@@ -8,9 +8,87 @@ import XCTest
 
 /// craft.files' disk side: the files it makes, the JPEG a picked photo becomes,
 /// the multipart body a screen's FormData is sent as, and a refused download.
-/// The pickers themselves need a person; what they hand on is tested here.
+/// System picker gestures are covered by NativeRenderUITests; lifecycle races
+/// and the disk work after a provider answers are tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    func testDocumentPickerCancellationIgnoresLateSelectionAndDuplicateCallbacks() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("late-\(UUID().uuidString).mp4")
+        try Data("late provider bytes".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let before = try importFolders()
+        for video in [false, true] {
+            var answers = 0
+            let completed = expectation(description: "picker cancellation")
+            let delegate = CraftNativeFiles.DocumentDelegate(limit: 1024, video: video, requestToken: nil, isCancelled: { false }) { result in
+                answers += 1
+                guard case .success(let value) = result else { return XCTFail("user cancellation must resolve") }
+                if video { XCTAssertTrue(value is NSNull) }
+                else { XCTAssertEqual((value as? [Any])?.count, 0) }
+                completed.fulfill()
+            }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
+            delegate.documentPickerWasCancelled(picker)
+            delegate.documentPicker(picker, didPickDocumentsAt: [source])
+            delegate.documentPickerWasCancelled(picker)
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertEqual(answers, 1)
+        }
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testDocumentPickerRequestCancellationDrainsTokenAndIgnoresLateProvider() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("disposed-\(UUID().uuidString).mp4")
+        try Data(repeating: 7, count: 256 * 1024).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let before = try importFolders()
+        for video in [false, true] {
+            let token = UUID().uuidString
+            let completed = expectation(description: "cancelled delegate settles")
+            var answers = 0
+            let delegate = CraftNativeFiles.DocumentDelegate(limit: 1024 * 1024, video: video, requestToken: token,
+                isCancelled: { CraftNativeActions.isCancelled(token) }) { result in
+                answers += 1
+                CraftNativeActions.completeFile(token, result) { _ in XCTFail("disposed screen received a result") }
+                DispatchQueue.main.async { completed.fulfill() }
+            }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
+            CraftNativeActions.cancel(requestToken: token)
+            delegate.cancel()
+            delegate.cancel()
+            delegate.documentPicker(picker, didPickDocumentsAt: [source])
+            delegate.documentPickerWasCancelled(picker)
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertEqual(answers, 1)
+            XCTAssertFalse(CraftNativeActions.isCancelled(token))
+        }
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testDocumentPickerCancellationDuringSelectionCleansOwnedFilesBeforeDrainingToken() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("selected-\(UUID().uuidString).mp4")
+        try Data(repeating: 7, count: 4 * 1024 * 1024).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let before = try importFolders()
+        for video in [false, true] {
+            let token = UUID().uuidString
+            let completed = expectation(description: "copy cancellation cleanup")
+            let delegate = CraftNativeFiles.DocumentDelegate(limit: 8 * 1024 * 1024, video: video, requestToken: token,
+                isCancelled: { CraftNativeActions.isCancelled(token) }) { result in
+                CraftNativeActions.completeFile(token, result) { _ in XCTFail("cancelled selection delivered") }
+                DispatchQueue.main.async { completed.fulfill() }
+            }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
+            delegate.documentPicker(picker, didPickDocumentsAt: [source])
+            CraftNativeActions.cancel(requestToken: token)
+            delegate.cancel()
+            XCTAssertTrue(CraftNativeActions.isCancelled(token), "worker still owns cancellation until delivery")
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertFalse(CraftNativeActions.isCancelled(token))
+            XCTAssertEqual(try importFolders(), before)
+        }
+    }
+
     private func importFolders() throws -> Set<URL> {
         guard FileManager.default.fileExists(atPath: CraftNativeFiles.root.path) else { return [] }
         return Set(try FileManager.default.contentsOfDirectory(at: CraftNativeFiles.root, includingPropertiesForKeys: nil))

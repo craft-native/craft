@@ -14,6 +14,9 @@
   let solidChanges = 0
   let pageIndex = 0
   let checkpointMode = false
+  let pickerMode = globalThis.__stxNativeRoute === 'picker-retry'
+  let pickerAnswers = 0
+  let pickerRequest = ''
   let checkpointBackgroundArmed = false
   const checkpointName = 'craft-ui-checkpoint-recovery'
   const checkpointSession = `${Date.now()}-${Math.random()}`
@@ -82,6 +85,19 @@
   }
 
   function render() {
+    if (pickerMode) {
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: `render-${++nextMessage}`, type: 'RENDER',
+        payload: { document: { type: 'View', style: { padding: 16 }, children: [
+          { id: 'picker-status', type: 'Text', props: { key: 'picker-status' }, children: ['Picker ready'] },
+          { type: 'Text', props: { key: 'picker-session' }, children: [checkpointSession] },
+          ...['file', 'video', 'abort', 'replace'].map(mode => ({
+            type: 'Button', props: { key: `picker-${mode}` }, events: { onPress: `pick-${mode}` }, children: [`Pick ${mode}`],
+          })),
+        ] } },
+      }))
+      return
+    }
     if (checkpointMode) { renderCheckpoint(); return }
     if (pagerMode) { renderPager(); return }
     if (solidMode) {
@@ -153,6 +169,7 @@
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
             { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
             { type: 'Button', props: { key: 'open-checkpoint' }, events: { onPress: 'openCheckpoint' }, children: ['Checkpoint recovery'] },
+            { type: 'Button', props: { key: 'open-picker' }, events: { onPress: 'openPicker' }, children: ['Document picker lifecycle'] },
           ],
         },
       },
@@ -161,6 +178,11 @@
 
   globalThis.__stxNativeBridge.onMessage(function (raw) {
     const message = JSON.parse(raw)
+    if (['API_RESPONSE', 'API_ERROR'].includes(message.type) && message.payload.requestId === pickerRequest) {
+      pickerAnswers += 1
+      const result = message.type === 'API_ERROR' ? message.payload.code : JSON.stringify(message.payload.data)
+      mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Answer ${pickerAnswers}: ${result}`] } }])
+    }
     if (message.type === 'APP_STATE' && message.payload.state === 'background' && checkpointBackgroundArmed) {
       checkpointBackgroundArmed = false
       craft.snapshots.set(checkpointName, checkpointValue(33, 'background')).then(
@@ -169,6 +191,28 @@
       )
     }
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openPicker') { pickerMode = true; render(); return }
+    if (message.payload.handlerName.startsWith('pick-')) {
+      const mode = message.payload.handlerName.slice(5)
+      pickerRequest = `picker-request-${++nextMessage}`
+      const requestId = pickerRequest
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: requestId, type: 'API_REQUEST',
+        payload: { version: 1, module: 'Files', method: mode === 'video' ? 'pickVideo' : 'pickFile', args: [{ source: 'files' }], untimed: true },
+      }))
+      if (mode === 'abort' || mode === 'replace') {
+        // Exercise the real bridge while the system UI is on top. The replace
+        // path disposes this runtime; no fixture-only native cancellation hook.
+        setTimeout(() => {
+          globalThis.craftNativePostMessage(JSON.stringify(mode === 'replace'
+            ? { type: 'NAVIGATE_REPLACE', payload: { screen: 'picker-retry' } }
+            : { type: 'API_CANCEL', payload: { requestId } }))
+          if (mode === 'abort')
+            mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Aborted; answers ${pickerAnswers}`] } }])
+        }, 8000)
+      }
+      return
+    }
     if (message.payload.handlerName === 'openCheckpoint') { checkpointMode = true; render(); return }
     if (message.payload.handlerName === 'resetCheckpoint') {
       checkpointBackgroundArmed = false
