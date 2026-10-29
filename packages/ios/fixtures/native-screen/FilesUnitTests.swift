@@ -846,7 +846,9 @@ final class FilesUnitTests: XCTestCase {
     func testAMultipartFilePreservesEveryStreamingChunk() throws {
         let made = try CraftNativeFiles.newFile(named: "session.mp4")
         // Span multiple 64 KiB production reads, with a partial final chunk.
-        let bytes = Data((0..<(64 * 1024 * 3 + 17)).map { UInt8($0 % 251) })
+        let byteCount: Int = 64 * 1024 * 3 + 17
+        let payload: [UInt8] = (0..<byteCount).map { index in UInt8(index % 251) }
+        let bytes = Data(payload)
         try bytes.write(to: made)
         defer { CraftNativeFiles.remove(made.path) }
         guard case .success(let (bodyURL, boundary)) = CraftNativeFiles.multipart([

@@ -1759,6 +1759,15 @@ host-neutral benchmark includes 100, 1,000, and 10,000-node full renders and
 single-node mutations; the platform suites separately verify native recycling,
 capability persistence across relaunch, and notification cancellation.
 
+Android 15 navigation-bar acceptance retains screenshots and measurements in
+the `native-navigation-bars` artifact directory. A missing bottom inset remains
+a failure; its `*-missing-insets.txt` receipt records visible and hidden inset
+geometry, window focus, rotation, size and navigation mode, with a screenshot
+when capture is available. Inspect that evidence before changing a timeout or
+assuming an app background/contrast defect. Swift fixture compilation must also
+pass on CI's selected Xcode: a newer local compiler accepting an expression is
+not evidence that the CI compiler can type-check the same fixture.
+
 When a style or color prop is removed during reconciliation, reused native
 controls reset that value to the platform default instead of retaining stale
 state. Detaching a retained iOS child also clears its cached layout style and

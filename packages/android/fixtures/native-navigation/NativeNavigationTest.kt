@@ -360,8 +360,36 @@ class NativeNavigationTest {
                 if (measured != null) break
                 SystemClock.sleep(100)
             }
-            val insets = measured ?: throw AssertionError(
-                "navigation-bar screenshot coverage requires a visible system bar after window layout")
+            if (measured == null) {
+                // Retain the failed geometry too: without it, a missing bar,
+                // side inset, or lost focus all produced the same blind failure.
+                val output = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+                    ?: throw AssertionError("Gradle system-bar evidence directory unavailable")
+                val directory = java.io.File(output, "native-navigation-bars").apply { mkdirs() }
+                val name = (navigationSystemAppearance + "-" + message + "-missing-insets")
+                    .replace(Regex("[^A-Za-z0-9_-]"), "_")
+                var metadata = ""
+                instrumentation.runOnMainSync {
+                    val decor = activity.window.decorView
+                    val current = ViewCompat.getRootWindowInsets(decor)
+                    val type = androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+                    metadata = "navigation=${current?.getInsets(type)} ignoringVisibility=${current?.getInsetsIgnoringVisibility(type)} " +
+                        "visible=${current?.isVisible(type)} focused=${activity.hasWindowFocus()} shown=${decor.isShown} " +
+                        "size=${decor.width}x${decor.height} rotation=${decor.display?.rotation} " +
+                        "orientation=${activity.resources.configuration.orientation} flags=${activity.window.attributes.flags} " +
+                        "navigationMode=${Settings.Secure.getString(activity.contentResolver, "navigation_mode")}\n"
+                }
+                java.io.File(directory, "$name.txt").writeText(metadata)
+                android.util.Log.e("CraftNativeBarProbe", metadata)
+                instrumentation.uiAutomation.takeScreenshot()?.let { image ->
+                    java.io.File(directory, "$name.png").outputStream().use {
+                        image.compress(Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    image.recycle()
+                }
+                throw AssertionError("navigation-bar screenshot coverage requires a visible system bar after window layout: $metadata")
+            }
+            val insets = measured!!
             val tappable = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.tappableElement()).bottom
             val buttonNavigation = tappable > 0
             var expected = authored
