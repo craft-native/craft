@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.399...v0.0.400)
+
+## 🚀 Features
+
+- **location**: a power-saving mode for long route recordings ([a366c8e](https://github.com/craft-native/craft/commit/a366c8e)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **zig**: mirror the chrome font keys in ios_config ([92be5a0](https://github.com/craft-native/craft/commit/92be5a0)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.398...v0.0.399)
 
 ## ⚡ Performance Improvements
