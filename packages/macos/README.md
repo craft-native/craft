@@ -15,6 +15,13 @@ It never links the system JavaScriptCore or WebKit frameworks.
 ```ts
 import { buildMacOSNative } from 'craft-native/macos'
 
+// The pinned toolchain is resolved for you: Zig is installed by Pantry and
+// zig-js is fetched at its pinned revision and built once, into
+// ~/.cache/craft/toolchain (CRAFT_TOOLCHAIN_DIR moves it, CRAFT_ZIG overrides
+// the compiler). `resolveMacOSToolchain()` returns what it resolved.
+await buildMacOSNative({ outdir: 'dist/native', nativeBundle: 'dist/native-screen.js' })
+
+// Or hand it a toolchain you manage yourself:
 await buildMacOSNative({
   outdir: 'dist/native',
   nativeBundle: 'dist/native-screen.js',
@@ -22,6 +29,26 @@ await buildMacOSNative({
   zigJS: { source: '/sources/zig-js', library: '/sources/zig-js/zig-out/lib/libzig-js.a' },
 })
 ```
+
+## Hosted-API apps
+
+An app with its own local agent (Attic) is launched with `--api-url` and gets its
+session cookie from `/native/session`. An app that talks to a hosted API passes
+`--no-session` instead: there is no handshake, and `--api-url` is only the origin
+relative `fetch` calls resolve against (`craft.app.url`).
+
+`craft.secureStorage` is the macOS Keychain (one generic password per key, service
+`<bundle id>.secure`). A signed Mac App Store build uses the data-protection
+keychain; an unsigned or ad-hoc build uses the login keychain. `craft.session`
+follows the `auth.token` item and sends `SESSION_CHANGED` to every window.
+`craft.storage` has synchronous `getSync` and `setSync` over UserDefaults.
+
+A single-line `TextInput` fires `onSubmitEditing` on Return and `onBlur` /
+`onEndEditing` on leaving; a multi-line one fires `onBlur` too. A multi-line
+`TextInput` with `ghostText` draws an inline completion after the caret and Tab
+fires `onAcceptCompletion`; any edit removes it. `Text` honors `line-through` and
+`underline`. Menus passed to `craft.desktop.setMenus` land between Edit and Window,
+and one titled `File` goes first after the app menu.
 
 Launch the executable with `--api-url`, `--native-bundle`, `--title`, and an
 optional `--route`. The HTTP agent's `/native/session` endpoint must establish

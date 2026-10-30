@@ -54,6 +54,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var bundle = ""
     var initialRoute = "Main"
     var titlebarStyle = "standard"
+    /// Apps that ship their own agent (Attic) hand out a session cookie at
+    /// `/native/session`. An app that talks to a hosted API has no such
+    /// endpoint and starts with `--no-session`.
+    var requiresSession = true
     var mainWindowOptions: [String: Any] = [:]
     var network: CraftMacNetwork!
     var scenes: [String: CraftMacScene] = [:]
@@ -70,6 +74,11 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             DispatchQueue.main.async { self?.appearanceChanged() }
         }
         NSApp.activate(ignoringOtherApps: true)
+        if !requiresSession {
+            open(name: "main", route: initialRoute, options: mainWindowOptions.merging(["title": appName]) { _, new in new })
+            startTestDriver()
+            return
+        }
         // The agent issues an HttpOnly cookie. It stays in URLSession, shared
         // by native windows, and is never handed to the JavaScript context.
         let request = URLRequest(url: network.base.appendingPathComponent("native/session"))
@@ -174,7 +183,11 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 if let old = bar.items.first(where: { $0.title == title }) { bar.removeItem(old) }
                 let menu = NSMenu(title: title); menu.autoenablesItems = false
                 for item in raw["items"] as? [[String: Any]] ?? [] { menu.addItem(menuItem(item, target: self, action: #selector(command(_:)))) }
-                addMenu(menu, to: bar)
+                let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: ""); item.submenu = menu
+                // A File menu is the first after the app menu; the others sit
+                // between Edit and Window, where a Mac app's own menus belong.
+                let index = title == "File" ? 1 : (bar.items.firstIndex(where: { $0.title == "Window" }) ?? bar.items.count)
+                bar.insertItem(item, at: min(index, bar.items.count))
             }; reply(true)
         case "contextMenu":
             let target = CraftMacMenuTarget(), menu = NSMenu(); menu.autoenablesItems = false
@@ -353,6 +366,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.appName = argument("--title", fallback: "Craft")
         application.initialRoute = argument("--route", fallback: "Main")
         application.titlebarStyle = argument("--titlebar-style", fallback: "standard")
+        application.requiresSession = !CommandLine.arguments.contains("--no-session")
         for (flag, key) in [("--width", "width"), ("--height", "height"), ("--min-width", "minWidth"), ("--min-height", "minHeight")] {
             if let value = Double(argument(flag)), value.isFinite, value > 0 { application.mainWindowOptions[key] = value }
         }

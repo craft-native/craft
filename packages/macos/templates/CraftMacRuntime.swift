@@ -1,6 +1,55 @@
 import AppKit
 import ZigJS
 import Foundation
+import Security
+
+/// The macOS Keychain behind `craft.secureStorage`: one generic password per
+/// key, under a service named for the app. The data-protection keychain is
+/// used when the app is signed for it (a Mac App Store build, which carries
+/// the application-identifier / keychain-access-groups entitlements); an
+/// unsigned or ad-hoc development build has none and uses the login keychain,
+/// so the same code runs both.
+enum CraftMacKeychain {
+    static var service: String { (Bundle.main.bundleIdentifier ?? "dev.craft.native") + ".secure" }
+    /// Whether this process carries the keychain-access-groups entitlement, which
+    /// is what the data-protection keychain requires. Decided once, from the
+    /// signature, so reads and writes always use the same keychain: a failure
+    /// based fallback let a write land in the login keychain and the next
+    /// launch read an empty data-protection one.
+    private static var dataProtection: Bool = {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        return SecTaskCopyValueForEntitlement(task, "keychain-access-groups" as CFString, nil) != nil
+            || SecTaskCopyValueForEntitlement(task, "com.apple.application-identifier" as CFString, nil) != nil
+    }()
+    private static func base(_ account: String?) -> [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+        if let account { query[kSecAttrAccount as String] = account }
+        if dataProtection { query[kSecUseDataProtectionKeychain as String] = true }
+        return query
+    }
+    private static func run(_ account: String?, _ body: ([String: Any]) -> OSStatus) -> OSStatus { body(base(account)) }
+    static func get(_ account: String) -> String? {
+        var result: AnyObject?
+        let status = run(account) { query in
+            var query = query; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
+            return SecItemCopyMatching(query as CFDictionary, &result)
+        }
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+    @discardableResult static func set(_ account: String, _ value: String) -> Bool {
+        _ = run(account) { SecItemDelete($0 as CFDictionary) }
+        let status = run(account) { query in
+            var query = query; query[kSecValueData as String] = Data(value.utf8); query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            return SecItemAdd(query as CFDictionary, nil)
+        }
+        return status == errSecSuccess
+    }
+    @discardableResult static func remove(_ account: String?) -> Bool {
+        let status = run(account) { SecItemDelete($0 as CFDictionary) }
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+}
 
 /// One zig-js context per STX window. No DOM and no browser view.
 final class CraftMacRuntime {
@@ -39,6 +88,18 @@ final class CraftMacRuntime {
             if level == "error" { self?.errors.append(text) }
             fputs("[stx \(level)] \(text)\n", stderr)
         }
+        // The synchronous halves of craft.storage and craft.secureStorage
+        // (getSync/setSync), which the stx runtime keeps when the host has them.
+        let storageGet: @convention(block) (String) -> String? = { key in
+            guard let value = UserDefaults.standard.object(forKey: "craft.native." + key) else { return nil }
+            if let text = value as? String { return text }
+            return (try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        let storageSet: @convention(block) (String, String) -> Void = { key, json in UserDefaults.standard.set(json, forKey: "craft.native." + key) }
+        let secureGet: @convention(block) (String) -> String? = { key in CraftMacKeychain.get(key) }
+        context.setObject(storageGet, forKeyedSubscript: "craftNativeStorageGet" as NSString)
+        context.setObject(storageSet, forKeyedSubscript: "craftNativeStorageSet" as NSString)
+        context.setObject(secureGet, forKeyedSubscript: "craftNativeSecureGet" as NSString)
         context.setObject(post, forKeyedSubscript: "craftNativePostMessage" as NSString)
         context.setObject(schedule, forKeyedSubscript: "craftNativeScheduleTimer" as NSString)
         context.setObject(cancel, forKeyedSubscript: "craftNativeCancelTimer" as NSString)
@@ -48,7 +109,8 @@ final class CraftMacRuntime {
         let info = Bundle.main.infoDictionary ?? [:]
         let bridge: [String: Any] = [
             "platform": "macos", "mutationProtocolVersion": 1, "capabilityProtocolVersion": 1,
-            "capabilityTimeoutMs": 30_000, "capabilities": ["desktop", "fetch", "eventStream", "storage", "clipboard", "dialog", "linking", "haptics", "notifications"],
+            "capabilityTimeoutMs": 30_000, "capabilities": ["desktop", "fetch", "eventStream", "storage", "secureStorage", "clipboard", "dialog", "linking", "haptics", "notifications"],
+            "sessionTokenKey": "auth.token",
             "initialAppState": "active", "colorScheme": CraftMacColor.isDark ? "dark" : "light",
             "appURL": network.base.absoluteString, "appVersion": info["CFBundleShortVersionString"] as? String ?? "", "appBuild": info["CFBundleVersion"] as? String ?? ""
         ]
@@ -58,6 +120,12 @@ final class CraftMacRuntime {
         globalThis.__stxNativeBridge = \(bridgeJSON);
         __stxNativeBridge.postMessage = function(text) { craftNativePostMessage(text); };
         __stxNativeBridge.onMessage = function(callback) { globalThis.__stxNativeCallback = callback; };
+        globalThis.craft = globalThis.craft || {};
+        craft.storage = {
+            getSync: function(key) { var raw = craftNativeStorageGet(String(key)); if (raw === null || raw === undefined) return null; try { return JSON.parse(raw); } catch (e) { return raw; } },
+            setSync: function(key, value) { craftNativeStorageSet(String(key), JSON.stringify(value === undefined ? null : value)); }
+        };
+        craft.secureStorage = { getSync: function(key) { var value = craftNativeSecureGet(String(key)); return value === null || value === undefined ? null : value; } };
         globalThis.console = {};
         ['log','info','warn','error','debug'].forEach(function(level) {
             console[level] = function() { craftNativeLog(level, Array.from(arguments).map(String).join(' ')); };
@@ -138,6 +206,14 @@ final class CraftMacRuntime {
         }
     }
 
+    /// `craft.session.onChange`: the sign-in token moved, in any window.
+    private func sessionChanged(_ key: String, token: String?, previous: String?) {
+        guard key == "auth.token", token != previous else { return }
+        for scene in CraftMacApplication.shared.scenes.values {
+            scene.runtime.send("SESSION_CHANGED", ["key": key, "token": token ?? NSNull(), "previous": previous ?? NSNull()])
+        }
+    }
+
     func answer(_ id: String, _ value: Any = NSNull()) {
         tasks.removeValue(forKey: id)
         send("API_RESPONSE", ["version": 1, "requestId": id, "data": value], correlation: id)
@@ -168,6 +244,22 @@ final class CraftMacRuntime {
                 }
             }
             tasks[id] = task; task.resume()
+        case "SecureStorage":
+            if method == "clear" { CraftMacKeychain.remove(nil); answer(id, true); return }
+            guard let key = args.first as? String, !key.isEmpty else { fail(id, "INVALID_ARGUMENT", "Secure storage needs a non-empty key"); return }
+            switch method {
+            case "get": answer(id, CraftMacKeychain.get(key) ?? NSNull())
+            case "set":
+                guard args.count == 2, let value = args[1] as? String else { fail(id, "INVALID_ARGUMENT", "SecureStorage.set needs a key and string value"); return }
+                let previous = CraftMacKeychain.get(key)
+                guard CraftMacKeychain.set(key, value) else { fail(id, "SECURE_STORAGE_ERROR", "Secure storage could not be written"); return }
+                sessionChanged(key, token: value, previous: previous); answer(id, true)
+            case "remove":
+                let previous = CraftMacKeychain.get(key)
+                guard CraftMacKeychain.remove(key) else { fail(id, "SECURE_STORAGE_ERROR", "Secure storage could not be removed"); return }
+                sessionChanged(key, token: nil, previous: previous); answer(id, true)
+            default: fail(id, "UNKNOWN_ACTION", "Unsupported SecureStorage method")
+            }
         case "Storage":
             let prefix = "craft.native."
             let key = prefix + (args.first as? String ?? "")

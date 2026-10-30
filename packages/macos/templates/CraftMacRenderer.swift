@@ -156,8 +156,19 @@ func nativeText(_ node: [String: Any]) -> String {
 /// selection, and scroll position survive updates instead of being recreated.
 final class CraftMacTextView: NSTextView {
     var placeholder = ""
+    /// An inline completion drawn after the caret in the placeholder color
+    /// (`ghostText`); Tab accepts it (`onAcceptCompletion`), any edit drops it.
+    var ghost = ""
+    override func didChangeText() { ghost = ""; super.didChangeText() }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if !ghost.isEmpty, selectedRange().length == 0, let window {
+            let screen = firstRect(forCharacterRange: NSRange(location: selectedRange().location, length: 0), actualRange: nil)
+            let point = convert(window.convertFromScreen(screen), from: nil)
+            let left = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 5)
+            (ghost as NSString).draw(with: CGRect(x: point.minX, y: point.minY, width: max(20, bounds.width - point.minX - left), height: 100_000), options: [.usesLineFragmentOrigin],
+                attributes: [.font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.tertiaryLabelColor])
+        }
         if string.isEmpty && !placeholder.isEmpty {
             (placeholder as NSString).draw(at: CGPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 5), y: textContainerInset.height),
                 withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.placeholderTextColor])
@@ -269,6 +280,10 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         if let text = control as? NSTextField, kind == "Text" {
             text.stringValue = props["text"] as? String ?? nativeText(node)
             text.font = font; text.textColor = CraftMacColor.parse(style["color"])
+            if let line = style["textDecorationLine"] as? String, line == "line-through" || line == "underline" {
+                let attributed = NSMutableAttributedString(string: text.stringValue, attributes: [.font: font, .foregroundColor: CraftMacColor.parse(style["color"]), line == "underline" ? .underlineStyle : .strikethroughStyle: NSUnderlineStyle.single.rawValue])
+                text.attributedStringValue = attributed
+            }
             text.alignment = style["textAlign"] as? String == "center" ? .center : style["textAlign"] as? String == "right" ? .right : .left
             text.maximumNumberOfLines = (props["numberOfLines"] as? NSNumber)?.intValue ?? 0
             text.lineBreakMode = text.maximumNumberOfLines == 1 ? .byTruncatingTail : .byWordWrapping
@@ -345,7 +360,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             }
             if text.string != value { text.string = value }
             text.isEditable = props["disabled"] as? Bool != true; text.font = font
-            if let editor = text as? CraftMacTextView { editor.placeholder = props["placeholder"] as? String ?? ""; editor.needsDisplay = true }
+            if let editor = text as? CraftMacTextView { editor.placeholder = props["placeholder"] as? String ?? ""; editor.ghost = props["ghostText"] as? String ?? ""; editor.needsDisplay = true }
             text.setAccessibilityIdentifier(props["testID"] as? String ?? props["testId"] as? String ?? id)
             text.setAccessibilityLabel(props["placeholder"] as? String ?? "Message")
         } else if let field = control as? NSTextField {
@@ -449,8 +464,24 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     func textDidChange(_ notification: Notification) { if let text = notification.object as? NSTextView { input(text.string) } }
     func input(_ value: String) { fire("onChangeText", ["text": value, "value": value, "nativeEvent": ["text": value, "value": value]]) }
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertTab(_:)), let editor = textView as? CraftMacTextView, !editor.ghost.isEmpty, events["onAcceptCompletion"] != nil {
+            let accepted = editor.ghost; editor.ghost = ""; fire("onAcceptCompletion", ["text": accepted, "value": accepted]); return true
+        }
         if commandSelector == #selector(NSResponder.insertNewline(_:)), !NSEvent.modifierFlags.contains(.shift), events["onSubmitEditing"] != nil { fire("onSubmitEditing", ["text": textView.string]); return true }
         return false
+    }
+    /// Single-line fields: Return submits, and leaving the field blurs it, as on the web.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)), events["onSubmitEditing"] != nil { fire("onSubmitEditing", ["text": textView.string, "value": textView.string, "nativeEvent": ["text": textView.string]]); return true }
+        return false
+    }
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        fire("onEndEditing", ["text": field.stringValue, "value": field.stringValue]); fire("onBlur", ["text": field.stringValue, "value": field.stringValue])
+    }
+    func textDidEndEditing(_ notification: Notification) {
+        guard let text = notification.object as? NSTextView else { return }
+        fire("onEndEditing", ["text": text.string, "value": text.string]); fire("onBlur", ["text": text.string, "value": text.string])
     }
     override func mouseDown(with event: NSEvent) { if events["onPress"] != nil { fire("onPress") } else { super.mouseDown(with: event) } }
     override func rightMouseDown(with event: NSEvent) { fire("onLongPress", ["x": event.locationInWindow.x, "y": event.locationInWindow.y]) }
