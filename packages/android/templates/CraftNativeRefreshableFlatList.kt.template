@@ -1,11 +1,20 @@
 package {{PACKAGE_NAME}}
 
 import android.content.Context
+import android.view.MotionEvent
 import org.json.JSONObject
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 /** Swipe-to-refresh host for a native FlatList. */
 internal class CraftNativeRefreshableFlatList(context: Context) : SwipeRefreshLayout(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+
     val list = CraftNativeFlatList(context)
     private var refreshHandler: (() -> Unit)? = null
 

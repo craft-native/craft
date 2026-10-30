@@ -43,6 +43,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -2723,4 +2724,270 @@ class NativeNavigationTest {
             instrumentation.waitForIdleSync()
         }
     }
+}
+
+@RunWith(AndroidJUnit4::class)
+class NativePointerEventsTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private fun policy(view: View, mode: String?, container: Boolean = false, style: String? = null) {
+        CraftNativePointers.configure(view, JSONObject().put("pointerEvents", mode ?: JSONObject.NULL),
+            JSONObject().put("pointerEvents", style ?: JSONObject.NULL), container)
+    }
+    private fun tap(root: View, x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+            val event = MotionEvent.obtain(now, now + if (action == MotionEvent.ACTION_UP) 50 else 0, action, x, y, 0)
+            try { root.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+    }
+    private fun layout(view: View) {
+        view.measure(View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 300, 300)
+    }
+
+    @Test fun overlayModesRouteActualTouchStreamsWithoutChangingDisabledState() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var root: android.widget.FrameLayout
+        lateinit var overlay: CraftNativeFlexLayout
+        lateinit var child: CraftNativePointerButton
+        var last = ""
+        try {
+            scenario.onActivity { activity ->
+                root = android.widget.FrameLayout(activity)
+                val under = CraftNativePointerButton(activity).apply { stateListAnimator = null; elevation = 0f; translationZ = 0f; setOnClickListener { last = "under" } }
+                policy(under, "auto")
+                root.addView(under, ViewGroup.LayoutParams(300, 300))
+                overlay = CraftNativeFlexLayout(activity)
+                overlay.setOnClickListener { last = "overlay" }
+                child = CraftNativePointerButton(activity).apply { setOnClickListener { last = "child" } }
+                policy(child, "auto")
+                overlay.addView(child, ViewGroup.LayoutParams(80, 44))
+                overlay.setChildStyle(child, JSONObject().put("width", 80).put("height", 44), 1f)
+                root.addView(overlay, ViewGroup.LayoutParams(200, 180))
+                activity.setContentView(root)
+                layout(root)
+            }
+            for (mode in listOf("auto", "none", "box-none", "box-only")) {
+                scenario.onActivity { policy(overlay, mode, true); last = ""; tap(root, 20f, 20f) }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { assertEquals(mode, if (mode == "none") "under" else if (mode == "box-only") "overlay" else "child", last) }
+                scenario.onActivity { last = ""; tap(root, 150f, 120f) }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { assertEquals(mode, if (mode in listOf("none", "box-none")) "under" else "overlay", last) }
+            }
+            scenario.onActivity { child.isEnabled = false }
+            for (mode in listOf("none", "box-none", "box-only", "auto")) {
+                scenario.onActivity { policy(overlay, mode, true); tap(root, 20f, 20f); assertFalse(child.isEnabled) }
+            }
+        } finally { scenario.close() }
+    }
+
+    @Test fun reactivePolicyCancelsTrackingAndNeverTurnsALateUpIntoAClick() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var root: android.widget.FrameLayout
+        lateinit var child: CraftNativePointerButton
+        var clicks = 0
+        val events = mutableListOf<Int>()
+        try {
+            scenario.onActivity { activity ->
+                root = android.widget.FrameLayout(activity)
+                child = CraftNativePointerButton(activity).apply {
+                    setOnClickListener { clicks++ }
+                    setOnTouchListener { _, event -> events.add(event.actionMasked); false }
+                }
+                policy(child, "auto", style = "none")
+                root.addView(child, ViewGroup.LayoutParams(200, 180))
+                activity.setContentView(root)
+                layout(root)
+                val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 20f, 20f, 0)
+                root.dispatchTouchEvent(down); down.recycle()
+                policy(child, null, style = "none")
+                val up = MotionEvent.obtain(0, 50, MotionEvent.ACTION_UP, 20f, 20f, 0)
+                root.dispatchTouchEvent(up); up.recycle()
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_CANCEL), events)
+                assertEquals(0, clicks)
+                assertTrue(child.isEnabled)
+                policy(child, null)
+                tap(root, 20f, 20f)
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals(1, clicks) }
+        } finally { scenario.close() }
+    }
+
+    @Test fun scrollContainerAllowsItsChildButNotItsEmptyBoxInBoxNoneMode() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var root: android.widget.FrameLayout
+        lateinit var scroll: CraftNativeScrollView
+        var last = ""
+        try {
+            scenario.onActivity { activity ->
+                root = android.widget.FrameLayout(activity)
+                val under = CraftNativePointerButton(activity).apply { stateListAnimator = null; elevation = 0f; translationZ = 0f; setOnClickListener { last = "under" } }
+                policy(under, "auto")
+                root.addView(under, ViewGroup.LayoutParams(300, 300))
+                scroll = CraftNativeScrollView(activity)
+                scroll.setHorizontal(false)
+                val child = CraftNativePointerButton(activity).apply { setOnClickListener { last = "child" } }
+                policy(child, "auto")
+                scroll.content.addView(child, ViewGroup.LayoutParams(80, 44))
+                root.addView(scroll, ViewGroup.LayoutParams(200, 180))
+                activity.setContentView(root)
+                layout(root)
+                policy(scroll, "box-none", true)
+                tap(root, 20f, 20f)
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("child", last); last = ""; tap(root, 150f, 140f) }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("under", last); last = ""; policy(scroll, "none", true); tap(root, 20f, 20f) }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("under", last) }
+        } finally { scenario.close() }
+    }
+    @Test fun overflowingChildrenRespectClippingAndSiblingZOrder() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var root: CraftNativeFlexLayout
+        lateinit var overlay: CraftNativeFlexLayout
+        lateinit var child: CraftNativePointerButton
+        lateinit var under: CraftNativePointerButton
+        var last = ""
+        try {
+            scenario.onActivity { activity ->
+                root = CraftNativeFlexLayout(activity)
+                under = CraftNativePointerButton(activity).apply { stateListAnimator = null; elevation = 0f; translationZ = 0f; setOnClickListener { last = "under" } }
+                child = CraftNativePointerButton(activity).apply { setOnClickListener { last = "child" } }
+                overlay = CraftNativeFlexLayout(activity)
+                policy(root, "auto", true); policy(under, "auto"); policy(child, "auto"); policy(overlay, "box-none", true)
+                root.addView(under, ViewGroup.LayoutParams(300, 300))
+                overlay.addView(child, ViewGroup.LayoutParams(80, 44))
+                overlay.setChildStyle(child, JSONObject().put("width", 80).put("height", 44), 1f)
+                root.addView(overlay, ViewGroup.LayoutParams(200, 0))
+                activity.setContentView(root)
+                layout(root)
+            }
+            // Keep a real, intentionally overflowing layout for each event stream.
+            fun frames() { under.layout(0, 0, 300, 300); overlay.layout(0, 0, 200, 0); child.layout(10, 20, 90, 64) }
+            scenario.onActivity { frames(); overlay.clipChildren = false; last = ""; tap(root, 30f, 40f) }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("child", last); frames(); overlay.clipChildren = true; last = ""; tap(root, 30f, 40f) }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("under", last); frames(); overlay.clipChildren = false; under.translationZ = 10f; last = ""; tap(root, 30f, 40f) }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("under", last) }
+        } finally { scenario.close() }
+    }
+
+    @Test fun rendererMutationsResolvePropsAndStylesOnRetainedNestedListControls() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        lateinit var screen: Any
+        lateinit var root: View
+        lateinit var child: View
+        var last = ""
+        fun find(view: View, id: String): View? {
+            if (view.tag?.toString() == id) return view
+            if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index), id)?.let { return it }
+            return null
+        }
+        fun patch(revision: Int, body: String) {
+            MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, JSONObject::class.java)
+                .apply { isAccessible = true }.invoke(activity, screen, JSONObject("""{
+                  "version":1,"batchId":"pointer-$revision","baseRevision":${revision - 1},"revision":$revision,
+                  "operations":[{"op":"updateNode","id":"list","patch":$body}]
+                }"""))
+        }
+        try {
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { current ->
+                activity = current
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }.get(activity) as List<*>
+                screen = requireNotNull(screens.last())
+                screen.javaClass.getDeclaredField("active").apply { isAccessible = true }.setBoolean(screen, false)
+                val document = JSONObject("""{"id":"root","type":"View","props":{"testID":"pointer-root"},"style":{"width":300,"height":300},"children":[
+                  {"id":"under","type":"Button","props":{"testID":"pointer-under","title":"Under"},"style":{"position":"absolute","width":300,"height":300}},
+                  {"id":"list","type":"FlatList","props":{"testID":"pointer-list","pointerEvents":"auto"},"style":{"position":"absolute","width":200,"height":180,"pointerEvents":"none"},"children":[
+                    {"id":"row","type":"View","children":[{"id":"child","type":"Button","props":{"testID":"pointer-child","title":"Child"},"style":{"height":44,"width":80}}]}
+                  ]}
+                ]}""")
+                MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }.invoke(activity, screen, document)
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                root = requireNotNull(find(activity.window.decorView, "pointer-root"))
+                root.requestLayout()
+            }
+            instrumentation.waitForIdleSync()
+            fun clickChild() {
+                val a = IntArray(2); val b = IntArray(2)
+                child.getLocationOnScreen(a); root.getLocationOnScreen(b)
+                tap(root, (a[0] - b[0] + 10).toFloat(), (a[1] - b[1] + 10).toFloat())
+            }
+            scenario.onActivity {
+                child = requireNotNull(find(root, "pointer-child"))
+                child.setOnClickListener { last = "child" }
+                requireNotNull(find(root, "pointer-under")).apply { stateListAnimator = null; elevation = 0f; translationZ = 0f; setOnClickListener { last = "under" } }
+                clickChild()
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("child", last); patch(1, """{"props":{"pointerEvents":null}}"""); last = ""; clickChild() }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("under", last); patch(2, """{"style":{"pointerEvents":null}}"""); child.setOnClickListener { last = "child" }; last = ""; clickChild() }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertEquals("child", last); assertTrue(child === find(root, "pointer-child")) }
+        } finally { scenario.close() }
+    }
+
+    @Test fun leafControlsHonorAllModesAndKeepAuthoredDisabledAndHiddenState() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val factories: List<(android.content.Context) -> View> = listOf(
+            { CraftNativePointerButton(it) }, { CraftNativePointerTextView(it) }, { context -> Class.forName("dev.craft.navigationtest.CraftNativeTextField").getDeclaredConstructor(android.content.Context::class.java).apply { isAccessible = true }.newInstance(context) as View },
+            { CraftNativePointerCheckBox(it) }, { CraftNativePointerSwitch(it) }, { CraftNativePointerSeekBar(it) },
+            { CraftNativePointerSpinner(it) }, { CraftNativePointerImageView(it) }, { CraftNativePointerRadioGroup(it) },
+        )
+        try {
+            for (factory in factories) {
+                lateinit var root: android.widget.FrameLayout
+                lateinit var leaf: View
+                var downs = 0
+                var underClicks = 0
+                scenario.onActivity { activity ->
+                    root = android.widget.FrameLayout(activity)
+                    val under = CraftNativePointerButton(activity).apply {
+                        stateListAnimator = null; elevation = 0f
+                        setOnClickListener { underClicks++ }
+                    }
+                    policy(under, "auto")
+                    root.addView(under, ViewGroup.LayoutParams(200, 120))
+                    leaf = factory(activity)
+                    leaf.setOnTouchListener { _, event -> if (event.actionMasked == MotionEvent.ACTION_DOWN) downs++; true }
+                    root.addView(leaf, ViewGroup.LayoutParams(200, 120))
+                    activity.setContentView(root)
+                }
+                instrumentation.waitForIdleSync()
+                for (mode in listOf("none", "box-none", "box-only", "auto", null)) {
+                    scenario.onActivity { policy(leaf, mode); downs = 0; underClicks = 0; tap(root, 20f, 20f) }
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity {
+                        val passThrough = mode == "none" || mode == "box-none"
+                        assertEquals(leaf.javaClass.simpleName + mode, if (passThrough) 0 else 1, downs)
+                        assertEquals(leaf.javaClass.simpleName + mode, if (passThrough) 1 else 0, underClicks)
+                        assertTrue(leaf.isEnabled)
+                    }
+                }
+                scenario.onActivity { leaf.isEnabled = false; policy(leaf, "none"); policy(leaf, null); downs = 0; tap(root, 20f, 20f) }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity {
+                    assertFalse(leaf.isEnabled); assertEquals(0, downs)
+                    leaf.visibility = View.GONE; underClicks = 0; tap(root, 20f, 20f)
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { assertEquals(1, underClicks); assertEquals(View.GONE, leaf.visibility) }
+            }
+        } finally { scenario.close() }
+    }
+
 }

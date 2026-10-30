@@ -1420,7 +1420,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('setTextColor(buttonColor?.let { color(it, defaultTextColor) } ?: defaultTextColor)')
     expect(android).toContain('val linkColor = craftNativeOptionalString(props.opt("color")) ?: craftNativeOptionalString(style.opt("color"))')
     expect(android).toContain('setTextColor(color(linkColor.orEmpty(), Color.rgb(33, 150, 243)))')
-    expect(android).toContain('(previous as? TextView)?.takeUnless { it is Button } ?: TextView(this)')
+    expect(android).toContain('(previous as? TextView)?.takeUnless { it is Button } ?: CraftNativePointerTextView(this)')
   })
 
   it('keeps capitalize semantics aligned across hosts', () => {
@@ -1511,7 +1511,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('"nativeEvent": ["value": option.value, "index": row]')
     expect(ios).toContain('if let value = craftNativeNumber(value), value.doubleValue.isFinite { return String(value.doubleValue) }')
     expect(iosNativeUnitTests).toContain('testPickerBooleanValuesFallBackToTheirLabels')
-    expect(android).toContain('"Picker" -> (previous as? Spinner ?: Spinner(this)).apply')
+    expect(android).toContain('"Picker" -> (previous as? Spinner ?: CraftNativePointerSpinner(this)).apply')
     expect(android).toContain('setSelection(selected, false)')
     expect(android).toContain('onItemSelectedListener = null')
     expect(android).toContain('Both operations can synchronously dispatch an Android selection')
@@ -1586,7 +1586,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('let uncheckedImage = UIImage(systemName: indeterminate ? "minus.square" : "square")')
     expect(ios).toContain('UIImage(systemName: indeterminate ? "minus.square" : "checkmark.square.fill")')
     expect(ios).toContain('nativeEvent": ["value": sender.isSelected]')
-    expect(android).toContain('"Checkbox" -> (previous as? CheckBox ?: CheckBox(this)).apply')
+    expect(android).toContain('"Checkbox" -> (previous as? CheckBox ?: CraftNativePointerCheckBox(this)).apply')
     expect(android).toContain('val indeterminate = (props.opt("indeterminate") as? Boolean) == true')
     expect(android).toContain('isActivated = indeterminate')
     expect(android).toContain('val checkboxColor = craftNativeOptionalString(props.opt("color"))\n                    ?: craftNativeOptionalString(style.opt("color"))')
@@ -1769,7 +1769,7 @@ describe('native renderer component contract', () => {
     expect(android).not.toContain('android_ripple')
   })
 
-  it('wires iOS pointer targeting into semantic boundaries and native regression tests', () => {
+  it('wires pointer targeting into semantic boundaries and native regression tests', () => {
     const viewProps = componentTypes.match(/export interface ViewProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(viewProps).toContain('onLayout?: (event: LayoutEvent) => void')
     expect(viewProps).not.toContain('pointerEvents?:')
@@ -1777,7 +1777,8 @@ describe('native renderer component contract', () => {
     expect(iosFlatList).toContain('craftPointerHitTest(point, with: event)')
     expect(iosNativeUnitTests).toContain('testOverlayModesTargetSiblingsChildrenAndOwnBoxAndDispatchTheChosenAction')
     expect(iosNativeUnitTests).toContain('testModalShieldRemainsUnlessTheAuthorExplicitlyPassesThrough')
-    expect(android).not.toContain('pointerEvents')
+    expect(android).toContain('CraftNativePointers.configure(control, props, style,')
+    expect(android).toContain('cancel.action = MotionEvent.ACTION_CANCEL')
   })
 
   it('keeps native Text selection aligned across hosts', () => {
@@ -2562,7 +2563,7 @@ describe('native renderer component contract', () => {
     const scrollEnd = android.indexOf('private class CraftNativeFlexSpacer', scrollStart)
     const scroll = android.slice(scrollStart, scrollEnd)
     expect(scroll).toContain('override fun onInterceptTouchEvent(event: MotionEvent): Boolean')
-    expect(scroll).toContain('if (refreshHandler == null) return false')
+    expect(scroll).toContain('if (refreshHandler == null || !CraftNativePointers.ownsTouch(this)) return false')
     expect(scroll).toContain('isEnabled = true')
     expect(scroll).not.toContain('isEnabled = false')
   })

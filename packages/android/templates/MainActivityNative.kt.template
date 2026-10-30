@@ -366,6 +366,9 @@ private object CraftNativeSkewTransforms {
 
 /** A DOM-free SVG surface for the geometry emitted by the shared STX native protocol. */
 private class CraftNativeSvgView(context: Context) : View(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     var drawing: JSONObject = JSONObject()
         set(value) {
             field = value
@@ -972,8 +975,115 @@ internal class CraftNativeCelebration(private val view: View) {
     }
 }
 
+/** Authored nodes are boundaries; native control implementation views are not. */
+internal object CraftNativePointers {
+    private data class State(var mode: String? = null, var container: Boolean = false,
+        var active: Boolean = false, var cancelled: Boolean = false, var route: List<String> = emptyList())
+    private val states = java.util.WeakHashMap<View, State>()
+
+    fun configure(view: View, props: JSONObject, style: JSONObject, container: Boolean) {
+        val raw = if (props.has("pointerEvents") && !props.isNull("pointerEvents")) props.opt("pointerEvents") else style.opt("pointerEvents")
+        val state = states.getOrPut(view) { State() }
+        state.mode = (raw as? String)?.takeIf { it in setOf("auto", "none", "box-none", "box-only") } ?: "auto"
+        state.container = container
+    }
+
+    private fun route(view: View): List<String> {
+        val result = mutableListOf<String>()
+        var candidate: View? = view
+        while (candidate != null) {
+            states[candidate]?.mode?.let { result.add(it) }
+            candidate = candidate.parent as? View
+        }
+        return result
+    }
+
+    fun ownsTouch(view: View): Boolean = route(view).firstOrNull() !in setOf("none", "box-none")
+
+    fun dispatch(view: View, event: MotionEvent, native: (MotionEvent) -> Boolean): Boolean {
+        val state = states.getOrPut(view) { State() }
+        val route = route(view)
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            state.active = false
+            return native(event)
+        }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            state.active = false
+            state.cancelled = false
+            state.route = route
+        } else if (state.active && state.route != route) {
+            val cancel = MotionEvent.obtain(event)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            try { native(cancel) } finally { cancel.recycle() }
+            state.active = false
+            state.cancelled = true
+        }
+        if (state.cancelled) return false
+        if (state.mode == "box-only" && event.actionMasked == MotionEvent.ACTION_DOWN &&
+            (event.x < 0 || event.x >= view.width || event.y < 0 || event.y >= view.height)) return false
+        val ancestors = route.drop(1)
+        if ("none" in route || "box-only" in ancestors || (state.mode == "box-none" && !state.container)) return false
+        val handled = native(event) || (state.mode == "box-only" && state.container && view.isEnabled)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) state.active = handled
+        if (event.actionMasked == MotionEvent.ACTION_UP) state.active = false
+        return handled
+    }
+}
+
+internal class CraftNativePointerTextView(context: Context) : TextView(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerButton(context: Context) : Button(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerCheckBox(context: Context) : CheckBox(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerRadioGroup(context: Context) : android.widget.RadioGroup(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+}
+
+internal class CraftNativePointerSpinner(context: Context) : Spinner(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerSwitch(context: Context) : Switch(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerSeekBar(context: Context) : SeekBar(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
+internal class CraftNativePointerImageView(context: Context) : ImageView(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+}
+
 /** A deterministic flex-shaped container shared by normal views and scroll content. */
 internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+
     private var celebration: CraftNativeCelebration? = null
     fun configureCelebration(raw: JSONObject?, radius: Float) {
         if (raw != null && celebration == null) celebration = CraftNativeCelebration(this)
@@ -1012,10 +1122,76 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private var safeAreaPadding = intArrayOf(0, 0, 0, 0)
     private var applyingPadding = false
     private var safeAreaEdges = setOf("top", "right", "bottom", "left")
+    private var overflowTouchTarget: View? = null
+
+    private fun childEvent(child: View, event: MotionEvent): MotionEvent = MotionEvent.obtain(event).also {
+        it.offsetLocation((scrollX - child.left).toFloat(), (scrollY - child.top).toFloat())
+        if (!child.matrix.isIdentity) {
+            val inverse = android.graphics.Matrix()
+            if (child.matrix.invert(inverse)) it.transform(inverse)
+        }
+    }
+
+    private fun overflowContains(group: ViewGroup, x: Float, y: Float): Boolean {
+        if (group.clipChildren) return false
+        for (index in group.childCount - 1 downTo 0) {
+            val child = group.getChildAt(index)
+            if (child.visibility != View.VISIBLE || child.alpha <= 0.01f) continue
+            val point = floatArrayOf(x + group.scrollX - child.left, y + group.scrollY - child.top)
+            val inverse = android.graphics.Matrix()
+            if (!child.matrix.isIdentity && child.matrix.invert(inverse)) inverse.mapPoints(point)
+            if (point[0] >= 0 && point[0] < child.width && point[1] >= 0 && point[1] < child.height) return true
+            if (child is ViewGroup && overflowContains(child, point[0], point[1])) return true
+        }
+        return false
+    }
+
+    // Android normally rejects a zero-height child's entire subtree before
+    // dispatch, even when it draws outside that box. Only that overflow path
+    // needs routing here; ordinary gestures stay in ViewGroup's dispatcher.
+    private fun dispatchOverflow(event: MotionEvent): Boolean? {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            overflowTouchTarget = null
+            val children = (0 until childCount).map { getChildAt(it) }
+                .filter { it.visibility == View.VISIBLE && it.alpha > 0.01f }
+                .sortedBy { it.z }.reversed()
+            val reachesOverflow = children.any { child ->
+                val local = childEvent(child, event)
+                try {
+                    child is ViewGroup && (local.x < 0 || local.x >= child.width || local.y < 0 || local.y >= child.height) &&
+                        overflowContains(child, local.x, local.y)
+                } finally { local.recycle() }
+            }
+            if (!reachesOverflow) return null
+            for (child in children) {
+                val local = childEvent(child, event)
+                try {
+                    val inside = local.x >= 0 && local.x < child.width && local.y >= 0 && local.y < child.height
+                    if ((inside || (child is ViewGroup && overflowContains(child, local.x, local.y))) && child.dispatchTouchEvent(local)) {
+                        overflowTouchTarget = child
+                        return true
+                    }
+                } finally { local.recycle() }
+            }
+            return null
+        }
+        val target = overflowTouchTarget ?: return null
+        val local = childEvent(target, event)
+        try {
+            if (target.parent !== this) local.action = MotionEvent.ACTION_CANCEL
+            target.dispatchTouchEvent(local)
+            if (local.actionMasked == MotionEvent.ACTION_UP || local.actionMasked == MotionEvent.ACTION_CANCEL) overflowTouchTarget = null
+            return true
+        } finally { local.recycle() }
+    }
+
     private var shieldedModalTouch = false
     private var dismissibleModalTouch: CraftNativeModalView? = null
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { dispatchNativeTouchEvent(it) }
+
+    private fun dispatchNativeTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val x = event.x.roundToInt()
             val y = event.y.roundToInt()
@@ -1023,12 +1199,12 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 .map { getChildAt(it) }
                 .filterIsInstance<CraftNativeModalView>()
                 .firstOrNull { child ->
-                    child.dismissOnOutsideTap && child.visibility == View.VISIBLE && child.alpha > 0.01f
+                    CraftNativePointers.ownsTouch(child) && child.dismissOnOutsideTap && child.visibility == View.VISIBLE && child.alpha > 0.01f
                         && (x < child.left || x >= child.right || y < child.top || y >= child.bottom)
                 }
             shieldedModalTouch = (childCount - 1 downTo 0).any { index ->
                 val child = getChildAt(index)
-                child is CraftNativeModalView && !child.blocksBackground && child.visibility == View.VISIBLE
+                child is CraftNativeModalView && CraftNativePointers.ownsTouch(child) && !child.blocksBackground && child.visibility == View.VISIBLE
                     && (x < child.left || x >= child.right || y < child.top || y >= child.bottom)
                     && child.hasBlockingModalBelow()
             }
@@ -1046,6 +1222,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) shieldedModalTouch = false
             return true
         }
+        dispatchOverflow(event)?.let { return it }
         return super.dispatchTouchEvent(event)
     }
 
@@ -2328,6 +2505,14 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
 /** An image-backed flex container with ordinary native children over the image. */
 private class CraftNativeImageBackgroundView(context: Context) : FrameLayout(context) {
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     val image = ImageView(context)
     val content = CraftNativeFlexLayout(context)
 
@@ -2342,6 +2527,14 @@ private class CraftNativeImageBackgroundView(context: Context) : FrameLayout(con
 
 /** A flex container that responds to the activity's IME inset. */
 private class CraftNativeKeyboardAvoidingView(context: Context) : FrameLayout(context) {
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     val content = CraftNativeFlexLayout(context)
     private var behavior = "padding"
     private var keyboardVerticalOffset = 0
@@ -2426,17 +2619,23 @@ internal fun craftNativeFontFamily(family: String?, bundledFonts: Map<String, Ty
     }?.firstOrNull() ?: Typeface.DEFAULT
 
 internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+
     val content = CraftNativeFlexLayout(context)
     // Keep one refresh target across axis changes. Replacing all children of
     // SwipeRefreshLayout would also detach its own animated indicator.
     private val scrollContainer = FrameLayout(context)
     private val vertical = object : ScrollView(context) {
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onInterceptTouchEvent(event)
-        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onTouchEvent(event)
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
     }
     private val horizontal = object : HorizontalScrollView(context) {
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onInterceptTouchEvent(event)
-        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onTouchEvent(event)
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
+        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
     }
     private var horizontalMode: Boolean? = null
     private var pagingEnabled = false
@@ -2534,7 +2733,7 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
     }
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-        if (refreshHandler == null) return false
+        if (refreshHandler == null || !CraftNativePointers.ownsTouch(this)) return false
         return super.onInterceptTouchEvent(event)
     }
 
@@ -2914,6 +3113,7 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
                 onScroll?.invoke(x, y)
             }
             scroller.setOnTouchListener { _, event ->
+                if (!CraftNativePointers.ownsTouch(scroller) && event.actionMasked != MotionEvent.ACTION_CANCEL) return@setOnTouchListener false
                 when (event.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
                         pageDragging = true
@@ -2984,6 +3184,9 @@ private class CraftNativeFlexSpacer(context: Context) : View(context)
  * the other native leaf controls without adding an icon-font dependency.
  */
 private class CraftNativeIconView(context: Context) : TextView(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     /** The app's vector for the icon (CraftNativeIcons), drawn in place of the glyph. */
     var vector: Drawable? = null
         set(value) {
@@ -3010,6 +3213,9 @@ private class CraftNativeIconView(context: Context) : TextView(context) {
 
 /** A platform EditText with the native end clear affordance and TalkBack action. */
 private class CraftNativeTextField(context: Context) : EditText(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     companion object { val CLEAR_ACTION_ID = View.generateViewId() }
     var clearButtonMode = "never"
     var onClearRequest: (() -> Unit)? = null
@@ -3054,8 +3260,14 @@ private class CraftNativeTextField(context: Context) : EditText(context) {
 }
 
 private class CraftNativeModalView(context: Context) : FrameLayout(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     val content = CraftNativeFlexLayout(context)
-    private val blocker = View(context)
+    private val blocker = object : View(context) {
+        override fun onTouchEvent(event: MotionEvent): Boolean =
+            (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+    }
     private var renderedVisible = false
     private var animationGeneration = 0
     var focusToRestore: View? = null
@@ -3095,6 +3307,7 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
         isClickable = true
         blocker.isClickable = true
         blocker.setOnTouchListener { _, event ->
+            if (!CraftNativePointers.ownsTouch(this)) return@setOnTouchListener false
             if (event.action == MotionEvent.ACTION_UP) requestClose(reason = "backdrop")
             true
         }
@@ -3175,6 +3388,7 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_CANCEL && !CraftNativePointers.ownsTouch(this)) return false
         if (!blocksBackground) {
             if (dismissOnOutsideTap && event.action == MotionEvent.ACTION_UP) {
                 requestClose(reason = "backdrop")
@@ -3192,7 +3406,7 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
         val index = group.indexOfChild(this)
         return index > 0 && (0 until index).any { siblingIndex ->
             val sibling = group.getChildAt(siblingIndex)
-            sibling is CraftNativeModalView && sibling.blocksBackground && sibling.visibility == View.VISIBLE && sibling.alpha > 0.01f
+            sibling is CraftNativeModalView && CraftNativePointers.ownsTouch(sibling) && sibling.blocksBackground && sibling.visibility == View.VISIBLE && sibling.alpha > 0.01f
         }
     }
 }
@@ -3213,6 +3427,9 @@ private data class LayoutBounds(
  */
 private class CraftNativeActivityIndicator(context: Context) :
     android.widget.ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     var indicatorScale = 1f
 
     init {
@@ -3224,6 +3441,9 @@ private class CraftNativeActivityIndicator(context: Context) :
 
 /** Android counterpart to iOS's UIDatePicker-backed native DatePicker. */
 private class CraftNativeDatePickerView(context: Context) : FrameLayout(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     private enum class PickerMode { DATE, TIME, DATE_TIME, COUNTDOWN }
     private val maxCountdownSeconds = 23 * 3600 + 59 * 60 + 59
 
@@ -3470,6 +3690,9 @@ internal class CraftNativeInputEcho {
  * while this view keeps its place.
  */
 private class CraftNativeVideoView(context: Context) : VideoView(context) {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     private var sourceUri = ""
     private var shouldLoop = false
     private var shouldPlay = false
@@ -5748,7 +5971,7 @@ class MainActivity : AppCompatActivity() {
         val previous = protocolId?.let { previousControls["id:$it"] } ?: keyedPrevious
         val reusableInput = previous as? CraftNativeTextField
         val control = when (type) {
-            "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
+            "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: CraftNativePointerTextView(this)).apply {
                 includeFontPadding = false
                 maxLines = craftNativeInt(props.opt("numberOfLines"), 0).takeIf { it > 0 } ?: Int.MAX_VALUE
                 ellipsize = when (craftNativeOptionalString(props.opt("ellipsizeMode"))) {
@@ -5771,7 +5994,7 @@ class MainActivity : AppCompatActivity() {
             "RefreshControl" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 visibility = View.GONE
             }
-            "Link" -> ((previous as? TextView)?.takeUnless { it is Button } ?: TextView(this)).apply {
+            "Link" -> ((previous as? TextView)?.takeUnless { it is Button } ?: CraftNativePointerTextView(this)).apply {
                 includeFontPadding = false
                 configureText(this, (props.opt("title") as? String) ?: childText(children), style)
                 val linkColor = craftNativeOptionalString(props.opt("color")) ?: craftNativeOptionalString(style.opt("color"))
@@ -5794,7 +6017,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                 }
             }
-            "Button" -> (previous as? Button ?: Button(this).apply {
+            "Button" -> (previous as? Button ?: CraftNativePointerButton(this).apply {
                 // A plain button, as on iOS (UIButton) and the web: its
                 // style draws any fill, not Material's grey raised box.
                 background = null
@@ -5819,7 +6042,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                 }
             }
-            "Checkbox" -> (previous as? CheckBox ?: CheckBox(this)).apply {
+            "Checkbox" -> (previous as? CheckBox ?: CraftNativePointerCheckBox(this)).apply {
                 text = (props.opt("label") as? String) ?: childText(children)
                 configureText(this, text.toString(), style)
                 val checkboxChecked = props.opt("checked")
@@ -6004,7 +6227,7 @@ class MainActivity : AppCompatActivity() {
                     addTextChangedListener(watcher)
                 }
             }
-            "SegmentedControl" -> (previous as? android.widget.RadioGroup ?: android.widget.RadioGroup(this)).apply {
+            "SegmentedControl" -> (previous as? android.widget.RadioGroup ?: CraftNativePointerRadioGroup(this)).apply {
                 orientation = android.widget.LinearLayout.HORIZONTAL
                 // Reconciliation is silent. Only the platform's user selection
                 // listener below emits a value, with the stable option value.
@@ -6055,7 +6278,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", value).put("index", index)))
                 }
             }
-            "Picker" -> (previous as? Spinner ?: Spinner(this)).apply {
+            "Picker" -> (previous as? Spinner ?: CraftNativePointerSpinner(this)).apply {
                 val itemOptions = props.optJSONArray("items")?.let { items ->
                     (0 until items.length()).mapNotNull { index ->
                         val item = items.optJSONObject(index) ?: return@mapNotNull null
@@ -6199,7 +6422,7 @@ class MainActivity : AppCompatActivity() {
                 screen.pressBaseBackgrounds[this] = this.background
                 reconcileChildren(screen, this, children, identity, next, style, previousControls)
             }
-            "Switch" -> (previous as? Switch ?: Switch(this)).apply {
+            "Switch" -> (previous as? Switch ?: CraftNativePointerSwitch(this)).apply {
                 setOnCheckedChangeListener(null)
                 val requestedValue = props.opt("value")
                 val requestedChecked = props.opt("checked")
@@ -6238,7 +6461,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", checked)))
                 }
             }
-            "Slider" -> (previous as? SeekBar ?: SeekBar(this)).apply {
+            "Slider" -> (previous as? SeekBar ?: CraftNativePointerSeekBar(this)).apply {
                 val minimum = craftNativeFiniteNumber(props, "minimumValue", 0.0)
                 val maximumCandidate = craftNativeFiniteNumber(props, "maximumValue", 1.0)
                 val maximum = if (maximumCandidate > minimum) maximumCandidate else minimum + Double.MIN_VALUE
@@ -6319,7 +6542,7 @@ class MainActivity : AppCompatActivity() {
             "Icon" -> (previous as? CraftNativeIconView ?: CraftNativeIconView(this)).apply {
                 configureIcon(this, props, style)
             }
-            "Image" -> (previous as? ImageView ?: ImageView(this)).apply {
+            "Image" -> (previous as? ImageView ?: CraftNativePointerImageView(this)).apply {
                 scaleType = when (craftNativeResizeMode(style, props)) {
                     "cover" -> ImageView.ScaleType.CENTER_CROP
                     "stretch" -> ImageView.ScaleType.FIT_XY
@@ -6568,6 +6791,7 @@ class MainActivity : AppCompatActivity() {
                         send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                     }
                     control.setOnTouchListener { view, event ->
+                        if (!CraftNativePointers.ownsTouch(view) && event.actionMasked != MotionEvent.ACTION_CANCEL) return@setOnTouchListener false
                         when (event.actionMasked) {
                             android.view.MotionEvent.ACTION_DOWN -> {
                                 val active = screen.pressActiveOpacities[view] ?: 0.5f
@@ -6636,6 +6860,8 @@ class MainActivity : AppCompatActivity() {
             control.setOnLongClickListener(null)
             control.isLongClickable = false
         }
+        CraftNativePointers.configure(control, props, style, control is CraftNativeFlexLayout || control is CraftNativeImageBackgroundView ||
+            control is CraftNativeKeyboardAvoidingView || control is CraftNativeScrollView || control is CraftNativeRefreshableFlatList || control is CraftNativeModalView)
         applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
         // One element across an animated change (craft.animation.next).
         control.transitionName = craftNativeOptionalString(props.opt("transitionID"))?.takeIf { it.isNotBlank() }
