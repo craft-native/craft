@@ -2689,7 +2689,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(screen).toContain('(field as? CraftNativeTextField)?.padding = paddingInsets(style)')
     expect(screen).toContain('func textFieldShouldReturn(_ textField: UITextField) -> Bool {')
     expect(screen).toContain('scroll.contentInset.bottom = overlap')
-    expect(screen).toContain('case "DatePicker":\n            let picker = UIDatePicker()')
+    expect(screen).toContain('case "DatePicker":\n            let picker = CraftNativeDatePickerView()')
     expect(screen).toContain('case "datepicker", "date-picker", "date": return "DatePicker"')
     expect(screen).toContain('"Picker", "DatePicker", "Switch"')
     expect(screen).toContain('picker.addTarget(self, action: #selector(datePicked(_:)), for: .valueChanged)')

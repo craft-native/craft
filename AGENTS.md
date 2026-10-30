@@ -28,6 +28,8 @@ Before pushing, run what your machine can actually run:
 
 ```sh
 bun run test:sdk        # the SDK suite
+(cd packages/ios && bun test)     # generated-shell builder contracts
+(cd packages/android && bun test) # generated-shell builder contracts
 bun run typecheck
 bun run verify:packages # needs the package dists built first
 bun run fmt:check       # use the pinned Zig toolchain, as CI does
