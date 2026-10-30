@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.392...v0.0.393)
+
+## 🐛 Bug Fixes
+
+- **updater**: support native release feeds and pin bundle identity ([66bf2e7](https://github.com/craft-native/craft/commit/66bf2e7)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.391...v0.0.392)
 
 ## 🐛 Bug Fixes
