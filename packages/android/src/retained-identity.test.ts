@@ -114,6 +114,7 @@ class Screen {
     val controls = linkedMapOf<String, View>()
     val nodeViews = mutableMapOf<String, View>()
     val nodePaths = mutableMapOf<String, String>()
+    val inheritedFontFamilies = mutableMapOf<String, String>()
     val protocolIds = mutableMapOf<View, String>()
     val lastLayoutBounds = mutableMapOf<View, String>()
     val modalVisibility = mutableMapOf<View, Boolean>()
@@ -121,7 +122,7 @@ class Screen {
     var layoutEvents = 0
 }
 fun drawnTarget(screen: Screen, id: String): String = id
-fun makeView(screen: Screen, document: JSONObject, path: String, controls: MutableMap<String, View>) {
+fun makeView(screen: Screen, document: JSONObject, path: String, controls: MutableMap<String, View>, inheritedFontFamily: String? = null) {
     // Targeted parent reconciliation restores its logical child before promotion.
     if (document.id == "parent") (screen.nodeViews.getValue("parent") as CraftNativeModalView).content.addView(screen.nodeViews.getValue("nested"))
 }
