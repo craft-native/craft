@@ -16,7 +16,7 @@
     },
     "benchmarks": {
       "name": "craft-benchmarks",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "dependencies": {
         "mitata": "^1.0.10",
       },
@@ -26,11 +26,11 @@
     },
     "packages/android": {
       "name": "@craft-native/android",
-      "version": "0.0.390",
+      "version": "0.0.391",
     },
     "packages/create-craft": {
       "name": "create-craft",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "bin": {
         "create-craft": "./bin/cli.ts",
       },
@@ -43,7 +43,7 @@
     },
     "packages/examples-ts": {
       "name": "craft-examples",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "dependencies": {
         "craft-native": "workspace:*",
       },
@@ -53,18 +53,18 @@
     },
     "packages/ios": {
       "name": "@craft-native/ios",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "bin": {
         "craft-ios": "dist/cli.js",
       },
     },
     "packages/macos": {
       "name": "@craft-native/macos",
-      "version": "0.0.390",
+      "version": "0.0.391",
     },
     "packages/react": {
       "name": "@craft-native/react",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "devDependencies": {
         "@types/react": "^18.2.0",
         "react": "^18.2.0",
@@ -77,7 +77,7 @@
     },
     "packages/svelte": {
       "name": "@craft-native/svelte",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "devDependencies": {
         "svelte": "^4.0.0",
         "tsup": "^8.0.0",
@@ -89,7 +89,7 @@
     },
     "packages/ts-maps": {
       "name": "@craft-native/ts-maps",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "ts-maps": "^0.3.9",
@@ -98,7 +98,7 @@
     },
     "packages/typescript": {
       "name": "craft-native",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "bin": {
         "craft-sdk": "./dist/cli.js",
       },
@@ -111,7 +111,7 @@
     },
     "packages/vue": {
       "name": "@craft-native/vue",
-      "version": "0.0.390",
+      "version": "0.0.391",
       "devDependencies": {
         "tsup": "^8.0.0",
         "typescript": "7.1.0-dev.20261011.1",

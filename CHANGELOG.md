@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.390...v0.0.391)
+
+## 🐛 Bug Fixes
+
+- **ios**: defer tab preparation during scroll deceleration ([725ebd1](https://github.com/craft-native/craft/commit/725ebd1)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.389...v0.0.390)
 
 ## 🧪 Tests
