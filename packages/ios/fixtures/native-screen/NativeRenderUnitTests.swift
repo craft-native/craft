@@ -5081,7 +5081,7 @@ final class NativeImageGeometryUnitTests: XCTestCase {
         if let fit { props["objectFit"] = fit }; if let position { props["objectPosition"] = position }
         var layout: [String: Any] = ["width": 100, "height": 100]
         layout.merge(style) { _, value in value }
-        screen.render(["id": "photo", "type": type, "props": props, "style": layout])
+        screen.render(["id": "photo", "type": type, "props": props, "style": layout, "events": ["onLoad": "image-loaded"]])
         func find(_ view: UIView) -> CraftNativePositionedImageView? {
             if let image = view as? CraftNativePositionedImageView { return image }
             return view.subviews.lazy.compactMap(find).first
@@ -5145,6 +5145,32 @@ final class NativeImageGeometryUnitTests: XCTestCase {
             _ = try render(screen, source: source, type: type)
             XCTAssertEqual(view.contentMode, .scaleAspectFit)
         }
+    }
+
+    func testTargetedFitMutationsDoNotReloadOrReplaceTheImage() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
+        screen.evaluateScript("globalThis.__loads = 0; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'image-loaded') __loads++; };")
+        let view = try render(screen, source: png(200, 100), fit: "contain")
+        let child = try pixels(view)
+        XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 1)
+        func patch(_ revision: Int, _ props: [String: Any]) throws {
+            let result = try screen.applyMutation([
+                "version": 1, "batchId": "image-\(revision)", "baseRevision": revision - 1, "revision": revision,
+                "operations": [["op": "updateNode", "id": "photo", "patch": ["props": props]]],
+            ])
+            XCTAssertFalse(result.requiresFullRender)
+            view.frame = CGRect(x: 0, y: 0, width: 100, height: 100); view.layoutIfNeeded()
+        }
+        try patch(1, ["objectFit": "cover", "objectPosition": "right top"])
+        XCTAssertEqual(child.frame, CGRect(x: -100, y: 0, width: 200, height: 100))
+        XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 1)
+        try patch(2, ["source": png(10, 20), "objectFit": "scale-down"])
+        XCTAssertEqual(child.frame, CGRect(x: 90, y: 0, width: 10, height: 20))
+        XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 2)
+        XCTAssertTrue(try pixels(view) === child); XCTAssertNotNil(view.superview)
+        try patch(3, ["objectFit": NSNull(), "objectPosition": NSNull()])
+        XCTAssertFalse(view.usesObjectGeometry); XCTAssertTrue(child.isHidden)
+        XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 2)
     }
 
     func testDownsampledSourceRetainsIntrinsicGeometry() throws {

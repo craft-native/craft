@@ -1072,6 +1072,75 @@ internal class CraftNativePointerSeekBar(context: Context) : SeekBar(context) {
 }
 
 internal class CraftNativePointerImageView(context: Context) : ImageView(context) {
+    private var objectFit: String? = null
+    private var objectX = 0.5f
+    private var objectY = 0.5f
+
+    fun configureObjectGeometry(props: JSONObject, style: JSONObject) {
+        fun value(name: String): Any? = props.opt(name)?.takeUnless { it == JSONObject.NULL }
+            ?: style.opt(name)?.takeUnless { it == JSONObject.NULL }
+        val fit = value("objectFit")
+        val position = value("objectPosition")
+        objectFit = if (fit != null || position != null) (fit as? String)
+            ?.takeIf { it in setOf("fill", "contain", "cover", "none", "scale-down") } ?: "fill" else null
+        val point = parsePosition(position)
+        objectX = point.first; objectY = point.second
+        cropToPadding = objectFit != null
+        updateObjectGeometry()
+    }
+
+    private fun parsePosition(raw: Any?): Pair<Float, Float> {
+        val center = 0.5f to 0.5f
+        val text = (raw as? String)?.trim()?.lowercase() ?: return center
+        var parts = text.split(Regex("\\s+"))
+        if (parts.size !in 1..2) return center
+        if (parts.size == 1) parts = if (parts[0] in setOf("top", "bottom")) listOf("center", parts[0]) else listOf(parts[0], "center")
+        else if (parts[0] in setOf("top", "bottom") || parts[1] in setOf("left", "right")) parts = parts.reversed()
+        fun fraction(part: String, low: String, high: String): Float? = when (part) {
+            low -> 0f; high -> 1f; "center" -> 0.5f
+            else -> if (part.endsWith("%")) part.dropLast(1).toFloatOrNull()?.takeIf { it.isFinite() }?.div(100f) else null
+        }
+        return (fraction(parts[0], "left", "right") ?: return center) to (fraction(parts[1], "top", "bottom") ?: return center)
+    }
+
+    override fun setImageDrawable(drawable: android.graphics.drawable.Drawable?) {
+        super.setImageDrawable(drawable)
+        updateObjectGeometry()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        updateObjectGeometry()
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        updateObjectGeometry()
+    }
+
+    private fun updateObjectGeometry() {
+        val fit = objectFit ?: return
+        val source = drawable ?: return
+        val sw = source.intrinsicWidth.toFloat(); val sh = source.intrinsicHeight.toFloat()
+        if (sw <= 0 || sh <= 0) return
+        val w = (width - paddingLeft - paddingRight).coerceAtLeast(0).toFloat()
+        val h = (height - paddingTop - paddingBottom).coerceAtLeast(0).toFloat()
+        val contain = minOf(w / sw, h / sh)
+        val scale = when (fit) {
+            "cover" -> maxOf(w / sw, h / sh)
+            "none" -> 1f
+            "scale-down" -> minOf(1f, contain)
+            else -> contain
+        }
+        val sx = if (fit == "fill") w / sw else scale
+        val sy = if (fit == "fill") h / sh else scale
+        scaleType = ScaleType.MATRIX
+        imageMatrix = Matrix().apply {
+            setScale(sx, sy)
+            postTranslate((w - sw * sx) * objectX, (h - sh * sy) * objectY)
+        }
+    }
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
@@ -2513,7 +2582,7 @@ private class CraftNativeImageBackgroundView(context: Context) : FrameLayout(con
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
-    val image = ImageView(context)
+    val image = CraftNativePointerImageView(context)
     val content = CraftNativeFlexLayout(context)
 
     init {
@@ -6542,13 +6611,14 @@ class MainActivity : AppCompatActivity() {
             "Icon" -> (previous as? CraftNativeIconView ?: CraftNativeIconView(this)).apply {
                 configureIcon(this, props, style)
             }
-            "Image" -> (previous as? ImageView ?: CraftNativePointerImageView(this)).apply {
+            "Image" -> (previous as? CraftNativePointerImageView ?: CraftNativePointerImageView(this)).apply {
                 scaleType = when (craftNativeResizeMode(style, props)) {
                     "cover" -> ImageView.ScaleType.CENTER_CROP
                     "stretch" -> ImageView.ScaleType.FIT_XY
                     "center" -> ImageView.ScaleType.CENTER
                     else -> ImageView.ScaleType.CENTER_INSIDE
                 }
+                configureObjectGeometry(props, style)
                 adjustViewBounds = false
                 val onLoadStart = craftNativeEventName(events, "onLoadStart")
                 if (onLoadStart.isNotBlank()) screen.imageLoadStartHandlers[this] = onLoadStart else screen.imageLoadStartHandlers.remove(this)
@@ -6567,6 +6637,7 @@ class MainActivity : AppCompatActivity() {
                     "center" -> ImageView.ScaleType.CENTER
                     else -> ImageView.ScaleType.CENTER_INSIDE
                 }
+                image.configureObjectGeometry(props, style)
                 val tint = craftNativeOptionalString(style.opt("tintColor"))
                     ?.let { runCatching { craftNativeColor(it) }.getOrNull() }
                 if (tint == null) image.clearColorFilter() else image.setColorFilter(tint)

@@ -2991,3 +2991,120 @@ class NativePointerEventsTest {
     }
 
 }
+
+@RunWith(AndroidJUnit4::class)
+class NativeImageGeometryTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    private fun rect(image: ImageView): android.graphics.RectF {
+        val result = android.graphics.RectF(0f, 0f, image.drawable.intrinsicWidth.toFloat(), image.drawable.intrinsicHeight.toFloat())
+        image.imageMatrix.mapRect(result)
+        return result
+    }
+
+    @Test fun explicitFitUsesIntrinsicSizeAndRecomputesOnLoadAndLayout() {
+        instrumentation.runOnMainSync {
+            val image = CraftNativePointerImageView(instrumentation.targetContext)
+            image.layout(0, 0, 100, 100)
+            image.configureObjectGeometry(JSONObject().put("objectFit", "scale-down").put("objectPosition", "right bottom"), JSONObject())
+            val bitmap = Bitmap.createBitmap(20, 10, Bitmap.Config.ARGB_8888).apply { density = Bitmap.DENSITY_NONE; eraseColor(Color.RED) }
+            image.setImageBitmap(bitmap)
+            assertEquals(android.graphics.RectF(80f, 90f, 100f, 100f), rect(image))
+            val drawable = image.drawable
+            image.configureObjectGeometry(JSONObject().put("objectFit", "contain").put("objectPosition", "top left"), JSONObject())
+            assertEquals(android.graphics.RectF(0f, 0f, 100f, 50f), rect(image))
+            assertTrue(drawable === image.drawable)
+            image.configureObjectGeometry(JSONObject().put("objectFit", "scale-down").put("objectPosition", "25% 75%"), JSONObject())
+            assertEquals(android.graphics.RectF(20f, 67.5f, 40f, 77.5f), rect(image))
+            image.layout(0, 0, 10, 10)
+            assertEquals(android.graphics.RectF(0f, 3.75f, 10f, 8.75f), rect(image))
+            assertTrue(image.cropToPadding)
+        }
+    }
+
+    @Test fun coverAndPositionRespectCroppingPrecedenceAndReset() {
+        instrumentation.runOnMainSync {
+            val image = CraftNativePointerImageView(instrumentation.targetContext)
+            image.layout(0, 0, 100, 100)
+            image.setImageBitmap(Bitmap.createBitmap(200, 100, Bitmap.Config.ARGB_8888).apply { density = Bitmap.DENSITY_NONE })
+            val style = JSONObject().put("objectFit", "contain").put("objectPosition", "bottom")
+            image.configureObjectGeometry(JSONObject().put("objectFit", "cover").put("objectPosition", "right top"), style)
+            assertEquals(android.graphics.RectF(-100f, 0f, 100f, 100f), rect(image))
+            image.configureObjectGeometry(JSONObject().put("objectFit", JSONObject.NULL).put("objectPosition", JSONObject.NULL), style)
+            assertEquals(android.graphics.RectF(0f, 50f, 100f, 100f), rect(image))
+            image.configureObjectGeometry(JSONObject().put("objectFit", "scale-down").put("objectPosition", "invalid"), JSONObject())
+            assertEquals(android.graphics.RectF(0f, 25f, 100f, 75f), rect(image))
+            image.configureObjectGeometry(JSONObject().put("objectFit", "invalid"), JSONObject())
+            assertEquals(android.graphics.RectF(0f, 0f, 100f, 100f), rect(image))
+            // The renderer restores the legacy mode before applying the optional contract.
+            image.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            image.configureObjectGeometry(JSONObject(), JSONObject())
+            assertEquals(ImageView.ScaleType.CENTER_INSIDE, image.scaleType)
+            assertFalse(image.cropToPadding)
+        }
+    }
+
+    @Test fun rendererRetainsImageAndBackgroundDuringLiveFitAndSourceChanges() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        fun find(view: View, id: String): View? {
+            if (view.tag?.toString() == id) return view
+            if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index), id)?.let { return it }
+            return null
+        }
+        fun source(width: Int, height: Int): String {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
+            val bytes = java.io.ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes); bitmap.recycle()
+            return "data:image/png;base64," + android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP)
+        }
+        try {
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }.get(activity) as List<*>
+                val screen = requireNotNull(screens.last())
+                screen.javaClass.getDeclaredField("active").apply { isAccessible = true }.setBoolean(screen, false)
+                val render = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }
+                val mutate = MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }
+                for (type in listOf("Image", "ImageBackground")) {
+                    val initial = source(20, 10)
+                    val document = JSONObject().put("id", "photo").put("type", type)
+                        .put("props", JSONObject().put("testID", "image-geometry").put("source", initial).put("objectFit", "scale-down"))
+                        .put("style", JSONObject().put("width", 100).put("height", 100))
+                    render.invoke(activity, screen, document)
+                    val root = requireNotNull(find(activity.window.decorView, "image-geometry"))
+                    val image = if (root is ImageView) root else (root as ViewGroup).getChildAt(0) as ImageView
+                    image.layout(0, 0, 100, 100)
+                    val drawable = image.drawable
+                    val bitmap = (drawable as android.graphics.drawable.BitmapDrawable).bitmap
+                    var revision = 0
+                    fun patch(props: JSONObject) {
+                        val next = revision + 1
+                        mutate.invoke(activity, screen, JSONObject().put("version", 1).put("batchId", "$type-$next")
+                            .put("baseRevision", revision).put("revision", next).put("operations", JSONArray().put(JSONObject()
+                                .put("op", "updateNode").put("id", "photo").put("patch", JSONObject().put("props", props)))))
+                        revision = next
+                        image.layout(0, 0, 100, 100)
+                    }
+                    patch(JSONObject().put("objectFit", "cover").put("objectPosition", "right"))
+                    assertTrue(root === find(activity.window.decorView, "image-geometry"))
+                    assertTrue(drawable === image.drawable)
+                    assertTrue(bitmap === (image.drawable as android.graphics.drawable.BitmapDrawable).bitmap)
+                    assertEquals(android.graphics.RectF(-100f, 0f, 100f, 100f), rect(image))
+                    patch(JSONObject().put("source", source(10, 20)).put("objectFit", "contain"))
+                    assertEquals(android.graphics.RectF(50f, 0f, 100f, 100f), rect(image))
+                    patch(JSONObject().put("objectFit", JSONObject.NULL).put("objectPosition", JSONObject.NULL))
+                    assertEquals(ImageView.ScaleType.CENTER_INSIDE, image.scaleType)
+                    render.invoke(activity, screen, JSONObject().put("id", "empty").put("type", "View"))
+                    render.invoke(activity, screen, document)
+                    val remounted = requireNotNull(find(activity.window.decorView, "image-geometry"))
+                    assertFalse(root === remounted)
+                    val remountedImage = if (remounted is ImageView) remounted else (remounted as ViewGroup).getChildAt(0) as ImageView
+                    remountedImage.layout(0, 0, 100, 100)
+                    assertEquals(ImageView.ScaleType.MATRIX, remountedImage.scaleType)
+                    assertTrue(rect(remountedImage).width() <= 100f)
+                    assertEquals(2f, rect(remountedImage).width() / rect(remountedImage).height(), 0.001f)
+                }
+            }
+        } finally { scenario.close() }
+    }
+}
