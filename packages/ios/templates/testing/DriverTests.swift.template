@@ -17,7 +17,7 @@ import Darwin
 ///   openurl <url>         opens a link through the system, answering "Open in the app?"
 ///   universallink <https-url> waits up to 60s for an OS-verified link; never opens a browser
 ///   shot <name>           screenshot → shots/<name>.png
-///   tree <name>           accessibility tree → shots/<name>.txt
+///   tree <name>           accessibility tree + identified snapshot values → shots/<name>.txt / <name>-values.json
 ///   tap <text>            first hittable element whose label contains text
 ///   tapif <text>          tap it when it is on screen, else carry on (the big timer's "Show the controls")
 ///   tapid <identifier>
@@ -367,6 +367,22 @@ final class DriverTests: XCTestCase {
             post("/save?name=\(arg).png", shot.pngRepresentation)
         case "tree":
             post("/save?name=\(arg).txt", Data(app.debugDescription.utf8))
+            // debugDescription abbreviates values further than the snapshot.
+            // Retain snapshot values separately; long receipts chunk themselves.
+            do {
+                var values: [[String: String]] = []
+                func collect(_ node: XCUIElementSnapshot) {
+                    if !node.identifier.isEmpty, let value = node.value as? String {
+                        values.append(["id": node.identifier, "label": node.label, "value": value])
+                    }
+                    for child in node.children { collect(child) }
+                }
+                collect(try app.snapshot())
+                let data = try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+                post("/save?name=\(arg)-values.json", data)
+            } catch {
+                XCTFail("Could not retain accessibility values: \(error)")
+            }
         case "tap":
             if let target = waitFor(arg, 10) { press(target); note("tap \(arg): ok") }
             else { XCTFail("Element not found"); note("FAIL tap \(arg): NOT FOUND") }

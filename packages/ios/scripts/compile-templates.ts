@@ -264,6 +264,12 @@ try {
     { command: 'touches', paths: inputSequence.map((tab, index) => [
       { tab, at: index * 0.08 }, { tab, at: index * 0.08 + 0.025 },
     ]) },
+    // Capture what the independent receiver actually received before any
+    // assertion can abort the journey. The scheduled paths alone cannot say
+    // whether a missing callback was lost in delivery or receiver state.
+    { command: 'tree', name: 'timed-input-receiver' },
+    { command: 'valueid', id: 'native-touch-counts', text: 'began=24;ended=24;cancelled=0' },
+    { command: 'valueid', id: 'received-callbacks', text: inputSequence.join(',') },
     { command: 'labelid', id: 'received-taps', text: inputSequence.join(',') },
     { command: 'selected', text: 'Four' },
     { command: 'scrollto', text: 'End of scroll fixture' },
@@ -274,6 +280,7 @@ try {
   initSimulatorDriver({ output: driverOutput, bundleId: 'dev.craft.timedinput.host',
     bundleIdPrefix: 'dev.craft.timedinput', projectName: 'TimedInputDriver', tabs: inputNames, script })
   copyFileSync(join(import.meta.dir, '../fixtures/timed-input/HostApp.swift'), join(driverOutput, 'Host/HostApp.swift'))
+  copyFileSync(join(import.meta.dir, '../fixtures/timed-input/InputReceipt.swift'), join(driverOutput, 'Host/InputReceipt.swift'))
   run(['xcodegen', 'generate'], driverOutput, 'Generating timed input driver')
   run(['xcodebuild', '-quiet', '-project', 'TimedInputDriver.xcodeproj', '-scheme', 'TimedInputDriver',
     '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', join(workspace, 'DriverDerivedData'),

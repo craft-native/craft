@@ -6,6 +6,8 @@ struct HostApp: App {
     @State private var taps: [String] = []
     private let names = ["One", "Two", "Three", "Four"]
 
+    init() { InputReceipt.install() }
+
     var body: some Scene {
         WindowGroup {
             VStack {
@@ -24,7 +26,11 @@ struct HostApp: App {
                 }
                 HStack {
                     ForEach(names, id: \.self) { name in
-                        Button(name) { taps.append(name) }
+                        Button(name) {
+                            let before = taps
+                            taps.append(name)
+                            InputReceipt.callback(name, before: before, after: taps)
+                        }
                             .frame(maxWidth: .infinity, minHeight: 48)
                             .buttonStyle(.borderedProminent)
                             .accessibilityAddTraits(taps.last == name ? .isSelected : [])
@@ -32,6 +38,9 @@ struct HostApp: App {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 12)
+            }
+            .overlay(alignment: .topLeading) {
+                InputReceiptView().frame(width: 1, height: 1)
             }
         }
     }
