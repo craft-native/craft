@@ -5528,7 +5528,7 @@ class MainActivity : AppCompatActivity() {
             val document = screen.mutations.node(target) ?: return false
             val path = screen.nodePaths[target] ?: return false
             if (screen.nodeViews[target] == null) return false
-            makeView(screen, document, path, screen.controls, screen.inheritedFontFamilies[target])
+            makeView(screen, document, path, screen.controls, inheritedFontFamily = screen.inheritedFontFamilies[target])
             val updated = screen.nodeViews[target] ?: return false
             screen.lastLayoutBounds.remove(updated)
             if (!updateParentLayoutStyle(updated, document.optJSONObject("style") ?: JSONObject())) return false

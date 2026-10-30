@@ -578,7 +578,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('current = screen.mutations.parentId(current)')
       expect(nativeActivity).toContain('val path = screen.nodePaths[target] ?: return false')
       // A targeted update keeps the fontFamily its ancestors gave the subtree.
-      expect(nativeActivity).toContain('makeView(screen, document, path, screen.controls, screen.inheritedFontFamilies[target])')
+      expect(nativeActivity).toContain('makeView(screen, document, path, screen.controls, inheritedFontFamily = screen.inheritedFontFamilies[target])')
       expect(nativeActivity).toContain('val style = craftNativeInheritFontFamily(node.optJSONObject("style") ?: JSONObject(), inheritedFontFamily)')
       expect(nativeActivity).toContain('makeView(screen, node, "$path.$itemIdentity", next, previous, fontFamily)')
       expect(nativeActivity).toContain('screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)')
