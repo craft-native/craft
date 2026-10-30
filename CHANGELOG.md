@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.397...v0.0.398)
+
+## 🚀 Features
+
+- **native**: draw the chrome in the app's own fonts ([78afa88](https://github.com/craft-native/craft/commit/78afa88)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.396...v0.0.397)
 
 ## 🐛 Bug Fixes
