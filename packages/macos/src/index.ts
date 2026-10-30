@@ -2,14 +2,21 @@ import { cp, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
+import { resolveMacOSToolchain } from './toolchain'
+
+export { macosToolchain, pantryExecutable, resolveMacOSToolchain, resolveZig, toolchainCacheDir } from './toolchain'
+export type { MacOSToolchain } from './toolchain'
 
 export interface MacOSNativeBuildOptions {
   outdir: string
   /** A compiled stx native route bundle, never HTML. */
   nativeBundle: string
+  /** Defaults to the pinned compiler, installed by Pantry (see `resolveMacOSToolchain`). */
   zig?: string
-  /** zig-js checkout and its public static archive. No system JSC fallback. */
-  zigJS: { source: string, library: string }
+  /** zig-js checkout and its public static archive. Default: the pinned revision, fetched and built once. No system JSC fallback. */
+  zigJS?: { source: string, library: string }
+  /** Where the toolchain is cached; default `~/.cache/craft/toolchain`. */
+  toolchainDir?: string
 }
 
 /** Compile Craft's AppKit host and the shared Zig layout core. No WebKit. */
@@ -28,12 +35,12 @@ export async function buildMacOSNative(options: MacOSNativeBuildOptions): Promis
     const child = Bun.spawn(args, { stdout: 'inherit', stderr: 'inherit' })
     if (await child.exited !== 0) throw new Error(`Native build failed: ${args[0]}`)
   }
-  const zig = options.zig || process.env.CRAFT_ZIG || Bun.which('zig')
-  if (!zig) throw new Error('Install the pinned Craft Zig toolchain or set CRAFT_ZIG.')
+  const toolchain = options.zig && options.zigJS ? undefined : await resolveMacOSToolchain({ cacheDir: options.toolchainDir, log: line => console.log(line) })
+  const zig = options.zig || toolchain!.zig
   const layoutLibrary = join(outdir, 'libcraft-layout.a')
   await run([zig, 'build-lib', layout, '-O', 'ReleaseSafe', '-static', '-lc', `-femit-bin=${layoutLibrary}`])
   const executable = join(outdir, 'craft-native-macos')
-  const engine = options.zigJS
+  const engine = options.zigJS || toolchain!.zigJS
   if (!existsSync(engine.library)) throw new Error(`Build zig-js first: ${engine.library}`)
   if (!existsSync(join(engine.source, 'include/module.modulemap'))) throw new Error('zig-js must expose its owned ZigJS Swift module.')
   const bridge = join(outdir, 'zig-js-objc.o')
