@@ -198,6 +198,7 @@ export type {
   ViewStyle,
   TextStyleProps,
   TextStyle,
+  ImageObjectFit,
   ImageStyleProps,
   ImageStyle,
 

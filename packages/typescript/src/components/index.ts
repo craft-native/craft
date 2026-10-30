@@ -381,7 +381,14 @@ export type TextStyle = ViewStyle & TextStyleProps
 /**
  * Image-specific style properties.
  */
+/** Explicit CSS-facing native image sizing. Legacy resizeMode remains unchanged. */
+export type ImageObjectFit = 'fill' | 'contain' | 'cover' | 'none' | 'scale-down'
+
 export interface ImageStyleProps {
+  /** Explicit fit; null clears the style value. */
+  objectFit?: ImageObjectFit | null
+  /** One/two alignment keywords or percentages; defaults to center. */
+  objectPosition?: string | null
   /** Resize mode */
   resizeMode?: 'cover' | 'contain' | 'stretch' | 'center'
   /** Tint color */
@@ -570,6 +577,10 @@ export interface ImageErrorEvent {
  * Image component props.
  */
 export interface ImageProps extends BaseProps {
+  /** Non-null props override style; removing both restores legacy resizeMode. */
+  objectFit?: ImageObjectFit | null
+  /** One/two alignment keywords or percentages, e.g. "right top" or "25% 75%". */
+  objectPosition?: string | null
   /** Image source */
   source: ImageSource
   /** Style object or array */

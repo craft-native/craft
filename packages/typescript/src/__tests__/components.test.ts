@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import type { ImageObjectFit } from '../index'
 import {
   Platform,
   StyleSheet,
@@ -539,5 +540,24 @@ describe('native pointer targeting types', () => {
     // @ts-expect-error Native pointer policies are a closed union, not CSS's broader SVG vocabulary.
     const invalid: ButtonProps = { title: 'Invalid', pointerEvents: 'visiblePainted' }
     expect(String(invalid.pointerEvents)).toBe('visiblePainted')
+  })
+})
+
+
+describe('native explicit image geometry types', () => {
+  it('preserves fit, alignment and nullable resets in props and styles', () => {
+    for (const objectFit of ['fill', 'contain', 'cover', 'none', 'scale-down', null] satisfies Array<ImageObjectFit | null>) {
+      const image: ImageProps = {
+        source: { uri: 'photo.png' }, objectFit, objectPosition: 'right top',
+        style: [{ objectFit: 'contain', objectPosition: '25% 75%' }, { objectFit }],
+      }
+      expect(JSON.parse(JSON.stringify(image)).objectFit).toBe(objectFit)
+      expect(StyleSheet.flatten(image.style)?.objectFit).toBe(objectFit)
+    }
+    const cleared: ImageProps = { source: 'photo.png', objectFit: null, objectPosition: null }
+    expect(cleared.objectPosition).toBeNull()
+    // @ts-expect-error CSS image fit does not use the legacy stretch spelling.
+    const invalid: ImageProps = { source: 'photo.png', objectFit: 'stretch' }
+    expect(String(invalid.objectFit)).toBe('stretch')
   })
 })
