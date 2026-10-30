@@ -2282,7 +2282,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('current = screen.mutations.parentId(current)')
     expect(androidMutation).toContain('fun parentId(id: String): String? = nodes[id]?.parent')
     expect(android).toContain('val path = screen.nodePaths[target] ?: return false')
-    expect(android).toContain('makeView(screen, document, path, screen.controls)')
+    expect(android).toContain('makeView(screen, document, path, screen.controls, screen.inheritedFontFamilies[target])')
     expect(android).toContain('val updated = screen.nodeViews[target] ?: return false')
     expect(android).toContain('updateParentLayoutStyle(updated, document.optJSONObject("style") ?: JSONObject())')
     expect(android).toContain('view.forceLayout()\n        view.requestLayout()\n        while (parent != null)')
