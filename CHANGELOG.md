@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.396...v0.0.397)
+
+## 🐛 Bug Fixes
+
+- **bridge**: report why an AppleScript failed and escape every control character ([013cd6d](https://github.com/craft-native/craft/commit/013cd6d)) _(by Chris Breuer)_
+- **testing**: enumerate native Windows windows in the compiled probe ([6987b7e](https://github.com/craft-native/craft/commit/6987b7e)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: detect compressed timed input receipts ([eb234b6](https://github.com/craft-native/craft/commit/eb234b6)) _(by glennmichael123)_
+- **ios**: retain delivered events in timed input acceptance ([cce5890](https://github.com/craft-native/craft/commit/cce5890)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.395...v0.0.396)
 
 ## 🚀 Features
