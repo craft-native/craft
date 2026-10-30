@@ -1,0 +1,521 @@
+{
+  "source": {
+    "commit": "cce58902a2b298371d0fd98412a0d875c3b25572",
+    "run": "https://github.com/craft-native/craft/actions/runs/41095420626",
+    "artifactId": 12998581446,
+    "scheduleAttachment": "0CA5F7F3-6ED1-4F98-9409-FC7A95C489C3.txt",
+    "valuesAttachment": "6E70EEC7-C47F-465B-8F20-1054A9EE4A26.txt"
+  },
+  "schedule": [
+    [
+      {
+        "at": 0,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.025,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.08,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.10500000000000001,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.16,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.185,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.24,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.265,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.32,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.34500000000000003,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.4,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.42500000000000004,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.48,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.505,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.56,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.5850000000000001,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.64,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.665,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.72,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.745,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.8,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.8250000000000001,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.88,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.905,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 0.96,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 0.985,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.04,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.065,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.12,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.145,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.2,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.2249999999999999,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.28,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.305,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.36,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.385,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.44,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.4649999999999999,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.52,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.545,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.6,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.625,
+        "x": 0.1322553897180763,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.68,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.7049999999999998,
+        "x": 0.3772802653399669,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.76,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.785,
+        "x": 0.6223051409618574,
+        "y": 0.920099160945843
+      }
+    ],
+    [
+      {
+        "at": 1.84,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      },
+      {
+        "at": 1.865,
+        "x": 0.8673300165837479,
+        "y": 0.920099160945843
+      }
+    ]
+  ],
+  "values": [
+    {
+      "id": "native-touch-counts",
+      "label": "native-touch-counts",
+      "value": "began=24;ended=24;cancelled=0"
+    },
+    {
+      "id": "received-callbacks",
+      "label": "received-callbacks",
+      "value": "One,Two,Three,Four,One,Two,Three,Four,One,Two,Three,Four,One,Two,Three,Four,One,Two,Three,Four,One,Two,Three,Four"
+    },
+    {
+      "id": "native-input-journal-0",
+      "label": "native-input-journal-0",
+      "value": "[{\"applicationState\":0,\"deliveredAt\":672.67455687500001,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.65957191666666,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.71518441666672,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.69290524999997,\"view\":\"nil\",\"x\":53."
+    },
+    {
+      "id": "native-input-journal-1",
+      "label": "native-input-journal-1",
+      "value": "333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\"],\"before\":[],\"deliveredAt\":672.71573699999999,\"kind\":\"callback\",\"name\":\"One\"},{\"applicationState\":0,\"deliveredAt\":672.71780162499999,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.69290524999997,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0"
+    },
+    {
+      "id": "native-input-journal-2",
+      "label": "native-input-journal-2",
+      "value": ",\"deliveredAt\":672.73472370833338,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.72623858333338,\"view\":\"nil\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\"],\"before\":[\"One\"],\"deliveredAt\":672.74204275,\"kind\":\"callback\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":672.74467420833332,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.726238583"
+    },
+    {
+      "id": "native-input-journal-3",
+      "label": "native-input-journal-3",
+      "value": "33338,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.76743187500006,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.75957191666669,\"view\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\"],\"deliveredAt\":672.7710483333334,\"ki"
+    },
+    {
+      "id": "native-input-journal-4",
+      "label": "native-input-journal-4",
+      "value": "nd\":\"callback\",\"name\":\"Three\"},{\"applicationState\":0,\"deliveredAt\":672.77256675000001,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.75957191666669,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.80121400000007,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.79290"
+    },
+    {
+      "id": "native-input-journal-5",
+      "label": "native-input-journal-5",
+      "value": "524999999,\"view\":\"nil\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\"],\"deliveredAt\":672.80173683333339,\"kind\":\"callback\",\"name\":\"Four\"},{\"applicationState\":0,\"deliveredAt\":672.80375283333342,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.79290524999999,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>"
+    },
+    {
+      "id": "native-input-journal-6",
+      "label": "native-input-journal-6",
+      "value": ">\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.83455375000005,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.82623858333329,\"view\":\"nil\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\"],\"deliveredAt\":672.83511308333334,\"kind\":\"callback\",\"name\":\"One\"},{\"applica"
+    },
+    {
+      "id": "native-input-journal-7",
+      "label": "native-input-journal-7",
+      "value": "tionState\":0,\"deliveredAt\":672.83677387500006,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.82623858333329,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.86779024999998,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.85957191666671,\"view\":\"nil\",\"x\":151.666666666"
+    },
+    {
+      "id": "native-input-journal-8",
+      "label": "native-input-journal-8",
+      "value": "66666,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"deliveredAt\":672.86818429166669,\"kind\":\"callback\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":672.86943762500005,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.85957191666671,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333"
+    },
+    {
+      "id": "native-input-journal-9",
+      "label": "native-input-journal-9",
+      "value": "333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.91781366666669,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.89290525000001,\"view\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"deliveredAt\":672.91830137500006,\"kind\":\"callback\",\"name\":\"Three"
+    },
+    {
+      "id": "native-input-journal-10",
+      "label": "native-input-journal-10",
+      "value": "\"},{\"applicationState\":0,\"deliveredAt\":672.91995883333334,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.89290525000001,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.9348569583334,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.92623858333332,\"view\":\"nil\",\"x\":34"
+    },
+    {
+      "id": "native-input-journal-11",
+      "label": "native-input-journal-11",
+      "value": "8.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"deliveredAt\":672.93707754166667,\"kind\":\"callback\",\"name\":\"Four\"},{\"applicationState\":0,\"deliveredAt\":672.93944266666676,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.92623858333332,\"view\":\"_UIHostingView<ModifiedConte"
+    },
+    {
+      "id": "native-input-journal-12",
+      "label": "native-input-journal-12",
+      "value": "nt<AnyView, RootModifier>>\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":672.96751600000005,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":672.95957191666662,\"view\":\"nil\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Fo"
+    },
+    {
+      "id": "native-input-journal-13",
+      "label": "native-input-journal-13",
+      "value": "ur\"],\"deliveredAt\":672.96807933333332,\"kind\":\"callback\",\"name\":\"One\"},{\"applicationState\":0,\"deliveredAt\":672.96893191666675,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":672.95957191666662,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.00110754166667,\"keyWindow\":true,\"kind\":\"touch"
+    },
+    {
+      "id": "native-input-journal-14",
+      "label": "native-input-journal-14",
+      "value": "\",\"phase\":\"ended\",\"timestamp\":672.99290525000004,\"view\":\"nil\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"deliveredAt\":673.00166316666673,\"kind\":\"callback\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":673.00264695833334,\"keyWindow\":true,\"kind\""
+    },
+    {
+      "id": "native-input-journal-15",
+      "label": "native-input-journal-15",
+      "value": ":\"touch\",\"phase\":\"began\",\"timestamp\":672.99290525000004,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.03448050000009,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.02623858333334,\"view\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"O"
+    },
+    {
+      "id": "native-input-journal-16",
+      "label": "native-input-journal-16",
+      "value": "ne\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"deliveredAt\":673.03500274999999,\"kind\":\"callback\",\"name\":\"Three\"},{\"applicationState\":0,\"deliveredAt\":673.03686795833335,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.02623858333334,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.6666"
+    },
+    {
+      "id": "native-input-journal-17",
+      "label": "native-input-journal-17",
+      "value": "6666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.06751337500009,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.05957191666664,\"view\":\"nil\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Th"
+    },
+    {
+      "id": "native-input-journal-18",
+      "label": "native-input-journal-18",
+      "value": "ree\"],\"deliveredAt\":673.06778970833341,\"kind\":\"callback\",\"name\":\"Four\"},{\"applicationState\":0,\"deliveredAt\":673.06868750000001,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.05957191666664,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.10111345833343,\"keyWindow\":true,\"kind\":\"tou"
+    },
+    {
+      "id": "native-input-journal-19",
+      "label": "native-input-journal-19",
+      "value": "ch\",\"phase\":\"ended\",\"timestamp\":673.09290524999994,\"view\":\"nil\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"deliveredAt\":673.10158808333335,\"kind\":\"callback\",\"name\":\"One\"},{\"applicationState\":0,\"deliveredAt"
+    },
+    {
+      "id": "native-input-journal-20",
+      "label": "native-input-journal-20",
+      "value": "\":673.10298929166674,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.09290524999994,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.13434345833332,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.12623858333336,\"view\":\"nil\",\"x\":151.66666666666666,\"y\":804.33333333333"
+    },
+    {
+      "id": "native-input-journal-21",
+      "label": "native-input-journal-21",
+      "value": "326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"deliveredAt\":673.1348867083334,\"kind\":\"callback\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":673.13667050000004,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.1262385833"
+    },
+    {
+      "id": "native-input-journal-22",
+      "label": "native-input-journal-22",
+      "value": "3336,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.16782275000003,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.15957191666666,\"view\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\""
+    },
+    {
+      "id": "native-input-journal-23",
+      "label": "native-input-journal-23",
+      "value": ",\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"deliveredAt\":673.16840429166666,\"kind\":\"callback\",\"name\":\"Three\"},{\"applicationState\":0,\"deliveredAt\":673.17009416666667,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.15957191666666,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.6"
+    },
+    {
+      "id": "native-input-journal-24",
+      "label": "native-input-journal-24",
+      "value": "6666666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.20087291666675,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.19287408333332,\"view\":\"nil\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\","
+    },
+    {
+      "id": "native-input-journal-25",
+      "label": "native-input-journal-25",
+      "value": "\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"deliveredAt\":673.20113654166676,\"kind\":\"callback\",\"name\":\"Four\"},{\"applicationState\":0,\"deliveredAt\":673.20193283333333,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.19289649999996,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"del"
+    },
+    {
+      "id": "native-input-journal-26",
+      "label": "native-input-journal-26",
+      "value": "iveredAt\":673.23422466666671,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.22623858333338,\"view\":\"nil\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Thr"
+    },
+    {
+      "id": "native-input-journal-27",
+      "label": "native-input-journal-27",
+      "value": "ee\",\"Four\"],\"deliveredAt\":673.23452674999999,\"kind\":\"callback\",\"name\":\"One\"},{\"applicationState\":0,\"deliveredAt\":673.23616350000009,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.22623858333338,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.26783266666666,\"keyWindow\":true,\"kind\""
+    },
+    {
+      "id": "native-input-journal-28",
+      "label": "native-input-journal-28",
+      "value": ":\"touch\",\"phase\":\"ended\",\"timestamp\":673.25957191666669,\"view\":\"nil\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"deliveredAt\":673.2683750416"
+    },
+    {
+      "id": "native-input-journal-29",
+      "label": "native-input-journal-29",
+      "value": "6667,\"kind\":\"callback\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":673.27005962500004,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.25957191666669,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.30114291666666,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673"
+    },
+    {
+      "id": "native-input-journal-30",
+      "label": "native-input-journal-30",
+      "value": ".29290520833331,\"view\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"deliveredAt\":673.3016882500001,\"kind\":\"callback\",\"nam"
+    },
+    {
+      "id": "native-input-journal-31",
+      "label": "native-input-journal-31",
+      "value": "e\":\"Three\"},{\"applicationState\":0,\"deliveredAt\":673.30318870833332,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.29290520833331,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.33446170833338,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.32623858333329,\"view\":\"n"
+    },
+    {
+      "id": "native-input-journal-32",
+      "label": "native-input-journal-32",
+      "value": "il\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"deliveredAt\":673.33540720833332,\"kind\":\"callback\",\"name\":\"Four\""
+    },
+    {
+      "id": "native-input-journal-33",
+      "label": "native-input-journal-33",
+      "value": "},{\"applicationState\":0,\"deliveredAt\":673.33706320833335,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.32623858333329,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":53.333333333333329,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.36773808333339,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.35957191666671,\"view\":\"nil\",\"x\":53"
+    },
+    {
+      "id": "native-input-journal-34",
+      "label": "native-input-journal-34",
+      "value": ".333333333333329,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"deliveredAt\":673.36843370833333,\"kind\":\"callback\",\"name\":\"On"
+    },
+    {
+      "id": "native-input-journal-35",
+      "label": "native-input-journal-35",
+      "value": "e\"},{\"applicationState\":0,\"deliveredAt\":673.36920650000002,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.35957191666671,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":151.66666666666666,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.40081508333333,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.39290525000001,\"view\":\"nil\",\"x\":"
+    },
+    {
+      "id": "native-input-journal-36",
+      "label": "native-input-journal-36",
+      "value": "151.66666666666666,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\"],\"deliveredAt\":673.40112279166669,\"kind\":\"callba"
+    },
+    {
+      "id": "native-input-journal-37",
+      "label": "native-input-journal-37",
+      "value": "ck\",\"name\":\"Two\"},{\"applicationState\":0,\"deliveredAt\":673.40243879166667,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.39290525000001,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.43433812500007,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestamp\":673.42607991666671,\"vi"
+    },
+    {
+      "id": "native-input-journal-38",
+      "label": "native-input-journal-38",
+      "value": "ew\":\"nil\",\"x\":250.33333333333331,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\"],\"deliveredAt\":673.4"
+    },
+    {
+      "id": "native-input-journal-39",
+      "label": "native-input-journal-39",
+      "value": "3457266666667,\"kind\":\"callback\",\"name\":\"Three\"},{\"applicationState\":0,\"deliveredAt\":673.43536012499999,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"began\",\"timestamp\":673.426089875,\"view\":\"_UIHostingView<ModifiedContent<AnyView, RootModifier>>\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"applicationState\":0,\"deliveredAt\":673.46793558333343,\"keyWindow\":true,\"kind\":\"touch\",\"phase\":\"ended\",\"timestam"
+    },
+    {
+      "id": "native-input-journal-40",
+      "label": "native-input-journal-40",
+      "value": "p\":673.45957191666662,\"view\":\"nil\",\"x\":348.66666666666663,\"y\":804.33333333333326},{\"after\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\"],\"before\":[\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\",\"One\",\"Two\",\"Three\",\"Four\","
+    },
+    {
+      "id": "native-input-journal-41",
+      "label": "native-input-journal-41",
+      "value": "\"One\",\"Two\",\"Three\"],\"deliveredAt\":673.46856366666668,\"kind\":\"callback\",\"name\":\"Four\"}]"
+    }
+  ]
+}
