@@ -469,11 +469,21 @@ const childPage = `<!doctype html><script>
 const windowProbeScript = `
 $signature = @'
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+public sealed class CraftNativeWindow {
+  public string title { get; set; }
+  public long handle { get; set; }
+  public long owner { get; set; }
+  public bool enabled { get; set; }
+}
 public static class CraftWindowProbe {
+  [return: MarshalAs(UnmanagedType.Bool)]
   public delegate bool EnumWindowsProc(IntPtr window, IntPtr state);
-  [DllImport("user32.dll")]
+  [DllImport("user32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr state);
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
@@ -484,31 +494,36 @@ public static class CraftWindowProbe {
   public static extern bool IsWindowEnabled(IntPtr window);
   [DllImport("user32.dll")]
   public static extern IntPtr GetWindow(IntPtr window, uint command);
+
+  public static CraftNativeWindow[] Snapshot(uint targetProcess) {
+    var rows = new List<CraftNativeWindow>();
+    // Enumeration stays inside the compiled callback. A PowerShell script
+    // callback enters its runspace once for every window on the desktop,
+    // including windows belonging to unrelated processes.
+    EnumWindowsProc callback = delegate(IntPtr handle, IntPtr state) {
+      uint processId;
+      GetWindowThreadProcessId(handle, out processId);
+      if (processId == targetProcess) {
+        var title = new StringBuilder(512);
+        GetWindowText(handle, title, title.Capacity);
+        rows.Add(new CraftNativeWindow {
+          title = title.ToString(), handle = handle.ToInt64(),
+          owner = GetWindow(handle, 4).ToInt64(), enabled = IsWindowEnabled(handle)
+        });
+      }
+      return true;
+    };
+    if (!EnumWindows(callback, IntPtr.Zero))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    return rows.ToArray();
+  }
 }
 '@
 Add-Type -TypeDefinition $signature
 [Console]::Out.WriteLine('ready')
 [Console]::Out.Flush()
 while ($null -ne ($line = [Console]::In.ReadLine())) {
-  $script:probePid = [uint32]$line
-  $script:probeRows = [System.Collections.ArrayList]::new()
-  $callback = [CraftWindowProbe+EnumWindowsProc]{
-    param([IntPtr]$handle, [IntPtr]$state)
-    [uint32]$processId = 0
-    [void][CraftWindowProbe]::GetWindowThreadProcessId($handle, [ref]$processId)
-    if ($processId -eq $script:probePid) {
-      $title = [System.Text.StringBuilder]::new(512)
-      [void][CraftWindowProbe]::GetWindowText($handle, $title, $title.Capacity)
-      [void]$script:probeRows.Add([pscustomobject]@{
-        title = $title.ToString()
-        handle = $handle.ToInt64()
-        owner = [CraftWindowProbe]::GetWindow($handle, 4).ToInt64()
-        enabled = [CraftWindowProbe]::IsWindowEnabled($handle)
-      })
-    }
-    return $true
-  }
-  [void][CraftWindowProbe]::EnumWindows($callback, [IntPtr]::Zero)
+  $script:probeRows = [CraftWindowProbe]::Snapshot([uint32]$line)
   function Enabled([string]$title) {
     $matches = @($script:probeRows | Where-Object { $_.title -eq $title })
     if ($matches.Count -eq 0) { return $null }
@@ -527,7 +542,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     attached = (Enabled 'Attached desktop child')
     modalOwnedByParent = (OwnedBy 'Parent-scoped modal' 'Child 1')
     attachedOwnedByParent = (OwnedBy 'Attached desktop child' 'Child 1')
-    windows = @($script:probeRows.ToArray())
+    windows = @($script:probeRows)
   }
   [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
   [Console]::Out.Flush()
