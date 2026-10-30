@@ -433,13 +433,15 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
               : ['benchmarks.yml', 'binary-size.yml'].includes(file)
                 ? '0.11.106'
                 : '0.11.101'
-          const source = version === '0.11.120'
-            ? '3de609e1a7e305393b3d94e2848d859b39c5b5de'
-            : version === '0.11.109'
-              ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
-              : version === '0.11.106'
-                ? 'e62755c21d946ed0f8dc8e4af39f6ea5f084537a'
-                : 'ae59a7b7fc5f4e6f7b8041a75e6b5772680bebdf'
+          const source = file === 'release.yml' && name === 'publish-pantry'
+            ? 'ba9c66fc12af6bca2dd50dcad421f4a824531bcc'
+            : version === '0.11.120'
+              ? '3de609e1a7e305393b3d94e2848d859b39c5b5de'
+              : version === '0.11.109'
+                ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
+                : version === '0.11.106'
+                  ? 'e62755c21d946ed0f8dc8e4af39f6ea5f084537a'
+                  : 'ae59a7b7fc5f4e6f7b8041a75e6b5772680bebdf'
           expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
           expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
         }

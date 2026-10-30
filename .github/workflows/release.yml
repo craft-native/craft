@@ -562,8 +562,10 @@ jobs:
       # Zig publication reads build.zig.zon and packages its declared source
       # paths; it does not rebuild a platform binary. The complete GitHub
       # release is public before this registry version can become visible.
+      # Use the publisher's transport diagnostics from the registry hashing
+      # fix, while retaining the independently qualified installer below.
       - name: Publish Zig package
-        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        uses: pantry-pm/pantry/packages/action@ba9c66fc12af6bca2dd50dcad421f4a824531bcc # v0.11.147
         with:
           version: '0.11.120'
           install: 'false'
