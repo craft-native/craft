@@ -53,6 +53,12 @@ test('heart-rate guarded reads preserve the existing since filter', async () => 
   expect(calls).toEqual([['readRecording', { expectedId: 'owned', since: 125 }]])
 })
 
+test('route reads pass since to the host, which answers with only the newer fixes', async () => {
+  const calls = host(true)
+  await location.readRecording({ expectedId: 'owned', since: 1_730_000_000_000 })
+  expect(calls).toEqual([['readRecording', { expectedId: 'owned', since: 1_730_000_000_000 }]])
+})
+
 for (const capable of [false, true]) {
   test(`storage CAS refuses an incomplete host (${capable}) before any write`, async () => {
     const calls: unknown[] = []

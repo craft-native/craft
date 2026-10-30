@@ -1026,6 +1026,11 @@ export interface RecordingOwnershipOptions {
   expectedId: string
 }
 
+/** Reading a route back: `since` (epoch ms) asks only for the fixes recorded after it. */
+export interface LocationRecordingReadOptions extends RecordingOwnershipOptions {
+  since?: number
+}
+
 function storageHost(method: string): any {
   const host = getCraftRoot()?.storage
   if (typeof host?.[method] !== 'function')
@@ -1317,12 +1322,20 @@ export const location = {
     return true
   },
 
-  async readRecording(options?: RecordingOwnershipOptions): Promise<Location[]> {
+  /**
+   * The recording's fixes. With `since`, iOS reads only the fixes after it
+   * from the end of the track; a host that does not know `since` answers with
+   * every fix, so a caller skips those it already has.
+   */
+  async readRecording(options?: LocationRecordingReadOptions): Promise<Location[]> {
     validateRecordingOwnership('location', options)
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.location?.readRecording)
       return craft.location.readRecording(options)
-    return [...webLocationRecording.locations]
+    const since = options?.since
+    return typeof since === 'number' && Number.isFinite(since)
+      ? webLocationRecording.locations.filter(location => location.timestamp > since)
+      : [...webLocationRecording.locations]
   }
 }
 
@@ -3926,7 +3939,7 @@ interface CraftMobileBridge {
     stopRecording?(options?: RecordingOwnershipOptions): Promise<LocationRecordingResult>
     getRecordingState?(options?: RecordingOwnershipOptions): Promise<LocationRecordingState>
     acknowledgeRecording?(options: RecordingOwnershipOptions): Promise<boolean>
-    readRecording?(options?: RecordingOwnershipOptions): Promise<Location[]>
+    readRecording?(options?: LocationRecordingReadOptions): Promise<Location[]>
   }
   share?: {
     share(options: ShareOptions): Promise<boolean>

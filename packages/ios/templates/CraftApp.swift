@@ -2815,7 +2815,7 @@ struct CraftWebView: UIViewRepresentable {
             case "getLocationRecordingState":
                 getLocationRecordingState(callbackId: callbackId)
             case "readLocationRecording":
-                if requireLocationRecordingOwner(body, callbackId: callbackId) { readLocationRecording(callbackId: callbackId) }
+                if requireLocationRecordingOwner(body, callbackId: callbackId) { readLocationRecording(body: body, callbackId: callbackId) }
             case "acknowledgeLocationRecording":
                 _ = archivedLocationAction(action, body: body, callbackId: callbackId)
             // App Badge
@@ -7274,8 +7274,18 @@ struct CraftWebView: UIViewRepresentable {
             resolveCallback(callbackId, result: summary)
         }
 
-        private func readLocationRecording(callbackId: String?) {
-            do { resolveCallback(callbackId, result: try loadRecordedLocationsStrict()) }
+        /// The recording's fixes, or with `since` (epoch ms) only those recorded
+        /// after it. A screen showing a long run reads every few seconds, and a
+        /// 20-hour track is ~72,000 lines: `since` reads the file's tail, not all
+        /// of it, so each read costs what the new fixes do.
+        private func readLocationRecording(body: [String: Any], callbackId: String?) {
+            do {
+                if let since = (body["since"] as? NSNumber)?.doubleValue, since.isFinite {
+                    resolveCallback(callbackId, result: try loadRecordedLocationsStrict(after: since))
+                } else {
+                    resolveCallback(callbackId, result: try loadRecordedLocationsStrict())
+                }
+            }
             catch { rejectCallback(callbackId, error: "Unable to read the location recording", code: "RECORDING_STORAGE_ERROR") }
         }
 
@@ -7312,6 +7322,39 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func loadRecordedLocations() -> [[String: Any]] { (try? loadRecordedLocationsStrict()) ?? [] }
+
+        /// The fixes recorded after `since` (epoch ms), oldest first, read from
+        /// the end of the track backwards: a window of the file's last bytes,
+        /// widened until it reaches a fix at or before `since` or the start.
+        /// Fixes are appended in time order, one JSON object per line.
+        private func loadRecordedLocationsStrict(after since: Double) throws -> [[String: Any]] {
+            if locationRecordingId == nil { return [] }
+            let handle = try FileHandle(forReadingFrom: locationRecordingTrackURL)
+            defer { try? handle.close() }
+            let size = try handle.seekToEnd()
+            var window: UInt64 = 64 * 1024
+            while true {
+                let start = size > window ? size - window : 0
+                try handle.seek(toOffset: start)
+                let data = try handle.readToEnd() ?? Data()
+                var lines = data.split(separator: 0x0A, omittingEmptySubsequences: true)
+                // Mid-file, the window's first line may be cut: it is older than
+                // every line after it, so it is never the one needed.
+                if start > 0, !lines.isEmpty { lines.removeFirst() }
+                var newer: [[String: Any]] = []
+                var reachedOlder = start == 0
+                for line in lines.reversed() {
+                    guard let fix = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+                    if let time = (fix["timestamp"] as? NSNumber)?.doubleValue, time <= since {
+                        reachedOlder = true
+                        break
+                    }
+                    newer.append(fix)
+                }
+                if reachedOlder { return Array(newer.reversed()) }
+                window *= 4
+            }
+        }
 
         private func loadRecordedLocationsStrict() throws -> [[String: Any]] {
             if locationRecordingId == nil { return [] }
