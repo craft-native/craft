@@ -1820,7 +1820,7 @@ app release.
 
 ### Pointer targeting on native screens
 
-The iOS host accepts `pointerEvents` on a node's props or style. A non-null
+The iOS and Android hosts accept `pointerEvents` on a node's props or style. A non-null
 prop wins over style; clearing the prop falls back to style, and clearing both
 restores `auto`. An invalid value uses `auto`.
 
@@ -1834,3 +1834,8 @@ picker's wheels and a text field's editing views still belong to that control.
 Policy changes retain the native views and do not change `disabled`, visibility,
 scroll enablement, or gesture recognizers. Overflow and clipping retain their
 normal rules. Pointer targeting does not disable keyboard or accessibility actions.
+
+The SDK exports the `PointerEvents` union on shared component props and styles.
+For a floating overlay with interactive children, set `pointerEvents="box-none"`;
+for an entirely decorative overlay, use `pointerEvents="none"`. Keep its z-order
+above the content it overlays; pointer policy does not reorder native siblings.

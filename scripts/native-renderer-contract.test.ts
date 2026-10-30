@@ -1772,7 +1772,9 @@ describe('native renderer component contract', () => {
   it('wires pointer targeting into semantic boundaries and native regression tests', () => {
     const viewProps = componentTypes.match(/export interface ViewProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(viewProps).toContain('onLayout?: (event: LayoutEvent) => void')
-    expect(viewProps).not.toContain('pointerEvents?:')
+    const baseProps = componentTypes.match(/export interface BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(baseProps).toContain('pointerEvents?: PointerEvents | null')
+    expect(componentTypes).toContain("export type PointerEvents = 'auto' | 'none' | 'box-none' | 'box-only'")
     expect(ios).toContain('result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)')
     expect(iosFlatList).toContain('craftPointerHitTest(point, with: event)')
     expect(iosNativeUnitTests).toContain('testOverlayModesTargetSiblingsChildrenAndOwnBoxAndDispatchTheChosenAction')

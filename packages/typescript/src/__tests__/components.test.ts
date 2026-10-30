@@ -11,6 +11,7 @@ import {
   Animated
 } from '../components'
 import type {
+  PointerEvents,
   ViewStyle,
   TextStyle,
   ImageStyle,
@@ -118,10 +119,9 @@ describe('Component System', () => {
       style: [{ color: '#2563eb' }, { paddingHorizontal: 16, fontWeight: 700 }],
     }
     const view: ViewProps = { onPress: () => {} }
-    // Pointer-event routing is not implemented by either maintained native host.
-    // @ts-expect-error pointerEvents is intentionally outside the native View contract.
     view.pointerEvents = 'none'
     expect(view.onPress).toBeDefined()
+    expect(view.pointerEvents).toBe('none')
     expect(button.style).toHaveLength(2)
     const toggle: SwitchProps = { value: undefined, checked: true, onValueChange: value => expect(typeof value).toBe('boolean') }
     expect(toggle.checked).toBe(true)
@@ -522,5 +522,22 @@ describe('Component System', () => {
       expect(typeof animation.start).toBe('function')
       expect(typeof animation.stop).toBe('function')
     })
+  })
+})
+
+
+describe('native pointer targeting types', () => {
+  it('carries prop and nested style policies through control and container contracts', () => {
+    for (const pointerEvents of ['auto', 'none', 'box-none', 'box-only', null] satisfies Array<PointerEvents | null>) {
+      const button: ButtonProps = { title: 'Action', pointerEvents }
+      const scroll: ScrollViewProps = { pointerEvents, style: [{ pointerEvents: 'none' }, [false, { pointerEvents }]] }
+      const input: TextInputProps = { pointerEvents }
+      const map: MapProps = { pointerEvents }
+      expect(JSON.parse(JSON.stringify({ button, input, map })).button.pointerEvents).toBe(pointerEvents)
+      expect(StyleSheet.flatten<ViewStyle>(scroll.style)?.pointerEvents).toBe(pointerEvents)
+    }
+    // @ts-expect-error Native pointer policies are a closed union, not CSS's broader SVG vocabulary.
+    const invalid: ButtonProps = { title: 'Invalid', pointerEvents: 'visiblePainted' }
+    expect(String(invalid.pointerEvents)).toBe('visiblePainted')
   })
 })

@@ -157,10 +157,15 @@ export interface FlexStyle {
   columnGap?: number
 }
 
+/** Hit targeting at an authored native component boundary. */
+export type PointerEvents = 'auto' | 'none' | 'box-none' | 'box-only'
+
 /**
  * Layout style properties.
  */
 export interface LayoutStyle {
+  /** Native pointer policy; a non-null prop overrides this style value. */
+  pointerEvents?: PointerEvents | null
   /** Width */
   width?: number | string
   /** Height */
@@ -399,6 +404,8 @@ export type StyleValue<T> = T | StyleValue<T>[] | null | false | undefined
  * Base props for all components.
  */
 export interface BaseProps {
+  /** Native hit targeting. Null clears the override and falls back to style. */
+  pointerEvents?: PointerEvents | null
   /** Unique identifier */
   id?: string
   /** Test ID for testing */
