@@ -1588,6 +1588,29 @@ pub fn build(b: *std.Build) void {
     });
     linkPlatformLibraries(b, bridge_fs_tests.root_module, target_os, macos_sdk);
 
+    // The JSON the AppleScript bridge replies with. Standard library only, so it
+    // needs no platform libraries: every control byte a script can return must
+    // still produce a reply the page can parse.
+    const apple_script_json_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/apple_script_json.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // The AppleScript bridge against the real scripting runtime. A root of its own
+    // for the reason `bridge_fs_test.zig` gives, and linked like the binary because
+    // the bridge reaches the platform layer even though these tests never open a window.
+    const bridge_apple_script_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_apple_script_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    linkPlatformLibraries(b, bridge_apple_script_tests.root_module, target_os, macos_sdk);
+
     // The host logger's own internals. `test/log_test.zig` already exercises it
     // through the module boundary, which cannot reach the config storage or the
     // formatter — the three places it was wrong. Rooted at the source file so
@@ -2044,6 +2067,8 @@ pub fn build(b: *std.Build) void {
     const run_bridge_haptics_tests = b.addRunArtifact(bridge_haptics_tests);
     const run_audio_tests = b.addRunArtifact(audio_tests);
     const run_bridge_fs_tests = b.addRunArtifact(bridge_fs_tests);
+    const run_apple_script_json_tests = b.addRunArtifact(apple_script_json_tests);
+    const run_bridge_apple_script_tests = b.addRunArtifact(bridge_apple_script_tests);
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_window_context_tests = b.addRunArtifact(window_context_tests);
@@ -2309,6 +2334,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_bridge_haptics_tests.step);
     test_step.dependOn(&run_audio_tests.step);
     test_step.dependOn(&run_bridge_fs_tests.step);
+    test_step.dependOn(&run_apple_script_json_tests.step);
+    test_step.dependOn(&run_bridge_apple_script_tests.step);
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_window_context_tests.step);

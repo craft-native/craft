@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
+const json = @import("apple_script_json.zig");
 
 const BridgeError = bridge_error.BridgeError;
 
@@ -9,10 +10,12 @@ const BridgeError = bridge_error.BridgeError;
 /// asking Music to play a track, etc.
 ///
 /// `executeAndReturnError:` returns an `NSAppleEventDescriptor`; we
-/// surface its `stringValue` as the result. The output param of the
-/// real call is an NSDictionary** with rich error info — we pass nil
-/// to keep the bridge surface compact (callers see `{ok: false}` on
-/// failure). Future work: thread the rich error through to JS.
+/// surface its `stringValue` as the result. When the call fails, its
+/// error dictionary is threaded through as `error: { code, message }`
+/// (`NSAppleScriptErrorNumber` and `NSAppleScriptErrorMessage`), so a
+/// caller can tell a refused Automation permission (-1743) or a missing
+/// Accessibility grant (-25211) from a syntax error (-2741) or a script
+/// the user cancelled (-128). `ok` is unchanged.
 pub const AppleScriptBridge = struct {
     allocator: std.mem.Allocator,
 
@@ -41,51 +44,62 @@ pub const AppleScriptBridge = struct {
         defer parsed.deinit();
         if (parsed.value.source.len == 0) return BridgeError.MissingData;
 
-        const macos = @import("macos.zig");
-        const NSAppleScript = macos.getClass("NSAppleScript");
-        if (@intFromPtr(NSAppleScript) == 0) {
-            bridge_error.sendResultToJS(self.allocator, "execute", "{\"ok\":false,\"reason\":\"NSAppleScript unavailable\"}");
-            return;
-        }
-
-        const source_ns = macos.createNSString(parsed.value.source);
-        const script = macos.msgSend1(macos.msgSend0(NSAppleScript, "alloc"), "initWithSource:", source_ns);
-
-        const Fn = *const fn (macos.objc.id, macos.objc.SEL, ?*anyopaque) callconv(.c) macos.objc.id;
-        const f: Fn = @ptrCast(&macos.objc.objc_msgSend);
-        const result = f(script, macos.sel("executeAndReturnError:"), null);
-
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer buf.deinit(self.allocator);
-        try buf.appendSlice(self.allocator, "{\"ok\":");
-        if (@intFromPtr(result) == 0) {
-            try buf.appendSlice(self.allocator, "false}");
-        } else {
-            try buf.appendSlice(self.allocator, "true,\"result\":\"");
-            const desc_str = macos.msgSend0(result, "stringValue");
-            if (@intFromPtr(desc_str) != 0) appendNSStringEscaped(self.allocator, &buf, desc_str);
-            try buf.appendSlice(self.allocator, "\"}");
-        }
-        const owned = try buf.toOwnedSlice(self.allocator);
-        defer self.allocator.free(owned);
-        bridge_error.sendResultToJS(self.allocator, "execute", owned);
+        const reply = try run(self.allocator, parsed.value.source);
+        defer self.allocator.free(reply);
+        bridge_error.sendResultToJS(self.allocator, "execute", reply);
     }
 };
 
-fn appendNSStringEscaped(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), ns_string: @import("macos.zig").objc.id) void {
-    if (@intFromPtr(ns_string) == 0) return;
+/// Compile and run `source`, and return the JSON reply the page receives. The caller frees it. Kept apart
+/// from the handler so it can be exercised without a webview.
+pub fn run(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+    const macos = @import("macos.zig");
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(allocator);
+
+    const NSAppleScript = macos.getClass("NSAppleScript");
+    if (@intFromPtr(NSAppleScript) == 0) {
+        try buf.appendSlice(allocator, "{\"ok\":false,\"reason\":\"NSAppleScript unavailable\"}");
+        return buf.toOwnedSlice(allocator);
+    }
+
+    const source_ns = macos.createNSString(source);
+    const script = macos.msgSend1(macos.msgSend0(NSAppleScript, "alloc"), "initWithSource:", source_ns);
+    // `alloc` returns an owned object; the source string above is autoreleased.
+    defer macos.msgSendVoid0(script, "release");
+
+    var error_info: macos.objc.id = null;
+    const Fn = *const fn (macos.objc.id, macos.objc.SEL, *macos.objc.id) callconv(.c) macos.objc.id;
+    const f: Fn = @ptrCast(&macos.objc.objc_msgSend);
+    const result = f(script, macos.sel("executeAndReturnError:"), &error_info);
+
+    if (@intFromPtr(result) == 0) {
+        var code: ?i64 = null;
+        var message: ?[]const u8 = null;
+        if (@intFromPtr(error_info) != 0) {
+            const number = macos.msgSend1(error_info, "objectForKey:", macos.createNSString("NSAppleScriptErrorNumber"));
+            if (@intFromPtr(number) != 0) code = longValue(number);
+            message = nsStringBytes(macos.msgSend1(error_info, "objectForKey:", macos.createNSString("NSAppleScriptErrorMessage")));
+        }
+        try json.appendFailure(allocator, &buf, code, message);
+    } else {
+        try json.appendSuccess(allocator, &buf, nsStringBytes(macos.msgSend0(result, "stringValue")) orelse "");
+    }
+    return buf.toOwnedSlice(allocator);
+}
+
+/// The UTF-8 bytes of an NSString, valid while the string is alive. Null for nil.
+fn nsStringBytes(ns_string: @import("macos.zig").objc.id) ?[]const u8 {
+    if (@intFromPtr(ns_string) == 0) return null;
     const macos = @import("macos.zig");
     const utf8 = macos.msgSend0(ns_string, "UTF8String");
-    if (@intFromPtr(utf8) == 0) return;
-    const slice = std.mem.span(@as([*:0]const u8, @ptrCast(utf8)));
-    for (slice) |b| {
-        switch (b) {
-            '"' => buf.appendSlice(allocator, "\\\"") catch return,
-            '\\' => buf.appendSlice(allocator, "\\\\") catch return,
-            '\n' => buf.appendSlice(allocator, "\\n") catch return,
-            '\r' => buf.appendSlice(allocator, "\\r") catch return,
-            '\t' => buf.appendSlice(allocator, "\\t") catch return,
-            else => buf.append(allocator, b) catch return,
-        }
-    }
+    if (@intFromPtr(utf8) == 0) return null;
+    return std.mem.span(@as([*:0]const u8, @ptrCast(utf8)));
+}
+
+fn longValue(number: @import("macos.zig").objc.id) i64 {
+    const macos = @import("macos.zig");
+    const Fn = *const fn (macos.objc.id, macos.objc.SEL) callconv(.c) c_long;
+    const f: Fn = @ptrCast(&macos.objc.objc_msgSend);
+    return f(number, macos.sel("longValue"));
 }
