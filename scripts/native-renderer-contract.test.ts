@@ -1374,7 +1374,7 @@ describe('native renderer component contract', () => {
   })
 
   it('renders ImageBackground as an image-backed native container', () => {
-    expect(ios).toContain('private final class CraftNativeImageBackgroundView: UIImageView')
+    expect(ios).toContain('private final class CraftNativeImageBackgroundView: CraftNativePositionedImageView')
     expect(ios).toContain('configureStack(background.contentStack, style: style)')
     expect(android).toContain('private class CraftNativeImageBackgroundView(context: Context) : FrameLayout(context)')
     expect(android).toContain('configureContainer(content, style)')

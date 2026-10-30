@@ -4154,10 +4154,103 @@ private final class CraftNativeKeyboardAvoidingView: CraftNativeFlowView {
     }
 }
 
+// Preserve source dimensions when the loader downsamples decoded pixels. CSS
+// scale-down/none use intrinsic dimensions, never the thumbnail's display size.
+private var craftImageIntrinsicKey: UInt8 = 0
+private extension UIImage {
+    var craftIntrinsicSize: CGSize {
+        get { (objc_getAssociatedObject(self, &craftImageIntrinsicKey) as? NSValue)?.cgSizeValue ?? size }
+        set { objc_setAssociatedObject(self, &craftImageIntrinsicKey, NSValue(cgSize: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+}
+
+/// Explicit CSS-facing image geometry; the loader and semantic view stay retained.
+class CraftNativePositionedImageView: UIImageView {
+    private var storedImage: UIImage?
+    private var fittedImage: UIImageView?
+    private var fit: String?
+    private var position = CGPoint(x: 0.5, y: 0.5)
+
+    override var image: UIImage? {
+        get { storedImage }
+        set {
+            storedImage = newValue
+            super.image = fit == nil ? newValue : nil
+            fittedImage?.image = newValue
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+
+    override var intrinsicContentSize: CGSize {
+        fit == nil ? super.intrinsicContentSize : storedImage?.craftIntrinsicSize ?? CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
+
+    func configureObjectGeometry(props: [String: Any], style: [String: Any]) {
+        func value(_ name: String) -> Any? {
+            if let raw = props[name], !(raw is NSNull) { return raw }
+            if let raw = style[name], !(raw is NSNull) { return raw }
+            return nil
+        }
+        let rawFit = value("objectFit"), rawPosition = value("objectPosition")
+        if rawFit != nil || rawPosition != nil {
+            let requested = rawFit as? String ?? "fill"
+            fit = ["fill", "contain", "cover", "none", "scale-down"].contains(requested) ? requested : "fill"
+            position = Self.objectPosition(rawPosition)
+            if fittedImage == nil {
+                let child = UIImageView()
+                child.isUserInteractionEnabled = false
+                child.isAccessibilityElement = false
+                child.contentMode = .scaleToFill
+                insertSubview(child, at: 0)
+                fittedImage = child
+            }
+        } else { fit = nil }
+        fittedImage?.isHidden = fit == nil
+        super.image = fit == nil ? storedImage : nil
+        fittedImage?.image = storedImage
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    var usesObjectGeometry: Bool { fit != nil }
+    var objectCovers: Bool { fit == "cover" }
+
+    private static func objectPosition(_ raw: Any?) -> CGPoint {
+        guard let text = raw as? String else { return CGPoint(x: 0.5, y: 0.5) }
+        var parts = text.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard (1...2).contains(parts.count) else { return CGPoint(x: 0.5, y: 0.5) }
+        if parts.count == 1 {
+            parts = ["top", "bottom"].contains(parts[0]) ? ["center", parts[0]] : [parts[0], "center"]
+        } else if ["top", "bottom"].contains(parts[0]) || ["left", "right"].contains(parts[1]) { parts.swapAt(0, 1) }
+        func fraction(_ part: String, low: String, high: String) -> CGFloat? {
+            if part == low { return 0 }; if part == high { return 1 }; if part == "center" { return 0.5 }
+            guard part.hasSuffix("%"), let number = Double(part.dropLast()), number.isFinite else { return nil }
+            return CGFloat(number / 100)
+        }
+        guard let x = fraction(parts[0], low: "left", high: "right"), let y = fraction(parts[1], low: "top", high: "bottom") else { return CGPoint(x: 0.5, y: 0.5) }
+        return CGPoint(x: x, y: y)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let fit, let child = fittedImage else { return }
+        let source = storedImage?.craftIntrinsicSize ?? .zero
+        guard source.width > 0, source.height > 0 else { child.frame = .zero; return }
+        let contain = min(bounds.width / source.width, bounds.height / source.height)
+        let scale: CGFloat = fit == "cover" ? max(bounds.width / source.width, bounds.height / source.height)
+            : fit == "none" ? 1 : fit == "scale-down" ? min(1, contain) : contain
+        let size = fit == "fill" ? bounds.size : CGSize(width: source.width * scale, height: source.height * scale)
+        child.frame = CGRect(x: bounds.minX + (bounds.width - size.width) * position.x,
+            y: bounds.minY + (bounds.height - size.height) * position.y, width: size.width, height: size.height)
+        child.tintColor = tintColor
+    }
+}
+
 /// An image-backed flex container. The image stays behind ordinary native
 /// children so `ImageBackground` keeps the same layout and interaction
 /// semantics as a `View` while using the shared image loader.
-private final class CraftNativeImageBackgroundView: UIImageView {
+private final class CraftNativeImageBackgroundView: CraftNativePositionedImageView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
@@ -6001,7 +6094,7 @@ private final class CraftNativeSlider: UISlider {
 
 }
 
-private final class CraftNativeImageView: UIImageView {
+private final class CraftNativeImageView: CraftNativePositionedImageView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
@@ -9121,6 +9214,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let current = image.image { image.image = imageForDisplay(current, view: image) }
             let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String
             image.contentMode = imageContentMode(requestedResizeMode)
+            (image as? CraftNativePositionedImageView)?.configureObjectGeometry(props: props, style: style)
             applyImageClipping(image, contentMode: image.contentMode, style: style)
             updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: image)
             updateAuxiliaryHandler(events["onLoad"], in: &imageLoadHandlers, for: image)
@@ -9140,6 +9234,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let current = background.image { background.image = imageForDisplay(current, view: background) }
             let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String
             background.contentMode = imageContentMode(requestedResizeMode)
+            background.configureObjectGeometry(props: props, style: style)
             applyImageClipping(background, contentMode: background.contentMode, style: style)
             updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: background)
             updateAuxiliaryHandler(events["onLoad"], in: &imageLoadHandlers, for: background)
@@ -10611,7 +10706,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 if let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) {
                     // At the screen's scale, so its size in points is the
                     // size it is drawn at.
-                    return UIImage(cgImage: image, scale: target.scale, orientation: .up)
+                    let decoded = UIImage(cgImage: image, scale: target.scale, orientation: .up)
+                    decoded.craftIntrinsicSize = CGSize(width: width, height: height)
+                    return decoded
                 }
             }
         }
@@ -10648,7 +10745,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let authored = (style["overflow"] as? String) == "hidden"
             || (view.craftRequestedCornerRadius ?? 0) > 0
             || view.craftRequestedCornerRadii != nil
-        let clips = authored || contentMode == .scaleAspectFill
+        let clips = authored || contentMode == .scaleAspectFill || (view as? CraftNativePositionedImageView)?.usesObjectGeometry == true
         view.clipsToBounds = clips
         view.layer.masksToBounds = clips
     }
@@ -10695,7 +10792,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let url = imageURL(for: uri) {
             // Decoded at the size it is drawn, when the style fixes that size.
             let pixels = Self.displayPixels(of: view)
-            let fill = view.contentMode == .scaleAspectFill
+            let fill = (view as? CraftNativePositionedImageView)?.objectCovers == true || view.contentMode == .scaleAspectFill
             // media.keep owns private/offline copies keyed by the authored URL.
             // Read before the decoded/network cache, without retaining private
             // pixels there after the app clears its media on sign-out.
@@ -10803,7 +10900,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func imageForDisplay(_ image: UIImage, view: UIImageView) -> UIImage {
-        image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)
+        let displayed = image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)
+        displayed.craftIntrinsicSize = image.craftIntrinsicSize
+        return displayed
     }
 
     private func emitImageEvent(

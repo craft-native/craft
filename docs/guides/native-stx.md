@@ -1839,3 +1839,26 @@ The SDK exports the `PointerEvents` union on shared component props and styles.
 For a floating overlay with interactive children, set `pointerEvents="box-none"`;
 for an entirely decorative overlay, use `pointerEvents="none"`. Keep its z-order
 above the content it overlays; pointer policy does not reorder native siblings.
+
+### Explicit Image fit and position
+
+`Image` and `ImageBackground` accept `objectFit` and `objectPosition` in props or
+style. Non-null props take precedence; null/absent props fall back to style.
+With either property present, `objectFit` defaults to `fill` and supports `fill`,
+`contain`, `cover`, `none`, and `scale-down`. `contain` may upscale; `scale-down`
+uses the intrinsic size when it fits and otherwise contains it, never upscaling.
+`none` keeps intrinsic size. All explicit modes clip pixels to the image box.
+
+`objectPosition` defaults to center. It accepts one or two whitespace-separated
+keywords (`left`, `right`, `top`, `bottom`, `center`) or percentages, such as
+`right top`, `bottom`, or `25% 75%`. Percentages position the remaining space:
+`x = (boxWidth - renderedWidth) * percentage`, including negative space when
+`cover` crops. Values outside 0–100% are allowed. Pixel offsets and three/four-token
+edge-offset syntax are not supported; invalid positions reset to center and
+invalid fit values reset to fill.
+
+Removing both properties restores the legacy `resizeMode` path, including its
+existing platform defaults (iOS aspect-fit can upscale; Android center-inside
+cannot). Source loading, retained view identity and `source` remain unchanged.
+Geometry recomputes after load, source replacement, layout and property changes;
+changing fit or position does not restart an unchanged image request.

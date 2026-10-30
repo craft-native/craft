@@ -5063,3 +5063,98 @@ final class NativePointerEventsUnitTests: XCTestCase {
     }
 
 }
+
+@MainActor
+final class NativeImageGeometryUnitTests: XCTestCase {
+    private func png(_ width: CGFloat, _ height: CGFloat) throws -> String {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+            UIColor.blue.setFill(); context.fill(CGRect(x: width / 2, y: 0, width: width / 2, height: height))
+        }
+        return "data:image/png;base64," + (try XCTUnwrap(image.pngData())).base64EncodedString()
+    }
+
+    private func render(_ screen: CraftNativeScreenController, source: String, fit: Any? = nil, position: Any? = nil,
+                        style: [String: Any] = [:], type: String = "Image") throws -> CraftNativePositionedImageView {
+        var props: [String: Any] = ["source": source]
+        if let fit { props["objectFit"] = fit }; if let position { props["objectPosition"] = position }
+        var layout: [String: Any] = ["width": 100, "height": 100]
+        layout.merge(style) { _, value in value }
+        screen.render(["id": "photo", "type": type, "props": props, "style": layout])
+        func find(_ view: UIView) -> CraftNativePositionedImageView? {
+            if let image = view as? CraftNativePositionedImageView { return image }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        let view = try XCTUnwrap(find(screen.view))
+        view.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        return view
+    }
+
+    private func pixels(_ view: CraftNativePositionedImageView) throws -> UIImageView {
+        try XCTUnwrap(view.subviews.compactMap { $0 as? UIImageView }.first)
+    }
+
+    func testSmallImageScaleDownContainAndLivePositionKeepTheViewAndSource() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
+        let source = try png(20, 10)
+        let view = try render(screen, source: source, fit: "scale-down", position: "right bottom")
+        let child = try pixels(view), decoded = try XCTUnwrap(view.image?.cgImage)
+        XCTAssertEqual(child.frame, CGRect(x: 80, y: 90, width: 20, height: 10))
+        let changed = try render(screen, source: source, fit: "contain", position: "left top")
+        XCTAssertTrue(changed === view); XCTAssertTrue(try pixels(changed) === child)
+        XCTAssertTrue(changed.image?.cgImage === decoded, "geometry must not reload unchanged image data")
+        XCTAssertEqual(child.frame, CGRect(x: 0, y: 0, width: 100, height: 50))
+        _ = try render(screen, source: source, fit: "scale-down", position: "25% 75%")
+        XCTAssertEqual(child.frame, CGRect(x: 20, y: 67.5, width: 20, height: 10))
+        view.frame.size = CGSize(width: 10, height: 10); view.layoutIfNeeded()
+        XCTAssertEqual(child.frame, CGRect(x: 0, y: 3.75, width: 10, height: 5))
+    }
+
+    func testCoverCropAndLargeScaleDownRecomputeForReplacementAndRemount() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
+        let source = try png(200, 100)
+        let view = try render(screen, source: source, fit: "cover", position: "right top")
+        XCTAssertEqual(try pixels(view).frame, CGRect(x: -100, y: 0, width: 200, height: 100))
+        XCTAssertTrue(view.clipsToBounds)
+        _ = try render(screen, source: source, fit: "scale-down", position: "bottom left")
+        XCTAssertEqual(try pixels(view).frame, CGRect(x: 0, y: 50, width: 100, height: 50))
+        let replacement = try png(10, 20)
+        XCTAssertTrue(try render(screen, source: replacement, fit: "none", position: "top") === view)
+        XCTAssertEqual(try pixels(view).frame, CGRect(x: 45, y: 0, width: 10, height: 20))
+        screen.render(["type": "View", "id": "empty"])
+        let remounted = try render(screen, source: replacement, fit: "scale-down")
+        XCTAssertFalse(remounted === view)
+        XCTAssertEqual(try pixels(remounted).frame, CGRect(x: 45, y: 40, width: 10, height: 20))
+    }
+
+    func testPropStylePrecedenceClearingAndImageBackgroundPreserveLegacyModes() throws {
+        for type in ["Image", "ImageBackground"] {
+            let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
+            let source = try png(20, 10)
+            let view = try render(screen, source: source, fit: "scale-down", position: "right", style: ["objectFit": "cover", "objectPosition": "left"], type: type)
+            XCTAssertEqual(try pixels(view).frame, CGRect(x: 80, y: 45, width: 20, height: 10))
+            _ = try render(screen, source: source, fit: NSNull(), position: NSNull(), style: ["objectFit": "contain", "objectPosition": "bottom"], type: type)
+            XCTAssertEqual(try pixels(view).frame, CGRect(x: 0, y: 50, width: 100, height: 50))
+            _ = try render(screen, source: source, fit: "invalid", position: "invalid", type: type)
+            XCTAssertEqual(try pixels(view).frame, view.bounds)
+            _ = try render(screen, source: source, style: ["resizeMode": "cover"], type: type)
+            XCTAssertFalse(view.usesObjectGeometry); XCTAssertTrue(try pixels(view).isHidden)
+            XCTAssertNotNil(view.image); XCTAssertEqual(view.contentMode, .scaleAspectFill)
+            _ = try render(screen, source: source, type: type)
+            XCTAssertEqual(view.contentMode, .scaleAspectFit)
+        }
+    }
+
+    func testDownsampledSourceRetainsIntrinsicGeometry() throws {
+        let uri = try png(400, 200)
+        let data = try XCTUnwrap(Data(base64Encoded: String(uri.split(separator: ",")[1])))
+        let decoded = try XCTUnwrap(CraftNativeScreenController.decodeImage(data, fitting: (CGSize(width: 100, height: 100), 2), fill: false))
+        XCTAssertLessThan(decoded.size.width, 400)
+        let view = CraftNativePositionedImageView(frame: CGRect(x: 0, y: 0, width: 300, height: 300))
+        view.configureObjectGeometry(props: ["objectFit": "scale-down"], style: [:]); view.image = decoded
+        view.layoutIfNeeded()
+        XCTAssertEqual(try pixels(view).frame, CGRect(x: 0, y: 75, width: 300, height: 150))
+    }
+}
