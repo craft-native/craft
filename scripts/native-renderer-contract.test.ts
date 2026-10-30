@@ -4022,7 +4022,8 @@ describe('native renderer component contract', () => {
   })
 
   it('refreshes theme-default native controls when traits change', () => {
-    expect(ios).toContain('mutationDocument.node("root")')
+    expect(ios).toContain('if let document = mutationDocument.document')
+    expect(ios).not.toContain('mutationDocument.node("root")')
     expect(ios).toContain('renderCommitted(document)')
     expect(ios).toContain('private func refreshTraitDefaults()')
     expect(ios).toContain('refreshTraitDefaults()')

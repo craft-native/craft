@@ -852,6 +852,139 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNotNil(find(UILabel.self, key: "name-input", below: controller.view))
     }
 
+    func testImportedDescendantsKeepIdentityThroughTargetedUpdatesAndRenders() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // These legacy children have selectors but no protocol IDs. Import
+        // assigns IDs once; drawing must use those IDs from the first frame.
+        let root: [String: Any] = ["id": "screen", "type": "View", "children": [
+            ["type": "TextInput", "props": ["testID": "draft"], "style": ["height": 44]],
+            ["type": "Button", "props": ["testID": "save"], "style": ["height": 44],
+             "events": ["onPress": "saved"], "children": ["Save"]],
+            ["type": "ScrollView", "props": ["testID": "rows"], "style": ["height": 80],
+             "children": [["type": "View", "style": ["height": 320]]]],
+        ]]
+        controller.render(root)
+        controller.view.layoutIfNeeded()
+        let field = try XCTUnwrap(find(UITextField.self, key: "draft", below: controller.view))
+        let button = try XCTUnwrap(find(UIButton.self, key: "save", below: controller.view))
+        let scroll = try XCTUnwrap(find(UIScrollView.self, key: "rows", below: controller.view))
+        field.text = "unsaved draft"
+        let caret = try XCTUnwrap(field.position(from: field.beginningOfDocument, offset: 3))
+        field.selectedTextRange = field.textRange(from: caret, to: caret)
+        scroll.contentOffset.y = 40
+        controller.evaluateScript("globalThis.__saved = 0; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'saved') __saved++; };")
+
+        func assertRetained() throws {
+            controller.view.layoutIfNeeded()
+            XCTAssertTrue(find(UITextField.self, key: "draft", below: controller.view) === field)
+            XCTAssertTrue(find(UIButton.self, key: "save", below: controller.view) === button)
+            XCTAssertTrue(find(UIScrollView.self, key: "rows", below: controller.view) === scroll)
+            XCTAssertEqual(field.text, "unsaved draft")
+            let selection = try XCTUnwrap(field.selectedTextRange)
+            XCTAssertEqual(field.offset(from: field.beginningOfDocument, to: selection.start), 3)
+            XCTAssertEqual(scroll.contentOffset.y, 40)
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: controller.view)
+            XCTAssertTrue(controller.view.hitTest(point, with: nil) === button)
+        }
+        for revision in 1...3 {
+            let color: Any = revision == 2 ? "#112233" : NSNull()
+            let label: Any = revision == 2 ? "Form" : NSNull()
+            let result = try controller.applyMutation(batch(revision, [[
+                "op": "updateNode", "id": "screen", "patch": [
+                    "style": ["backgroundColor": color],
+                    "props": ["accessibilityLabel": label],
+                ],
+            ]]))
+            XCTAssertFalse(result.requiresFullRender)
+            try assertRetained()
+        }
+        // Returning to full-document rendering must not swap identities back.
+        controller.render(root)
+        try assertRetained()
+        button.sendActions(for: .touchUpInside)
+        XCTAssertEqual(controller.evaluateScript("__saved")?.toInt32(), 1)
+    }
+
+    func testNormalizedLegacyContentKeepsInterleavedTextInAuthoredOrder() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(["id": "screen", "type": "View", "children": [
+            "Before", ["type": "Button", "props": ["testID": "action"], "children": ["Action"]],
+            "Between", ["type": "Text", "props": ["testID": "label"], "children": ["Label"]], "After",
+        ]])
+        let root = try XCTUnwrap(find(UIStackView.self, key: "screen", below: controller.view))
+        let original = root.arrangedSubviews
+        func content() -> [String] {
+            root.arrangedSubviews.compactMap { view in
+                if let button = view as? UIButton { return button.title(for: .normal) }
+                return (view as? UILabel)?.text
+            }
+        }
+        XCTAssertEqual(content(), ["Before", "Action", "Between", "Label", "After"])
+        _ = try controller.applyMutation(batch(1, [["op": "updateNode", "id": "screen", "patch": ["style": ["opacity": 0.8]]]]))
+        XCTAssertEqual(content(), ["Before", "Action", "Between", "Label", "After"])
+        XCTAssertEqual(original.count, root.arrangedSubviews.count)
+        for (before, after) in zip(original, root.arrangedSubviews) { XCTAssertTrue(before === after) }
+        // An explicit text replacement retains the protocol's text-before-
+        // node semantics; imported placement must not leak into later text.
+        _ = try controller.applyMutation(batch(2, [["op": "updateNode", "id": "screen", "patch": ["text": "Replaced"]]]))
+        XCTAssertEqual(content(), ["Replaced", "Action", "Label"])
+    }
+
+    func testCommittedMutationRootTracksReplacementRemovalAndFailedBatches() throws {
+        let model = CraftNativeMutationDocument()
+        XCTAssertNil(model.document)
+        model.replace(with: ["id": "screen", "type": "View", "children": [
+            ["type": "Text", "props": ["testID": "label"], "children": ["Before"]],
+        ]])
+        XCTAssertEqual(model.document?["id"] as? String, "screen")
+        let children = try XCTUnwrap(model.document?["children"] as? [[String: Any]])
+        let id = try XCTUnwrap(children.first?["id"] as? String)
+        XCTAssertEqual(id, "screen/key:label")
+        XCTAssertThrowsError(try model.apply(batch(1, [
+            ["op": "updateNode", "id": id, "patch": ["children": ["Must not commit"]]],
+            ["op": "removeNode", "id": "missing"],
+        ])))
+        XCTAssertEqual(model.revision, 0)
+        XCTAssertEqual(model.node(id)?["children"] as? [String], ["Before"])
+        XCTAssertEqual(model.document?["id"] as? String, "screen")
+        _ = try model.apply(batch(1, [["op": "removeNode", "id": "screen"]]))
+        XCTAssertNil(model.document)
+        _ = try model.apply(batch(2, [["op": "createNode", "id": "new-screen", "root": true, "node": ["type": "View"]]]))
+        XCTAssertEqual(model.document?["id"] as? String, "new-screen")
+        model.replace(with: ["type": "View", "props": ["key": "authored-screen"]])
+        XCTAssertEqual(model.document?["id"] as? String, "root/key:authored-screen")
+        XCTAssertEqual(model.revision, 0)
+    }
+
+    func testTraitRefreshUsesTheCommittedRootRatherThanAChildNamedRoot() throws {
+        let parent = UIViewController()
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        parent.addChild(controller)
+        parent.view.addSubview(controller.view)
+        controller.didMove(toParent: parent)
+        controller.render(["id": "screen", "type": "View", "props": ["testID": "screen"], "children": [
+            ["id": "root", "type": "Text", "props": ["testID": "title"],
+             "style": ["fontSize": 16], "children": ["Title"]],
+            ["type": "TextInput", "props": ["testID": "draft"]],
+        ]])
+        controller.viewWillAppear(false)
+        let root = try XCTUnwrap(find(UIView.self, key: "screen", below: controller.view))
+        let label = try XCTUnwrap(find(UILabel.self, key: "title", below: controller.view))
+        let field = try XCTUnwrap(find(UITextField.self, key: "draft", below: controller.view))
+        field.text = "keep me"
+        parent.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge), forChild: controller)
+        controller.viewWillAppear(false)
+        XCTAssertTrue(find(UIView.self, key: "screen", below: controller.view) === root)
+        XCTAssertTrue(find(UILabel.self, key: "title", below: controller.view) === label)
+        XCTAssertTrue(find(UITextField.self, key: "draft", below: controller.view) === field)
+        XCTAssertEqual(field.text, "keep me")
+        let expected = UIFontMetrics(forTextStyle: .body).scaledValue(for: 16, compatibleWith: controller.traitCollection)
+        XCTAssertEqual(label.font.pointSize, expected, accuracy: 0.1)
+    }
+
     func testNativeTextScalesWithTheScreenContentSizeTrait() throws {
         let host = UIViewController()
         let controller = CraftNativeScreenController(config: CraftConfig())
@@ -1018,10 +1151,11 @@ final class NativeRenderUnitTests: XCTestCase {
             ["type": "Text", "children": ["First"]],
             ["type": "Text", "children": ["Second"]],
         ]))
-        let first = try XCTUnwrap(find(UILabel.self, key: "root.0", below: controller.view))
-        let second = try XCTUnwrap(find(UILabel.self, key: "root.1", below: controller.view))
+        let root = try XCTUnwrap(find(UIStackView.self, key: "root", below: controller.view))
+        let first = try XCTUnwrap(root.arrangedSubviews.first as? UILabel)
+        let second = try XCTUnwrap(root.arrangedSubviews.last as? UILabel)
         controller.render(document([["type": "Text", "children": ["Updated"]]]))
-        XCTAssertTrue(first === find(UILabel.self, key: "root.0", below: controller.view))
+        XCTAssertTrue(root.arrangedSubviews.first === first)
         XCTAssertEqual(first.text, "Updated")
         XCTAssertNil(second.superview)
     }

@@ -1147,7 +1147,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
     expect(source).toContain('traitCollectionDidChange')
     expect(source).toContain('config.resolvedBackgroundColor')
-    expect(source).toContain('mutationDocument.node("root")')
+    expect(source).toContain('mutationDocument.document')
     expect(source).toContain('renderCommitted(document)')
   })
 
@@ -2260,7 +2260,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // and survives a change of appearance.
     expect(screen).toContain('screenBackgroundColor = color(options["backgroundColor"])')
     expect(screen).toContain('view.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor')
-    expect(screen).toContain('if let document = mutationDocument.node("root")')
+    expect(screen).toContain('if let document = mutationDocument.document')
     expect(screen).toContain('if let solid = options["navigationBarSolid"] as? Bool {')
     expect(screen).toContain('appearance.configureWithOpaqueBackground()')
     expect(screen).toContain('appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor')

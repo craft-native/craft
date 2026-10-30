@@ -6371,7 +6371,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         appliedTraitDefaults = traits
         view.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
         applyNavigationBarAppearance()
-        if let document = mutationDocument.node("root") {
+        if let document = mutationDocument.document {
             renderCommitted(document)
         } else {
             rootStack.setNeedsLayout()
@@ -8335,7 +8335,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     // Internal so simulator-hosted XCTest can assert actual UIView identity.
     func render(_ document: [String: Any]) {
         mutationDocument.replace(with: document)
-        renderCommitted(document)
+        // Import assigns protocol IDs to legacy descendants. Draw that same
+        // committed tree from the first frame, so later patches cannot turn
+        // selector/positional identities into different native controls.
+        guard let committed = mutationDocument.document else { return }
+        renderCommitted(committed)
         if !hybridRendered {
             hybridRendered = true
             // The app script's drawing is never on screen: not a first frame.

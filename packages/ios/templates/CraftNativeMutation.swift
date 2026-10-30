@@ -35,6 +35,9 @@ final class CraftNativeMutationDocument {
         var style: [String: Any]
         var events: [String: Any]
         var text: [String]
+        // Legacy snapshots may interleave bare text and native children.
+        // Keep each text fragment's slot among the child nodes on import.
+        var textPositions: [Int]? = nil
         var children: [String]
         var parent: String?
     }
@@ -42,6 +45,11 @@ final class CraftNativeMutationDocument {
     private var nodes: [String: Node] = [:]
     private var rootId: String?
     private(set) var revision = 0
+
+    /// The normalized committed tree, whose root need not be named "root".
+    var document: [String: Any]? {
+        rootId.flatMap { materialize($0, nodes: nodes) }
+    }
 
     func replace(with document: [String: Any]) {
         var replacement: [String: Node] = [:]
@@ -217,6 +225,7 @@ final class CraftNativeMutationDocument {
         if patch.keys.contains("events") { mergePatch(patch["events"], into: &node.events) }
         if patch.keys.contains("children") || patch.keys.contains("text") {
             node.text = try textChildren(patch["children"] ?? patch["text"])
+            node.textPositions = nil
         }
         nodes[id] = node
     }
@@ -422,9 +431,18 @@ final class CraftNativeMutationDocument {
             "events": node.events,
         ]
         if let key = node.key { value["key"] = key }
-        let text: [Any] = node.text
         let children: [Any] = node.children.compactMap { materialize($0, nodes: nodes) }
-        value["children"] = text + children
+        var content: [Any] = []
+        var textIndex = 0
+        for index in 0...children.count {
+            while textIndex < node.text.count,
+                  min(node.textPositions?[textIndex] ?? 0, children.count) == index {
+                content.append(node.text[textIndex])
+                textIndex += 1
+            }
+            if index < children.count { content.append(children[index]) }
+        }
+        value["children"] = content
         return value
     }
 
@@ -440,6 +458,12 @@ final class CraftNativeMutationDocument {
         var id = explicit ?? key.map { "\(parent ?? "root")/key:\($0)" } ?? preferredId
         if nodes[id] != nil { id = "\(preferredId)#\(nodes.count)" }
         let children = value["children"] as? [Any] ?? []
+        var textPositions: [Int] = []
+        var childCount = 0
+        for child in children {
+            if child is String { textPositions.append(childCount) }
+            else if child is [String: Any] { childCount += 1 }
+        }
         nodes[id] = Node(
             id: id,
             key: value["key"] as? String,
@@ -448,6 +472,7 @@ final class CraftNativeMutationDocument {
             style: dictionary(value["style"]),
             events: dictionary(value["events"]),
             text: children.compactMap { $0 as? String },
+            textPositions: textPositions,
             children: [],
             parent: parent
         )
