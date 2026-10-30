@@ -2338,6 +2338,13 @@ struct CraftWebView: UIViewRepresentable {
         private var isLocationRecordingPaused = false
         private var locationRecordingId: String?
         private var locationRecordingStartedAt: TimeInterval?
+        /// `startRecording({ powerMode: 'saver' })`: a long recording (an
+        /// ultra) that trades fixes nobody needs for battery. See
+        /// `applyLocationRecordingPower`.
+        private var locationRecordingPowerSaver = false
+        /// Recent fix speeds while saving power; steady ones relax the accuracy.
+        private var locationRecordingRecentSpeeds: [Double] = []
+        private var locationRecordingSteady = false
         private let recordingDirectory: URL?
         private var locationRecordingRestoreError: Error?
 
@@ -6913,9 +6920,13 @@ struct CraftWebView: UIViewRepresentable {
                 return
             }
             manager.delegate = self
-            manager.desiredAccuracy = body["enableHighAccuracy"] as? Bool == true
-                ? kCLLocationAccuracyBest
-                : kCLLocationAccuracyHundredMeters
+            // A recording in progress owns the shared manager's accuracy: a
+            // one-off fix must neither coarsen it nor undo its power saving.
+            if !(isRecordingLocation && !isLocationRecordingPaused) {
+                manager.desiredAccuracy = body["enableHighAccuracy"] as? Bool == true
+                    ? kCLLocationAccuracyBest
+                    : kCLLocationAccuracyHundredMeters
+            }
 
             if let pendingCallbackId = singleLocationCallbackId {
                 finishSingleLocationRequest()
@@ -6981,7 +6992,48 @@ struct CraftWebView: UIViewRepresentable {
             singleLocationCallbackId = nil
             singleLocationAcquisitionStarted = false
             singleLocationAuthorizationRequested = false
-            locationManager?.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager?.desiredAccuracy = recordingDesiredAccuracy
+        }
+
+        /// Fixes at least this far apart, metres, while saving power. A
+        /// filter of d metres spaces fixes d/v seconds apart at v m/s; the
+        /// route counts fixes more than 30 s apart as a pause, so d must stay
+        /// under 30 s at the slowest speed that still counts as moving (0.2
+        /// m/s on the server): 5 m is 25 s at 0.2 m/s.
+        static let powerSaverDistanceFilterM: CLLocationDistance = 5
+
+        /// Best, except while a power-saving recording holds a steady speed.
+        private var recordingDesiredAccuracy: CLLocationAccuracy {
+            locationRecordingPowerSaver && locationRecordingSteady ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyBest
+        }
+
+        /// The manager's filter and accuracy for the recording's power mode.
+        private func applyLocationRecordingPower() {
+            locationManager?.distanceFilter = locationRecordingPowerSaver && isRecordingLocation ? Self.powerSaverDistanceFilterM : kCLDistanceFilterNone
+            if singleLocationCallbackId == nil || (isRecordingLocation && !isLocationRecordingPaused) {
+                locationManager?.desiredAccuracy = recordingDesiredAccuracy
+            }
+        }
+
+        /// Steady: the last ten fixes within a fifth of their mean speed, at
+        /// least a slow walk, each accurate to 10 m. Anything else (a change
+        /// of pace, a weak signal) goes straight back to Best.
+        private func noteLocationRecordingSpeed(_ location: CLLocation) {
+            guard locationRecordingPowerSaver else { return }
+            let usable = location.speed >= 0 && location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 10
+            if usable {
+                locationRecordingRecentSpeeds.append(location.speed)
+                if locationRecordingRecentSpeeds.count > 10 { locationRecordingRecentSpeeds.removeFirst(locationRecordingRecentSpeeds.count - 10) }
+            } else if location.horizontalAccuracy > 20 || location.horizontalAccuracy < 0 {
+                locationRecordingRecentSpeeds.removeAll()
+            }
+            let speeds = locationRecordingRecentSpeeds
+            let mean = speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
+            let steady = speeds.count >= 10 && mean >= 0.8 && speeds.allSatisfy { abs($0 - mean) <= mean * 0.2 }
+            if steady != locationRecordingSteady {
+                locationRecordingSteady = steady
+                applyLocationRecordingPower()
+            }
         }
 
         private func locationData(_ location: CLLocation) -> [String: Any] {
@@ -7053,7 +7105,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func persistLocationRecordingState() throws {
-            let state: [String: Any] = ["active": isRecordingLocation, "paused": isLocationRecordingPaused, "id": locationRecordingId ?? NSNull(), "startedAt": locationRecordingStartedAt ?? NSNull()]
+            let state: [String: Any] = ["active": isRecordingLocation, "paused": isLocationRecordingPaused, "id": locationRecordingId ?? NSNull(), "startedAt": locationRecordingStartedAt ?? NSNull(), "powerMode": locationRecordingPowerSaver ? "saver" : "default"]
             try CraftRecordingArchive.writeAtomically(JSONSerialization.data(withJSONObject: state), locationRecordingStateURL)
         }
 
@@ -7074,6 +7126,7 @@ struct CraftWebView: UIViewRepresentable {
             isLocationRecordingPaused = state["paused"] as? Bool ?? false
             locationRecordingId = state["id"] as? String
             locationRecordingStartedAt = state["startedAt"] as? TimeInterval
+            locationRecordingPowerSaver = isRecordingLocation && state["powerMode"] as? String == "saver"
             if let id = locationRecordingId, try CraftRecordingArchive.isAcknowledged(recordingBaseDirectory, "location", id) {
                 try CraftRecordingArchive.acknowledge(recordingBaseDirectory, "location", id)
                 if FileManager.default.fileExists(atPath: locationRecordingTrackURL.path) { try FileManager.default.removeItem(at: locationRecordingTrackURL) }
@@ -7086,6 +7139,7 @@ struct CraftWebView: UIViewRepresentable {
             if isRecordingLocation && !isLocationRecordingPaused {
                 locationManager?.delegate = self
                 configureBackgroundLocationIfNeeded()
+                applyLocationRecordingPower()
                 locationManager?.startUpdatingLocation()
             }
 
@@ -7183,20 +7237,24 @@ struct CraftWebView: UIViewRepresentable {
                 rejectCallback(callbackId, error: "Unable to create the location recording", code: "RECORDING_STORAGE_ERROR")
                 return
             }
-            let previous = (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused)
+            let previous = (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerSaver)
             locationRecordingId = id
             locationRecordingStartedAt = Date().timeIntervalSince1970 * 1000
             isRecordingLocation = true
             isLocationRecordingPaused = false
+            locationRecordingPowerSaver = body["powerMode"] as? String == "saver"
+            locationRecordingRecentSpeeds.removeAll()
+            locationRecordingSteady = false
             do { try persistLocationRecordingState() }
             catch {
-                (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused) = previous
+                (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerSaver) = previous
                 rejectCallback(callbackId, error: "Unable to persist the location recording", code: "RECORDING_STORAGE_ERROR")
                 return
             }
             locationManager?.delegate = self
             requestLocationAuthorization()
             configureBackgroundLocationIfNeeded()
+            applyLocationRecordingPower()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: locationRecordingSummary())
 
@@ -7262,6 +7320,10 @@ struct CraftWebView: UIViewRepresentable {
                     locationManager?.stopUpdatingLocation()
                     locationManager?.allowsBackgroundLocationUpdates = false
                 }
+                locationRecordingPowerSaver = false
+                locationRecordingSteady = false
+                locationRecordingRecentSpeeds.removeAll()
+                applyLocationRecordingPower()
                 var summary = locationRecordingSummary()
                 summary["locations"] = locations
                 resolveCallback(callbackId, result: summary)
@@ -7375,7 +7437,17 @@ struct CraftWebView: UIViewRepresentable {
             }
 
             if isRecordingLocation, let id = locationRecordingId { data["recordingId"] = id }
+            // In the background Core Location can hand over several fixes at
+            // once: the recording keeps each of them, not just the newest, or
+            // the route would have holes a pause is made of.
+            for earlier in locations.dropLast() {
+                var sample = locationData(earlier)
+                if isRecordingLocation, let id = locationRecordingId { sample["recordingId"] = id }
+                appendRecordedLocation(sample)
+                noteLocationRecordingSpeed(earlier)
+            }
             appendRecordedLocation(data)
+            noteLocationRecordingSpeed(location)
             if isWatchingLocation || isRecordingLocation {
                 sendToWeb("craftLocationUpdate", data: data)
             }

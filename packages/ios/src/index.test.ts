@@ -2879,6 +2879,35 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(body.indexOf('content.userInfo = info')).toBeLessThan(body.indexOf('UNNotificationRequest(identifier: id, content: content'))
   })
 
+  it('saves power on a long recording without leaving gaps a pause is made of', async () => {
+    // An ultra: startRecording({ powerMode: 'saver' }) spaces fixes 5 m apart
+    // (under the route's 30 s pause gap at 0.2 m/s) and relaxes accuracy only
+    // while the pace is steady. A one-off fix must not undo either, and a
+    // batch of background fixes is recorded whole, not just its newest.
+    const output = createTempDir('craft-ios-location-saver-')
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: { enableGeolocation: true, enableBackgroundLocation: true } })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    expect(swift).toContain('static let powerSaverDistanceFilterM: CLLocationDistance = 5')
+    expect(swift).toContain('locationRecordingPowerSaver = body["powerMode"] as? String == "saver"')
+    // Kept with the recording, so a relaunch restores the same mode.
+    expect(swift).toContain('"powerMode": locationRecordingPowerSaver ? "saver" : "default"')
+    expect(swift).toContain('locationRecordingPowerSaver = isRecordingLocation && state["powerMode"] as? String == "saver"')
+
+    const finish = swift.slice(swift.indexOf('private func finishSingleLocationRequest() {'))
+    expect(finish.slice(0, finish.indexOf('\n        }\n'))).toContain('locationManager?.desiredAccuracy = recordingDesiredAccuracy')
+    const single = swift.slice(swift.indexOf('private func getCurrentPosition(body: [String: Any], callbackId: String?) {'))
+    expect(single.slice(0, single.indexOf('singleLocationCallbackId = callbackId'))).toContain('if !(isRecordingLocation && !isLocationRecordingPaused) {')
+
+    const update = swift.slice(swift.indexOf('didUpdateLocations locations: [CLLocation]) {'))
+    const body = update.slice(0, update.indexOf('\n        }\n'))
+    expect(body).toContain('for earlier in locations.dropLast() {')
+    expect(body.indexOf('for earlier in locations.dropLast()')).toBeLessThan(body.indexOf('appendRecordedLocation(data)'))
+
+    const stop = swift.slice(swift.indexOf('private func stopLocationRecording(callbackId: String?) {'))
+    expect(stop.slice(0, stop.indexOf('\n        }\n'))).toContain('locationRecordingPowerSaver = false')
+  })
+
   it('asks again when Core Location has no fix yet, rather than failing the caller', async () => {
     // #260: kCLErrorLocationUnknown rejected a getCurrentPosition whose fix
     // was seconds away. requestLocation gives up on it, so the one-shot asks

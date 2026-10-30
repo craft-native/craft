@@ -1021,6 +1021,19 @@ export interface RecordingStartOptions {
   recordingId?: string
 }
 
+/**
+ * How hard a route recording works the GPS. `'saver'` is for a long effort (an
+ * ultra): fixes come at least 5 m apart rather than every second, and while
+ * the pace holds steady iOS asks for ten-metre accuracy instead of the best it
+ * can do, going back to the best at once when the pace or the signal changes.
+ * Fixes stay under 30 s apart at any speed that counts as moving, so distance
+ * and moving time come out as they would at full rate. Android asks for the
+ * same spacing and batches delivery.
+ */
+export interface LocationRecordingPowerOptions {
+  powerMode?: 'default' | 'saver'
+}
+
 /** Fence a recording operation to the ID returned by start or explicit recovery. */
 export interface RecordingOwnershipOptions {
   expectedId: string
@@ -1247,7 +1260,7 @@ export const location = {
     navigator.geolocation.clearWatch(watchId)
   },
 
-  async startRecording(options: LocationOptions & RecordingStartOptions = {}): Promise<LocationRecordingState> {
+  async startRecording(options: LocationOptions & RecordingStartOptions & LocationRecordingPowerOptions = {}): Promise<LocationRecordingState> {
     validateRecordingStart('location', options)
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.location?.startRecording)

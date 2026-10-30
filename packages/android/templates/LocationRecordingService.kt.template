@@ -112,15 +112,18 @@ object CraftLocationRecordingStore {
     }
 
     @Synchronized
-    fun start(context: Context, id: String, startedAt: Long) {
+    fun start(context: Context, id: String, startedAt: Long, powerSaver: Boolean = false) {
         recover(context)
         if (isActive(context)) throw CraftRecordingException("RECORDING_ALREADY_ACTIVE", "A location recording is already active")
         if (id == recordingId(context) || archive(context, id).exists() || acknowledged(context, id))
             throw CraftRecordingException("RECORDING_CONFLICT", "Recording IDs cannot be reused")
         archiveCompleted(context)
         file(context).writeText("")
-        edit(context) { it.putString("id", id).putBoolean("active", true).putBoolean("paused", false).putLong("startedAt", startedAt) }
+        edit(context) { it.putString("id", id).putBoolean("active", true).putBoolean("paused", false).putLong("startedAt", startedAt).putBoolean("powerSaver", powerSaver) }
     }
+
+    /** `startRecording({ powerMode: 'saver' })`: a long recording that spaces its fixes out. */
+    @Synchronized fun isPowerSaver(context: Context) = prefs(context).getBoolean("powerSaver", false)
 
     @Synchronized
     fun updatePause(context: Context, paused: Boolean, options: JSONObject?): JSONObject {
@@ -175,7 +178,7 @@ object CraftLocationRecordingStore {
                         if (requested !is String || requested.isBlank()) throw CraftRecordingException("INVALID_ARGUMENT", "recordingId must be a nonempty recording ID")
                         requested
                     } else java.util.UUID.randomUUID().toString()
-                    start(context, id, System.currentTimeMillis())
+                    start(context, id, System.currentTimeMillis(), options.optString("powerMode") == "saver")
                     try { ContextCompat.startForegroundService(context, Intent(context, LocationRecordingService::class.java).setAction(LocationRecordingService.ACTION_START).putExtra("recordingId", id)) }
                     catch (error: Exception) { finish(context, JSONObject().put("expectedId", id)); throw error }
                     state(context)
@@ -347,9 +350,15 @@ class LocationRecordingService : Service() {
             runCatching { CraftLocationRecordingStore.finish(this, JSONObject().put("expectedId", id)) }
             return false
         }
+        // Saving power (an ultra): fixes at least 5 m apart and delivered in
+        // batches of up to 20 s, each keeping its own time. 5 m stays under
+        // the route's 30 s pause gap at any speed that counts as moving
+        // (0.2 m/s), so distance and moving time come out as at full rate.
+        val saver = CraftLocationRecordingStore.isPowerSaver(this)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000)
             .setMinUpdateIntervalMillis(2_000)
-            .setMaxUpdateDelayMillis(10_000)
+            .setMaxUpdateDelayMillis(if (saver) 20_000 else 10_000)
+            .apply { if (saver) setMinUpdateDistanceMeters(5f) }
             .build()
         val nextCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
