@@ -1817,3 +1817,20 @@ Wi-Fi-only media downloads wait when the browser cannot identify its network;
 applications may let the account explicitly allow other networks. Website
 updates replace the browser bundle; installed native bundles still require an
 app release.
+
+### Pointer targeting on native screens
+
+The iOS host accepts `pointerEvents` on a node's props or style. A non-null
+prop wins over style; clearing the prop falls back to style, and clearing both
+restores `auto`. An invalid value uses `auto`.
+
+- `auto` keeps native hit testing, including hidden and disabled controls.
+- `none` excludes the node and its descendants, allowing a sibling behind it to receive the touch.
+- `box-none` allows authored descendants to receive touches but passes through empty space in the node.
+- `box-only` targets the node rather than its authored descendants.
+
+These boundaries are STX nodes, not a platform control's private subviews: a
+picker's wheels and a text field's editing views still belong to that control.
+Policy changes retain the native views and do not change `disabled`, visibility,
+scroll enablement, or gesture recognizers. Overflow and clipping retain their
+normal rules. Pointer targeting does not disable keyboard or accessibility actions.

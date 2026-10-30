@@ -4915,3 +4915,151 @@ final class NativeTypingEventTests: XCTestCase {
         XCTAssertEqual(input.text, "Reset")
     }
 }
+
+@MainActor
+final class NativePointerEventsUnitTests: XCTestCase {
+    private func find(_ id: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == id { return view }
+        return view.subviews.lazy.compactMap { self.find(id, in: $0) }.first
+    }
+
+    private func node(_ type: String, _ id: String, props: [String: Any] = [:], style: [String: Any] = [:], children: [[String: Any]] = []) -> [String: Any] {
+        var props = props
+        props["testID"] = id
+        return ["id": id, "type": type, "props": props, "style": style, "children": children, "events": ["onPress": id]]
+    }
+
+    private func fixture(_ overlay: [String: Any]) -> CraftNativeScreenController {
+        let host = CraftNativeScreenController(config: CraftConfig())
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
+        host.evaluateScript("globalThis.__press = ''; globalThis.__stxNativeCallback = function(json) { const message = JSON.parse(json); if (message.type === 'EVENT') __press = message.payload.handlerName; };")
+        host.render(node("View", "root", style: ["width": 320, "height": 400], children: [
+            node("Button", "under", props: ["title": "Under"], style: ["position": "absolute", "width": 300, "height": 300]), overlay,
+        ]))
+        host.view.layoutIfNeeded()
+        return host
+    }
+
+    private func overlay(_ type: String = "View", props: [String: Any] = [:], style: [String: Any] = [:]) -> [String: Any] {
+        var layout: [String: Any] = ["position": "absolute", "width": 200, "height": 180]
+        layout.merge(style) { _, new in new }
+        return node(type, "overlay", props: props, style: layout, children: [node("Button", "child", props: ["title": "Child"], style: ["width": 80, "height": 44])])
+    }
+
+    private func hit(_ host: CraftNativeScreenController, _ view: UIView, _ point: CGPoint) -> UIView? {
+        host.view.hitTest(view.convert(point, to: host.view), with: nil)
+    }
+
+    private func patch(_ host: CraftNativeScreenController, revision: Int, id: String = "overlay", _ patch: [String: Any]) throws {
+        _ = try host.applyMutation(["version": 1, "batchId": "pointer-\(revision)", "baseRevision": revision - 1, "revision": revision,
+                                   "operations": [["op": "updateNode", "id": id, "patch": patch]]])
+        host.view.layoutIfNeeded()
+    }
+
+    func testOverlayModesTargetSiblingsChildrenAndOwnBoxAndDispatchTheChosenAction() throws {
+        for mode in ["auto", "none", "box-none", "box-only"] {
+            let host = fixture(overlay(props: ["pointerEvents": mode]))
+            let overlay = try XCTUnwrap(find("overlay", in: host.view))
+            let child = try XCTUnwrap(find("child", in: host.view))
+            let under = try XCTUnwrap(find("under", in: host.view))
+            let target = hit(host, child, CGPoint(x: 20, y: 20))
+            XCTAssertTrue(target === (mode == "none" ? under : mode == "box-only" ? overlay : child), mode)
+            XCTAssertTrue(hit(host, overlay, CGPoint(x: 150, y: 120)) === (["none", "box-none"].contains(mode) ? under : overlay), mode)
+            (target as? UIButton)?.sendActions(for: .touchUpInside)
+            XCTAssertEqual(host.evaluateScript("__press")?.toString(), mode == "box-only" ? "" : mode == "none" ? "under" : "child")
+        }
+    }
+
+    func testPropOverridesStyleAndReactiveClearingRetainsControlAndDisabledState() throws {
+        let host = fixture(overlay(props: ["pointerEvents": "auto"], style: ["pointerEvents": "none"]))
+        let child = try XCTUnwrap(find("child", in: host.view) as? UIButton)
+        let under = try XCTUnwrap(find("under", in: host.view))
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === child)
+        try patch(host, revision: 1, ["props": ["pointerEvents": NSNull()]])
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === under)
+        try patch(host, revision: 2, ["style": ["pointerEvents": NSNull()]])
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === child)
+        XCTAssertTrue(find("child", in: host.view) === child)
+        try patch(host, revision: 3, id: "child", ["props": ["disabled": true]])
+        for (index, mode) in ["none", "box-none", "box-only", "auto"].enumerated() {
+            try patch(host, revision: index + 4, ["props": ["pointerEvents": mode]])
+            XCTAssertFalse(child.isEnabled, "pointer policy must not enable a disabled control")
+        }
+        XCTAssertTrue(child.isUserInteractionEnabled)
+        child.isHidden = true
+        XCTAssertFalse(hit(host, child, CGPoint(x: 20, y: 20)) === child)
+    }
+
+    func testLeafModesKeepNativeControlInternalsAndRestoreOrdinaryHitTesting() throws {
+        for type in ["Button", "TextInput", "Switch", "Slider", "Picker", "DatePicker", "SegmentedControl", "Checkbox", "Image", "Text", "Icon", "ActivityIndicator", "Svg"] {
+            let host = fixture(node(type, "overlay", props: ["title": "Action", "options": ["A", "B"]], style: ["position": "absolute", "width": 150, "height": 100]))
+            let leaf = try XCTUnwrap(find("overlay", in: host.view))
+            let under = try XCTUnwrap(find("under", in: host.view))
+            let point = CGPoint(x: 20, y: 20)
+            let initial = hit(host, leaf, point)
+            let enabled = leaf.isUserInteractionEnabled
+            for (index, mode) in ["none", "box-none", "box-only", "auto"].enumerated() {
+                try patch(host, revision: index + 1, ["props": ["pointerEvents": mode]])
+                let result = hit(host, leaf, point)
+                if mode == "none" || mode == "box-none" { XCTAssertTrue(result === under, type + mode) }
+                if mode == "auto" { XCTAssertTrue(result === initial, type) }
+                if mode == "box-only", enabled { XCTAssertTrue(result === leaf || result?.isDescendant(of: leaf) == true, type) }
+                XCTAssertEqual(leaf.isUserInteractionEnabled, enabled, type)
+            }
+        }
+    }
+
+    func testOverflowClippingAndSiblingOrderRemainNative() throws {
+        let host = fixture(overlay(props: ["pointerEvents": "box-none"]))
+        let overlay = try XCTUnwrap(find("overlay", in: host.view))
+        let child = try XCTUnwrap(find("child", in: host.view))
+        let under = try XCTUnwrap(find("under", in: host.view))
+        // A real overflowing child outside a zero-height wrapper remains reachable.
+        overlay.frame.size.height = 0
+        child.frame = CGRect(x: 10, y: 20, width: 80, height: 44)
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === child)
+        overlay.clipsToBounds = true
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === under)
+        overlay.clipsToBounds = false
+        overlay.superview?.bringSubviewToFront(under)
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === under)
+    }
+
+    func testScrollAndListBoundariesDoNotConfuseInternalContainersWithAuthoredChildren() throws {
+        for type in ["ScrollView", "FlatList"] {
+            let host = fixture(overlay(type))
+            let scroll = try XCTUnwrap(find("overlay", in: host.view) as? UIScrollView)
+            let child = try XCTUnwrap(find("child", in: host.view))
+            let under = try XCTUnwrap(find("under", in: host.view))
+            let gesture = scroll.panGestureRecognizer
+            for (index, mode) in ["box-none", "none", "box-only", "auto"].enumerated() {
+                try patch(host, revision: index + 1, ["props": ["pointerEvents": mode]])
+                let target = hit(host, child, CGPoint(x: 20, y: 20))
+                XCTAssertTrue(target === (mode == "none" ? under : mode == "box-only" ? scroll : child), type + mode)
+                if mode == "box-none" { XCTAssertTrue(hit(host, scroll, CGPoint(x: 150, y: 140)) === under, type) }
+                XCTAssertTrue(scroll.panGestureRecognizer === gesture)
+                XCTAssertTrue(scroll.isScrollEnabled)
+            }
+        }
+    }
+    func testModalShieldRemainsUnlessTheAuthorExplicitlyPassesThrough() throws {
+        let host = fixture(node("Modal", "overlay", props: ["visible": true, "animationType": "none"], children: [
+            node("Button", "child", props: ["title": "Modal action"], style: ["width": 80, "height": 44]),
+        ]))
+        let modal = try XCTUnwrap(find("overlay", in: host.view))
+        let child = try XCTUnwrap(find("child", in: host.view))
+        let under = try XCTUnwrap(find("under", in: host.view))
+        let blank = CGPoint(x: 150, y: 140)
+        XCTAssertFalse(hit(host, under, blank) === under)
+        try patch(host, revision: 1, ["props": ["pointerEvents": "box-none"]])
+        XCTAssertTrue(hit(host, under, blank) === under)
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === child)
+        try patch(host, revision: 2, ["props": ["pointerEvents": "none"]])
+        XCTAssertTrue(hit(host, child, CGPoint(x: 20, y: 20)) === under)
+        try patch(host, revision: 3, ["props": ["pointerEvents": NSNull()]])
+        XCTAssertFalse(hit(host, under, blank) === under)
+        XCTAssertTrue(modal === find("overlay", in: host.view))
+    }
+
+}

@@ -1108,6 +1108,10 @@ private func craftNativeAlignContentCode(_ value: String) -> UInt32 {
 
 /// Keep the indicator's intrinsic size separate from authored style transforms.
 private final class CraftNativeActivityIndicatorView: UIActivityIndicatorView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var indicatorScale: CGFloat = 1
 }
 
@@ -1122,6 +1126,10 @@ private final class CraftNativeActivityIndicatorView: UIActivityIndicatorView {
 /// `enableBackgroundAudio` writes), and comes back into its place when the
 /// app does.
 private final class CraftNativeVideoView: UIView, AVPlayerViewControllerDelegate {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     private let playerController = AVPlayerViewController()
     private var player: AVPlayer?
     private var sourceURI = ""
@@ -1454,6 +1462,10 @@ private final class CraftMarkerPhotoRedirects: NSObject, URLSessionTaskDelegate 
 }
 
 private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     private var annotationsByID: [String: MKPointAnnotation] = [:]
     private var overlaysByID: [String: MKPolyline] = [:]
     private var overlayCoordinatesByID: [String: [CLLocationCoordinate2D]] = [:]
@@ -2394,6 +2406,46 @@ private final class CraftNativeLayoutStyleBox {
     init(_ style: CraftNativeLayoutStyle) { self.style = style }
 }
 
+/// Pointer policy applies to authored nodes, not UIKit's private control views.
+enum CraftNativePointerEvents: String {
+    case auto, none
+    case boxNone = "box-none"
+    case boxOnly = "box-only"
+
+    static func resolve(props: [String: Any], style: [String: Any]) -> Self {
+        let prop = props["pointerEvents"]
+        let value = prop == nil || prop is NSNull ? style["pointerEvents"] : prop
+        return (value as? String).flatMap(Self.init(rawValue:)) ?? .auto
+    }
+}
+
+private var craftNativePointerEventsKey: UInt8 = 0
+
+extension UIView {
+    // nil identifies an internal view; even authored `auto` nodes are marked.
+    var craftPointerEvents: CraftNativePointerEvents? {
+        get { (objc_getAssociatedObject(self, &craftNativePointerEventsKey) as? String).flatMap(CraftNativePointerEvents.init(rawValue:)) }
+        set { objc_setAssociatedObject(self, &craftNativePointerEventsKey, newValue?.rawValue, .OBJC_ASSOCIATION_COPY_NONATOMIC) }
+    }
+
+    func craftPointerHitTest(_ point: CGPoint, with event: UIEvent?, native: () -> UIView?) -> UIView? {
+        guard let policy = craftPointerEvents, policy != .auto else { return native() }
+        guard policy != .none, !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
+        if policy == .boxOnly && !self.point(inside: point, with: event) { return nil }
+        let hit = native()
+        var candidate = hit
+        var authoredChild = false
+        while let view = candidate, view !== self {
+            if view.craftPointerEvents != nil { authoredChild = true; break }
+            candidate = view.superview
+        }
+        if policy == .boxNone { return authoredChild ? hit : nil }
+        // Preserve private controls (picker wheels, text selection, map gestures),
+        // while excluding authored descendants of a box-only container.
+        return authoredChild ? self : hit ?? self
+    }
+}
+
 private var craftNativeLayoutStyleKey: UInt8 = 0
 private var craftNativeCornerRadiusKey: UInt8 = 0
 private var craftNativeCornerRadiiKey: UInt8 = 0
@@ -3021,12 +3073,14 @@ private class CraftNativeFlowView: UIStackView {
     /// is inside the view, so a floating button absolutely positioned out of a
     /// zero-height parent (a component's wrapper) drew but could not be tapped.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if let hit = super.hitTest(point, with: event) { return hit }
-        guard !clipsToBounds, !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
-        for child in subviews.reversed() where !child.isHidden && child.alpha > 0.01 && child.isUserInteractionEnabled {
-            if let hit = child.hitTest(child.convert(point, from: self), with: event) { return hit }
+        return craftPointerHitTest(point, with: event) {
+            if let hit = super.hitTest(point, with: event) { return hit }
+            guard !clipsToBounds, !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
+            for child in subviews.reversed() where !child.isHidden && child.alpha > 0.01 && child.isUserInteractionEnabled {
+                if let hit = child.hitTest(child.convert(point, from: self), with: event) { return hit }
+            }
+            return nil
         }
-        return nil
     }
 
     // MARK: Children
@@ -4104,6 +4158,10 @@ private final class CraftNativeKeyboardAvoidingView: CraftNativeFlowView {
 /// children so `ImageBackground` keeps the same layout and interaction
 /// semantics as a `View` while using the shared image loader.
 private final class CraftNativeImageBackgroundView: UIImageView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     let contentStack = CraftNativeFlowView()
 
     override init(frame: CGRect) {
@@ -4142,6 +4200,10 @@ private final class CraftNativeSegmentElement: UIAccessibilityElement {
 }
 
 private final class CraftNativeSegmentedControl: UISegmentedControl {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var values: [String] = []
     private var segments: [CraftNativeSegmentElement] = []
     override var accessibilityElements: [Any]? {
@@ -4391,28 +4453,30 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
-        let contentPoint = contentStack.convert(point, from: self)
-        if contentStack.bounds.contains(contentPoint), let hit = contentStack.hitTest(contentPoint, with: event), hit !== contentStack {
-            // Flow/layout views occupy the modal's entire content rect, but a
-            // blank part of one must still be a scrim tap. Preserve touches
-            // only when the hit view (or one of its ancestors) actually owns
-            // a control or gesture recognizer.
-            var candidate: UIView? = hit
-            while let view = candidate, view !== contentStack {
-                if view is UIControl || !(view.gestureRecognizers?.isEmpty ?? true) { return hit }
-                candidate = view.superview
+        return craftPointerHitTest(point, with: event) {
+            guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
+            let contentPoint = contentStack.convert(point, from: self)
+            if contentStack.bounds.contains(contentPoint), let hit = contentStack.hitTest(contentPoint, with: event), hit !== contentStack {
+                // Flow/layout views occupy the modal's entire content rect, but a
+                // blank part of one must still be a scrim tap. Preserve touches
+                // only when the hit view (or one of its ancestors) actually owns
+                // a control or gesture recognizer.
+                var candidate: UIView? = hit
+                while let view = candidate, view !== contentStack {
+                    if view is UIControl || !(view.gestureRecognizers?.isEmpty ?? true) { return hit }
+                    candidate = view.superview
+                }
             }
+            if !blocksBackground {
+                // A dismissible popup consumes its outside hit so the close event
+                // cannot also activate the screen below. Otherwise it owns the
+                // hit only when a blocking modal is underneath it; with no modal
+                // below, the screen remains pass-through.
+                if dismissOnOutsideTap { return self }
+                return craftScreenController?.hasBlockingModalBelow(self) == true ? self : nil
+            }
+            return blocker.hitTest(blocker.convert(point, from: self), with: event)
         }
-        if !blocksBackground {
-            // A dismissible popup consumes its outside hit so the close event
-            // cannot also activate the screen below. Otherwise it owns the
-            // hit only when a blocking modal is underneath it; with no modal
-            // below, the screen remains pass-through.
-            if dismissOnOutsideTap { return self }
-            return craftScreenController?.hasBlockingModalBelow(self) == true ? self : nil
-        }
-        return blocker.hitTest(blocker.convert(point, from: self), with: event)
     }
 
     override func layoutSubviews() {
@@ -4513,6 +4577,10 @@ func craftHandleKeyboardTap(in container: UIView, hit: UIView?, persistTaps: Str
 }
 
 private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDelegate {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     let contentStack = CraftNativeFlowView()
     private let keyboardTapGesture = UITapGestureRecognizer()
     private var keyboardShouldPersistTaps = "never"
@@ -4877,6 +4945,10 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 /// inherited down the tree as SVG does; `dark:` classes arrive already
 /// resolved for the appearance, so a redraw is all a theme change needs.
 final class CraftNativeSvgView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var drawing: [String: Any] = [:] {
         didSet {
             animates = Self.hasAnimation(drawing["children"] as? [Any] ?? [])
@@ -5282,6 +5354,10 @@ private final class CraftNativeGradientLayer: CAGradientLayer {
 /// pill with its label touching the edges. The padding is added to its size
 /// and the label laid out inside it, at the alignment the style asked for.
 private final class CraftNativeButton: UIButton {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var padding: UIEdgeInsets = .zero {
         didSet {
             guard padding != oldValue else { return }
@@ -5323,6 +5399,10 @@ private final class CraftNativeButton: UIButton {
 /// Opt-in solid switch. Draws only public UIControl content; it neither walks
 /// UISwitch's private views nor changes UIKit animations elsewhere in the app.
 final class CraftNativeSolidSwitch: UIControl {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     private(set) var isOn = false
     var onColor: UIColor? { didSet { setNeedsDisplay() } }
     var offColor: UIColor? { didSet { setNeedsDisplay() } }
@@ -5433,10 +5513,18 @@ final class CraftNativeSolidSwitch: UIControl {
 /// square/checkmark symbols while keeping the control's title and accessibility
 /// state native and keyboard/touch reachable.
 private final class CraftNativeCheckboxButton: UIButton {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var indeterminate = false
 }
 
 private final class CraftNativeLabel: UILabel {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var insets = UIEdgeInsets.zero {
         didSet {
             guard insets != oldValue else { return }
@@ -5470,6 +5558,10 @@ private final class CraftNativeLabel: UILabel {
 /// selection. UILabel has no selection model; UITextView supplies UIKit's
 /// standard loupe, menu and copy behavior while remaining a plain text leaf.
 private final class CraftNativeSelectableTextView: UITextView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     convenience init() {
         self.init(frame: .zero, textContainer: nil)
     }
@@ -5498,6 +5590,10 @@ private final class CraftNativeSelectableTextView: UITextView {
 /// A one-line TextInput. Its style's padding is where the text and the
 /// placeholder start, as in a web input; UITextField has no padding of its own.
 final class CraftNativeTextField: UITextField {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var padding = UIEdgeInsets.zero {
         didSet {
             guard padding != oldValue else { return }
@@ -5529,6 +5625,10 @@ private final class CraftNativeFlexSpacer: UIView {}
 /// An SF Symbol leaf. Its natural size is the symbol's, or a 20 pt square
 /// when the style gives it no size at all.
 private final class CraftNativeIconView: UIImageView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     var defaultBox: CGFloat? { didSet { if defaultBox != oldValue { invalidateIntrinsicContentSize() } } }
 
     /// An icon says only what the screen labels it. iOS gives a symbol image
@@ -5554,6 +5654,10 @@ private final class CraftNativeIconView: UIImageView {
 }
 
 private final class CraftNativeTextView: UITextView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     private let placeholderLabel = UILabel()
     private var nativeTextContainerInset: UIEdgeInsets?
     private var nativeLineFragmentPadding: CGFloat?
@@ -5869,6 +5973,41 @@ enum CraftNativeBundle {
     }
 }
 
+private final class CraftNativePickerView: UIPickerView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+}
+
+private final class CraftNativeDatePickerView: UIDatePicker {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+}
+
+private final class CraftNativeSwitch: UISwitch {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+}
+
+private final class CraftNativeSlider: UISlider {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+}
+
+private final class CraftNativeImageView: UIImageView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+}
+
 private final class CraftNativeScreenRootView: UIView {
     weak var controller: CraftNativeScreenController?
 
@@ -5879,7 +6018,8 @@ private final class CraftNativeScreenRootView: UIView {
         // overlays remain pass-through.
         if let controller {
             for modal in controller.view.subviews.compactMap({ $0 as? CraftNativeModalView }).reversed()
-                where !modal.blocksBackground && !modal.isHidden && modal.alpha > 0.01 {
+                where !modal.blocksBackground && !modal.isHidden && modal.alpha > 0.01
+                    && modal.craftPointerEvents != CraftNativePointerEvents.none && modal.craftPointerEvents != .boxNone {
                 let local = modal.convert(point, from: self)
                 if !modal.bounds.contains(local) && (modal.dismissOnOutsideTap || controller.hasBlockingModalBelow(modal)) { return modal }
             }
@@ -6469,6 +6609,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return view.subviews[..<index].contains { candidate in
             guard let other = candidate as? CraftNativeModalView else { return false }
             return other.blocksBackground && !other.isHidden && other.alpha > 0.01
+                && other.craftPointerEvents != CraftNativePointerEvents.none && other.craftPointerEvents != .boxNone
         }
     }
 
@@ -9140,6 +9281,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             )
             if disabled { result.isUserInteractionEnabled = false }
         }
+        result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)
         applyAccessibility(props, type: type, to: result)
         (result as? CraftNativeFlowView)?.configureCelebration(props["celebration"])
         return current
@@ -9186,12 +9328,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             control.addTarget(self, action: #selector(segmentChanged(_:)), for: .valueChanged)
             return control
         case "Picker":
-            let picker = UIPickerView()
+            let picker = CraftNativePickerView()
             picker.dataSource = self
             picker.delegate = self
             return picker
         case "DatePicker":
-            let picker = UIDatePicker()
+            let picker = CraftNativeDatePickerView()
             picker.preferredDatePickerStyle = .compact
             picker.addTarget(self, action: #selector(datePicked(_:)), for: .valueChanged)
             return picker
@@ -9203,11 +9345,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 toggle.addTarget(self, action: #selector(solidSwitchChanged(_:)), for: .valueChanged)
                 return toggle
             }
-            let toggle = UISwitch()
+            let toggle = CraftNativeSwitch()
             toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
             return toggle
         case "Slider":
-            let slider = UISlider()
+            let slider = CraftNativeSlider()
             slider.addTarget(self, action: #selector(sliderChanged(_:)), for: .valueChanged)
             slider.addTarget(self, action: #selector(sliderFinished(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
             return slider
@@ -9216,7 +9358,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "StatusBar", "RefreshControl":
             return CraftNativeFlowView()
         case "Image":
-            return UIImageView()
+            return CraftNativeImageView()
         case "ImageBackground":
             return CraftNativeImageBackgroundView(frame: .zero)
         case "KeyboardAvoidingView":

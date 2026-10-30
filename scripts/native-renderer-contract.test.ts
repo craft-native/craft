@@ -273,7 +273,7 @@ describe('native renderer component contract', () => {
   it('keeps the solid switch opt-in and retains simulator regression coverage', () => {
     expect(componentTypes).toContain('ios_solid?: boolean')
     expect(ios).toContain('if props["ios_solid"] as? Bool == true')
-    expect(ios).toContain('let toggle = UISwitch()')
+    expect(ios).toContain('let toggle = CraftNativeSwitch()')
     expect(guide).toContain('Android ignores this iOS-only option')
     expect(iosNativeUnitTests).toContain('testOptInIsStrictAndStyleChangesPreserveControlledValue')
     expect(iosNativeUnitTests).toContain('testThumbIsOpaqueThroughoutDragAndCancellingRestoresStateInBothDirections')
@@ -1769,11 +1769,14 @@ describe('native renderer component contract', () => {
     expect(android).not.toContain('android_ripple')
   })
 
-  it('does not advertise unsupported pointer-event routing', () => {
+  it('wires iOS pointer targeting into semantic boundaries and native regression tests', () => {
     const viewProps = componentTypes.match(/export interface ViewProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(viewProps).toContain('onLayout?: (event: LayoutEvent) => void')
     expect(viewProps).not.toContain('pointerEvents?:')
-    expect(ios).not.toContain('pointerEvents')
+    expect(ios).toContain('result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)')
+    expect(iosFlatList).toContain('craftPointerHitTest(point, with: event)')
+    expect(iosNativeUnitTests).toContain('testOverlayModesTargetSiblingsChildrenAndOwnBoxAndDispatchTheChosenAction')
+    expect(iosNativeUnitTests).toContain('testModalShieldRemainsUnlessTheAuthorExplicitlyPassesThrough')
     expect(android).not.toContain('pointerEvents')
   })
 

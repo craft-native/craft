@@ -42,6 +42,10 @@ private final class CraftNativeFlatListLayout: UICollectionViewFlowLayout {
 /// The screen controller owns rendered row state; this view owns collection
 /// diffs, viewport state, and UICollectionView cell reuse.
 final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
     typealias RenderItem = (_ node: [String: Any], _ identity: String, _ previous: UIView?) -> UIView
 
     private final class Cell: UICollectionViewCell {
