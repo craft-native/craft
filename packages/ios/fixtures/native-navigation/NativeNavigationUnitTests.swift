@@ -463,6 +463,28 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertTrue(betaInput.isFirstResponder, "reordering replaced the focused native input")
     }
 
+    func testCommittedSwipeKeepsTheSystemTabSelectionAnimated() async throws {
+        guard !UIAccessibility.isReduceMotionEnabled else { throw XCTSkip("Reduce Motion disables selection animation") }
+        await displayWait("adjacent native tab prepared") { self.stack("/details") != nil }
+        func image() -> Data? {
+            UIGraphicsImageRenderer(bounds: shell.tabBar.bounds).image { _ in
+                shell.tabBar.drawHierarchy(in: shell.tabBar.bounds, afterScreenUpdates: false)
+            }.pngData()
+        }
+        let before = try XCTUnwrap(image())
+        func animating(_ layer: CALayer) -> Bool {
+            !(layer.animationKeys() ?? []).isEmpty || (layer.sublayers ?? []).contains(where: animating)
+        }
+        drag(-200)
+        drag(-200, phase: .ended)
+        await displayWait("system selection committed") { self.shell.selectedViewController === self.stack("/details") }
+        XCTAssertTrue(animating(shell.tabBar.layer), "selection must animate instead of snapping after the page settles")
+        await settle()
+        let after = try XCTUnwrap(image())
+        XCTAssertNotEqual(before, after, "the system bar must reflect the committed tab")
+        XCTAssertTrue(shell.selectedViewController === stack("/details"))
+    }
+
     func testIdlePreparationKeepsSelectionAndCurrentStackIntact() async throws {
         let home = try XCTUnwrap(stack("/"))
         let root = home.topViewController

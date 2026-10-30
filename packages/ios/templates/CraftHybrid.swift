@@ -1268,9 +1268,14 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             item.accessibilityLabel = tab.accessibilityLabel ?? tab.displayTitle
         }
         if let committed = stacks[currentTab], controllers.contains(where: { $0 === committed }), selectedViewController !== committed {
-            UIView.performWithoutAnimation {
-                selectedViewController = committed
-                view.layoutIfNeeded()
+            // UIKit owns the Liquid Glass selection pill. Suppressing this
+            // transaction made a completed page swipe snap its indicator.
+            // Keep native selection animation and honour Reduce Motion.
+            let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.22
+            UIView.animate(withDuration: duration, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.selectedViewController = committed
+                self.tabBar.layoutIfNeeded()
             }
         }
         tabBar.tintColor = chrome.tint ?? config.tintColor.flatMap { UIColor(hex: $0) } ?? view.tintColor
