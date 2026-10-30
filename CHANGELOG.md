@@ -1,5 +1,30 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.395...v0.0.396)
+
+## 🚀 Features
+
+- **android**: honor explicit native image fit and position ([4202419](https://github.com/craft-native/craft/commit/4202419)) _(by glennmichael123)_
+- **types**: expose native image fit and position contracts ([b5c1438](https://github.com/craft-native/craft/commit/b5c1438)) _(by glennmichael123)_
+- **ios**: add explicit image fit and positioning ([cb95ae0](https://github.com/craft-native/craft/commit/cb95ae0)) _(by glennmichael123)_
+- **types**: expose native pointer policies on shared props and styles ([4a91668](https://github.com/craft-native/craft/commit/4a91668)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **android**: apply pointer policies to both native map adapters ([3303f52](https://github.com/craft-native/craft/commit/3303f52)) _(by glennmichael123)_
+- **android**: route native pointer policies without disabling controls ([0610709](https://github.com/craft-native/craft/commit/0610709)) _(by glennmichael123)_
+- **ios**: honor pointer targeting at native component boundaries ([5acda37](https://github.com/craft-native/craft/commit/5acda37)) _(by glennmichael123)_
+- **ios**: render committed identities from the first frame ([cd191ea](https://github.com/craft-native/craft/commit/cd191ea)) _(by glennmichael123)_
+- **ios**: restore soft separation behind floating navigation ([baf99c8](https://github.com/craft-native/craft/commit/baf99c8)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **mobile**: align builder contracts with native subclasses ([6d942b5](https://github.com/craft-native/craft/commit/6d942b5)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.394...v0.0.395)
 
 ## 🚀 Features
