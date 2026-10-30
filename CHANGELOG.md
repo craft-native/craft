@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.393...v0.0.394)
+
+## 🐛 Bug Fixes
+
+- **release**: pin Zig publisher with registry upload diagnostics ([21a1517](https://github.com/craft-native/craft/commit/21a1517)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.392...v0.0.393)
 
 ## 🐛 Bug Fixes
