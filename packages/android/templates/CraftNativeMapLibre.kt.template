@@ -1,5 +1,8 @@
 /** A key-free native Android map. STX geometry never enters a WebView. */
 internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMapReadyCallback {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     private val mapView: MapView
     private var map: MapLibreMap? = null
     private var destroyed = false

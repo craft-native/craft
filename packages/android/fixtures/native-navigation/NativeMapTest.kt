@@ -463,4 +463,41 @@ class NativeMapTest {
         assertEquals("Rendering a map must not open a permission dialog", activity.packageName, instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString())
         evidence("map-location-permission-not-requested")
     }
+    @Test fun pointerModesTreatMapImplementationViewsAsOneLeafControl() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var host: android.widget.FrameLayout
+        lateinit var map: CraftNativeMapView
+        var last = ""
+        try {
+            scenario.onActivity { activity ->
+                host = android.widget.FrameLayout(activity)
+                val under = android.widget.Button(activity).apply { stateListAnimator = null; elevation = 0f; setOnClickListener { last = "under" } }
+                host.addView(under, ViewGroup.LayoutParams(200, 200))
+                map = CraftNativeMapView(activity)
+                // An unmarked native implementation view belongs to the Map;
+                // it is not an authored STX descendant for box-only targeting.
+                map.addView(View(activity).apply { setOnClickListener { last = "map" } }, ViewGroup.LayoutParams(200, 200))
+                host.addView(map, ViewGroup.LayoutParams(200, 200))
+                activity.setContentView(host)
+            }
+            instrumentation.waitForIdleSync()
+            for (mode in listOf("none", "box-none", "box-only", "auto")) {
+                scenario.onActivity {
+                    CraftNativePointers.configure(map, JSONObject().put("pointerEvents", mode), JSONObject(), false)
+                    last = ""
+                    val now = SystemClock.uptimeMillis()
+                    for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                        val event = android.view.MotionEvent.obtain(now, now + 50, action, 50f, 50f, 0)
+                        try { host.dispatchTouchEvent(event) } finally { event.recycle() }
+                    }
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { assertEquals(mode, if (mode == "none" || mode == "box-none") "under" else "map", last) }
+            }
+        } finally {
+            scenario.onActivity { map.destroy() }
+            scenario.close()
+        }
+    }
+
 }

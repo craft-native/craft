@@ -1,5 +1,8 @@
 /** The Android host for the small, host-neutral native trail map contract. */
 private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMapReadyCallback {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean =
+        CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
+
     private data class PolygonValue(val points: List<LatLng>, val fillColor: Int, val strokeColor: Int, val strokeWidth: Float)
     private val mapView = MapView(context)
     private val scaleView = LinearLayout(context).apply {
