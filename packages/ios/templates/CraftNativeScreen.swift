@@ -7674,6 +7674,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             #if compiler(>=6.2)
             if #available(iOS 26.0, *) {
                 trackedScrollView?.topEdgeEffect.isHidden = false
+                trackedScrollView?.topEdgeEffect.style = .automatic
                 trackedScrollView?.bottomEdgeEffect.isHidden = false
             }
             #endif
@@ -7684,10 +7685,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
-            // Floating button groups carry their own material. UIKit's
-            // separate scroll-edge wash would cover the content behind
-            // and beyond them even with a transparent bar appearance.
-            scroll?.topEdgeEffect.isHidden = topEdgeToEdge && !navigationBarSolid
+            // The clock and navigation title need separation from live
+            // content. Keep UIKit's soft top scrim rather than removing
+            // it or adding an opaque bar. The floating tab pill already
+            // carries its own material, so its full-width wash stays off.
+            scroll?.topEdgeEffect.isHidden = false
+            scroll?.topEdgeEffect.style = topEdgeToEdge && !navigationBarSolid ? .soft : .automatic
             scroll?.bottomEdgeEffect.isHidden = tabbedScroll
         }
         #endif

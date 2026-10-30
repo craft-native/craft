@@ -1440,7 +1440,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         ])
     }
 
-    private func assertContentVisibleAtEveryWindowRow(_ window: UIWindow) throws {
+    private func assertContentVisibleBelowNavigation(_ window: UIWindow, navigationBottom: CGFloat) throws {
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
@@ -1451,7 +1451,8 @@ final class NativeLayoutUnitTests: XCTestCase {
         let cgImage = try XCTUnwrap(image.cgImage)
         var visibleRows = [Bool](repeating: false, count: cgImage.height)
         // Inspect the content outside the floating groups, including the
-        // first and final display rows. A solid-colour scroll background
+        // body and final display rows. The top deliberately keeps a soft
+        // legibility scrim. A solid-colour scroll background
         // would mask the defect: the edge wash adopts that same colour.
         for x in [6, cgImage.width - 7] {
             let strip = try XCTUnwrap(cgImage.cropping(to: CGRect(x: x, y: 0, width: 1, height: cgImage.height)))
@@ -1467,11 +1468,12 @@ final class NativeLayoutUnitTests: XCTestCase {
                 visibleRows[y] = visibleRows[y] || (rgb.max()! - rgb.min()! > 80)
             }
         }
-        let obscured = visibleRows.indices.filter { !visibleRows[$0] }
+        let firstBodyRow = Int(ceil(navigationBottom * image.scale))
+        let obscured = visibleRows.indices.filter { $0 >= firstBodyRow && !visibleRows[$0] }
         XCTAssertTrue(obscured.isEmpty, "Full-width backdrop hides \(obscured.count) content rows; first=\(String(describing: obscured.first)), last=\(String(describing: obscured.last))")
     }
 
-    func testFloatingChromeDoesNotWashOutLiveContentOrMoveWhenSolidIsToggled() async throws {
+    func testFloatingChromeKeepsSoftTopSeparationWithoutMovingWhenSolidIsToggled() async throws {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             let animations = UIView.areAnimationsEnabled
@@ -1492,25 +1494,28 @@ final class NativeLayoutUnitTests: XCTestCase {
                 let buttonFrame = button.convert(button.bounds, to: window)
                 let viewport = current.convert(current.bounds, to: window)
                 let inset = current.adjustedContentInset
-                XCTAssertTrue(current.topEdgeEffect.isHidden)
+                XCTAssertFalse(current.topEdgeEffect.isHidden)
+                XCTAssertEqual(current.topEdgeEffect.style, .soft)
                 XCTAssertTrue(current.bottomEdgeEffect.isHidden)
-                XCTAssertNil(controller.navigationItem.standardAppearance, "the default keeps UIKit's appearance; only the scroll-edge wash is hidden")
-                try assertContentVisibleAtEveryWindowRow(window)
+                XCTAssertNil(controller.navigationItem.standardAppearance, "the default keeps UIKit's appearance and a soft top scrim")
+                try assertContentVisibleBelowNavigation(window, navigationBottom: navigation.navigationBar.convert(navigation.navigationBar.bounds, to: window).maxY)
 
                 controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: true, backgroundColor: '#f2f2f7' })")
                 await settle(controller)
                 XCTAssertFalse(current.topEdgeEffect.isHidden, "an explicit solid-bar request remains supported")
+                XCTAssertEqual(current.topEdgeEffect.style, .automatic)
                 XCTAssertTrue(current.bottomEdgeEffect.isHidden)
                 XCTAssertNotNil(controller.navigationItem.standardAppearance)
                 controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: false })")
                 await settle(controller)
-                XCTAssertTrue(current.topEdgeEffect.isHidden)
+                XCTAssertFalse(current.topEdgeEffect.isHidden)
+                XCTAssertEqual(current.topEdgeEffect.style, .soft)
                 XCTAssertEqual(navigation.navigationBar.frame, barFrame)
                 XCTAssertEqual(tabs.tabBar.frame, tabFrame)
                 XCTAssertEqual(button.convert(button.bounds, to: window), buttonFrame)
                 XCTAssertEqual(current.convert(current.bounds, to: window), viewport)
                 XCTAssertEqual(current.adjustedContentInset, inset)
-                try assertContentVisibleAtEveryWindowRow(window)
+                try assertContentVisibleBelowNavigation(window, navigationBottom: navigation.navigationBar.convert(navigation.navigationBar.bounds, to: window).maxY)
             }
         }
         #endif
@@ -1524,7 +1529,8 @@ final class NativeLayoutUnitTests: XCTestCase {
             controller.evaluateScript("craft.navigation.setOptions({ title: 'Today', largeTitle: true })")
             await settle(controller)
             let original = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
-            XCTAssertTrue(original.topEdgeEffect.isHidden)
+            XCTAssertFalse(original.topEdgeEffect.isHidden)
+            XCTAssertEqual(original.topEdgeEffect.style, .soft)
             XCTAssertTrue(original.bottomEdgeEffect.isHidden)
             tabs.tabBar.isHidden = true
             await settle(controller)
@@ -1534,9 +1540,45 @@ final class NativeLayoutUnitTests: XCTestCase {
             await settle(controller)
             let replacement = try XCTUnwrap(find("replacement", below: controller.view) as? UIScrollView)
             XCTAssertFalse(original.topEdgeEffect.isHidden)
+            XCTAssertEqual(original.topEdgeEffect.style, .automatic)
             XCTAssertFalse(original.bottomEdgeEffect.isHidden)
-            XCTAssertTrue(replacement.topEdgeEffect.isHidden)
+            XCTAssertFalse(replacement.topEdgeEffect.isHidden)
+            XCTAssertEqual(replacement.topEdgeEffect.style, .soft)
             XCTAssertTrue(replacement.bottomEdgeEffect.isHidden)
+        }
+        #endif
+    }
+
+    func testSoftTopSeparationWithoutTabsSurvivesAppearanceAndLayoutChanges() async throws {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            let (controller, _, window) = try await bottomLayoutScreen(stripedTabRoot(), tabbed: false)
+            defer { window.isHidden = true }
+            controller.evaluateScript("craft.navigation.setOptions({ title: 'Today', largeTitle: false, backgroundColor: '#112233' })")
+            for appearance in [UIUserInterfaceStyle.light, .dark] {
+                window.overrideUserInterfaceStyle = appearance
+                await settle(controller)
+                let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+                XCTAssertFalse(scroll.topEdgeEffect.isHidden)
+                XCTAssertEqual(scroll.topEdgeEffect.style, .soft)
+                XCTAssertFalse(scroll.bottomEdgeEffect.isHidden, "without a floating tab pill, UIKit owns the bottom effect")
+                XCTAssertNil(controller.navigationItem.standardAppearance)
+            }
+            // A real fixed header restores the default effect on the same
+            // scroller; returning to a leading scroller reapplies soft style.
+            var root = stripedTabRoot()
+            var children = try XCTUnwrap(root["children"] as? [[String: Any]])
+            children.insert(box("header", style: ["height": 44]), at: 0)
+            root["children"] = children
+            controller.render(root)
+            await settle(controller)
+            let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+            XCTAssertFalse(scroll.topEdgeEffect.isHidden)
+            XCTAssertEqual(scroll.topEdgeEffect.style, .automatic)
+            controller.render(stripedTabRoot())
+            await settle(controller)
+            XCTAssertTrue(find("scroll", below: controller.view) === scroll)
+            XCTAssertEqual(scroll.topEdgeEffect.style, .soft)
         }
         #endif
     }

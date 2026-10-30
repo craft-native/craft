@@ -1073,14 +1073,18 @@ clearance already supplied by UIKit. Plain screens, sheets, bounded
 scrollers and screens with a fixed footer keep their safe-area bottom; an
 explicit root `SafeAreaView` retains its existing edge handling.
 
-On iOS 26, content extending beneath the navigation bar or floating tab bar
-remains visible behind and beyond the floating button groups. Craft hides the
-primary scroller's full-width scroll-edge wash at those edges; the buttons and
-tab pill retain their own material, size and position. This also works with
-nested wrappers and empty leading placeholders. An explicit
+On iOS 26, content extends beneath the navigation bar and floating tab bar,
+behind and beyond the floating button groups. Craft uses UIKit's soft
+top scroll-edge effect to separate the status bar and navigation title from
+scrolled content, rather than leaving them over sharp text or adding an opaque
+bar. The bottom full-width wash stays hidden behind a visible floating tab bar;
+the tab pill retains its own material. Buttons and bars keep their size and
+position. This also works with nested wrappers and empty leading placeholders. An explicit
 `navigationBarSolid: true` still requests an opaque navigation region;
-`navigationBarSolid: false` returns to visible content beneath it. These
+`navigationBarSolid: false` returns to the soft top effect. These
 settings do not remove safe-area clearance or change the chrome's layout.
+After upgrading Craft, regenerate the iOS shell before rebuilding: existing
+generated Swift sources do not change just because the package version changed.
 
 ## An all-native iOS app: paths, tabs and an app script
 
