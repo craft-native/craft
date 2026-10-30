@@ -1,6 +1,13 @@
 import Foundation
 import SwiftUI
 import UIKit
+
+/// Includes deceleration, which runs in default mode after tracking ends.
+func craftHybridHasActiveScroll(in view: UIView) -> Bool {
+    if let scroll = view as? UIScrollView,
+       scroll.isTracking || scroll.isDragging || scroll.isDecelerating { return true }
+    return view.subviews.contains { craftHybridHasActiveScroll(in: $0) }
+}
 import WebKit
 import Combine
 
@@ -1950,6 +1957,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             guard self.currentTab == owner, self.view.window != nil else { return }
             let quietFor = neighbour ? 0.3 : 1.0
             guard self.activeTabSwipeTarget == nil, !self.tabSwipeSettling,
+                  !craftHybridHasActiveScroll(in: self.view),
                   !self.stacks.values.contains(where: { $0.transitionCoordinator != nil }),
                   CACurrentMediaTime() - self.lastNavigation >= quietFor else {
                 self.prepareAdjacentNativeTabs()

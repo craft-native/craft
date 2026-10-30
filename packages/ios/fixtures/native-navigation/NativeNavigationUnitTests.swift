@@ -3,10 +3,28 @@ import WebKit
 import XCTest
 @testable import NativeNavigation
 
+private final class MovingScrollView: UIScrollView {
+    var moving = false
+    override var isDecelerating: Bool { moving }
+}
+
 /// Drive the real UIKit gesture target and inspect the hosted native stacks,
 /// including frames while the finger is down. UI tests cover touch routing.
 @MainActor
 final class NativeNavigationUnitTests: XCTestCase {
+    func testTabPreparationWaitsForNestedScrollDeceleration() {
+        let root = UIView()
+        let container = UIView()
+        let scroll = MovingScrollView()
+        root.addSubview(container)
+        container.addSubview(scroll)
+        XCTAssertFalse(craftHybridHasActiveScroll(in: root))
+        scroll.moving = true
+        XCTAssertTrue(craftHybridHasActiveScroll(in: root))
+        scroll.moving = false
+        XCTAssertFalse(craftHybridHasActiveScroll(in: root))
+    }
+
     @available(iOS 16.1, *)
     func testActivityTransitionsCatchUpWithoutThePlayerAndStopAtCompletion() {
         var state = CraftActivityAttributes.ContentState(status: "Training", distanceMeters: 0, durationSeconds: 0, progress: 0)
