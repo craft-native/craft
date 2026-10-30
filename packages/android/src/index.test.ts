@@ -577,7 +577,10 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('private fun drawnTarget(screen: Screen, id: String): String?')
       expect(nativeActivity).toContain('current = screen.mutations.parentId(current)')
       expect(nativeActivity).toContain('val path = screen.nodePaths[target] ?: return false')
-      expect(nativeActivity).toContain('makeView(screen, document, path, screen.controls)')
+      // A targeted update keeps the fontFamily its ancestors gave the subtree.
+      expect(nativeActivity).toContain('makeView(screen, document, path, screen.controls, screen.inheritedFontFamilies[target])')
+      expect(nativeActivity).toContain('val style = craftNativeInheritFontFamily(node.optJSONObject("style") ?: JSONObject(), inheritedFontFamily)')
+      expect(nativeActivity).toContain('makeView(screen, node, "$path.$itemIdentity", next, previous, fontFamily)')
       expect(nativeActivity).toContain('screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)')
       expect(nativeActivity).toContain('if (type == "SafeAreaView") setSafeAreaEdges(props.optJSONArray("edges"))\n                else setWindowSafeInsets(0, 0, 0, 0)')
       expect(nativeActivity).toContain('private fun applyViewStyle(view: View, style: JSONObject)')

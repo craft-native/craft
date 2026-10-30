@@ -829,6 +829,107 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * A family set on a screen's root reaches every text control below it,
+     * as the web's cascade does: through containers, into FlatList rows drawn
+     * later, and across a targeted update of one subtree. A control's own
+     * family wins; with no family anywhere the platform font stays.
+     */
+    @Test
+    fun fontFamilyIsInheritedFromAncestorsThroughListsAndTargetedUpdates() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        var resumeScreenMessages: (() -> Unit)? = null
+        fun monospaced(id: String): Boolean {
+            val view = requireNotNull(find(activity.window.decorView, id) as? TextView) { id }
+            return abs(view.paint.measureText("iii") - view.paint.measureText("WWW")) < 0.1f
+        }
+        fun screen(): Any {
+            val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
+                .get(activity) as List<*>
+            return requireNotNull(screens.last())
+        }
+        fun render(rootFamily: String?) {
+            val screen = screen()
+            fun text(id: String, style: org.json.JSONObject = org.json.JSONObject()) = org.json.JSONObject()
+                .put("id", id).put("type", "Text").put("props", org.json.JSONObject().put("testID", id))
+                .put("style", style).put("children", JSONArray().put("iii WWW"))
+            val rootStyle = org.json.JSONObject().put("flex", 1)
+            if (rootFamily != null) rootStyle.put("fontFamily", rootFamily)
+            val document = org.json.JSONObject().put("id", "font-root").put("type", "View").put("style", rootStyle)
+                .put("children", JSONArray()
+                    .put(org.json.JSONObject().put("id", "font-box").put("type", "View").put("children", JSONArray()
+                        .put(org.json.JSONObject().put("id", "font-inner").put("type", "View").put("children", JSONArray()
+                            .put(text("font-deep"))
+                            .put(org.json.JSONObject().put("id", "font-button").put("type", "Button")
+                                .put("props", org.json.JSONObject().put("testID", "font-button").put("title", "iii WWW")))
+                            .put(org.json.JSONObject().put("id", "font-input").put("type", "TextInput")
+                                .put("props", org.json.JSONObject().put("testID", "font-input").put("value", "iii WWW")))))
+                        .put(text("font-own", org.json.JSONObject().put("fontFamily", "serif")))))
+                    .put(org.json.JSONObject().put("id", "font-list").put("type", "FlatList")
+                        .put("props", org.json.JSONObject().put("testID", "font-list"))
+                        .put("style", org.json.JSONObject().put("height", 120))
+                        .put("children", JSONArray().put(org.json.JSONObject().put("id", "font-row").put("type", "View")
+                            .put("props", org.json.JSONObject().put("key", "font-row"))
+                            .put("children", JSONArray().put(text("font-row-text")))))))
+            MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, org.json.JSONObject::class.java)
+                .apply { isAccessible = true }
+                .invoke(activity, screen, document)
+        }
+        try {
+            awaitView(activity, "selectable-native-text")
+            // This test owns the protocol document: Home's runtime must not
+            // redraw over it (see keptPrivateImageLoadsOfflineWithoutEnteringPublicCache).
+            instrumentation.runOnMainSync {
+                val screen = screen()
+                val active = screen.javaClass.getDeclaredField("active").apply { isAccessible = true }
+                val wasActive = active.getBoolean(screen)
+                active.setBoolean(screen, false)
+                resumeScreenMessages = { active.setBoolean(screen, wasActive) }
+                render("'Missing Brand', monospace")
+            }
+            awaitView(activity, "font-row-text")
+            instrumentation.runOnMainSync {
+                assertTrue("from a grandparent container", monospaced("font-deep"))
+                assertTrue("a button's title", monospaced("font-button"))
+                assertTrue("an input", monospaced("font-input"))
+                assertTrue("a FlatList row drawn later", monospaced("font-row-text"))
+                assertFalse("an explicit family wins", monospaced("font-own"))
+
+                // A targeted update redraws one subtree without its ancestors.
+                val deep = find(activity.window.decorView, "font-deep")
+                val screen = screen()
+                val result = MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, org.json.JSONObject::class.java)
+                    .apply { isAccessible = true }
+                    .invoke(activity, screen, org.json.JSONObject()
+                        .put("version", 1).put("batchId", "font-1").put("baseRevision", 0).put("revision", 1)
+                        .put("operations", JSONArray().put(org.json.JSONObject()
+                            .put("op", "updateNode").put("id", "font-deep")
+                            .put("patch", org.json.JSONObject().put("style", org.json.JSONObject().put("fontSize", 20))))))
+                assertFalse("a targeted update", (result as CraftNativeMutationResult).requiresFullRender)
+                assertSame(deep, find(activity.window.decorView, "font-deep"))
+                assertTrue("a subtree update keeps the inherited family", monospaced("font-deep"))
+
+                // The same views without a family anywhere: the platform font.
+                render(null)
+                assertFalse(monospaced("font-deep"))
+                assertFalse(monospaced("font-input"))
+            }
+            // Rows rebind when only an ancestor's family changes.
+            awaitView(activity, "font-row-text") { view ->
+                view is TextView && abs(view.paint.measureText("iii") - view.paint.measureText("WWW")) >= 0.1f
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                resumeScreenMessages?.invoke()
+                activity.finishAndRemoveTask()
+            }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     @Test
     fun selectableTextUsesNativeTextSelection() {
         val context = instrumentation.targetContext

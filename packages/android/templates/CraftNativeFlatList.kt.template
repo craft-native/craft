@@ -96,6 +96,12 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     }
 
     private var renderItem: CraftNativeRenderItem? = null
+    /**
+     * The `fontFamily` the rows inherit from the list's ancestors. Rows are
+     * rebound only when their own node changes, so the screen redraws them
+     * when this changes (`reconcileFlatList` in MainActivity).
+     */
+    var inheritedFontFamily: String? = null
     private var recycleItem: ((String) -> Unit)? = null
     private var removeItem: ((String) -> Unit)? = null
     private var endReached: (() -> Unit)? = null

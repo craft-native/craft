@@ -26,6 +26,9 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -217,6 +220,23 @@ class NativeFlatListTest {
             assertEquals(Typeface.SANS_SERIF, craftNativeFontFamily("system-ui"))
             assertEquals(Typeface.SERIF, craftNativeFontFamily("Brand Font, monospace", mapOf("Brand Font" to Typeface.SERIF)))
         }
+    }
+
+    @Test
+    fun fontFamilyIsInheritedOnlyByANodeWithoutItsOwn() {
+        val bare = JSONObject().put("fontSize", 18)
+        assertSame("nothing inherited: the node's own style, uncopied", bare, craftNativeInheritFontFamily(bare, null))
+        val inherited = craftNativeInheritFontFamily(bare, "Barlow, sans-serif")
+        assertEquals("Barlow, sans-serif", inherited.getString("fontFamily"))
+        assertEquals(18, inherited.getInt("fontSize"))
+        assertFalse("the protocol document's style is not written to", bare.has("fontFamily"))
+        val own = JSONObject().put("fontFamily", "serif")
+        assertSame("an explicit family wins", own, craftNativeInheritFontFamily(own, "Barlow"))
+        assertEquals("Barlow", craftNativeInheritFontFamily(JSONObject().put("fontFamily", "inherit"), "Barlow").getString("fontFamily"))
+        assertEquals("Barlow", craftNativeInheritFontFamily(JSONObject().put("fontFamily", JSONObject.NULL), "Barlow").getString("fontFamily"))
+        assertEquals("serif", craftNativeInheritableFontFamily(own))
+        assertNull(craftNativeInheritableFontFamily(JSONObject().put("fontFamily", "inherit")))
+        assertNull(craftNativeInheritableFontFamily(JSONObject()))
     }
 
     @Test

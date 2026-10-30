@@ -2389,6 +2389,31 @@ private class CraftNativeKeyboardAvoidingView(context: Context) : FrameLayout(co
     }
 }
 
+/**
+ * The `fontFamily` a node passes to its children: its own, which already
+ * carries any family it inherited (see [craftNativeInheritFontFamily]).
+ */
+internal fun craftNativeInheritableFontFamily(style: JSONObject): String? =
+    craftNativeOptionalString(style.opt("fontFamily"))?.takeUnless { it == "inherit" }
+
+/**
+ * CSS-style `fontFamily` inheritance: a node that sets no family (or
+ * `inherit`) takes its nearest ancestor's, so a brand face set on a screen's
+ * root reaches every label, button and input below it. Returns [style]
+ * itself when nothing is inherited or the node sets its own family, else a
+ * shallow copy carrying the inherited one; the protocol document's style is
+ * never written to, so an ancestor's later change still reaches the node.
+ */
+internal fun craftNativeInheritFontFamily(style: JSONObject, inherited: String?): JSONObject {
+    if (inherited == null) return style
+    val own = craftNativeOptionalString(style.opt("fontFamily"))
+    if (own != null && own != "inherit") return style
+    return JSONObject().also { copy ->
+        style.keys().forEach { key -> copy.put(key, style.opt(key)) }
+        copy.put("fontFamily", inherited)
+    }
+}
+
 /** CSS family fallback order, using bundled app fonts before platform families. */
 internal fun craftNativeFontFamily(family: String?, bundledFonts: Map<String, Typeface> = emptyMap()): Typeface =
     family?.split(',')?.asSequence()?.map { it.trim().trim('"', '\'') }?.mapNotNull { name ->
@@ -4210,6 +4235,12 @@ class MainActivity : AppCompatActivity() {
         // the original tree path without manufacturing a detached view.
         val nodeViews = mutableMapOf<String, View>()
         val nodePaths = mutableMapOf<String, String>()
+        /**
+         * The `fontFamily` a protocol node inherited from its ancestors when
+         * drawn, so a targeted update of its subtree keeps it. Only nodes that
+         * inherit one are recorded: a screen with no family keeps it empty.
+         */
+        val inheritedFontFamilies = mutableMapOf<String, String>()
         val protocolIds = mutableMapOf<View, String>()
         val handlers = mutableMapOf<View, String>()
         val linkTargets = mutableMapOf<View, String>()
@@ -5497,7 +5528,7 @@ class MainActivity : AppCompatActivity() {
             val document = screen.mutations.node(target) ?: return false
             val path = screen.nodePaths[target] ?: return false
             if (screen.nodeViews[target] == null) return false
-            makeView(screen, document, path, screen.controls)
+            makeView(screen, document, path, screen.controls, screen.inheritedFontFamilies[target])
             val updated = screen.nodeViews[target] ?: return false
             screen.lastLayoutBounds.remove(updated)
             if (!updateParentLayoutStyle(updated, document.optJSONObject("style") ?: JSONObject())) return false
@@ -5584,6 +5615,7 @@ class MainActivity : AppCompatActivity() {
         val next = mutableMapOf<String, View>()
         screen.nodeViews.clear()
         screen.nodePaths.clear()
+        screen.inheritedFontFamilies.clear()
         val tree = makeView(screen, document, "root", next)
         if (screen.view.getChildAt(0) !== tree) {
             (tree.parent as? ViewGroup)?.removeView(tree)
@@ -5673,6 +5705,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.clear()
         screen.nodeViews.clear()
         screen.nodePaths.clear()
+        screen.inheritedFontFamilies.clear()
         screen.protocolIds.clear()
         screen.handlers.clear()
         screen.linkTargets.clear()
@@ -5681,16 +5714,22 @@ class MainActivity : AppCompatActivity() {
         screen.flatListOwnerByView.clear()
     }
 
+    /**
+     * [inheritedFontFamily]: the nearest ancestor's `fontFamily`, which the
+     * node takes when it sets none ([craftNativeInheritFontFamily]) and
+     * passes on to its children and list rows.
+     */
     private fun makeView(
         screen: Screen,
         node: JSONObject,
         path: String,
         next: MutableMap<String, View>,
         previousControls: Map<String, View> = screen.controls,
+        inheritedFontFamily: String? = null,
     ): View {
         val type = canonicalType(node.optString("type", "View"))
         val props = node.optJSONObject("props") ?: JSONObject()
-        val style = node.optJSONObject("style") ?: JSONObject()
+        val style = craftNativeInheritFontFamily(node.optJSONObject("style") ?: JSONObject(), inheritedFontFamily)
         val events = node.optJSONObject("events") ?: JSONObject()
         val children = node.optJSONArray("children") ?: JSONArray()
         val protocolId = node.optString("id").takeIf { it.isNotBlank() }
@@ -6477,7 +6516,7 @@ class MainActivity : AppCompatActivity() {
                     (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                         ?.hideSoftInputFromWindow(windowToken, 0)
                 }
-                reconcileFlatList(screen, nativeList, children, identity, protocolId ?: identity, props, events)
+                reconcileFlatList(screen, nativeList, children, identity, protocolId ?: identity, props, events, craftNativeInheritableFontFamily(style))
             }
             "View", "SafeAreaView" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
@@ -6622,6 +6661,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         protocolId?.let {
+            if (inheritedFontFamily != null) {
+                screen.inheritedFontFamilies[it] = inheritedFontFamily
+            } else if (screen.inheritedFontFamilies.isNotEmpty()) {
+                screen.inheritedFontFamilies.remove(it)
+            }
             screen.nodeViews[it] = control
             screen.nodePaths[it] = path
         }
@@ -6742,10 +6786,12 @@ class MainActivity : AppCompatActivity() {
         }
         val desired = mutableListOf<View>()
         val desiredOrder = mutableMapOf<View, Int>()
+        // `style` is the parent's effective style, its inherited family included.
+        val fontFamily = craftNativeInheritableFontFamily(style)
         for (index in 0 until children.length()) {
             val child = children.opt(index)
             val childView = when (child) {
-                is JSONObject -> makeView(screen, child, "$path.$index", next, previousControls)
+                is JSONObject -> makeView(screen, child, "$path.$index", next, previousControls, fontFamily)
                 is String -> TextView(this).apply {
                     includeFontPadding = false
                     configureText(this, child, craftNativeTypography(style))
@@ -6790,6 +6836,7 @@ class MainActivity : AppCompatActivity() {
         owner: String,
         props: JSONObject,
         events: JSONObject,
+        fontFamily: String?,
     ) {
         screen.flatListOwners.entries.removeAll { it.value == owner }
         screen.flatListOwnerByView[list] = owner
@@ -6819,6 +6866,10 @@ class MainActivity : AppCompatActivity() {
         val threshold = craftNativeNonNegativeDouble(props, "threshold", 0.1)
         val authoredThreshold = craftNativeNonNegativeDouble(props, "onEndReachedThreshold", threshold)
         val horizontal = craftNativeBoolean(props.opt("horizontal"))
+        // A row redraws when its own node changes; an ancestor's new family
+        // leaves every node as it was, so rows drawn before are redrawn below.
+        val familyChanged = list.inheritedFontFamily != fontFamily
+        val rowsDrawnBefore = familyChanged && screen.flatListRows[list]?.isNotEmpty() == true
         list.apply(
             nodes = nodes,
             horizontal = horizontal,
@@ -6829,7 +6880,9 @@ class MainActivity : AppCompatActivity() {
                 val rows = screen.flatListRows.getOrPut(list) { mutableMapOf() }
                 val previous = rows[itemIdentity].orEmpty()
                 val next = mutableMapOf<String, View>()
-                val view = makeView(screen, node, "$path.$itemIdentity", next, previous)
+                // Rows are drawn later, as they scroll in: each takes the
+                // list's family from this render's closure.
+                val view = makeView(screen, node, "$path.$itemIdentity", next, previous, fontFamily)
                 releaseViewState(screen, previous.values.filter { it !in next.values })
                 rows[itemIdentity] = next
                 view
@@ -6858,6 +6911,10 @@ class MainActivity : AppCompatActivity() {
             craftNativeBoolean(props.opt("alwaysBounceVertical"), !horizontal),
             craftNativeBoolean(props.opt("alwaysBounceHorizontal"), horizontal),
         )
+        if (familyChanged) {
+            list.inheritedFontFamily = fontFamily
+            if (rowsDrawnBefore) list.refreshThemeDefaults()
+        }
     }
 
     private fun registerFlatListOwnership(screen: Screen, node: JSONObject, owner: String) {
@@ -8358,6 +8415,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.clear()
         screen.nodeViews.clear()
         screen.nodePaths.clear()
+        screen.inheritedFontFamilies.clear()
         screen.protocolIds.clear()
         screen.handlers.clear()
         screen.pressInHandlers.clear()
