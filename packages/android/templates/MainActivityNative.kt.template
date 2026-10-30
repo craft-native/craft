@@ -2677,6 +2677,24 @@ internal fun craftNativeInheritFontFamily(style: JSONObject, inherited: String?)
 }
 
 /** CSS family fallback order, using bundled app fonts before platform families. */
+/**
+ * The face a CSS stack gives the app's own chrome (title, tab and button
+ * labels): the first family packaged with the app, or null for the system
+ * face when a generic family (`system-ui`, `sans-serif`) comes first or none is
+ * packaged. Screens resolve the same stacks with `craftNativeFontFamily`.
+ */
+internal fun craftNativeChromeTypeface(stack: String?, bundledFonts: Map<String, Typeface>): Typeface? {
+    for (part in stack.orEmpty().split(',')) {
+        val name = part.trim().trim('"', '\'')
+        when (name.lowercase()) {
+            "" -> continue
+            "sans-serif", "ui-sans-serif", "system-ui", "-apple-system", "serif", "ui-serif", "monospace", "ui-monospace" -> return null
+            else -> bundledFonts[name]?.let { return it }
+        }
+    }
+    return null
+}
+
 internal fun craftNativeFontFamily(family: String?, bundledFonts: Map<String, Typeface> = emptyMap()): Typeface =
     family?.split(',')?.asSequence()?.map { it.trim().trim('"', '\'') }?.mapNotNull { name ->
         bundledFonts[name] ?: when (name.lowercase()) {
@@ -4841,7 +4859,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun installChrome() {
-        val bars = CraftNativeChrome(this, routes.tabs, routes.tabBarAppearance)
+        val bodyFont = craftNativeChromeTypeface(routes.fontFamily, bundledFonts)
+        val bars = CraftNativeChrome(this, routes.tabs, routes.tabBarAppearance,
+            CraftNativeChromeFonts(bodyFont, craftNativeChromeTypeface(routes.headingFontFamily, bundledFonts) ?: bodyFont))
         bars.layoutParams = FrameLayout.LayoutParams(-1, -1)
         bars.onBack = { onBackPressedDispatcherCompat() }
         bars.onAccessory = { path -> navigateOpen(path) }

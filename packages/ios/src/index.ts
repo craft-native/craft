@@ -123,6 +123,13 @@ export interface CraftConfig {
   backgroundColor?: string
   /** Default tint for native controls and selected tabs, as #RRGGBB. */
   tintColor?: string
+  /**
+   * CSS font stack for the native chrome's labels (tab bar, bar buttons); the
+   * first family packaged in `nativeFonts` wins, a generic one keeps the system face.
+   */
+  fontFamily?: string
+  /** CSS font stack for navigation titles; `fontFamily` when unset. */
+  headingFontFamily?: string
   /** The launch and webview background while the phone is in Dark Mode. */
   backgroundColorDark?: string
   /** Edge-swipe back and forward through the page's history, pushState entries included. */

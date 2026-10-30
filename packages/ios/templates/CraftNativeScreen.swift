@@ -7629,6 +7629,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
         appearance.shadowColor = .clear
+        CraftChromeFonts.apply(to: appearance)
         navigationItem.standardAppearance = appearance
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance

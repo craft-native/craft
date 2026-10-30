@@ -223,6 +223,16 @@ class NativeFlatListTest {
     }
 
     @Test
+    fun chromeUsesThePackagedFaceAndKeepsTheSystemFaceForGenericStacks() {
+        val brand = mapOf("Brand-Regular" to Typeface.SERIF)
+        assertEquals(null, craftNativeChromeTypeface("system-ui, sans-serif", brand))
+        assertEquals(null, craftNativeChromeTypeface("'Missing Font'", brand))
+        assertEquals(null, craftNativeChromeTypeface("sans-serif, Brand-Regular", brand))
+        assertEquals(Typeface.SERIF, craftNativeChromeTypeface("'Missing Font', Brand-Regular, system-ui", brand))
+        assertEquals(null, craftNativeChromeTypeface(null, brand))
+    }
+
+    @Test
     fun fontFamilyIsInheritedOnlyByANodeWithoutItsOwn() {
         val bare = JSONObject().put("fontSize", 18)
         assertSame("nothing inherited: the node's own style, uncopied", bare, craftNativeInheritFontFamily(bare, null))

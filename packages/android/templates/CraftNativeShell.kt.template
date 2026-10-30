@@ -93,6 +93,9 @@ internal data class CraftNativeTabBarAppearance(
 
 internal data class CraftTabIconAppearance(val symbol: String, val tint: Int?, val pulse: Boolean)
 
+/** The app's faces for the chrome (`fontFamily`, `headingFontFamily`); null keeps the system face. */
+internal data class CraftNativeChromeFonts(val body: Typeface? = null, val heading: Typeface? = null)
+
 /** The app's paths (`nativeScreens`), its tabs and its site. */
 internal class CraftNativeRoutes(config: JSONObject) {
     private data class Route(val segments: List<String>, val screen: String)
@@ -136,6 +139,10 @@ internal class CraftNativeRoutes(config: JSONObject) {
             )
         }
         ?: CraftNativeTabBarAppearance()
+
+    /** CSS stacks for the chrome's labels and titles, as the app configured them. */
+    val fontFamily: String? = config.optString("fontFamily").takeUnless { config.isNull("fontFamily") || it.isBlank() }
+    val headingFontFamily: String? = config.optString("headingFontFamily").takeUnless { config.isNull("headingFontFamily") || it.isBlank() }
 
     /** The app's site (`devServerURL`): its origin answers paths no screen draws. */
     val site: Uri? = config.optString("devServerURL").takeIf { it.isNotBlank() }?.let(Uri::parse)
@@ -789,6 +796,7 @@ internal class CraftNativeChrome(
     context: Context,
     private val tabs: List<CraftNativeTab>,
     private val tabBarAppearance: CraftNativeTabBarAppearance = CraftNativeTabBarAppearance(),
+    private val fonts: CraftNativeChromeFonts = CraftNativeChromeFonts(),
 ) : LinearLayout(context) {
     val content = FrameLayout(context)
     private val bar = LinearLayout(context)
@@ -858,7 +866,7 @@ internal class CraftNativeChrome(
         leadingButtons.gravity = Gravity.CENTER_VERTICAL
         bar.addView(leadingButtons, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)))
         titleView.textSize = 20f
-        titleView.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        titleView.typeface = fonts.heading?.let { Typeface.create(it, Typeface.BOLD) } ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
         titleView.isSingleLine = true
         titleView.ellipsize = TextUtils.TruncateAt.END
         titleView.setPadding(dp(12), 0, dp(8), 0)
@@ -868,7 +876,7 @@ internal class CraftNativeChrome(
         bar.addView(buttons, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)))
         addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         largeTitleView.textSize = 32f
-        largeTitleView.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        largeTitleView.typeface = Typeface.create(fonts.heading ?: Typeface.create("sans-serif", Typeface.NORMAL), Typeface.BOLD)
         largeTitleView.isSingleLine = true
         largeTitleView.ellipsize = TextUtils.TruncateAt.END
         largeTitleView.setPadding(dp(16), 0, dp(16), dp(8))
@@ -907,6 +915,7 @@ internal class CraftNativeChrome(
             label.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             label.text = tab.title
             label.textSize = 12f
+            fonts.body?.let { label.typeface = it }
             label.fontFeatureSettings = "tnum"
             label.gravity = Gravity.CENTER
             label.isSingleLine = true
@@ -1199,6 +1208,7 @@ internal class CraftNativeChrome(
         val vector = if (symbol.isNotBlank()) CraftNativeIcons.drawable(context, null, symbol, tint) else null
         view.text = if (vector != null) "" else if (symbol.isNotBlank()) CraftNativeSymbols.glyph(symbol) else title
         view.textSize = if (symbol.isNotBlank()) 22f else 16f
+        if (symbol.isBlank()) fonts.body?.let { view.typeface = it }
         if (vector != null) {
             view.foreground = android.graphics.drawable.InsetDrawable(vector, dp(10), dp(15), dp(10), dp(15))
             view.minWidth = dp(46)

@@ -517,6 +517,95 @@ enum CraftSymbols {
 /// controller, which offers no way to say which style it wants, so the first
 /// call teaches that controller's class to answer from here. Only that exact
 /// class is touched, and only once.
+/// The app's typefaces on UIKit's own chrome. A screen's text follows the
+/// stx tree's `fontFamily`; the navigation bar, the tab bar and bar button
+/// labels are UIKit's, outside that tree, so a branded app drew them in the
+/// system face beside screens in its own. `fontFamily` / `headingFontFamily`
+/// (CSS stacks, as the screens use) put the same faces there, through the
+/// appearance proxies every bar starts from.
+enum CraftChromeFonts {
+    /// The packaged family a body or heading stack resolved to; nil keeps the system face.
+    private(set) static var body: String?
+    private(set) static var heading: String?
+
+    /// The first family of a CSS stack the app can draw. A generic family
+    /// ahead of any packaged one means the system face: nil.
+    static func family(_ stack: String?) -> String? {
+        guard let stack else { return nil }
+        for part in stack.split(separator: ",") {
+            let name = part.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            switch name.lowercased() {
+            case "": continue
+            case "sans-serif", "ui-sans-serif", "system-ui", "-apple-system", "serif", "ui-serif", "monospace", "ui-monospace": return nil
+            default: if UIFont(name: name, size: 12) != nil { return name }
+            }
+        }
+        return nil
+    }
+
+    /// `family` at a chrome size, bold for a heavy weight and scaled with Dynamic Type.
+    static func font(_ family: String?, size: CGFloat, weight: UIFont.Weight, textStyle: UIFont.TextStyle) -> UIFont? {
+        guard let family, let custom = UIFont(name: family, size: size) else { return nil }
+        var traits = custom.fontDescriptor.symbolicTraits
+        if weight >= .semibold { traits.insert(.traitBold) }
+        let descriptor = custom.fontDescriptor.withSymbolicTraits(traits) ?? custom.fontDescriptor
+        return UIFontMetrics(forTextStyle: textStyle).scaledFont(for: UIFont(descriptor: descriptor, size: size))
+    }
+
+    static var titleFont: UIFont? { font(heading, size: 17, weight: .semibold, textStyle: .headline) }
+    static var largeTitleFont: UIFont? { font(heading, size: 34, weight: .bold, textStyle: .largeTitle) }
+    static var tabLabelFont: UIFont? { font(body, size: 10, weight: .medium, textStyle: .caption2) }
+    static var barButtonFont: UIFont? { font(body, size: 17, weight: .regular, textStyle: .body) }
+
+    static func configure(_ config: CraftConfig) {
+        body = family(config.fontFamily)
+        heading = family(config.headingFontFamily) ?? body
+        if let title = titleFont, let large = largeTitleFont {
+            let bar = UINavigationBar.appearance()
+            bar.titleTextAttributes = [.font: title]
+            bar.largeTitleTextAttributes = [.font: large]
+        }
+        if let label = tabLabelFont {
+            for state in [UIControl.State.normal, .selected] {
+                UITabBarItem.appearance().setTitleTextAttributes([.font: label], for: state)
+            }
+        }
+        if let button = barButtonFont {
+            for state in [UIControl.State.normal, .highlighted, .disabled] {
+                UIBarButtonItem.appearance().setTitleTextAttributes([.font: button], for: state)
+            }
+        }
+    }
+
+    /// The label face on a tab bar. The Liquid Glass bar reads its labels from
+    /// its own appearance and ignores UITabBarItem's proxy, so the face goes on
+    /// a copy of the bar's appearance, which keeps its material untouched.
+    static func apply(to tabBar: UITabBar) {
+        guard let label = tabLabelFont else { return }
+        func labelled(_ appearance: UITabBarAppearance) -> UITabBarAppearance {
+            let copy = appearance.copy()
+            for layout in [copy.stackedLayoutAppearance, copy.inlineLayoutAppearance, copy.compactInlineLayoutAppearance] {
+                for state in [layout.normal, layout.selected, layout.focused, layout.disabled] {
+                    state.titleTextAttributes[.font] = label
+                }
+            }
+            return copy
+        }
+        tabBar.standardAppearance = labelled(tabBar.standardAppearance)
+        if let edge = tabBar.scrollEdgeAppearance { tabBar.scrollEdgeAppearance = labelled(edge) }
+    }
+
+    /// The title faces on a bar appearance a screen builds itself (an opaque bar).
+    static func apply(to appearance: UINavigationBarAppearance) {
+        if let title = titleFont { appearance.titleTextAttributes[.font] = title }
+        if let large = largeTitleFont { appearance.largeTitleTextAttributes[.font] = large }
+        if let button = barButtonFont {
+            appearance.buttonAppearance.normal.titleTextAttributes[.font] = button
+            appearance.doneButtonAppearance.normal.titleTextAttributes[.font] = button
+        }
+    }
+}
+
 enum CraftStatusBar {
     static var style: UIStatusBarStyle = .default
     private static var taught = Set<ObjectIdentifier>()

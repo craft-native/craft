@@ -288,6 +288,7 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let config = CraftConfig.bundled()
         CraftInterfaceStyleController.configure(config)
+        CraftChromeFonts.configure(config)
         // First, so a crash anywhere in the rest of launch is reported too.
         CraftCrashReporter.shared.start(config)
         UNUserNotificationCenter.current().delegate = self
@@ -1791,6 +1792,12 @@ struct CraftConfig: Codable {
     var backgroundColor: String = "#1a1a2e"
     /// Default native control and selected-tab tint, independent of page chrome.
     var tintColor: String? = nil
+    /// CSS font stacks for the app's own chrome (navigation titles, tab and
+    /// bar button labels): the first family packaged with the app wins, and a
+    /// generic one (`system-ui`, `sans-serif`) keeps the system face.
+    var fontFamily: String? = nil
+    /// Navigation titles; `fontFamily` when unset.
+    var headingFontFamily: String? = nil
     /// The background while the phone is in Dark Mode; the light one if unset.
     var backgroundColorDark: String? = nil
     /// Edge-swipe back and forward through the page's history.

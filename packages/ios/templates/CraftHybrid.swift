@@ -1184,6 +1184,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
 #if compiler(>=6.2)
         if #available(iOS 26.0, *) { tabBarMinimizeBehavior = .never }
 #endif
+        CraftChromeFonts.apply(to: tabBar)
         accessoryButton.accessibilityIdentifier = "craft-tab-accessory"
         accessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
         chromeSubscription = CraftChrome.shared.objectWillChange.sink { [weak self] in

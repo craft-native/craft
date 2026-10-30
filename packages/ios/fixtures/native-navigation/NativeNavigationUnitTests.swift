@@ -1150,4 +1150,45 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertFalse(details.view.isHidden)
         XCTAssertEqual(details.view.frame, shell.view.bounds)
     }
+
+    func testChromeUsesTheAppsFacesAndKeepsTheSystemFaceForGenericStacks() {
+        XCTAssertNil(CraftChromeFonts.family("system-ui, -apple-system, sans-serif"))
+        XCTAssertNil(CraftChromeFonts.family("'Missing Brand Face'"))
+        XCTAssertNil(CraftChromeFonts.family("sans-serif, Georgia"))
+        XCTAssertEqual(CraftChromeFonts.family("'Missing Brand Face', Georgia, system-ui"), "Georgia")
+
+        var config = CraftConfig()
+        config.fontFamily = "Georgia, system-ui, sans-serif"
+        config.headingFontFamily = "Avenir-Heavy, system-ui"
+        CraftChromeFonts.configure(config)
+        defer {
+            UINavigationBar.appearance().titleTextAttributes = nil
+            UINavigationBar.appearance().largeTitleTextAttributes = nil
+            for state in [UIControl.State.normal, .selected] { UITabBarItem.appearance().setTitleTextAttributes(nil, for: state) }
+            for state in [UIControl.State.normal, .highlighted, .disabled] { UIBarButtonItem.appearance().setTitleTextAttributes(nil, for: state) }
+            CraftChromeFonts.configure(CraftConfig())
+        }
+        XCTAssertEqual((UINavigationBar.appearance().titleTextAttributes?[.font] as? UIFont)?.familyName, "Avenir")
+        XCTAssertEqual((UINavigationBar.appearance().largeTitleTextAttributes?[.font] as? UIFont)?.familyName, "Avenir")
+        XCTAssertEqual((UITabBarItem.appearance().titleTextAttributes(for: .normal)?[.font] as? UIFont)?.familyName, "Georgia")
+        XCTAssertEqual((UITabBarItem.appearance().titleTextAttributes(for: .selected)?[.font] as? UIFont)?.familyName, "Georgia")
+        XCTAssertEqual((UIBarButtonItem.appearance().titleTextAttributes(for: .normal)?[.font] as? UIFont)?.familyName, "Georgia")
+
+        // A screen's own opaque bar gets the same title faces.
+        let opaque = UINavigationBarAppearance()
+        CraftChromeFonts.apply(to: opaque)
+        XCTAssertEqual((opaque.largeTitleTextAttributes[.font] as? UIFont)?.familyName, "Avenir")
+        XCTAssertEqual((opaque.buttonAppearance.normal.titleTextAttributes[.font] as? UIFont)?.familyName, "Georgia")
+
+        // The Liquid Glass tab bar reads labels from its own appearance.
+        let tabBar = UITabBar()
+        CraftChromeFonts.apply(to: tabBar)
+        XCTAssertEqual((tabBar.standardAppearance.stackedLayoutAppearance.normal.titleTextAttributes[.font] as? UIFont)?.familyName, "Georgia")
+        XCTAssertEqual((tabBar.standardAppearance.inlineLayoutAppearance.selected.titleTextAttributes[.font] as? UIFont)?.familyName, "Georgia")
+
+        // Without a packaged face, nothing changes.
+        CraftChromeFonts.configure(CraftConfig())
+        XCTAssertNil(CraftChromeFonts.titleFont)
+        XCTAssertNil(CraftChromeFonts.tabLabelFont)
+    }
 }
