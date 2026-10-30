@@ -302,3 +302,53 @@ describe('AutoUpdater conditional downloads', () => {
     }
   })
 })
+
+
+describe('alternate release manifests', () => {
+  it('normalizes once and reuses the validated result on 304', async () => {
+    let calls = 0
+    const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      calls++
+      return calls === 1 ? Response.json({ tag: 'v2.0.0' }, { headers: { etag: 'v2' } }) : new Response(null, { status: 304 })
+    }) as unknown as typeof fetch)
+    let parses = 0
+    const updater = new AutoUpdater({
+      updateUrl: 'https://releases.example.test/release-manifest.json', currentVersion: '1.0.0',
+      appPath: join(work, 'App.app'), autoDownload: false,
+      parseManifest(input) {
+        parses++
+        expect(input).toEqual({ tag: 'v2.0.0' })
+        return { version: '2.0.0', releaseDate: '2026-10-29', platforms: {} }
+      },
+    })
+    try {
+      expect((await updater.checkForUpdates())?.version).toBe('2.0.0')
+      expect((await updater.checkForUpdates())?.version).toBe('2.0.0')
+      expect(parses).toBe(1)
+    }
+    finally { fetcher.mockRestore() }
+  })
+
+  it('reports parser rejection as a failed check', async () => {
+    const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => Response.json({})) as unknown as typeof fetch)
+    const updater = new AutoUpdater({
+      updateUrl: 'https://releases.example.test/release-manifest.json', currentVersion: '1.0.0',
+      appPath: join(work, 'App.app'), autoDownload: false,
+      parseManifest() { throw new Error('Invalid release manifest') },
+    })
+    updater.on('error', () => {})
+    try {
+      expect(await updater.checkForUpdates()).toBeNull()
+      expect(updater.getLastError()?.message).toBe('Invalid release manifest')
+    }
+    finally { fetcher.mockRestore() }
+  })
+
+  it.skipIf(!darwin)('rejects another application signed by the same publisher', async () => {
+    const bundle = makeSignableBundle(join(work, 'Other.app'))
+    execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', bundle])
+    const result = await verifyBundleTrust(bundle, { requireNotarized: false, bundleIdentifier: 'org.craft.expected' })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('identifier-mismatch')
+  })
+})

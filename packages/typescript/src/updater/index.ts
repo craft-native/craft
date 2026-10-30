@@ -61,6 +61,8 @@ export interface UpdaterConfig {
    * The constructor will throw on a plain `http://` URL.
    */
   updateUrl: string
+  /** Normalize an alternate release feed before version checks and caching. */
+  parseManifest?: (input: unknown) => UpdateInfo
   currentVersion: string
   appPath: string // Path to app bundle
   autoDownload?: boolean
@@ -281,7 +283,8 @@ export class AutoUpdater extends EventEmitter {
         throw new Error(`HTTP ${response.status}`)
       }
 
-      const updateInfo = await response.json() as UpdateInfo
+      const input: unknown = await response.json()
+      const updateInfo = this.config.parseManifest ? this.config.parseManifest(input) : input as UpdateInfo
       // Capture validators for the next check. response.headers.get is
       // case-insensitive per the Fetch spec.
       this.cachedEtag = response.headers.get('etag') || null

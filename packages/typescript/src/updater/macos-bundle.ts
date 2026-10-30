@@ -42,6 +42,8 @@ export interface BundleIdentity {
 }
 
 export interface BundleTrustPolicy {
+  /** Require the same application, in addition to the signing team. */
+  bundleIdentifier?: string
   /**
    * Team ID the bundle must be signed by.
    *
@@ -65,6 +67,7 @@ export type BundleTrustFailure =
   | 'codesign-invalid'
   | 'gatekeeper-rejected'
   | 'team-mismatch'
+  | 'identifier-mismatch'
 
 export interface BundleTrustResult {
   ok: boolean
@@ -191,6 +194,16 @@ export async function verifyBundleTrust(
       gatekeeperSource,
       reason: 'team-mismatch',
       detail: `Expected Team ID ${policy.teamId}, bundle is signed by ${identity.teamId ?? 'nobody'}`,
+    }
+  }
+
+  if (policy.bundleIdentifier && identity.identifier !== policy.bundleIdentifier) {
+    return {
+      ok: false,
+      identity,
+      gatekeeperSource,
+      reason: 'identifier-mismatch',
+      detail: `Expected bundle identifier ${policy.bundleIdentifier}, received ${identity.identifier ?? 'none'}`,
     }
   }
 
