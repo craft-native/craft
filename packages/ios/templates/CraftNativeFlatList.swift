@@ -188,6 +188,10 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var recycleItem: ((String) -> Void)?
     private var removeItem: ((String) -> Void)?
     private var endReached: (() -> Void)?
+    /// The `fontFamily` the list's rows inherit from its ancestors. Rows are
+    /// reconfigured when only their node changes, so the screen redraws them
+    /// itself when this changes (`CraftNativeScreenController.reconcileFlatList`).
+    var inheritedFontFamily: String?
     var onScrollEvent: ((UIScrollView) -> Void)?
     /// Called as the visible rows move, for a screen that lays out around them.
     var onLayoutChanged: (() -> Void)?

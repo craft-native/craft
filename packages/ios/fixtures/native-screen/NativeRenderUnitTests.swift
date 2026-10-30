@@ -4312,6 +4312,131 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(first + second, "data: đ✓\n")
         XCTAssertTrue(tail.isEmpty)
     }
+
+    // MARK: fontFamily inheritance
+
+    private func labelFamily(_ key: String, below view: UIView, file: StaticString = #filePath, line: UInt = #line) throws -> String {
+        try XCTUnwrap(find(UILabel.self, key: key, below: view)?.font.familyName, key, file: file, line: line)
+    }
+
+    /// A family set on a screen's root reaches every text control below it,
+    /// as the web's cascade does; the nearest family wins and a control's own
+    /// family wins over any inherited one.
+    func testFontFamilyIsInheritedFromAncestorsAndYieldsToAnExplicitFamily() throws {
+        let courier = try XCTUnwrap(UIFont(name: "Courier", size: 16)).familyName
+        let helvetica = try XCTUnwrap(UIFont(name: "Helvetica", size: 16)).familyName
+        let system = UIFont.systemFont(ofSize: 16).familyName
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func screen(_ rootStyle: [String: Any]) -> [String: Any] {
+            ["type": "View", "style": rootStyle, "children": [
+                ["type": "View", "props": ["key": "outer"], "children": [
+                    ["type": "View", "props": ["key": "inner"], "children": [
+                        node("Text", key: "grandchild", text: "Deep", style: ["fontWeight": "700"]),
+                        node("Button", key: "button", text: "Go"),
+                        node("TextInput", key: "input"),
+                    ]],
+                    node("Text", key: "own", text: "Own", style: ["fontFamily": "Helvetica, sans-serif"]),
+                    ["type": "View", "props": ["key": "branch"], "style": ["fontFamily": "Helvetica"], "children": [
+                        node("Text", key: "nearest", text: "Nearest"),
+                    ]],
+                ]],
+            ]]
+        }
+        controller.render(screen(["fontFamily": "Courier, monospace"]))
+        XCTAssertEqual(try labelFamily("grandchild", below: controller.view), courier, "from a grandparent container")
+        let button = try XCTUnwrap(find(UIButton.self, key: "button", below: controller.view))
+        let title = try XCTUnwrap(button.attributedTitle(for: .normal))
+        XCTAssertEqual((title.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)?.familyName, courier, "a button's title")
+        XCTAssertEqual(find(UITextField.self, key: "input", below: controller.view)?.font?.familyName, courier, "an input")
+        XCTAssertEqual(try labelFamily("own", below: controller.view), helvetica, "an explicit family wins")
+        XCTAssertEqual(try labelFamily("nearest", below: controller.view), helvetica, "the nearest ancestor wins")
+
+        // The same views, redrawn without a family anywhere: the system font.
+        let label = find(UILabel.self, key: "grandchild", below: controller.view)
+        controller.render(screen([:]))
+        XCTAssertTrue(label === find(UILabel.self, key: "grandchild", below: controller.view))
+        XCTAssertEqual(try labelFamily("grandchild", below: controller.view), system)
+        XCTAssertEqual(find(UITextField.self, key: "input", below: controller.view)?.font?.familyName, system)
+        XCTAssertEqual(try labelFamily("own", below: controller.view), helvetica)
+    }
+
+    /// Rows are drawn later than the list, as they scroll in, and redrawn
+    /// only when their own node changes: they still take the family of the
+    /// list's ancestors, and a new one when only an ancestor's changes.
+    func testFlatListRowsInheritTheirAncestorsFontFamily() throws {
+        let courier = try XCTUnwrap(UIFont(name: "Courier", size: 16)).familyName
+        let helvetica = try XCTUnwrap(UIFont(name: "Helvetica", size: 16)).familyName
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        func screen(_ family: String) -> [String: Any] {
+            ["type": "View", "style": ["flex": 1, "fontFamily": family], "children": [[
+                "type": "FlatList", "props": ["key": "list"], "style": ["flex": 1],
+                "children": ["a", "b"].map { key -> [String: Any] in
+                    ["type": "View", "props": ["key": key], "children": [node("Text", key: "text-\(key)", text: "Row \(key)")]]
+                },
+            ]]]
+        }
+        func settle() throws -> CraftNativeFlatList {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            controller.view.layoutIfNeeded()
+            let list = try XCTUnwrap(find(CraftNativeFlatList.self, key: "list", below: controller.view))
+            list.layoutIfNeeded()
+            return list
+        }
+        controller.render(screen("Courier"))
+        var list = try settle()
+        XCTAssertEqual(try labelFamily("text-a", below: list), courier)
+        XCTAssertEqual(try labelFamily("text-b", below: list), courier)
+
+        controller.render(screen("Helvetica"))
+        list = try settle()
+        XCTAssertEqual(try labelFamily("text-a", below: list), helvetica, "rows redrawn for an ancestor's new family")
+        XCTAssertEqual(try labelFamily("text-b", below: list), helvetica)
+    }
+
+    /// A targeted mutation redraws one subtree without its ancestors: it must
+    /// keep the family those ancestors gave it.
+    func testATargetedSubtreeUpdateKeepsItsInheritedFontFamily() throws {
+        let courier = try XCTUnwrap(UIFont(name: "Courier", size: 16)).familyName
+        let helvetica = try XCTUnwrap(UIFont(name: "Helvetica", size: 16)).familyName
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(["id": "root-node", "type": "View", "style": ["fontFamily": "Courier"], "children": []])
+        try controller.applyMutation(batch(1, [
+            ["op": "createNode", "id": "box-node", "node": ["type": "View", "props": ["testID": "box"]]],
+            ["op": "createNode", "id": "label-node", "node": [
+                "type": "Text", "props": ["testID": "label"], "children": ["Before"],
+            ]],
+            ["op": "insertChild", "parentId": "box-node", "childId": "label-node", "index": 0],
+            ["op": "insertChild", "parentId": "root-node", "childId": "box-node", "index": 0],
+        ]))
+        let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+        XCTAssertEqual(label.font.familyName, courier)
+
+        let update = try controller.applyMutation(batch(2, [
+            ["op": "updateNode", "id": "label-node", "patch": ["children": ["After"], "style": ["fontSize": 20]]],
+        ]))
+        XCTAssertFalse(update.requiresFullRender)
+        XCTAssertEqual(update.updatedNodeIds, ["label-node"])
+        XCTAssertTrue(label === find(UILabel.self, key: "label", below: controller.view))
+        XCTAssertEqual(label.text, "After")
+        XCTAssertEqual(label.font.pointSize, UIFontMetrics(forTextStyle: .body).scaledValue(for: 20, compatibleWith: controller.traitCollection), accuracy: 0.01)
+        XCTAssertEqual(label.font.familyName, courier, "a subtree update keeps the inherited family")
+
+        // An update of a container redraws its subtree with the same family.
+        _ = try controller.applyMutation(batch(3, [
+            ["op": "updateNode", "id": "box-node", "patch": ["style": ["padding": 4]]],
+        ]))
+        XCTAssertEqual(find(UILabel.self, key: "label", below: controller.view)?.font.familyName, courier)
+
+        // The label's own family wins over the inherited one.
+        _ = try controller.applyMutation(batch(4, [
+            ["op": "updateNode", "id": "label-node", "patch": ["style": ["fontFamily": "Helvetica"]]],
+        ]))
+        XCTAssertEqual(find(UILabel.self, key: "label", below: controller.view)?.font.familyName, helvetica)
+    }
 }
 
 /// Shared stx controls must terminate in UIKit controls, rather than a picture

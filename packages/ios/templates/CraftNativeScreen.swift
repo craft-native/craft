@@ -5895,7 +5895,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let type: String
         let view: UIView
         var protocolId: String?
+        /// The node's effective style: its own, plus the `fontFamily` it
+        /// inherited when it sets none (see `reconcile`).
         var style: [String: Any] = [:]
+        /// The nearest ancestor's `fontFamily` when this node was drawn, so a
+        /// targeted update of this subtree inherits it without its ancestors.
+        var inheritedFontFamily: String?
         var children: [RenderedNode] = []
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
@@ -8380,7 +8385,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // its parent's to swap in: a targeted update only redraws in
             // place, and the new view was made and never attached.
             guard canReuseView(document, previous: previous) else { return false }
-            let next = reconcile(document, identity: previous.identity, path: target, previous: previous)
+            let next = reconcile(document, identity: previous.identity, path: target, previous: previous, inheritedFontFamily: previous.inheritedFontFamily)
             // A style patch is applied in place, layout included: the parent
             // reads the node's new layout style on its next pass.
             CraftNativeFlexLayout.invalidateAncestors(of: next.view)
@@ -8521,10 +8526,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     /// `adopting`: `previous` is a recycled list row's root, whose views may
     /// show this row instead (`identity` is the new row's).
-    private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?, adopting: Bool = false) -> RenderedNode {
+    ///
+    /// `inheritedFontFamily`: the nearest ancestor's `fontFamily`. As in CSS,
+    /// a node that sets none (or `inherit`) takes it, and its children inherit
+    /// in turn, so a brand face set on a screen's root reaches every label,
+    /// button and input below it. It is written into the node's effective
+    /// style, which every font computed from that style (Dynamic Type
+    /// re-renders included) reads. With no ancestor family this costs one nil
+    /// check and copies nothing.
+    private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?, adopting: Bool = false, inheritedFontFamily: String? = nil) -> RenderedNode {
         let type = canonicalType(node["type"] as? String ?? "View")
         let props = node["props"] as? [String: Any] ?? [:]
-        let style = node["style"] as? [String: Any] ?? [:]
+        var style = node["style"] as? [String: Any] ?? [:]
+        if let inheritedFontFamily {
+            let own = style["fontFamily"] as? String
+            if own == nil || own == "inherit" { style["fontFamily"] = inheritedFontFamily }
+        }
         let events = node["events"] as? [String: String] ?? [:]
         let children = node["children"] as? [Any] ?? []
         let protocolId = node["id"] as? String
@@ -8545,6 +8562,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let result = current.view
         current.protocolId = protocolId
         current.style = style
+        current.inheritedFontFamily = inheritedFontFamily
         let linkTarget = ["href", "to"].lazy.compactMap { props[$0] as? String }
             .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -9091,7 +9109,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 parent: current,
                 path: path,
                 props: props,
-                events: events
+                events: events,
+                fontFamily: style["fontFamily"] as? String
             )
         default:
             let stack = result as! CraftNativeFlowView
@@ -9319,6 +9338,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let counts = Dictionary(keys.map { ($0, 1) }, uniquingKeysWith: +)
         let old = Dictionary(uniqueKeysWithValues: parent.children.map { ($0.identity, $0) })
         var next: [RenderedNode] = []
+        // `style` is the parent's effective style, its inherited family included.
+        let fontFamily = style["fontFamily"] as? String
 
         for (index, node) in nodes.enumerated() {
             let key = explicitKey(node, props: node["props"] as? [String: Any] ?? [:])
@@ -9331,7 +9352,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let identity = parent.identity.hasPrefix("list:") || parent.identity.hasPrefix("key:")
                 ? "\(parent.identity)/\(localIdentity)"
                 : localIdentity
-            let child = reconcile(node, identity: identity, path: "\(path).\(index)", previous: old[identity])
+            let child = reconcile(node, identity: identity, path: "\(path).\(index)", previous: old[identity], inheritedFontFamily: fontFamily)
             next.append(child)
         }
         if (style["flexDirection"] as? String)?.hasSuffix("-reverse") == true { next.reverse() }
@@ -9376,7 +9397,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         parent: RenderedNode,
         path: String,
         props: [String: Any],
-        events: [String: String]
+        events: [String: String],
+        fontFamily: String?
     ) {
         let listKey = ObjectIdentifier(list)
         let owner = parent.protocolId ?? path
@@ -9420,6 +9442,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             0,
             Double(number(props["onEndReachedThreshold"]) ?? number(props["threshold"]) ?? 0.1)
         )
+        let familyChanged = list.inheritedFontFamily != fontFamily
+        let rowsDrawnBefore = familyChanged && flatListRows[listKey]?.isEmpty == false
         list.apply(
             nodes: children,
             horizontal: props["horizontal"] as? Bool == true,
@@ -9444,7 +9468,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     identity: "list:\(identity)",
                     path: "\(path).\(identity)",
                     previous: previous,
-                    adopting: adopting
+                    adopting: adopting,
+                    // Rows are drawn later, as they scroll in: each takes the
+                    // list's family from this render's closure.
+                    inheritedFontFamily: fontFamily
                 )
                 // A recycled row's handlers went when it was recycled.
                 if let previous, previous.view !== next.view, !adopting {
@@ -9489,6 +9516,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         list.setScrollTarget(props["scrollTarget"])
         list.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? !horizontal
         list.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? horizontal
+        // A row redraws when its own node changes; an ancestor's new family
+        // leaves every node as it was, so rows drawn before are redrawn here.
+        if familyChanged {
+            list.inheritedFontFamily = fontFamily
+            if rowsDrawnBefore { list.refreshThemeDefaults() }
+        }
         parent.children = []
     }
 
