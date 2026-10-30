@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.391...v0.0.392)
+
+## 🐛 Bug Fixes
+
+- **ios**: animate system tab selection after page swipes ([7b9d385](https://github.com/craft-native/craft/commit/7b9d385)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.390...v0.0.391)
 
 ## 🐛 Bug Fixes
