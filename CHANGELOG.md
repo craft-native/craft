@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.394...v0.0.395)
+
+## 🚀 Features
+
+- **android**: inherit fontFamily from ancestors in native screens ([1597f79](https://github.com/craft-native/craft/commit/1597f79)) _(by Chris Breuer)_
+- **ios**: inherit fontFamily from ancestors in native screens ([ce3a01e](https://github.com/craft-native/craft/commit/ce3a01e)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **android**: pass the inherited font family by name on targeted updates ([4fbc2ed](https://github.com/craft-native/craft/commit/4fbc2ed)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **android**: give the targeted-update fixture the inherited font family ([305083c](https://github.com/craft-native/craft/commit/305083c)) _(by Chris Breuer)_
+- pin the Android targeted update's inherited font family ([386b704](https://github.com/craft-native/craft/commit/386b704)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.393...v0.0.394)
 
 ## 🐛 Bug Fixes
