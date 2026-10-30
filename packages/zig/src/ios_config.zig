@@ -176,7 +176,7 @@ pub const Flags = std.EnumSet(Feature);
 const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{ "associatedDomains", "trustedOrigins" };
-const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "tintColor", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
+const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "tintColor", "fontFamily", "headingFontFamily", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
 const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains", "allowsLinkPreview", "keyboardAccessory", "disableZoom" };
 /// Swift `Double`s with a default. Any JSON number decodes; a string or a
 /// boolean throws.
