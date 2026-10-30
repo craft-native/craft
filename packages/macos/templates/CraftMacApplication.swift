@@ -356,19 +356,30 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
 
 @main struct CraftMacMain {
     static func main() throws {
-        func argument(_ flag: String, fallback: String = "") -> String { guard let index = CommandLine.arguments.firstIndex(of: flag), CommandLine.arguments.indices.contains(index + 1) else { return fallback }; return CommandLine.arguments[index + 1] }
+        // A bundled app is launched by Finder with no arguments: its settings are
+        // `Contents/Resources/craft-app.json`, written by the build. A flag on the
+        // command line still wins, so a development run can point elsewhere.
+        let packaged = Bundle.main.url(forResource: "craft-app", withExtension: "json")
+            .flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        func argument(_ flag: String, key: String? = nil, fallback: String = "") -> String {
+            if let index = CommandLine.arguments.firstIndex(of: flag), CommandLine.arguments.indices.contains(index + 1) { return CommandLine.arguments[index + 1] }
+            if let key, let value = packaged[key] { return String(describing: value) }
+            return fallback
+        }
         let application = CraftMacApplication.shared
         if CommandLine.arguments.contains("--version") { print("craft native macOS renderer 0.0.172 (zig-js)"); return }
-        guard let api = URL(string: argument("--api-url")), ["http", "https"].contains(api.scheme ?? ""), api.host != nil else { throw NSError(domain: "Craft", code: 1, userInfo: [NSLocalizedDescriptionKey: "--api-url must name the application's HTTP agent"] ) }
-        let bundlePath = argument("--native-bundle")
+        guard let api = URL(string: argument("--api-url", key: "apiUrl")), ["http", "https"].contains(api.scheme ?? ""), api.host != nil else { throw NSError(domain: "Craft", code: 1, userInfo: [NSLocalizedDescriptionKey: "--api-url must name the application's HTTP agent"] ) }
+        let bundledScreens = Bundle.main.path(forResource: "native-screen", ofType: "js") ?? ""
+        let bundlePath = argument("--native-bundle", fallback: bundledScreens)
         guard !bundlePath.isEmpty else { throw NSError(domain: "Craft", code: 2, userInfo: [NSLocalizedDescriptionKey: "--native-bundle must name a compiled STX bundle"] ) }
         application.bundle = try String(contentsOfFile: bundlePath, encoding: .utf8)
-        application.appName = argument("--title", fallback: "Craft")
-        application.initialRoute = argument("--route", fallback: "Main")
-        application.titlebarStyle = argument("--titlebar-style", fallback: "standard")
-        application.requiresSession = !CommandLine.arguments.contains("--no-session")
+        application.appName = argument("--title", key: "title", fallback: "Craft")
+        application.initialRoute = argument("--route", key: "route", fallback: "Main")
+        application.titlebarStyle = argument("--titlebar-style", key: "titlebarStyle", fallback: "standard")
+        application.requiresSession = !CommandLine.arguments.contains("--no-session") && packaged["session"] as? Bool != false
         for (flag, key) in [("--width", "width"), ("--height", "height"), ("--min-width", "minWidth"), ("--min-height", "minHeight")] {
-            if let value = Double(argument(flag)), value.isFinite, value > 0 { application.mainWindowOptions[key] = value }
+            if let value = Double(argument(flag, key: key)), value.isFinite, value > 0 { application.mainWindowOptions[key] = value }
         }
         application.network = CraftMacNetwork(base: api)
         let testDirectory = argument("--test-dir")
