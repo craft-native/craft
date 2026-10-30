@@ -1,5 +1,17 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.400...v0.0.401)
+
+## 🚀 Features
+
+- **macos**: read the host's settings from the bundle when launched without arguments ([7c19af8](https://github.com/craft-native/craft/commit/7c19af8)) _(by Chris Breuer)_
+- **macos**: resolve the pinned Zig and zig-js toolchain through Pantry ([8f40f74](https://github.com/craft-native/craft/commit/8f40f74)) _(by Chris Breuer)_
+- **macos**: hosted-API apps, Keychain secure storage, submit and blur events, ghost text completions ([9b2a9f8](https://github.com/craft-native/craft/commit/9b2a9f8)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.399...v0.0.400)
 
 ## 🚀 Features
