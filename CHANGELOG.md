@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.398...v0.0.399)
+
+## ⚡ Performance Improvements
+
+- **ios**: read only a route's new fixes with readRecording({ since }) ([1a7b871](https://github.com/craft-native/craft/commit/1a7b871)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.397...v0.0.398)
 
 ## 🚀 Features
