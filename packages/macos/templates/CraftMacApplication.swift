@@ -180,10 +180,19 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         NSApp.mainMenu = bar; NSApp.windowsMenu = window
     }
     private func addMenu(_ menu: NSMenu, to bar: NSMenu) { let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: ""); item.submenu = menu; bar.addItem(item) }
+    /// Keys a shortcut names rather than types (`ctrl+tab`, `cmd+alt+right`), as AppKit's key equivalents spell them.
+    static let namedKeys: [String: String] = {
+        var keys = ["up": "\u{F700}", "down": "\u{F701}", "left": "\u{F702}", "right": "\u{F703}",
+            "tab": "\t", "return": "\r", "enter": "\r", "escape": "\u{1B}", "esc": "\u{1B}", "space": " ",
+            "backspace": "\u{08}", "delete": "\u{08}", "forwarddelete": "\u{F728}",
+            "home": "\u{F729}", "end": "\u{F72B}", "pageup": "\u{F72C}", "pagedown": "\u{F72D}", "plus": "+", "minus": "-"]
+        for number in 1...12 { keys["f\(number)"] = String(UnicodeScalar(0xF703 + number)!) }
+        return keys
+    }()
     private func menuItem(_ raw: [String: Any], target: AnyObject, action: Selector) -> NSMenuItem {
         if raw["separator"] as? Bool == true { return .separator() }
         let parts = (raw["shortcut"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
-        let key = ["up": "\u{F700}", "down": "\u{F701}", "left": "\u{F702}", "right": "\u{F703}" ][parts.last ?? ""] ?? parts.last ?? ""
+        let key = Self.namedKeys[parts.last ?? ""] ?? parts.last ?? ""
         let item = NSMenuItem(title: raw["label"] as? String ?? raw["title"] as? String ?? "", action: action, keyEquivalent: key)
         item.target = target; item.representedObject = raw["id"]
         item.keyEquivalentModifierMask = []
