@@ -58,6 +58,24 @@ through `craft.web`, and decides where each appears with `<WebView tab>`:
 | `find(id, text, { backwards?, caseSensitive?, wraps? })` | `{ found }` |
 | `setZoom(id, zoom)`, `focus(id)`, `setInspectable(id, on)` | |
 | `snapshot(id, { width? })` | a JPEG data URL (tab previews, sleeping tabs) |
+| `print(id)` | `true`, once the print sheet is up |
+| `setContentRules(identifier, { version, json? })` | `{ cached }`, or `{ missing: true }` when that version was never compiled and no `json` came with it |
+| `removeContentRules(identifier)`, `allowContent(hosts)` | |
+| `setUserScripts([{ id, hosts, css?, js?, allFrames? }])` | |
+| `answerPermission(request, 'grant' \| 'deny' \| 'prompt')` | whether the request was still waiting |
+| `clearData({ profile, private?, host?, types? })` | `{ cleared }`; `types` from `cookies`, `storage`, `cache` |
+| `cancelDownload(id)`, `revealDownload(path)`, `openDownload(path)` | |
+
+**Content blockers** (an ad blocker) are WebKit content-rule lists. WebKit
+compiles each once and keeps it on disk under its identifier and version, so a
+screen first asks for a version without `json` and sends the rules only when the
+answer is `missing`. Every tab has its own content controller: a site listed in
+`allowContent` (a host covers its subdomains) loads with no list applied, in
+that tab only. **User scripts** (Boosts) run on the hosts they name, in an
+isolated world the page's scripts cannot see; CSS lands at document start, JS at
+document end, and pages pick a new set up on their next load. **Downloads** can
+only be revealed or opened inside ~/Downloads, and an app or script is revealed
+in Finder rather than run.
 
 Each profile has its own website data store (cookies, storage, cache), found
 again on every launch by a UUID derived from its name (macOS 14+; `default` is
@@ -70,7 +88,9 @@ themeColor, camera, microphone; coalesced to one per run-loop turn),
 `navigationStart`, `navigationFinish`, `navigationError`, `favicon`, `open`
 (`target=_blank` and `window.open` arrive with a ready `child` tab id;
 ⌘-click arrives with only a `url` and `background`), `close`, `crashed`
-(the page's process died and was reloaded) and `download` (`started`,
+(the page's process died and was reloaded), `permission` (a site asks for the
+camera or microphone: `{ request, kind, origin }`; answer it with
+`answerPermission`, or it is denied after two minutes) and `download` (`started`,
 `progress` at most every 250ms, `finished`, `failed`, saved to ~/Downloads
 under a name that never overwrites). Links to other apps' schemes (`mailto:`,
 `facetime:`) open those apps. JavaScript alerts, confirms, prompts and file
@@ -107,7 +127,15 @@ Use `--titlebar-style transparent` to hide the window title on a transparent
 title bar. The default keeps the standard AppKit title bar. `--width`,
 `--height`, `--min-width` and `--min-height` configure the main window in points.
 Additional windows accept `titlebarStyle: 'standard' | 'transparent'` with the
-same size options through `craft.desktop.openWindow`.
+same size options through `craft.desktop.openWindow`, and `floating: true` keeps
+one above other windows.
+
+Links and files other apps open with this one arrive as `CRAFT_EVENT`
+`craftDesktopOpenURL` `{ urls }`; ones that came before a screen was listening
+wait for `craft.desktop.takeOpenedURLs()`. `isDefaultBrowser()` and
+`setDefaultBrowser()` (macOS asks the person to confirm) cover a browser that
+declares http and https. `craft-app.json` `dockMenu: [{ title, action }]` fills
+the Dock icon's menu; each item arrives as a desktop command.
 
 This is a native control vocabulary, not an HTML renderer. Unsupported controls
 produce a diagnostic and an explicit visible error. The native `Sidebar` accepts

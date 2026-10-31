@@ -40,6 +40,8 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
             window.titleVisibility = .hidden
         }
         window.minSize = CGSize(width: number(options["minWidth"]) ?? 640, height: number(options["minHeight"]) ?? 400)
+        // A small window that stays above others (a link opened from another app, a quick look).
+        if options["floating"] as? Bool == true { window.level = .floating; window.collectionBehavior.insert(.fullScreenAuxiliary) }
         window.isReleasedWhenClosed = false
         renderer.root.autoresizingMask = [.width, .height]
         window.contentView = renderer.root
@@ -94,6 +96,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     /// endpoint and starts with `--no-session`.
     var requiresSession = true
     var mainWindowOptions: [String: Any] = [:]
+    /// The Dock icon's menu (`craft-app.json` `dockMenu`): each item sends its action as a desktop command.
+    var dockMenu: [[String: Any]] = []
+    /// Links and files other apps opened with this one, waiting for a screen to take them (`takeOpenedURLs`).
+    var openedURLs: [String] = []
     var network: CraftMacNetwork!
     var scenes: [String: CraftMacScene] = [:]
     var panels: [NSWindow] = []
@@ -132,6 +138,28 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         }.resume()
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { scenes["main"]?.window.makeKeyAndOrderFront(nil); return true }
+    /// Links from other apps (this app as the default browser) and files dropped on the Dock icon.
+    /// A screen hears `craftDesktopOpenURL`; ones that arrive before any screen listens wait for `takeOpenedURLs`.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let list = urls.map(\.absoluteString)
+        openedURLs.append(contentsOf: list)
+        for scene in scenes.values { scene.runtime.send("CRAFT_EVENT", ["event": "craftDesktopOpenURL", "detail": ["urls": list]]) }
+    }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard !dockMenu.isEmpty else { return nil }
+        let menu = NSMenu()
+        for raw in dockMenu {
+            let item = NSMenuItem(title: raw["title"] as? String ?? "", action: #selector(command(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = raw["action"] as? String
+            menu.addItem(item)
+        }
+        return menu
+    }
+    /// Is this app the one that opens web links?
+    var isDefaultBrowser: Bool {
+        guard let probe = URL(string: "https://example.com"), let handler = NSWorkspace.shared.urlForApplication(toOpen: probe) else { return false }
+        return handler.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+    }
     func applicationWillTerminate(_ notification: Notification) { scenes.values.forEach { $0.runtime.dispose() }; testTimer?.invalidate() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     /// Screens holding the quit hear `craftDesktopQuit` and answer `quitReady` once their work is saved.
@@ -286,6 +314,16 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             let filter = CIFilter(name: "CIQRCodeGenerator")!; filter.setValue(Data(text.utf8), forKey: "inputMessage"); filter.setValue("M", forKey: "inputCorrectionLevel")
             guard let image = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)), let cg = CIContext().createCGImage(image, from: image.extent), let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { reply(NSNull()); return }
             reply("data:image/png;base64," + data.base64EncodedString())
+        case "takeOpenedURLs": reply(openedURLs); openedURLs.removeAll()
+        case "isDefaultBrowser": reply(isDefaultBrowser)
+        case "setDefaultBrowser":
+            // macOS asks the person to confirm; the answer is whether this app opens links afterwards.
+            let app = Bundle.main.bundleURL
+            NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: "http") { _ in
+                NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: "https") { _ in
+                    DispatchQueue.main.async { reply(self.isDefaultBrowser) }
+                }
+            }
         case "setBadge": let count = (args.first as? NSNumber)?.intValue ?? 0; NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil; reply(true)
         case "holdQuit": scene?.holdsQuit = args.first as? Bool != false; reply(true)
         case "quitReady": if let scene { quitReady(scene: scene.name, token: args.first as? String) }; reply(true)
@@ -360,6 +398,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         if kind == "command", let id = action["id"] as? String { broadcast(id); return ["ok": true] }
         // After this result is written, from the run loop rather than a main-queue block (see applicationShouldTerminate).
         if kind == "quit" { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0); return ["ok": true] }
+        if kind == "openURL", let url = (action["url"] as? String).flatMap(URL.init(string:)) { application(NSApp, open: [url]); return ["ok": true] }
         if kind == "appearance" {
             NSApp.appearance = NSAppearance(named: action["value"] as? String == "dark" ? .darkAqua : .aqua)
             appearanceChanged(); return ["ok": true]
@@ -488,6 +527,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.initialRoute = argument("--route", key: "route", fallback: "Main")
         application.titlebarStyle = argument("--titlebar-style", key: "titlebarStyle", fallback: "standard")
         // `18,18` on the command line; `[18, 18]` in craft-app.json.
+        application.dockMenu = packaged["dockMenu"] as? [[String: Any]] ?? []
         let lights = argument("--traffic-lights", key: "trafficLights").split(separator: ",").compactMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: " []"))) }
         if lights.count == 2 { application.trafficLights = lights }
         application.requiresSession = !CommandLine.arguments.contains("--no-session") && packaged["session"] as? Bool != false

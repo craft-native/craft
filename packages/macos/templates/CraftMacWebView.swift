@@ -1,6 +1,7 @@
 #if CRAFT_WEBKIT
 import AppKit
 import CryptoKit
+import UniformTypeIdentifiers
 import WebKit
 
 // Web content for the AppKit host: one WKWebView per tab, for apps built with
@@ -66,8 +67,11 @@ final class CraftMacTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var statePending = false
     private var lastFavicon = ""
 
-    init(id: String, profile: String, ephemeral: Bool, configuration: WKWebViewConfiguration, owner: CraftMacRuntime?) {
+    init(id: String, profile: String, ephemeral: Bool, configuration: WKWebViewConfiguration, owner: CraftMacRuntime?, ownContent: Bool = true) {
         self.id = id; self.profile = profile; self.ephemeral = ephemeral; self.owner = owner
+        // Its own content controller, so a site allowed past the blockers is allowed in this tab only.
+        // A `window.open` child must take WebKit's configuration as given, and shares its opener's.
+        if ownContent { configuration.userContentController = WKUserContentController() }
         view = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         view.navigationDelegate = self
@@ -86,7 +90,14 @@ final class CraftMacTab: NSObject, WKNavigationDelegate, WKUIDelegate {
             view.observe(\.hasOnlySecureContent, changeHandler: report), view.observe(\.themeColor, changeHandler: report),
             view.observe(\.cameraCaptureState, changeHandler: report), view.observe(\.microphoneCaptureState, changeHandler: report),
         ]
+        if ownContent {
+            CraftMacContentRules.shared.apply(to: self, host: nil)
+            CraftMacUserScripts.shared.apply(to: view.configuration.userContentController)
+        }
     }
+
+    /// The site on screen is allowed past the content blockers (or no longer is).
+    private(set) var blockingHost: String?
 
     var state: [String: Any] {
         var state: [String: Any] = [
@@ -139,6 +150,11 @@ final class CraftMacTab: NSObject, WKNavigationDelegate, WKUIDelegate {
             decisionHandler(.cancel); return
         }
         if action.shouldPerformDownload { decisionHandler(.download); return }
+        // The blockers follow the site in the main frame: a site the person allowed loads without them.
+        if action.targetFrame?.isMainFrame ?? true, let host = url.host?.lowercased(), host != blockingHost {
+            blockingHost = host
+            CraftMacContentRules.shared.apply(to: self, host: host)
+        }
         // ⌘-click (and middle click) opens the link in a new tab, as every browser does; the screen decides where.
         if action.navigationType == .linkActivated, action.targetFrame?.isMainFrame ?? true,
            action.modifierFlags.contains(.command) || action.buttonNumber == 2 {
@@ -197,7 +213,7 @@ final class CraftMacTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// `window.open` and `target=_blank`. WebKit needs the new view right now, so the tab is
     /// created here and announced; the screen adopts it by id like any other tab.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        let child = CraftMacWebTabs.shared.make(profile: profile, ephemeral: ephemeral, configuration: configuration, owner: owner)
+        let child = CraftMacWebTabs.shared.make(profile: profile, ephemeral: ephemeral, configuration: configuration, owner: owner, ownContent: false)
         let popup = windowFeatures.width != nil || windowFeatures.height != nil
         var detail: [String: Any] = ["child": child.id, "url": action.request.url?.absoluteString ?? "", "popup": popup, "reason": "script"]
         if popup { detail["width"] = windowFeatures.width?.doubleValue ?? 0; detail["height"] = windowFeatures.height?.doubleValue ?? 0 }
@@ -235,6 +251,106 @@ final class CraftMacTab: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let window = view.window else { completionHandler(panel.runModal() == .OK ? panel.urls : nil); return }
         panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
     }
+
+    // MARK: permissions
+
+    /// A site asks for the camera or microphone. The screen decides (`permission`, answered with
+    /// `answerPermission`), so it can remember a site's answer; macOS still asks for the app once.
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        let kind: String
+        switch type {
+        case .camera: kind = "camera"
+        case .microphone: kind = "microphone"
+        default: kind = "camera+microphone"
+        }
+        let request = CraftMacWebTabs.shared.ask(tab: self, decide: decisionHandler)
+        emit("permission", ["request": request, "kind": kind, "origin": origin.host, "protocol": origin.protocol, "port": origin.port, "mainFrame": frame.isMainFrame])
+    }
+}
+
+/// Content blockers (an ad blocker's lists): compiled once by WebKit, kept on disk by identifier and
+/// version, and applied to every tab except on the sites the person allowed.
+final class CraftMacContentRules {
+    static let shared = CraftMacContentRules()
+    private(set) var lists: [String: WKContentRuleList] = [:]
+    /// Sites where no list applies; a host here covers its subdomains.
+    var allowed: Set<String> = []
+
+    func isAllowed(_ host: String?) -> Bool {
+        guard var host = host?.lowercased() else { return false }
+        while true {
+            if allowed.contains(host) { return true }
+            guard let dot = host.firstIndex(of: ".") else { return false }
+            host = String(host[host.index(after: dot)...])
+        }
+    }
+
+    func apply(to tab: CraftMacTab, host: String?) {
+        let controller = tab.view.configuration.userContentController
+        controller.removeAllContentRuleLists()
+        guard !isAllowed(host ?? tab.view.url?.host) else { return }
+        for list in lists.values { controller.add(list) }
+    }
+
+    func reapply() { for tab in CraftMacWebTabs.shared.tabs.values { apply(to: tab, host: tab.blockingHost) } }
+
+    /// A list by identifier and version: the compiled copy on disk when there is one, else compiled
+    /// from `json` (WebKit's content-blocker format). Without `json` and nothing on disk, `missing`.
+    func set(_ identifier: String, version: String, json: String?, answer: @escaping (Any) -> Void, fail: @escaping (String, String) -> Void) {
+        guard let store = WKContentRuleListStore.default() else { fail("UNAVAILABLE", "WebKit has no content rule list store"); return }
+        let key = "\(identifier)@\(version)"
+        store.lookUpContentRuleList(forIdentifier: key) { [weak self] found, _ in
+            guard let self else { return }
+            if let found {
+                self.lists[identifier] = found; self.reapply(); answer(["identifier": identifier, "cached": true]); return
+            }
+            guard let json, !json.isEmpty else { answer(["identifier": identifier, "missing": true]); return }
+            store.compileContentRuleList(forIdentifier: key, encodedContentRuleList: json) { list, error in
+                guard let list else { fail("COMPILE_FAILED", error?.localizedDescription ?? "WebKit did not compile \(identifier)"); return }
+                self.lists[identifier] = list; self.reapply()
+                // Older versions of the same list are only disk space now.
+                store.getAvailableContentRuleListIdentifiers { keys in
+                    for old in keys ?? [] where old.hasPrefix("\(identifier)@") && old != key { store.removeContentRuleList(forIdentifier: old) { _ in } }
+                }
+                answer(["identifier": identifier, "cached": false])
+            }
+        }
+    }
+
+    func remove(_ identifier: String) { lists.removeValue(forKey: identifier); reapply() }
+}
+
+/// Scripts and styles a person added to sites (Boosts), injected in an isolated world the page's
+/// own scripts cannot see. Each names the hosts it runs on; a host covers its subdomains.
+final class CraftMacUserScripts {
+    static let shared = CraftMacUserScripts()
+    private var scripts: [WKUserScript] = []
+
+    func set(_ entries: [[String: Any]]) {
+        scripts = entries.flatMap { entry -> [WKUserScript] in
+            let hosts = (entry["hosts"] as? [String] ?? []).map { $0.lowercased() }
+            guard !hosts.isEmpty, let hostsJSON = try? JSONSerialization.data(withJSONObject: hosts), let hostList = String(data: hostsJSON, encoding: .utf8) else { return [] }
+            let guardLine = "if (!\(hostList).some(h => location.hostname === h || location.hostname.endsWith('.' + h))) return;"
+            let allFrames = entry["allFrames"] as? Bool == true
+            var made: [WKUserScript] = []
+            if let css = entry["css"] as? String, !css.isEmpty, let cssJSON = try? JSONSerialization.data(withJSONObject: [css]), let cssLiteral = String(data: cssJSON, encoding: .utf8) {
+                let id = (entry["id"] as? String ?? "boost").replacingOccurrences(of: "\"", with: "")
+                let source = "(() => { \(guardLine) const s = document.createElement('style'); s.dataset.craftBoost = \"\(id)\"; s.textContent = \(cssLiteral)[0]; (document.head || document.documentElement).appendChild(s) })()"
+                made.append(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: !allFrames, in: .defaultClient))
+            }
+            if let js = entry["js"] as? String, !js.isEmpty {
+                made.append(WKUserScript(source: "(() => { \(guardLine)\n\(js)\n})()", injectionTime: .atDocumentEnd, forMainFrameOnly: !allFrames, in: .defaultClient))
+            }
+            return made
+        }
+        // Pages pick the new set up on their next load.
+        for tab in CraftMacWebTabs.shared.tabs.values { apply(to: tab.view.configuration.userContentController) }
+    }
+
+    func apply(to controller: WKUserContentController) {
+        controller.removeAllUserScripts()
+        scripts.forEach(controller.addUserScript)
+    }
 }
 
 /// Downloads started by any tab, saved to ~/Downloads under a name that never overwrites.
@@ -242,10 +358,12 @@ final class CraftMacDownloads: NSObject, WKDownloadDelegate {
     static let shared = CraftMacDownloads()
     private struct Entry { let id: String; weak var tab: CraftMacTab?; var path: String; var observation: NSKeyValueObservation? }
     private var entries: [ObjectIdentifier: Entry] = [:]
+    private var downloads: [WKDownload] = []
     private var lastReport: [String: CFAbsoluteTime] = [:]
 
     func adopt(_ download: WKDownload, tab: CraftMacTab) {
         download.delegate = self
+        downloads.append(download)
         let id = UUID().uuidString
         var entry = Entry(id: id, tab: tab, path: "")
         entry.observation = download.progress.observe(\.fractionCompleted) { [weak self, weak download] _, _ in
@@ -288,7 +406,25 @@ final class CraftMacDownloads: NSObject, WKDownloadDelegate {
         entry.tab?.emit("download", detail)
     }
 
+    /// Stop a download that is still running; what arrived is kept as resume data no one uses yet.
+    func cancel(_ id: String) -> Bool {
+        guard let download = downloads.first(where: { entries[ObjectIdentifier($0)]?.id == id }) else { return false }
+        download.cancel { _ in }
+        report(download, state: "failed", extra: ["message": "Cancelled", "cancelled": true])
+        finish(download)
+        return true
+    }
+
+    /// A file in ~/Downloads (after resolving links), or nil: the screen may only point at downloads.
+    static func downloadedFile(_ path: String) -> URL? {
+        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].resolvingSymlinksInPath().standardizedFileURL.path
+        let file = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+        guard file.path.hasPrefix(folder + "/"), FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return file
+    }
+
     private func finish(_ download: WKDownload) {
+        downloads.removeAll { $0 === download }
         if let entry = entries.removeValue(forKey: ObjectIdentifier(download)) { entry.observation?.invalidate(); lastReport.removeValue(forKey: entry.id) }
     }
 }
@@ -300,11 +436,11 @@ final class CraftMacWebTabs {
     private let hosts = NSHashTable<CraftMacWebHost>.weakObjects()
 
     @discardableResult
-    func make(id: String? = nil, profile: String = "default", ephemeral: Bool = false, configuration: WKWebViewConfiguration? = nil, owner: CraftMacRuntime?) -> CraftMacTab {
+    func make(id: String? = nil, profile: String = "default", ephemeral: Bool = false, configuration: WKWebViewConfiguration? = nil, owner: CraftMacRuntime?, ownContent: Bool = true) -> CraftMacTab {
         let id = id.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
         if let existing = tabs[id] { return existing }
         let tab = CraftMacTab(id: id, profile: profile, ephemeral: ephemeral,
-            configuration: configuration ?? CraftMacWebProfiles.shared.configuration(profile: profile, ephemeral: ephemeral), owner: owner)
+            configuration: configuration ?? CraftMacWebProfiles.shared.configuration(profile: profile, ephemeral: ephemeral), owner: owner, ownContent: ownContent)
         tabs[id] = tab
         // A `<WebView>` may have named this tab before it existed (the render and the create cross).
         for host in hosts.allObjects where host.wanted == id { host.show(id) }
@@ -313,7 +449,44 @@ final class CraftMacWebTabs {
 
     func register(_ host: CraftMacWebHost) { hosts.add(host) }
 
-    func close(_ id: String) { tabs.removeValue(forKey: id)?.close() }
+    /// Permission requests waiting for the screen, by request id. Unanswered ones are denied after two minutes.
+    private var pending: [String: (tab: String, decide: (WKPermissionDecision) -> Void)] = [:]
+    func ask(tab: CraftMacTab, decide: @escaping (WKPermissionDecision) -> Void) -> String {
+        let request = UUID().uuidString
+        pending[request] = (tab.id, decide)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in self?.answer(request, .deny) }
+        return request
+    }
+    @discardableResult
+    func answer(_ request: String, _ decision: WKPermissionDecision) -> Bool {
+        guard let waiting = pending.removeValue(forKey: request) else { return false }
+        waiting.decide(decision); return true
+    }
+
+    func close(_ id: String) {
+        for (request, waiting) in pending where waiting.tab == id { answer(request, .deny) }
+        tabs.removeValue(forKey: id)?.close()
+    }
+
+    /// Cookies, storage and caches of a profile: one site's (`host`, matched by its registrable
+    /// domain as WebKit names records) or everything.
+    func clearData(_ options: [String: Any], answer: @escaping (Any) -> Void) {
+        let store = CraftMacWebProfiles.shared.store(profile: options["profile"] as? String ?? "default", ephemeral: options["private"] as? Bool == true)
+        let kinds: [String: [String]] = [
+            "cookies": [WKWebsiteDataTypeCookies],
+            "storage": [WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeServiceWorkerRegistrations],
+            "cache": [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeOfflineWebApplicationCache],
+        ]
+        let asked = options["types"] as? [String] ?? Array(kinds.keys)
+        let types = Set(asked.flatMap { kinds[$0] ?? [] })
+        guard let host = (options["host"] as? String)?.lowercased(), !host.isEmpty else {
+            store.removeData(ofTypes: types, modifiedSince: .distantPast) { answer(["cleared": true]) }; return
+        }
+        store.fetchDataRecords(ofTypes: types) { records in
+            let matching = records.filter { host == $0.displayName || host.hasSuffix("." + $0.displayName) }
+            store.removeData(ofTypes: types, for: matching) { answer(["cleared": true, "records": matching.count]) }
+        }
+    }
 
     /// A closed window takes its tabs with it.
     func closeAll(owner: CraftMacRuntime) {
@@ -332,6 +505,30 @@ final class CraftMacWebTabs {
             answer(tab.state); return
         }
         if method == "list" { answer(tabs.values.map(\.state)); return }
+        switch method {
+        case "setContentRules":
+            guard let identifier = args.first as? String, !identifier.isEmpty else { fail("INVALID_ARGUMENT", "setContentRules needs an identifier"); return }
+            let list = args.dropFirst().first as? [String: Any] ?? [:]
+            CraftMacContentRules.shared.set(identifier, version: list["version"] as? String ?? "1", json: list["json"] as? String, answer: answer, fail: fail); return
+        case "removeContentRules": CraftMacContentRules.shared.remove(args.first as? String ?? ""); answer(true); return
+        case "allowContent":
+            CraftMacContentRules.shared.allowed = Set((args.first as? [String] ?? []).map { $0.lowercased() })
+            CraftMacContentRules.shared.reapply(); answer(true); return
+        case "setUserScripts": CraftMacUserScripts.shared.set(args.first as? [[String: Any]] ?? []); answer(true); return
+        case "answerPermission":
+            let decision: WKPermissionDecision = { switch args.dropFirst().first as? String { case "grant": return .grant; case "prompt": return .prompt; default: return .deny } }()
+            answer(self.answer(args.first as? String ?? "", decision)); return
+        case "clearData": clearData(options, answer: answer); return
+        case "cancelDownload": answer(CraftMacDownloads.shared.cancel(args.first as? String ?? "")); return
+        case "revealDownload", "openDownload":
+            guard let file = CraftMacDownloads.downloadedFile(args.first as? String ?? "") else { fail("NOT_FOUND", "Not a file in Downloads"); return }
+            // An app or a script is revealed, never run: opening it is the person's call in Finder.
+            let runnable = (try? file.resourceValues(forKeys: [.contentTypeKey]))?.contentType.map { $0.conforms(to: .application) || $0.conforms(to: .executable) || $0.conforms(to: .script) } ?? true
+            if method == "openDownload" && !runnable { answer(NSWorkspace.shared.open(file)) }
+            else { NSWorkspace.shared.activateFileViewerSelecting([file]); answer(true) }
+            return
+        default: break
+        }
         guard let id = args.first as? String, let tab = tabs[id] else { fail("NOT_FOUND", "No tab \(String(describing: args.first ?? ""))"); return }
         let view = tab.view
         switch method {
@@ -368,6 +565,11 @@ final class CraftMacWebTabs {
             configuration.caseSensitive = options["caseSensitive"] as? Bool == true
             configuration.wraps = options["wraps"] as? Bool ?? true
             view.find(text, configuration: configuration) { result in answer(["found": result.matchFound]) }
+        case "print":
+            let operation = view.printOperation(with: .shared)
+            operation.view?.frame = view.bounds
+            if let window = view.window { operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil) } else { operation.run() }
+            answer(true)
         case "snapshot":
             let configuration = WKSnapshotConfiguration()
             if let width = number((args.dropFirst().first as? [String: Any])?["width"]) { configuration.snapshotWidth = NSNumber(value: Double(width)) }

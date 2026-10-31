@@ -87,6 +87,28 @@ final class CraftMacRuntime {
         let isolated = call("create", [["id": "p", "private": true]], runtime) as! [String: Any]
         require(isolated["private"] as? Bool == true && !CraftMacWebTabs.shared.tabs["p"]!.view.configuration.websiteDataStore.isPersistent, "A private tab persisted its data")
 
+        // A content blocker applies to new tabs, is found again compiled by its version, and stays off on allowed sites.
+        let hide = #"[{"trigger":{"url-filter":".*"},"action":{"type":"css-display-none","selector":".ad"}}]"#
+        let fresh = call("setContentRules", ["checks", ["version": UUID().uuidString, "json": hide]], runtime) as! [String: Any]
+        require(fresh["cached"] as? Bool == false, "A new content rule list was not compiled")
+        let version = UUID().uuidString
+        require((call("setContentRules", ["checks-2", ["version": version]], runtime) as! [String: Any])["missing"] as? Bool == true, "A list never compiled was not reported missing")
+        _ = call("setContentRules", ["checks-2", ["version": version, "json": hide]], runtime)
+        require((call("setContentRules", ["checks-2", ["version": version]], runtime) as! [String: Any])["cached"] as? Bool == true, "A compiled list was not found again by its version")
+        // A Boost's style runs on the sites it names.
+        _ = call("setUserScripts", [[["id": "boost", "hosts": ["checks.invalid"], "css": "body { color: rgb(1, 2, 3) }"]]], runtime)
+        // Blockers act on web documents, not data: ones; an https base URL needs no network.
+        _ = call("create", [["id": "ads"]], runtime)
+        CraftMacWebTabs.shared.tabs["ads"]!.view.loadHTMLString("<title>Ads</title><div class=ad>ad</div><div class=keep>keep</div>", baseURL: URL(string: "https://checks.invalid/"))
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("bar", "View", ["height": 40]), node("content", "WebView", ["flexGrow": 1], props: ["tab": "ads"])]))
+        require(wait { (try? JSONSerialization.jsonObject(with: Data(((call("evaluate", ["ads", "(() => { const ad = document.querySelector('.ad'), keep = document.querySelector('.keep'); return ad && keep ? JSON.stringify([getComputedStyle(ad).display, getComputedStyle(keep).display, getComputedStyle(document.body).color]) : '[]' })()"], runtime) as? String) ?? "[]").utf8)) as? [String]) == ["none", "block", "rgb(1, 2, 3)"] }, "The blocker did not hide .ad, or the Boost's style did not apply")
+        CraftMacContentRules.shared.allowed = ["example.com"]
+        require(CraftMacContentRules.shared.isAllowed("news.example.com") && !CraftMacContentRules.shared.isAllowed("example.org"), "An allowed site did not cover its subdomains")
+        _ = call("removeContentRules", ["checks"], runtime); _ = call("removeContentRules", ["checks-2"], runtime)
+        _ = call("setUserScripts", [[]], runtime)
+        require(call("answerPermission", ["no-such-request", "grant"], runtime) as? Bool == false, "An unknown permission request was answered")
+        require((call("clearData", [["profile": "checks", "private": true]], runtime) as? [String: Any])?["cleared"] as? Bool == true, "clearData did not answer")
+
         // Unknown tabs fail with NOT_FOUND instead of answering.
         var code = ""
         CraftMacWebTabs.shared.perform("back", ["missing"], owner: runtime, answer: { _ in }, fail: { failure, _ in code = failure })
