@@ -78,3 +78,19 @@ surface and is unaffected by this WebView limitation.
 An explicit `--test-dir` enables local file-based AppKit control automation.
 It records actual control classes, frames, values, script errors, and view trees.
 It is absent during normal launches. Tests should always use isolated data.
+
+## Text editing, sidebar and shadows
+
+A multi-line `TextInput` reports the caret and selection with `onSelectionChange`
+(`{ start, end }`, UTF-16 offsets) and takes a `selection` prop to move it. With the
+`markdown` prop the text stays plain markdown, drawn as Notes would show it:
+headings, bold, italic, code, quotes, bullets and checklists with finished items struck
+through, restyled after every edit. `NativeSidebar` takes `rowHeight` and
+`labelFontSize` (24 and 15 give a Things-like source list). `shadow-*` classes draw a
+real layer shadow. With `--test-dir`, the driver's `key` action sends `return`, `tab`,
+`escape`, `up`, `down` or `backspace` to a text control as a command, so submit and
+accept-completion handlers can be exercised without a keyboard.
+
+A Keychain read never waits on a permission prompt: with user interaction turned off an
+item the app is not trusted for fails, and the app signs in again, instead of hanging
+with no window behind a dialog.

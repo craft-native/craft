@@ -173,7 +173,69 @@ final class CraftMacTextView: NSTextView {
     /// An inline completion drawn after the caret in the placeholder color
     /// (`ghostText`); Tab accepts it (`onAcceptCompletion`), any edit drops it.
     var ghost = ""
-    override func didChangeText() { ghost = ""; super.didChangeText() }
+    /// `markdown` prop: the text stays plain markdown, drawn the way Notes would show it (headings, bold, italic,
+    /// code, quotes, checklists with the done ones struck through), restyled after every edit.
+    var markdown = false
+    var lastStyled = ""
+    /// The font the markdown styling is built from. NSTextView's own `font` answers the font at the caret, which a heading changes.
+    var baseFont: NSFont?
+    override func didChangeText() { ghost = ""; super.didChangeText(); restyle() }
+    func restyle() {
+        guard markdown, let storage = textStorage else { return }
+        let base = baseFont ?? font ?? NSFont.systemFont(ofSize: 13)
+        let text = string as NSString
+        let full = NSRange(location: 0, length: text.length)
+        // The dynamic system font does not answer NSFontManager's trait conversion, so weight and slant are built directly.
+        enum Trait { case bold, italic }
+        func traits(_ font: NSFont, _ trait: Trait) -> NSFont {
+            switch trait {
+            case .bold:
+                let heavier = NSFont.systemFont(ofSize: font.pointSize, weight: .bold)
+                return font.fontDescriptor.symbolicTraits.contains(.italic) ? (NSFont(descriptor: heavier.fontDescriptor.withSymbolicTraits(.italic), size: font.pointSize) ?? heavier) : heavier
+            case .italic:
+                return NSFont(descriptor: font.fontDescriptor.withSymbolicTraits([.italic]), size: font.pointSize) ?? font
+            }
+        }
+        let dim: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.tertiaryLabelColor]
+        storage.beginEditing()
+        storage.setAttributes([.font: base, .foregroundColor: NSColor.labelColor], range: full)
+        text.enumerateSubstrings(in: full, options: [.byLines, .substringNotRequired]) { _, range, _, _ in
+            let line = text.substring(with: range)
+            if let hashes = line.prefix(while: { $0 == "#" }) as Substring?, (1...3).contains(hashes.count), line.dropFirst(hashes.count).hasPrefix(" ") {
+                let size: CGFloat = [1: base.pointSize + 11, 2: base.pointSize + 6, 3: base.pointSize + 3][hashes.count]!
+                storage.addAttribute(.font, value: traits(NSFont.systemFont(ofSize: size), .bold), range: range)
+                storage.addAttributes(dim, range: NSRange(location: range.location, length: hashes.count + 1))
+            }
+            else if line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
+                storage.addAttributes(dim, range: NSRange(location: range.location, length: 6))
+                storage.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: NSColor.secondaryLabelColor], range: NSRange(location: range.location + 6, length: range.length - 6))
+            }
+            else if line.hasPrefix("- [ ] ") { storage.addAttributes([.foregroundColor: NSColor.controlAccentColor], range: NSRange(location: range.location, length: 5)) }
+            else if line.hasPrefix("> ") {
+                storage.addAttributes(dim, range: NSRange(location: range.location, length: 2))
+                storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: range.location + 2, length: range.length - 2))
+            }
+            else if line.hasPrefix("- ") || line.hasPrefix("* ") { storage.addAttributes([.foregroundColor: NSColor.secondaryLabelColor], range: NSRange(location: range.location, length: 2)) }
+        }
+        func inline(_ pattern: String, _ apply: (NSRange, NSRange) -> Void) {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { return }
+            for match in expression.matches(in: string, range: full) where match.numberOfRanges > 1 { apply(match.range, match.range(at: 1)) }
+        }
+        inline("\\*\\*(?!\\s)(.+?)(?<!\\s)\\*\\*") { whole, inner in
+            storage.enumerateAttribute(.font, in: inner) { value, range, _ in storage.addAttribute(.font, value: traits(value as? NSFont ?? base, .bold), range: range) }
+            storage.addAttributes(dim, range: NSRange(location: whole.location, length: 2)); storage.addAttributes(dim, range: NSRange(location: whole.location + whole.length - 2, length: 2))
+        }
+        inline("(?<![\\*\\w])\\*(?![\\*\\s])(.+?)(?<![\\*\\s])\\*(?![\\*\\w])") { whole, inner in
+            storage.enumerateAttribute(.font, in: inner) { value, range, _ in storage.addAttribute(.font, value: traits(value as? NSFont ?? base, .italic), range: range) }
+            storage.addAttributes(dim, range: NSRange(location: whole.location, length: 1)); storage.addAttributes(dim, range: NSRange(location: whole.location + whole.length - 1, length: 1))
+        }
+        inline("`([^`\\n]+)`") { whole, inner in
+            storage.addAttributes([.font: NSFont.monospacedSystemFont(ofSize: base.pointSize - 1, weight: .regular), .backgroundColor: NSColor.quaternaryLabelColor], range: inner)
+            storage.addAttributes(dim, range: NSRange(location: whole.location, length: 1)); storage.addAttributes(dim, range: NSRange(location: whole.location + whole.length - 1, length: 1))
+        }
+        storage.endEditing()
+        typingAttributes = [.font: base, .foregroundColor: NSColor.labelColor]
+    }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if !ghost.isEmpty, selectedRange().length == 0, let window {
@@ -203,6 +265,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     var modal: NSPanel?
     var material: NSVisualEffectView?
     var edgeBorders: [String: CALayer] = [:]
+    var lastSelection = ""
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -271,6 +334,14 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         clipsToBounds = style["overflow"] as? String != "visible"
         if let container = control as? CraftMacFlow { container.clipsToBounds = clipsToBounds }
         layer?.masksToBounds = clipsToBounds || (number(style["borderRadius"]) ?? 0) > 0
+        // `shadow-*` classes: a box with a shadow cannot clip its own layer, or the shadow is cut off.
+        if let opacity = number(style["shadowOpacity"]), opacity > 0 {
+            let offset = style["shadowOffset"] as? [String: Any] ?? [:]
+            layer?.masksToBounds = false; clipsToBounds = false
+            layer?.shadowOpacity = Float(opacity); layer?.shadowRadius = number(style["shadowRadius"]) ?? 3
+            layer?.shadowOffset = CGSize(width: number(offset["width"]) ?? 0, height: -(number(offset["height"]) ?? 1))
+            layer?.shadowColor = CraftMacColor.parse(style["shadowColor"], fallback: .black).cgColor
+        } else { layer?.shadowOpacity = 0 }
         for edge in ["Top", "Right", "Bottom", "Left"] {
             let border = edgeBorders[edge] ?? CALayer()
             if edgeBorders[edge] == nil { edgeBorders[edge] = border; layer?.addSublayer(border) }
@@ -373,8 +444,20 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
                 text.drawsBackground = bordered
             }
             if text.string != value { text.string = value }
-            text.isEditable = props["disabled"] as? Bool != true; text.font = font
-            if let editor = text as? CraftMacTextView { editor.placeholder = props["placeholder"] as? String ?? ""; editor.ghost = props["ghostText"] as? String ?? ""; editor.needsDisplay = true }
+            // `selection` ({ start, end }) moves the caret, e.g. after a formatting action changed the text.
+            if let want = props["selection"] as? [String: Any], let start = number(want["start"]), let end = number(want["end"]) {
+                let length = (text.string as NSString).length
+                let range = NSRange(location: min(Int(start), length), length: max(0, min(Int(end), length) - min(Int(start), length)))
+                if text.selectedRange() != range { lastSelection = "\(range.location):\(range.length)"; text.setSelectedRange(range) }
+            }
+            text.isEditable = props["disabled"] as? Bool != true
+            // Assigning `font` restyles the whole text, so a markdown editor only does it when the base font changes.
+            if let editor = text as? CraftMacTextView, props["markdown"] as? Bool == true {
+                if editor.baseFont != font { editor.baseFont = font; editor.font = font; editor.lastStyled = "\u{0}" }
+            } else { (text as? CraftMacTextView)?.baseFont = nil; text.font = font }
+            if let editor = text as? CraftMacTextView { let markdown = props["markdown"] as? Bool == true
+                if editor.markdown != markdown || (markdown && editor.string != editor.lastStyled) { editor.markdown = markdown; editor.restyle(); editor.lastStyled = editor.string }
+                editor.placeholder = props["placeholder"] as? String ?? ""; editor.ghost = props["ghostText"] as? String ?? ""; editor.needsDisplay = true }
             text.setAccessibilityIdentifier(props["testID"] as? String ?? props["testId"] as? String ?? id)
             text.setAccessibilityLabel(props["placeholder"] as? String ?? "Message")
         } else if let field = control as? NSTextField {
@@ -476,6 +559,15 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     }
     func controlTextDidChange(_ notification: Notification) { if let field = notification.object as? NSTextField { input(field.stringValue) } }
     func textDidChange(_ notification: Notification) { if let text = notification.object as? NSTextView { input(text.string) } }
+    /// The caret and selection, as UTF-16 offsets (JavaScript string indices): `onSelectionChange`.
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard let text = notification.object as? NSTextView, events["onSelectionChange"] != nil else { return }
+        let range = text.selectedRange()
+        let key = "\(range.location):\(range.length)"
+        guard key != lastSelection else { return }
+        lastSelection = key
+        fire("onSelectionChange", ["start": range.location, "end": range.location + range.length, "selection": ["start": range.location, "end": range.location + range.length], "nativeEvent": ["selection": ["start": range.location, "end": range.location + range.length]]])
+    }
     func input(_ value: String) { fire("onChangeText", ["text": value, "value": value, "nativeEvent": ["text": value, "value": value]]) }
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertTab(_:)), let editor = textView as? CraftMacTextView, !editor.ghost.isEmpty, events["onAcceptCompletion"] != nil {
@@ -526,6 +618,9 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     let outline = NSOutlineView()
     var sections: [Item] = []
     var fingerprint = ""
+    /// `rowHeight` and `labelFontSize` props: a Things-like sidebar is 24 points tall at 15.
+    var rowHeight: CGFloat = 32
+    var labelSize: CGFloat = 13
     init(box: CraftMacBox) {
         self.box = box; super.init(frame: .zero)
         hasVerticalScroller = true; drawsBackground = false
@@ -538,7 +633,11 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     func configure(_ props: [String: Any]) {
         let raw = props["sections"] as? [[String: Any]] ?? []
         let data = (try? JSONSerialization.data(withJSONObject: raw, options: .sortedKeys)) ?? Data()
-        let next = String(decoding: data, as: UTF8.self)
+        // Written as attributes (`rowHeight="24"`) they arrive as text.
+        func size(_ key: String) -> CGFloat? { number(props[key]) ?? (props[key] as? String).flatMap(Double.init).map { CGFloat($0) } }
+        rowHeight = size("rowHeight") ?? 32
+        labelSize = size("labelFontSize") ?? 13
+        let next = String(decoding: data, as: UTF8.self) + "|\(rowHeight)|\(labelSize)"
         if next != fingerprint { fingerprint = next; sections = raw.map(Item.init); outline.reloadData(); outline.expandItem(nil, expandChildren: true) }
         if let selected = props["selected"] as? String { for index in 0..<outline.numberOfRows { if (outline.item(atRow: index) as? Item)?.id == selected { outline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false); break } } }
     }
@@ -550,7 +649,7 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool { false }
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
         let item = item as! Item
-        return item.children.isEmpty ? 32 : item.label.isEmpty ? 12 : 28
+        return item.children.isEmpty ? rowHeight : item.label.isEmpty ? 12 : max(24, rowHeight - 4)
     }
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
         let row = CraftMacSidebarRow(); row.isEmphasized = false; return row
@@ -558,13 +657,13 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let item = item as! Item
         let cell = NSTableCellView(); let label = NSTextField(labelWithString: item.label)
-        label.font = NSFont.systemFont(ofSize: 13); label.lineBreakMode = .byTruncatingTail; cell.textField = label; cell.addSubview(label)
+        label.font = NSFont.systemFont(ofSize: labelSize); label.lineBreakMode = .byTruncatingTail; cell.textField = label; cell.addSubview(label)
         if !item.children.isEmpty { label.font = NSFont.systemFont(ofSize: 11, weight: .semibold); label.textColor = .secondaryLabelColor }
         label.translatesAutoresizingMaskIntoConstraints = false
         let badge = NSTextField(labelWithString: item.badge); badge.font = NSFont.systemFont(ofSize: 11); badge.textColor = .secondaryLabelColor
         badge.translatesAutoresizingMaskIntoConstraints = false; badge.setContentHuggingPriority(.required, for: .horizontal); cell.addSubview(badge)
         NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: item.icon.isEmpty ? 16 : 39), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -16), badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-        if !item.icon.isEmpty { let image = NSImageView(image: NSImage(systemSymbolName: item.icon, accessibilityDescription: nil) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: 8, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
+        if !item.icon.isEmpty { let image = NSImageView(image: NSImage(systemSymbolName: item.icon, accessibilityDescription: nil) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: (rowHeight - 16) / 2, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
         cell.setAccessibilityIdentifier(item.id); cell.setAccessibilityLabel(item.label)
         return cell
     }

@@ -311,6 +311,16 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         guard box.window?.isVisible == true, !box.isHidden, box.frame.width > 0, box.frame.height > 0 else { return ["ok": false, "error": "Control is not visible"] }
         if let control = box.control as? NSControl, !control.isEnabled { return ["ok": false, "error": "Control is disabled"] }
         switch kind {
+        case "key":
+            // Return, Tab, Escape and the arrows, as the field editor receives them: they reach the same delegate commands a keystroke does.
+            let commands = ["return": #selector(NSResponder.insertNewline(_:)), "tab": #selector(NSResponder.insertTab(_:)), "escape": #selector(NSResponder.cancelOperation(_:)),
+                            "up": #selector(NSResponder.moveUp(_:)), "down": #selector(NSResponder.moveDown(_:)), "backspace": #selector(NSResponder.deleteBackward(_:))]
+            guard let name = action["value"] as? String, let command = commands[name] else { return ["ok": false, "error": "Unknown key"] }
+            let target: NSView? = (box.control as? NSScrollView)?.documentView ?? box.control
+            guard let target, scene.window.makeFirstResponder(target) else { return ["ok": false, "error": "Control cannot take focus"] }
+            let editor = (target as? NSTextField)?.currentEditor() as? NSTextView ?? target as? NSTextView
+            guard let editor else { return ["ok": false, "error": "Not a text input"] }
+            editor.doCommand(by: command)
         case "click": if let button = box.control as? NSButton { button.performClick(nil) } else { box.pressed() }
         case "fill":
             let value = action["value"] as? String ?? ""
