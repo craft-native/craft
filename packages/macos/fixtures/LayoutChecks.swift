@@ -124,6 +124,28 @@ final class CraftMacRuntime {
         require(card.layer?.masksToBounds == false && card.layer?.shadowOpacity ?? 0 > 0, "A card clipped away its own shadow")
         require(card.control?.layer?.masksToBounds == true && abs((card.control?.layer?.cornerRadius ?? 0) - 12) < 0.5, "A card with a shadow no longer clips its content to its corners")
         require(card.layer?.shadowPath != nil, "A shadow has no explicit path")
+        // Drag and drop: a drop target registers, reports before/after/inside, and reads what a drag carries.
+        var rowNode = node("dropRow", "Pressable", ["height": 40], props: ["draggable": true, "dragData": ["id": "t1"], "dropInside": true])
+        rowNode["events"] = ["onDrop": "h1", "onDragOver": "h2", "onHoverChange": "h3", "onPress": "h4"]
+        renderer.render(node("root", "View", ["flexGrow": 1], [rowNode]))
+        renderer.boxes["root"]!.layoutSubtreeIfNeeded()
+        let target = renderer.boxes["dropRow"]!
+        require(target.registeredDraggedTypes.contains(CraftMacBox.dragType) && target.registeredDraggedTypes.contains(.URL), "A drop target did not register for drags")
+        require(target.hoverArea != nil, "onHoverChange does not track the pointer")
+        require(target.dropPosition(at: CGPoint(x: 5, y: 2)) == "before" && target.dropPosition(at: CGPoint(x: 5, y: 20)) == "inside" && target.dropPosition(at: CGPoint(x: 5, y: 38)) == "after", "Drop positions are wrong")
+        let board = NSPasteboard(name: NSPasteboard.Name("org.craft-native.fixture.\(ProcessInfo.processInfo.processIdentifier)"))
+        board.clearContents()
+        let item = NSPasteboardItem()
+        item.setData(try! JSONSerialization.data(withJSONObject: ["data": ["id": "t1"]]), forType: CraftMacBox.dragType)
+        item.setString("https://stacksjs.com/", forType: .URL)
+        board.writeObjects([item])
+        let payload = target.dropPayload(board, position: "after")
+        require((payload["data"] as? [String: Any])?["id"] as? String == "t1" && payload["internal"] as? Bool == true, "A drop lost the drag's data")
+        require((payload["urls"] as? [String])?.first == "https://stacksjs.com/", "A drop lost the link it carried")
+        board.releaseGlobally()
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("dropRow", "Pressable", ["height": 40])]))
+        require(renderer.boxes["dropRow"]!.registeredDraggedTypes.isEmpty, "A box kept accepting drops after its drop handlers went")
+
         renderer.render(node("root", "View", ["flexGrow": 1], [node("row", "View", ["height": 40])]))
         require(renderer.boxes["root"]!.gradient == nil, "A gradient stayed after its classes went")
         require(renderer.boxes["row"]!.hoverArea == nil, "A box kept tracking the pointer after its hover styles went")

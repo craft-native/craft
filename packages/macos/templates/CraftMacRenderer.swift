@@ -252,7 +252,7 @@ final class CraftMacTextView: NSTextView {
     }
 }
 
-final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
+final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDraggingSource {
     let id: String
     let kind: String
     weak var renderer: CraftMacRenderer?
@@ -271,6 +271,11 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     var hoverArea: NSTrackingArea?
     var gradient: CAGradientLayer?
     var configuredOnce = false
+    /// Drag and drop: where a press started (a drag begins 3pt away), and the last position reported to a drop target.
+    static let dragType = NSPasteboard.PasteboardType("org.craft-native.drag")
+    var downPoint: NSPoint?
+    var lastDropPosition = ""
+    var acceptsDrops = false
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -423,6 +428,11 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             }
         }
         if let sidebar = control as? CraftMacSidebar { sidebar.configure(props) }
+        let dropTarget = events["onDrop"] != nil || events["onDragOver"] != nil
+        if dropTarget != acceptsDrops {
+            acceptsDrops = dropTarget
+            if dropTarget { registerForDraggedTypes([Self.dragType, .URL, .fileURL]) } else { unregisterDraggedTypes() }
+        }
         updateTrackingAreas()
         applyAppearance(animated: configuredOnce)
         configuredOnce = true
@@ -569,7 +579,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        let wanted = style["hoverStyle"] is [String: Any] || style["pressStyle"] is [String: Any]
+        let wanted = style["hoverStyle"] is [String: Any] || style["pressStyle"] is [String: Any] || events["onHoverChange"] != nil
         if !wanted, let area = hoverArea { removeTrackingArea(area); hoverArea = nil; hovering = false; pressing = false }
         if wanted, hoverArea == nil {
             let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
@@ -579,10 +589,83 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     override func mouseEntered(with event: NSEvent) {
         guard hoverArea != nil, !hovering else { return }
         hovering = true; applyAppearance(animated: true)
+        fire("onHoverChange", ["hovered": true])
     }
     override func mouseExited(with event: NSEvent) {
         guard hovering || pressing else { return }
+        let was = hovering
         hovering = false; pressing = false; applyAppearance(animated: true)
+        if was { fire("onHoverChange", ["hovered": false]) }
+    }
+
+    // MARK: drag and drop
+    // A `draggable` box starts a drag 3pt from where it was pressed, carrying `dragData` (and `dragURL`
+    // for other apps). A box with `onDrop`/`onDragOver` hears drags pass over it as `before`/`after`
+    // (or `inside`, with `dropInside`), with the data, links or files they carry.
+
+    override func mouseDragged(with event: NSEvent) {
+        guard props["draggable"] as? Bool == true, let start = downPoint,
+              hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) > 3 else { super.mouseDragged(with: event); return }
+        downPoint = nil
+        if pressing { pressing = false; applyAppearance(animated: false) }
+        let item = NSPasteboardItem()
+        let data = props["dragData"] ?? NSNull()
+        if let encoded = try? JSONSerialization.data(withJSONObject: ["data": data], options: [.fragmentsAllowed]) { item.setData(encoded, forType: Self.dragType) }
+        if let url = props["dragURL"] as? String, !url.isEmpty { item.setString(url, forType: .URL); item.setString(url, forType: .string) }
+        let dragging = NSDraggingItem(pasteboardWriter: item)
+        dragging.setDraggingFrame(bounds, contents: snapshot())
+        beginDraggingSession(with: [dragging], event: event, source: self)
+        fire("onDragStart", ["data": data])
+    }
+
+    private func snapshot() -> NSImage {
+        guard bounds.width > 0, bounds.height > 0, let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return NSImage() }
+        cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size); image.addRepresentation(rep)
+        return image
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : .copy
+    }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        fire("onDragEnd", ["dropped": operation != []])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { dragMoved(sender) }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { dragMoved(sender) }
+    override func draggingExited(_ sender: NSDraggingInfo?) { lastDropPosition = ""; fire("onDragLeave") }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let position = dropPosition(at: convert(sender.draggingLocation, from: nil))
+        lastDropPosition = ""
+        fire("onDrop", dropPayload(sender.draggingPasteboard, position: position))
+        return true
+    }
+
+    /// Reported once per change of position, not on every pointer move.
+    private func dragMoved(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let position = dropPosition(at: convert(sender.draggingLocation, from: nil))
+        if position != lastDropPosition { lastDropPosition = position; fire("onDragOver", dropPayload(sender.draggingPasteboard, position: position)) }
+        return sender.draggingPasteboard.types?.contains(Self.dragType) == true ? .move : .copy
+    }
+
+    /// The box is flipped, so y runs down: the top half is `before`; with `dropInside`, the middle half is `inside`.
+    func dropPosition(at point: NSPoint) -> String {
+        let fraction = bounds.height > 0 ? point.y / bounds.height : 0.5
+        if props["dropInside"] as? Bool == true { return fraction < 0.25 ? "before" : fraction > 0.75 ? "after" : "inside" }
+        return fraction < 0.5 ? "before" : "after"
+    }
+
+    func dropPayload(_ board: NSPasteboard, position: String) -> [String: Any] {
+        var payload: [String: Any] = ["position": position]
+        if let raw = board.data(forType: Self.dragType), let object = try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed]) as? [String: Any] {
+            payload["data"] = object["data"] ?? NSNull(); payload["internal"] = true
+        }
+        let urls = board.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+        let files = urls.filter(\.isFileURL).map(\.path), links = urls.filter { !$0.isFileURL }.map(\.absoluteString)
+        if !files.isEmpty { payload["files"] = files }
+        if !links.isEmpty { payload["urls"] = links }
+        return payload
     }
     override func mouseUp(with event: NSEvent) {
         if pressing { pressing = false; applyAppearance(animated: true) }
@@ -710,6 +793,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         fire("onEndEditing", ["text": text.string, "value": text.string]); fire("onBlur", ["text": text.string, "value": text.string])
     }
     override func mouseDown(with event: NSEvent) {
+        downPoint = event.locationInWindow
         if style["pressStyle"] is [String: Any] { pressing = true; applyAppearance(animated: false) }
         if events["onPress"] != nil { fire("onPress") } else { super.mouseDown(with: event) }
     }
@@ -719,6 +803,8 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         // Rows handle the whole click. Transcript text keeps AppKit selection,
         // while a right click is routed to the STX conversation/message menu.
         if kind == "Pressable", events["onPress"] != nil || (events["onLongPress"] != nil && NSApp.currentEvent?.type == .rightMouseDown) { return self }
+        // A draggable row takes the whole press, or its label would start a text selection instead of a drag.
+        if props["draggable"] as? Bool == true, NSApp.currentEvent?.type == .leftMouseDown { return self }
         return super.hitTest(point)
     }
 }
