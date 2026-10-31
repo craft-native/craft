@@ -2,10 +2,10 @@ import { cp, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
-import { resolveMacOSToolchain } from './toolchain'
+import { resolveMacOSToolchain } from './toolchain.js'
 
-export { macosToolchain, pantryExecutable, resolveMacOSToolchain, resolveZig, toolchainCacheDir } from './toolchain'
-export type { MacOSToolchain } from './toolchain'
+export { macosToolchain, pantryExecutable, resolveMacOSToolchain, resolveZig, toolchainCacheDir } from './toolchain.js'
+export type { MacOSToolchain } from './toolchain.js'
 
 export interface MacOSNativeBuildOptions {
   outdir: string
