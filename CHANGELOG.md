@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.411...v0.0.412)
+
+## 🚀 Features
+
+- **macos**: content blockers, user scripts, permission prompts and links from other apps ([8ec292b](https://github.com/craft-native/craft/commit/8ec292b)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.410...v0.0.411)
 
 ## 🚀 Features
