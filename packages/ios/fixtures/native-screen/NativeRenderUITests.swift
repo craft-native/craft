@@ -34,7 +34,11 @@ final class NativeRenderUITests: XCTestCase {
             let session = app.staticTexts["picker-session"].label
             app.buttons["picker-\(mode)"].tap()
             let cancel = app.buttons["Cancel"].firstMatch
-            XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
+            // The system picker runs out of process: on a loaded CI simulator
+            // it has taken about five seconds to show its Cancel button (the
+            // same wait failed on main CI at 5 s). The other picker waits in
+            // this file allow 15 s for the same appearance.
+            XCTAssertTrue(cancel.waitForExistence(timeout: 15), app.debugDescription)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "System media picker before \(mode)"
             screenshot.lifetime = .keepAlways
