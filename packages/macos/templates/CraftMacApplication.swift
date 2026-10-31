@@ -143,6 +143,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         let scheme = CraftMacColor.isDark ? "dark" : "light"
         for scene in scenes.values {
             scene.runtime.context.evaluateScript("__stxNativeBridge.colorScheme = '\(scheme)';")
+            // The protocol's own message: the screen restyles its `dark:` classes and tells `craft.appearance.onChange`.
+            scene.runtime.send("APPEARANCE", ["colorScheme": scheme])
             scene.window.effectiveAppearance.performAsCurrentDrawingAppearance {
                 for box in scene.renderer.boxes.values {
                     box.layer?.backgroundColor = CraftMacColor.parse(box.style["backgroundColor"], fallback: .clear).cgColor
@@ -331,6 +333,26 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         if kind == "resize", let width = number(action["width"]), let height = number(action["height"]), width.isFinite, height.isFinite {
             scene.window.setContentSize(CGSize(width: max(scene.window.minSize.width, width), height: max(scene.window.minSize.height, height)))
             scene.renderer.root.layoutSubtreeIfNeeded()
+            return ["ok": true]
+        }
+        // A control by its testID, driven the way a person would: pressed, typed into, submitted, a key, the pointer over it.
+        if ["press", "type", "submit", "key", "hover"].contains(kind) {
+            guard let target = action["target"] as? String,
+                  let box = scene.renderer.boxes.values.first(where: { ($0.props["testID"] as? String ?? $0.props["testId"] as? String ?? $0.id) == target }) else { return ["ok": false, "error": "No control \(action["target"] ?? "")"] }
+            let text = action["text"] as? String ?? ""
+            switch kind {
+            case "press": if let button = box.control as? NSButton { button.performClick(nil) } else { box.fire("onPress") }
+            case "type":
+                if let field = box.control as? NSTextField { field.stringValue = text }
+                else if let view = (box.control as? NSScrollView)?.documentView as? NSTextView { view.string = text }
+                box.input(text)
+            case "submit": box.fire("onSubmitEditing", ["text": text, "value": text, "nativeEvent": ["text": text]])
+            case "key": box.fire("onKeyPress", ["key": action["key"] as? String ?? "", "shiftKey": action["shift"] as? Bool == true, "text": text])
+            default:
+                let hovered = action["value"] as? Bool ?? true
+                box.hovering = hovered; box.applyAppearance(animated: false)
+                box.fire("onHoverChange", ["hovered": hovered])
+            }
             return ["ok": true]
         }
         if kind == "screenshot" {

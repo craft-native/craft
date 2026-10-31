@@ -122,6 +122,10 @@ surface and is unaffected by this WebView limitation.
 An explicit `--test-dir` enables local file-based AppKit control automation.
 It records actual control classes, frames, values, script errors, and view trees.
 It is absent during normal launches. Tests should always use isolated data.
+Drop `action-<n>.json` files into the directory and each gets a `result-<n>.json`:
+`{ "action": "command", "id" }`, `appearance` (`value`: light or dark), `resize`,
+`screenshot`, `close`, `quit`, and, aimed at a control by its testID (`target`),
+`press`, `type` (`text`), `submit`, `key` (`key`, `shift`) and `hover` (`value`).
 
 ## Text editing, sidebar and shadows
 
