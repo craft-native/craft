@@ -2,7 +2,6 @@ import AppKit
 import ZigJS
 import Foundation
 import Security
-import LocalAuthentication
 
 /// The macOS Keychain behind `craft.secureStorage`: one generic password per
 /// key, under a service named for the app. The data-protection keychain is
@@ -33,11 +32,13 @@ enum CraftMacKeychain {
         var result: AnyObject?
         let status = run(account) { query in
             var query = query; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
-            // Never stop the main thread on a Keychain permission prompt (a rebuilt,
-            // differently signed app is not trusted by an older item's access list):
-            // the read fails, the user signs in again, and the new item is trusted.
-            let context = LAContext(); context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext as String] = context
+            // Never stop the main thread on a Keychain permission prompt: an older item's
+            // access list does not trust a rebuilt app, and the prompt (with no window behind
+            // it) would hang the launch. With interaction off the read fails instead, the
+            // user signs in again, and the new item is trusted. Neither LAContext nor
+            // kSecUseAuthenticationUI stops a login-keychain access-list prompt; this does.
+            SecKeychainSetUserInteractionAllowed(false)
+            defer { SecKeychainSetUserInteractionAllowed(true) }
             return SecItemCopyMatching(query as CFDictionary, &result)
         }
         guard status == errSecSuccess, let data = result as? Data else { return nil }
