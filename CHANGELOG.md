@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.413...v0.0.414)
+
+## 🚀 Features
+
+- **macos**: Desktop.post sends a message to the app's other windows ([42c2667](https://github.com/craft-native/craft/commit/42c2667)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **macos**: a menu command goes to the window it was chosen in ([3dd7be4](https://github.com/craft-native/craft/commit/3dd7be4)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.412...v0.0.413)
 
 ## 🚀 Features
