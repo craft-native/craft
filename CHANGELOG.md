@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.403...v0.0.404)
+
+## 🐛 Bug Fixes
+
+- **macos**: turn Keychain interaction off for reads so an untrusted item fails instead of prompting ([6eda0ec](https://github.com/craft-native/craft/commit/6eda0ec)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.402...v0.0.403)
 
 ## 🚀 Features
