@@ -1,5 +1,31 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.410...v0.0.411)
+
+## 🚀 Features
+
+- **macos**: let screens finish their work before the app quits ([a810205](https://github.com/craft-native/craft/commit/a810205)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios**: keep the caret in view when the keyboard finishes appearing after an edit ([9017c5e](https://github.com/craft-native/craft/commit/9017c5e)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: allow the out-of-process photo picker its observed appearance time ([6b8ef47](https://github.com/craft-native/craft/commit/6b8ef47)) _(by Chris Breuer)_
+- **ios**: give the Metal fixture's GPU completion the surface's full budget ([a6b1316](https://github.com/craft-native/craft/commit/a6b1316)) _(by Chris Breuer)_
+- **android**: wait for the celebration to end on its own instead of sleeping ([70fff6a](https://github.com/craft-native/craft/commit/70fff6a)) _(by Chris Breuer)_
+
+## 🤖 Continuous Integration
+
+- **windows**: key the Vulkan driver cache on the toolchain, not the image ([516de1a](https://github.com/craft-native/craft/commit/516de1a)) _(by Chris Breuer)_
+- **windows**: keep the source-built Vulkan driver between runs ([19a02a6](https://github.com/craft-native/craft/commit/19a02a6)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.409...v0.0.410)
 
 ## 🐛 Bug Fixes
