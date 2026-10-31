@@ -257,6 +257,22 @@ test('cold-provisioning measurements cannot replace pending release acceptance',
   expect(group(true)).not.toBe(group(false))
 })
 
+test('a release commit keeps its own acceptance run, which later pushes cannot replace', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { concurrency: { group: string } }
+  const group = (message: string, sha: string, event = 'push') => workflow.concurrency.group.replace(/\$\{\{.*?\}\}/g, expression => String(runInNewContext(expression.slice(3, -2), {
+    inputs: { software_cold_provisioning_diagnostic: false },
+    startsWith: (text: string, prefix: string) => String(text ?? '').startsWith(prefix),
+    github: { workflow: 'CI', head_ref: '', ref: 'refs/heads/main', sha, event_name: event, event: { head_commit: { message } } },
+  })))
+  // Ordinary pushes share Main's single pending slot, as before.
+  expect(group('feat: a change', 'a1')).toBe(group('fix: another', 'b2'))
+  // Each release commit has a slot of its own, so the next push cannot drop the run its Releaser waits for.
+  expect(group('chore: release v0.0.409', 'c3')).not.toBe(group('feat: a change', 'a1'))
+  expect(group('chore: release v0.0.409', 'c3')).not.toBe(group('chore: release v0.0.410', 'd4'))
+  // A pull request titled like a release is still a pull request.
+  expect(group('chore: release v0.0.409', 'e5', 'pull_request')).toBe(group('feat: a change', 'f6', 'pull_request'))
+})
+
 test('mobile device jobs use the same released stx compiler version', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { env: Record<string, string>, jobs: Record<string, Job> }
   expect(workflow.env.STX_COMPILER_VERSION).toMatch(/^v\d+\.\d+\.\d+$/)

@@ -20,7 +20,11 @@ on:
       - main
 
 concurrency:
-  group: source-ci-${{ github.workflow }}-${{ inputs.software_cold_provisioning_diagnostic && 'software-cold-provisioning-diagnostic' || (github.head_ref || github.ref) }}
+  # A release commit's run is the one its Releaser accepts, and a group holds a
+  # single pending run that any newer push replaces (cancel-in-progress does not
+  # prevent that), so release commits get a group of their own: of twelve runs on
+  # main, ten were dropped this way while v0.0.397 to v0.0.408 waited for theirs.
+  group: "source-ci-${{ github.workflow }}-${{ inputs.software_cold_provisioning_diagnostic && 'software-cold-provisioning-diagnostic' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore: release v') && github.sha) || (github.head_ref || github.ref) }}"
   # Finish Main acceptance; newer commits replace the single pending run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
