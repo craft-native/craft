@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.406...v0.0.407)
+
+## 🚀 Features
+
+- **macos**: web pages in a WebView, tabs through craft.web ([749ad92](https://github.com/craft-native/craft/commit/749ad92)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **macos**: import the toolchain with its extension ([09b33ed](https://github.com/craft-native/craft/commit/09b33ed)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.405...v0.0.406)
 
 ## 🚀 Features
