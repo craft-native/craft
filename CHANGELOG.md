@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.402...v0.0.403)
+
+## 🚀 Features
+
+- **location**: change a recording's power mode while it runs and follow the device with auto ([105b5f2](https://github.com/craft-native/craft/commit/105b5f2)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.401...v0.0.402)
 
 ## 🐛 Bug Fixes
