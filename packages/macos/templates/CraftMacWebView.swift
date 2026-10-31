@@ -320,26 +320,32 @@ final class CraftMacContentRules {
     func remove(_ identifier: String) { lists.removeValue(forKey: identifier); reapply() }
 }
 
-/// Scripts and styles a person added to sites (Boosts), injected in an isolated world the page's
-/// own scripts cannot see. Each names the hosts it runs on; a host covers its subdomains.
+/// Scripts and styles for sites: a person's Boosts, or an ad blocker's page scripts. Each names the
+/// hosts it runs on (a host covers its subdomains; none, or `*`, is every site). By default they run in
+/// an isolated world the page's scripts cannot see; `world: 'page'` runs one in the page's own world,
+/// for a script that must wrap the page's `fetch` before the site does. CSS lands at document start,
+/// JS at document end unless `at: 'start'`.
 final class CraftMacUserScripts {
     static let shared = CraftMacUserScripts()
     private var scripts: [WKUserScript] = []
 
     func set(_ entries: [[String: Any]]) {
         scripts = entries.flatMap { entry -> [WKUserScript] in
-            let hosts = (entry["hosts"] as? [String] ?? []).map { $0.lowercased() }
-            guard !hosts.isEmpty, let hostsJSON = try? JSONSerialization.data(withJSONObject: hosts), let hostList = String(data: hostsJSON, encoding: .utf8) else { return [] }
-            let guardLine = "if (!\(hostList).some(h => location.hostname === h || location.hostname.endsWith('.' + h))) return;"
+            let hosts = (entry["hosts"] as? [String] ?? []).map { $0.lowercased() }.filter { !$0.isEmpty }
+            let everySite = hosts.isEmpty || hosts.contains("*")
+            guard let hostsJSON = try? JSONSerialization.data(withJSONObject: hosts), let hostList = String(data: hostsJSON, encoding: .utf8) else { return [] }
+            let guardLine = everySite ? "" : "if (!\(hostList).some(h => location.hostname === h || location.hostname.endsWith('.' + h))) return;"
+            let world: WKContentWorld = entry["world"] as? String == "page" ? .page : .defaultClient
+            let scriptTime: WKUserScriptInjectionTime = entry["at"] as? String == "start" ? .atDocumentStart : .atDocumentEnd
             let allFrames = entry["allFrames"] as? Bool == true
             var made: [WKUserScript] = []
             if let css = entry["css"] as? String, !css.isEmpty, let cssJSON = try? JSONSerialization.data(withJSONObject: [css]), let cssLiteral = String(data: cssJSON, encoding: .utf8) {
                 let id = (entry["id"] as? String ?? "boost").replacingOccurrences(of: "\"", with: "")
                 let source = "(() => { \(guardLine) const s = document.createElement('style'); s.dataset.craftBoost = \"\(id)\"; s.textContent = \(cssLiteral)[0]; (document.head || document.documentElement).appendChild(s) })()"
-                made.append(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: !allFrames, in: .defaultClient))
+                made.append(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: !allFrames, in: world))
             }
             if let js = entry["js"] as? String, !js.isEmpty {
-                made.append(WKUserScript(source: "(() => { \(guardLine)\n\(js)\n})()", injectionTime: .atDocumentEnd, forMainFrameOnly: !allFrames, in: .defaultClient))
+                made.append(WKUserScript(source: "(() => { \(guardLine)\n\(js)\n})()", injectionTime: scriptTime, forMainFrameOnly: !allFrames, in: world))
             }
             return made
         }

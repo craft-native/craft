@@ -61,7 +61,7 @@ through `craft.web`, and decides where each appears with `<WebView tab>`:
 | `print(id)` | `true`, once the print sheet is up |
 | `setContentRules(identifier, { version, json? })` | `{ cached }`, or `{ missing: true }` when that version was never compiled and no `json` came with it |
 | `removeContentRules(identifier)`, `allowContent(hosts)` | |
-| `setUserScripts([{ id, hosts, css?, js?, allFrames? }])` | |
+| `setUserScripts([{ id, hosts, css?, js?, world?, at?, allFrames? }])` | |
 | `answerPermission(request, 'grant' \| 'deny' \| 'prompt')` | whether the request was still waiting |
 | `clearData({ profile, private?, host?, types? })` | `{ cleared }`; `types` from `cookies`, `storage`, `cache` |
 | `cancelDownload(id)`, `revealDownload(path)`, `openDownload(path)` | |
@@ -71,9 +71,11 @@ compiles each once and keeps it on disk under its identifier and version, so a
 screen first asks for a version without `json` and sends the rules only when the
 answer is `missing`. Every tab has its own content controller: a site listed in
 `allowContent` (a host covers its subdomains) loads with no list applied, in
-that tab only. **User scripts** (Boosts) run on the hosts they name, in an
-isolated world the page's scripts cannot see; CSS lands at document start, JS at
-document end, and pages pick a new set up on their next load. **Downloads** can
+that tab only. **User scripts** (Boosts, an ad blocker's page scripts) run on
+the hosts they name (none, or `*`, is every site), in an isolated world the
+page's scripts cannot see unless `world: 'page'`; CSS lands at document start,
+JS at document end unless `at: 'start'`, and pages pick a new set up on their
+next load. **Downloads** can
 only be revealed or opened inside ~/Downloads, and an app or script is revealed
 in Finder rather than run.
 
