@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.412...v0.0.413)
+
+## 🚀 Features
+
+- **macos**: user scripts in the page's own world, at document start, on every site ([2c02b69](https://github.com/craft-native/craft/commit/2c02b69)) _(by Chris)_
+- **macos**: zIndex raises a view over its siblings, and the test driver answers context menus ([163d938](https://github.com/craft-native/craft/commit/163d938)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.411...v0.0.412)
 
 ## 🚀 Features
