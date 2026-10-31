@@ -9,7 +9,12 @@ fn code(err: anyerror) c_int {
 
 export fn craft_metal_fixture_open(view: ?*anyopaque, output: *?*Harness) c_int {
     output.* = null;
-    var surface = metal.Surface.init(view, .{ .max_buffer_bytes = 16 * 1024 * 1024 }) catch |err| return code(err);
+    // The simulator's GPU is the host's, shared with every other process on a
+    // CI runner: a submitted blit has waited more than the default second
+    // there (GPUTimeout, release 0.0.404). These tests check pixels, scale and
+    // ownership, not GPU latency, so give completion the surface's largest
+    // supported budget. A command that never completes still times out.
+    var surface = metal.Surface.init(view, .{ .max_buffer_bytes = 16 * 1024 * 1024, .command_timeout_ms = 5000 }) catch |err| return code(err);
     const harness = allocator.create(Harness) catch |err| {
         surface.deinit() catch unreachable;
         return code(err);
