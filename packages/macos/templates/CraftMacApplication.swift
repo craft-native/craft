@@ -16,12 +16,17 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     let window: NSWindow
     let runtime: CraftMacRuntime
     let renderer: CraftMacRenderer
+    /// Where the close button's top-left corner sits, from the window's top-left (`--traffic-lights 18,18`):
+    /// a browser lines the buttons up with its own toolbar row. Nil keeps AppKit's place.
+    let trafficLights: CGPoint?
     init(name: String, route: String, options: [String: Any], application: CraftMacApplication) {
         self.name = name
         runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
         renderer = CraftMacRenderer(runtime: runtime)
         let width = number(options["width"]) ?? 1120, height = number(options["height"]) ?? 740
         let transparent = (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent"
+        let lights = options["trafficLights"] as? [Any] ?? (name == "main" ? application.trafficLights : nil)
+        trafficLights = lights.flatMap { values in values.count == 2 ? number(values[0]).flatMap { x in number(values[1]).map { CGPoint(x: x, y: $0) } } : nil }
         let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         panel.runtime = runtime
         window = panel
@@ -39,8 +44,24 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         window.delegate = self; window.center()
         if name == "main" && application.testDirectory == nil { window.setFrameAutosaveName("\(application.appName)NativeMain") }
         window.makeKeyAndOrderFront(nil)
+        placeTrafficLights()
         runtime.load(application.bundle)
     }
+
+    /// AppKit lays the title bar out again on resize, full screen and appearance changes, so this runs after each.
+    func placeTrafficLights() {
+        guard let inset = trafficLights, let close = window.standardWindowButton(.closeButton), let titlebar = close.superview?.superview else { return }
+        let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        let size = close.frame.size
+        let height = size.height + inset.y * 2
+        titlebar.frame = CGRect(x: titlebar.frame.minX, y: window.frame.height - height, width: titlebar.frame.width, height: height)
+        // The standard spacing: each button 6pt after the last.
+        for (index, type) in buttons.enumerated() {
+            window.standardWindowButton(type)?.setFrameOrigin(CGPoint(x: inset.x + CGFloat(index) * (size.width + 6), y: (height - size.height) / 2))
+        }
+    }
+    func windowDidResize(_ notification: Notification) { placeTrafficLights() }
+    func windowDidExitFullScreen(_ notification: Notification) { placeTrafficLights() }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if name == "main" { sender.orderOut(nil); return false }
         return true
@@ -64,6 +85,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var bundle = ""
     var initialRoute = "Main"
     var titlebarStyle = "standard"
+    var trafficLights: [Any]?
     /// Apps that ship their own agent (Attic) hand out a session cookie at
     /// `/native/session`. An app that talks to a hosted API has no such
     /// endpoint and starts with `--no-session`.
@@ -397,6 +419,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.appName = argument("--title", key: "title", fallback: "Craft")
         application.initialRoute = argument("--route", key: "route", fallback: "Main")
         application.titlebarStyle = argument("--titlebar-style", key: "titlebarStyle", fallback: "standard")
+        // `18,18` on the command line; `[18, 18]` in craft-app.json.
+        let lights = argument("--traffic-lights", key: "trafficLights").split(separator: ",").compactMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: " []"))) }
+        if lights.count == 2 { application.trafficLights = lights }
         application.requiresSession = !CommandLine.arguments.contains("--no-session") && packaged["session"] as? Bool != false
         for (flag, key) in [("--width", "width"), ("--height", "height"), ("--min-width", "minWidth"), ("--min-height", "minHeight")] {
             if let value = Double(argument(flag, key: key)), value.isFinite, value > 0 { application.mainWindowOptions[key] = value }

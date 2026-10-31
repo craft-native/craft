@@ -507,8 +507,16 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             text.setAccessibilityLabel(props["placeholder"] as? String ?? "Message")
         } else if let field = control as? NSTextField {
             if field.stringValue != value { field.stringValue = value }
-            field.placeholderString = props["placeholder"] as? String
             field.font = font; field.isEnabled = props["disabled"] as? Bool != true
+            // A field the style colours (a light address pill in a dark window) follows it, placeholder included.
+            if style["color"] != nil {
+                let color = CraftMacColor.parse(style["color"])
+                field.textColor = color
+                field.placeholderAttributedString = (props["placeholder"] as? String).map { NSAttributedString(string: $0, attributes: [.foregroundColor: color.withAlphaComponent(0.5), .font: font]) }
+            } else {
+                field.textColor = .labelColor
+                field.placeholderString = props["placeholder"] as? String
+            }
             if let bordered = props["bordered"] as? Bool { field.isBordered = bordered; field.drawsBackground = bordered }
             field.setAccessibilityIdentifier(props["testID"] as? String ?? props["testId"] as? String ?? id)
         }
