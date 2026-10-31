@@ -10,6 +10,7 @@ final class CraftMacRuntime {
     var errors: [String] = []
     let network = FixtureNetwork()
     func event(_ handler: String?, payload: [String: Any]) {}
+    func send(_ type: String, _ payload: [String: Any], correlation: String? = nil) {}
 }
 
 @main struct LayoutChecks {

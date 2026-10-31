@@ -4,6 +4,13 @@ import CoreImage
 import UserNotifications
 import UniformTypeIdentifiers
 
+/// A window that tells its screen when Escape reaches it unhandled: the screen hears it as the desktop
+/// command `escape` (close the open item, dismiss a sheet).
+final class CraftMacWindow: NSWindow {
+    weak var runtime: CraftMacRuntime?
+    override func cancelOperation(_ sender: Any?) { runtime?.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": "escape"]]) }
+}
+
 final class CraftMacScene: NSObject, NSWindowDelegate {
     let name: String
     let window: NSWindow
@@ -14,7 +21,10 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
         renderer = CraftMacRenderer(runtime: runtime)
         let width = number(options["width"]) ?? 1120, height = number(options["height"]) ?? 740
-        window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        let transparent = (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent"
+        let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        panel.runtime = runtime
+        window = panel
         super.init()
         runtime.scene = self; renderer.window = window
         window.title = options["title"] as? String ?? application.appName

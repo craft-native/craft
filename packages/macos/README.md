@@ -94,3 +94,8 @@ accept-completion handlers can be exercised without a keyboard.
 A Keychain read never waits on a permission prompt: with user interaction turned off an
 item the app is not trusted for fails, and the app signs in again, instead of hanging
 with no window behind a dialog.
+
+Escape that reaches a window or a text control unhandled arrives in the screen as the
+desktop command `escape` (`craft.desktop.onCommand`), unless a ghost completion is
+showing. With `--titlebar-style transparent` the content runs under the title bar
+(full-size content view): leave room for the traffic lights.

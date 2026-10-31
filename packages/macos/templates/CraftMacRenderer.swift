@@ -570,6 +570,10 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     }
     func input(_ value: String) { fire("onChangeText", ["text": value, "value": value, "nativeEvent": ["text": value, "value": value]]) }
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)), (textView as? CraftMacTextView)?.ghost.isEmpty ?? true {
+            // Escape in an editor is the screen's too (it closes the open to-do), unless a completion is showing.
+            renderer?.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": "escape"]]); return true
+        }
         if commandSelector == #selector(NSResponder.insertTab(_:)), let editor = textView as? CraftMacTextView, !editor.ghost.isEmpty, events["onAcceptCompletion"] != nil {
             let accepted = editor.ghost; editor.ghost = ""; fire("onAcceptCompletion", ["text": accepted, "value": accepted]); return true
         }
@@ -578,6 +582,9 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     }
     /// Single-line fields: Return submits, and leaving the field blurs it, as on the web.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            renderer?.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": "escape"]]); return true
+        }
         if commandSelector == #selector(NSResponder.insertNewline(_:)), events["onSubmitEditing"] != nil { fire("onSubmitEditing", ["text": textView.string, "value": textView.string, "nativeEvent": ["text": textView.string]]); return true }
         return false
     }
