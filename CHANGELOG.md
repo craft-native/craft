@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.405...v0.0.406)
+
+## 🚀 Features
+
+- **macos**: Escape as a desktop command and full-size content under a transparent title bar ([6837d00](https://github.com/craft-native/craft/commit/6837d00)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.404...v0.0.405)
 
 ## 🚀 Features
