@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.408...v0.0.409)
+
+## 🚀 Features
+
+- **macos**: place the traffic lights, and colour fields from their style ([4ccf6c1](https://github.com/craft-native/craft/commit/4ccf6c1)) _(by Chris Breuer)_
+- **macos**: field keys, autofocus and floating-surface materials ([a82c49d](https://github.com/craft-native/craft/commit/a82c49d)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **ci**: a release commit keeps the acceptance run its Releaser waits for ([16169be](https://github.com/craft-native/craft/commit/16169be)) _(by Chris Breuer)_
+- **macos**: tell screens the appearance changed, and drive controls in --test-dir ([6f12335](https://github.com/craft-native/craft/commit/6f12335)) _(by Chris Breuer)_
+- **macos**: menu shortcuts that name a key, such as ctrl+tab and cmd+escape ([e9359b3](https://github.com/craft-native/craft/commit/e9359b3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.407...v0.0.408)
 
 ## 🚀 Features
