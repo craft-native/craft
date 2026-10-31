@@ -197,9 +197,13 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         if let scene = scenes[name] { scene.window.makeKeyAndOrderFront(nil); return }
         scenes[name] = CraftMacScene(name: name, route: route, options: options, application: self)
     }
+    /// A menu command goes to the window it was chosen in (the key window), else the main one: with
+    /// two windows of the same screen open, cmd-T opens one tab, not one in each.
     @objc func command(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
-        broadcast(id)
+        let target = scenes.values.first { $0.window === NSApp.keyWindow } ?? scenes["main"]
+        guard let target else { broadcast(id); return }
+        target.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": id]])
     }
     func broadcast(_ id: String) { for scene in scenes.values { scene.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": id]]) } }
     func appearanceChanged() {
@@ -401,7 +405,12 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     }
     private func testAction(_ action: [String: Any]) -> [String: Any] {
         let kind = action["action"] as? String ?? ""
-        if kind == "command", let id = action["id"] as? String { broadcast(id); return ["ok": true] }
+        if kind == "command", let id = action["id"] as? String {
+            // Like a menu: to the named window, else the key one, else the main one.
+            let target = (action["window"] as? String).flatMap { scenes[$0] } ?? scenes.values.first { $0.window === NSApp.keyWindow } ?? scenes["main"]
+            target?.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": id]])
+            return ["ok": target != nil]
+        }
         // After this result is written, from the run loop rather than a main-queue block (see applicationShouldTerminate).
         if kind == "quit" { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0); return ["ok": true] }
         if kind == "openURL", let url = (action["url"] as? String).flatMap(URL.init(string:)) { application(NSApp, open: [url]); return ["ok": true] }
