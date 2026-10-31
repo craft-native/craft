@@ -139,6 +139,18 @@ describe('package-owned iOS shells', () => {
     expect(handoff).not.toContain('target.launch()')
   })
 
+  it('counts a system prompt as dismissed only once its button has gone', () => {
+    const output = folder()
+    initSimulatorDriver({ output, bundleId: 'org.example.app' })
+    const source = readFileSync(join(output, 'UITests/DriverTests.swift'), 'utf8')
+    const dismiss = source.slice(source.indexOf('case "dismiss":'), source.indexOf('case "log":'))
+    // A sheet still sliding in is hittable and drops the tap; it is tapped again.
+    expect(dismiss).toContain('while !gone && Date() < end')
+    expect(dismiss).toContain('gone = !button.exists')
+    expect(dismiss).toContain('"STILL SHOWN"')
+    expect(dismiss).not.toContain('button.tap(); done = true')
+  })
+
   it('types once a field holds the keyboard, and scrolls by held drags', () => {
     const output = folder()
     initSimulatorDriver({ output, bundleId: 'org.example.app' })
