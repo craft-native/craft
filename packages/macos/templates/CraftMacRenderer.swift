@@ -280,7 +280,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
-        let keys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
+        let keys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "zIndex", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
         var result = style
         for key in keys where result[key] == nil { result[key] = child.layoutStyle[key] }
         return result
@@ -952,6 +952,12 @@ final class CraftMacRenderer {
                 for child in flow.boxes where !children.contains(where: { $0 === child }) { child.removeFromSuperview() }
                 flow.boxes = children
                 for child in children where child.superview !== flow && sheets[child.id] == nil { flow.addSubview(child) }
+                // `zIndex` draws a child above its siblings (an overlay over a web page), highest last.
+                let raised = children.filter { (number($0.layoutStyle["zIndex"]) ?? 0) > 0 && $0.superview === flow }
+                    .sorted { (number($0.layoutStyle["zIndex"]) ?? 0) < (number($1.layoutStyle["zIndex"]) ?? 0) }
+                if !raised.isEmpty, Array(flow.subviews.suffix(raised.count)) != raised {
+                    for child in raised { flow.addSubview(child, positioned: .above, relativeTo: nil) }
+                }
             }
             return box
         }

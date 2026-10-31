@@ -107,6 +107,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var testDirectory: URL?
     var testTimer: Timer?
     var processedActions = Set<String>()
+    /// The last context menu a screen asked for, and the entry the next one answers, under the test driver.
+    var testMenu: [[String: Any]] = []
+    var testMenuChoice: String?
     var appearanceObservation: NSKeyValueObservation?
     /// A quit waiting for screens to finish (`craft.desktop.onQuit`), for at most `quitGrace` seconds.
     private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
@@ -295,6 +298,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 bar.insertItem(item, at: min(index, bar.items.count))
             }; reply(true)
         case "contextMenu":
+            // Under the test driver no menu pops up (it would wait for a click): the items are recorded
+            // and the entry a `menu` action chose comes back.
+            if testDirectory != nil { testMenu = args.first as? [[String: Any]] ?? []; reply(testMenuChoice ?? NSNull()); testMenuChoice = nil; return }
             let target = CraftMacMenuTarget(), menu = NSMenu(); menu.autoenablesItems = false
             for item in args.first as? [[String: Any]] ?? [] { menu.addItem(menuItem(item, target: target, action: #selector(CraftMacMenuTarget.choose(_:)))) }
             menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil); reply(target.chosen ?? NSNull())
@@ -412,7 +418,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             return ["ok": true]
         }
         // A control by its testID, driven the way a person would: pressed, typed into, submitted, a key, the pointer over it.
-        if ["press", "type", "submit", "key", "hover"].contains(kind) {
+        if ["press", "type", "submit", "key", "hover", "menu"].contains(kind) {
             guard let target = action["target"] as? String,
                   let box = scene.renderer.boxes.values.first(where: { ($0.props["testID"] as? String ?? $0.props["testId"] as? String ?? $0.id) == target }) else { return ["ok": false, "error": "No control \(action["target"] ?? "")"] }
             let text = action["text"] as? String ?? ""
@@ -424,6 +430,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 box.input(text)
             case "submit": box.fire("onSubmitEditing", ["text": text, "value": text, "nativeEvent": ["text": text]])
             case "key": box.fire("onKeyPress", ["key": action["key"] as? String ?? "", "shiftKey": action["shift"] as? Bool == true, "text": text])
+            // A right-click, answered with `choose` (or nothing) when the screen opens its context menu.
+            case "menu": testMenuChoice = action["choose"] as? String; box.fire("onLongPress", ["x": 0, "y": 0])
             default:
                 let hovered = action["value"] as? Bool ?? true
                 box.hovering = hovered; box.applyAppearance(animated: false)
@@ -499,7 +507,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: type(of: scene.runtime.context)), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "errors": scene.runtime.errors]
         }
         let webViews = windows.reduce(0) { count, window in count + ((window["viewClasses"] as? [String] ?? []).filter { $0.contains("WKWebView") || $0 == "WebView" }.count) }
-        return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews]
+        return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews, "menu": testMenu]
     }
 }
 
