@@ -276,6 +276,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     var downPoint: NSPoint?
     var lastDropPosition = ""
     var acceptsDrops = false
+    var wantedFocus = false
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -366,8 +367,13 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             border.isHidden = (number(style["border\(edge)Width"]) ?? 0) <= 0
         }
         if let name = props["material"] as? String {
-            if material == nil { let effect = NSVisualEffectView(); effect.blendingMode = .behindWindow; effect.state = .followsWindowActiveState; addSubview(effect, positioned: .below, relativeTo: control); material = effect }
-            material?.material = name == "sidebar" ? .sidebar : .headerView
+            if material == nil { let effect = NSVisualEffectView(); effect.state = .followsWindowActiveState; addSubview(effect, positioned: .below, relativeTo: control); material = effect }
+            // Chrome shows the desktop through it; a floating surface (a command bar, a popover) blurs the window's own content.
+            let materials: [String: NSVisualEffectView.Material] = ["sidebar": .sidebar, "header": .headerView, "window": .windowBackground, "titlebar": .titlebar,
+                "popover": .popover, "menu": .menu, "hud": .hudWindow, "sheet": .sheet, "underPage": .underPageBackground]
+            material?.material = materials[name] ?? .headerView
+            material?.blendingMode = ["popover", "menu", "hud", "sheet"].contains(name) ? .withinWindow : .behindWindow
+            if name == "hud" { material?.state = .active }
         } else { material?.removeFromSuperview(); material = nil }
         let identifier = props["testID"] as? String ?? props["testId"] as? String ?? props["accessibilityIdentifier"] as? String ?? id
         control?.setAccessibilityIdentifier(identifier)
@@ -405,7 +411,19 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             if props["variant"] as? String == "primary" { button.bezelColor = .controlAccentColor }
             if props["variant"] as? String == "danger" { button.contentTintColor = .systemRed }
         }
-        if kind == "TextInput" { configureInput(font: font) }
+        if kind == "TextInput" {
+            configureInput(font: font)
+            // `autoFocus` takes the keyboard when it turns on (a command bar opening); `selectTextOnFocus` then selects it all.
+            let focus = props["autoFocus"] as? Bool == true
+            if focus && !wantedFocus {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let window = self.window, let target = (self.control as? NSScrollView)?.documentView ?? self.control else { return }
+                    window.makeFirstResponder(target)
+                    if self.props["selectTextOnFocus"] as? Bool == true { (target as? NSTextField)?.currentEditor()?.selectAll(nil) ?? (target as? NSTextView)?.selectAll(nil) }
+                }
+            }
+            wantedFocus = focus
+        }
         if let picker = control as? NSPopUpButton {
             let rawOptions = props["options"] as? [[String: Any]] ?? (node["children"] as? [[String: Any]] ?? []).map { child in
                 ["value": (child["props"] as? [String: Any])?["value"] ?? nativeText(child), "label": nativeText(child)]
@@ -720,6 +738,16 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             control?.frame = CGRect(x: padding.left, y: padding.top, width: max(0, bounds.width - padding.left - padding.right), height: max(0, bounds.height - padding.top - padding.bottom))
         } else { control?.frame = bounds }
         material?.frame = bounds
+        // A visual effect view ignores its layer's corner radius; a stretchable mask rounds it (as the tray popover does).
+        if let material {
+            let radius = layer?.cornerRadius ?? 0
+            if radius > 0, material.maskImage?.capInsets.top != radius {
+                let edge = radius * 2 + 1
+                let mask = NSImage(size: CGSize(width: edge, height: edge), flipped: false) { rect in NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill(); return true }
+                mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius); mask.resizingMode = .stretch
+                material.maskImage = mask
+            } else if radius == 0 { material.maskImage = nil }
+        }
         gradient?.frame = bounds
         gradient?.cornerRadius = layer?.cornerRadius ?? 0
         // An explicit path spares Core Animation an offscreen pass to find the shadow's shape, every frame.
@@ -782,6 +810,12 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             renderer?.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": "escape"]]); return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)), events["onSubmitEditing"] != nil { fire("onSubmitEditing", ["text": textView.string, "value": textView.string, "nativeEvent": ["text": textView.string]]); return true }
+        // The keys a list driven from a field needs (a command bar, an address bar's suggestions), in the web's names.
+        let keys: [Selector: String] = [#selector(NSResponder.moveUp(_:)): "ArrowUp", #selector(NSResponder.moveDown(_:)): "ArrowDown",
+            #selector(NSResponder.insertTab(_:)): "Tab", #selector(NSResponder.insertBacktab(_:)): "Tab"]
+        if let key = keys[commandSelector], events["onKeyPress"] != nil {
+            fire("onKeyPress", ["key": key, "shiftKey": commandSelector == #selector(NSResponder.insertBacktab(_:)), "text": textView.string]); return true
+        }
         return false
     }
     func controlTextDidEndEditing(_ notification: Notification) {
