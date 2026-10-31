@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.401...v0.0.402)
+
+## 🐛 Bug Fixes
+
+- **macos**: a Keychain read never waits on a permission prompt ([8cae64d](https://github.com/craft-native/craft/commit/8cae64d)) _(by Chris Breuer)_
+- **macos**: cross-axis margins, wider text measure and sheets that follow their content ([0efdc1a](https://github.com/craft-native/craft/commit/0efdc1a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.400...v0.0.401)
 
 ## 🚀 Features
