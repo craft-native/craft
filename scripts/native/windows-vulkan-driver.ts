@@ -49,7 +49,10 @@ export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
   if (!programFiles) throw new Error('Windows must declare its Visual Studio installer directory')
   const vswhere = join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
   const capabilities = await run('cmake-capabilities', [cmake, '-E', 'capabilities'], 10_000, true)
-  const instances = await run('visual-studio-identity', [vswhere, '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-format', 'json', '-utf8'], 10_000, true)
+  // vswhere enumerates every installed product; on a cold hosted runner that
+  // outlasted 10 s twice in a row (exit 124) before any Vulkan code ran. It
+  // only reads, so a generous bound costs nothing when it is quick.
+  const instances = await run('visual-studio-identity', [vswhere, '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-format', 'json', '-utf8'], 120_000, true)
   const visualStudio = visualStudioGenerator(JSON.parse(capabilities.stdout), JSON.parse(instances.stdout.replace(/^\uFEFF/, '')))
   for (const [name, source] of Object.entries(windowsVulkanDriverSources)) {
     const path = join(root, name)
