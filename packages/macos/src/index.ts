@@ -17,9 +17,15 @@ export interface MacOSNativeBuildOptions {
   zigJS?: { source: string, library: string }
   /** Where the toolchain is cached; default `~/.cache/craft/toolchain`. */
   toolchainDir?: string
+  /**
+   * Link WebKit so screens can show web pages in a `<WebView tab="...">` and drive
+   * tabs through `craft.web` (a browser, a help viewer). Off by default: the host
+   * then links no WebKit at all, and `WebView` reports itself unsupported.
+   */
+  webkit?: boolean
 }
 
-/** Compile Craft's AppKit host and the shared Zig layout core. No WebKit. */
+/** Compile Craft's AppKit host and the shared Zig layout core. No WebKit unless `webkit` is set. */
 export async function buildMacOSNative(options: MacOSNativeBuildOptions): Promise<{ executable: string, bundle: string }> {
   if (process.platform !== 'darwin') throw new Error('The AppKit host must be built on macOS.')
   const outdir = resolve(options.outdir)
@@ -48,7 +54,8 @@ export async function buildMacOSNative(options: MacOSNativeBuildOptions): Promis
   const assembly = join(engine.source, `src/objc_abi_${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}.S`)
   await run(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wno-incomplete-implementation', '-I', join(engine.source, 'include'), '-include', join(engine.source, 'include/ZigJS.h'), '-c', join(engine.source, 'src/objc_bridge.m'), '-o', bridge])
   await run([zig, 'build-obj', join(engine.source, 'src/objc_abi_dispatch.zig'), assembly, '-O', 'ReleaseFast', `-femit-bin=${dispatch}`])
-  await run(['swiftc', '-O', '-swift-version', '5', '-I', join(engine.source, 'include'), '-framework', 'Cocoa', '-framework', 'AVKit', '-framework', 'UserNotifications',
+  const web = options.webkit ? ['-D', 'CRAFT_WEBKIT', '-framework', 'WebKit', join(templates, 'CraftMacWebView.swift')] : []
+  await run(['swiftc', '-O', '-swift-version', '5', '-I', join(engine.source, 'include'), '-framework', 'Cocoa', '-framework', 'AVKit', '-framework', 'UserNotifications', ...web,
     join(templates, 'CraftMacRuntime.swift'), join(templates, 'CraftMacRenderer.swift'), join(templates, 'CraftMacApplication.swift'), mutation,
     bridge, dispatch, engine.library,
     '-Xlinker', '-force_load', '-Xlinker', layoutLibrary, '-Xlinker', '-export_dynamic', '-o', executable])

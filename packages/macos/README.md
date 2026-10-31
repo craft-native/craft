@@ -10,7 +10,7 @@ with Craft's mobile hosts.
 The script engine is zig-js. Pass its checkout and built public static archive
 as `zigJS: { source, library }`, and the pinned Zig compiler as `zig`.
 The host imports zig-js's `ZigJS` module and owns its Objective-C bridge objects.
-It never links the system JavaScriptCore or WebKit frameworks.
+It never links the system JavaScriptCore, and links WebKit only when built with `webkit: true` (see below).
 
 ```ts
 import { buildMacOSNative } from 'craft-native/macos'
@@ -29,6 +29,50 @@ await buildMacOSNative({
   zigJS: { source: '/sources/zig-js', library: '/sources/zig-js/zig-out/lib/libzig-js.a' },
 })
 ```
+
+## Web pages: `<WebView>` and `craft.web`
+
+A browser or help viewer can show web pages beside its native screens. Build
+with `webkit: true` and the host links WebKit, advertises the `web` capability,
+and renders `<WebView tab="...">` as that tab's `WKWebView`. Without the flag
+none of it is compiled, the host links no WebKit, and `WebView` is reported as
+an unsupported control.
+
+```ts
+await buildMacOSNative({ outdir: 'dist/native', nativeBundle: 'dist/native-screen.js', webkit: true })
+```
+
+Tabs are owned by the host, not by the view that shows them, so a page survives
+re-renders, split panes and off-screen time. The screen creates and drives them
+through `craft.web`, and decides where each appears with `<WebView tab>`:
+
+| Method | Answers |
+|---|---|
+| `create({ id?, url?, profile?, private?, inspectable? })` | the tab's state |
+| `navigate(id, url)`, `back(id)`, `forward(id)`, `reload(id, { ignoreCache? })`, `stop(id)`, `close(id)` | `true` (`back`/`forward`: whether there was history) |
+| `state(id)`, `list()` | state |
+| `evaluate(id, script, { isolated? })` | the script's JSON value; `isolated` runs it where the page's scripts cannot see it |
+| `find(id, text, { backwards?, caseSensitive?, wraps? })` | `{ found }` |
+| `setZoom(id, zoom)`, `focus(id)`, `setInspectable(id, on)` | |
+| `snapshot(id, { width? })` | a JPEG data URL (tab previews, sleeping tabs) |
+
+Each profile has its own website data store (cookies, storage, cache), found
+again on every launch by a UUID derived from its name (macOS 14+; `default` is
+WebKit's default store). `private: true` keeps nothing on disk. Pages get
+desktop Safari's user-agent suffix.
+
+Events arrive as `CRAFT_EVENT` `craftWebView` with `{ tab, type, ... }`:
+`state` (title, url, progress, loading, canGoBack, canGoForward, secure, zoom,
+themeColor, camera, microphone; coalesced to one per run-loop turn),
+`navigationStart`, `navigationFinish`, `navigationError`, `favicon`, `open`
+(`target=_blank` and `window.open` arrive with a ready `child` tab id;
+⌘-click arrives with only a `url` and `background`), `close`, `crashed`
+(the page's process died and was reloaded) and `download` (`started`,
+`progress` at most every 250ms, `finished`, `failed`, saved to ~/Downloads
+under a name that never overwrites). Links to other apps' schemes (`mailto:`,
+`facetime:`) open those apps. JavaScript alerts, confirms, prompts and file
+inputs use native sheets on the tab's window. A window that closes closes the
+tabs it owns.
 
 ## Hosted-API apps
 

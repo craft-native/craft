@@ -60,6 +60,14 @@ enum CraftMacKeychain {
 
 /// One zig-js context per STX window. No DOM and no browser view.
 final class CraftMacRuntime {
+    /// What this host offers a screen. `web` (tabs in a `<WebView>`) only in a build made with `webkit: true`.
+    static var capabilities: [String] {
+        var list = ["desktop", "fetch", "eventStream", "storage", "secureStorage", "clipboard", "dialog", "linking", "haptics", "notifications"]
+        #if CRAFT_WEBKIT
+        list.append("web")
+        #endif
+        return list
+    }
     let context = ZigJSContext()!
     let route: String
     let network: CraftMacNetwork
@@ -116,7 +124,7 @@ final class CraftMacRuntime {
         let info = Bundle.main.infoDictionary ?? [:]
         let bridge: [String: Any] = [
             "platform": "macos", "mutationProtocolVersion": 1, "capabilityProtocolVersion": 1,
-            "capabilityTimeoutMs": 30_000, "capabilities": ["desktop", "fetch", "eventStream", "storage", "secureStorage", "clipboard", "dialog", "linking", "haptics", "notifications"],
+            "capabilityTimeoutMs": 30_000, "capabilities": Self.capabilities,
             "sessionTokenKey": "auth.token",
             "initialAppState": "active", "colorScheme": CraftMacColor.isDark ? "dark" : "light",
             "appURL": network.base.absoluteString, "appVersion": info["CFBundleShortVersionString"] as? String ?? "", "appBuild": info["CFBundleVersion"] as? String ?? ""
@@ -163,6 +171,9 @@ final class CraftMacRuntime {
 
     func dispose() {
         guard !disposed else { return }
+        #if CRAFT_WEBKIT
+        CraftMacWebTabs.shared.closeAll(owner: self)
+        #endif
         context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])
         disposed = true
         timers.values.forEach { $0.cancel() }; timers.removeAll()
@@ -290,6 +301,9 @@ final class CraftMacRuntime {
         case "Linking":
             guard let text = args.first as? String, let url = URL(string: text), let scheme = url.scheme, ["https", "http", "imessage", "sms", "mailto", "x-apple.systempreferences"].contains(scheme) else { fail(id, "INVALID_ARGUMENT", "Unsupported URL scheme"); return }
             answer(id, method == "canOpenURL" ? NSWorkspace.shared.urlForApplication(toOpen: url) != nil : NSWorkspace.shared.open(url))
+        #if CRAFT_WEBKIT
+        case "Web": CraftMacWebTabs.shared.perform(method, args, owner: self, answer: { [weak self] value in self?.answer(id, value) }, fail: { [weak self] code, message in self?.fail(id, code, message) })
+        #endif
         case "Desktop": CraftMacApplication.shared.perform(method, args: args, scene: scene, reply: { [weak self] value in self?.answer(id, value) })
         case "Notifications": CraftMacApplication.shared.notification(method, options: options, reply: { [weak self] value in self?.answer(id, value) })
         default: fail(id, "CAPABILITY_DISABLED", "Unsupported native capability \(module).\(method)")

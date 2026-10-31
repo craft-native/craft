@@ -306,6 +306,9 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             let content = CraftMacFlow(); content.style = ["flexDirection": "column"]
             scroll.documentView = content; flow = content; control = scroll
         case "Sidebar": control = CraftMacSidebar(box: self)
+        #if CRAFT_WEBKIT
+        case "WebView": control = CraftMacWebHost(box: self)
+        #endif
         case "View", "SafeAreaView", "Pressable", "TouchableOpacity", "TouchableHighlight", "KeyboardAvoidingView", "Modal", "SplitView":
             let container = CraftMacFlow(); flow = container; control = container
         default:
@@ -412,6 +415,9 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             }
         }
         if let sidebar = control as? CraftMacSidebar { sidebar.configure(props) }
+        #if CRAFT_WEBKIT
+        if let web = control as? CraftMacWebHost { web.show(props["tab"] as? String) }
+        #endif
         flow?.style = style
         needsLayout = true
     }
@@ -503,6 +509,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             if text.maximumNumberOfLines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
             size.height += textPadding.top + textPadding.bottom
         } else if kind == "ScrollView" || kind == "FlatList" || kind == "Sidebar" { size = CGSize(width: limit, height: 100) }
+        else if kind == "WebView" { size = CGSize(width: limit, height: 300) }
         else if kind == "Icon" { size = CGSize(width: 18, height: 18) }
         else if kind == "Image" || kind == "Video" { size = CGSize(width: limit, height: 160) }
         else if kind == "TextInput" { size = CGSize(width: limit, height: props["multiline"] as? Bool == true ? 48 : 28) }
