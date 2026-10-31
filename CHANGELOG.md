@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.404...v0.0.405)
+
+## 🚀 Features
+
+- **macos**: caret and selection events, markdown styling, sidebar sizing, shadows, a key driver action and a Keychain read that never prompts ([17519cc](https://github.com/craft-native/craft/commit/17519cc)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.403...v0.0.404)
 
 ## 🐛 Bug Fixes
