@@ -137,7 +137,10 @@ Links and files other apps open with this one arrive as `CRAFT_EVENT`
 wait for `craft.desktop.takeOpenedURLs()`. `isDefaultBrowser()` and
 `setDefaultBrowser()` (macOS asks the person to confirm) cover a browser that
 declares http and https. `craft-app.json` `dockMenu: [{ title, action }]` fills
-the Dock icon's menu; each item arrives as a desktop command.
+the Dock icon's menu; each item arrives as a desktop command. A menu command goes
+to the window it was chosen in. `craft.desktop.post(message)` reaches the app's
+other windows as `craftDesktopMessage` `{ from, message }` (a tab handed from a
+small window to the main one).
 
 This is a native control vocabulary, not an HTML renderer. Unsupported controls
 produce a diagnostic and an explicit visible error. The native `Sidebar` accepts

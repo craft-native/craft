@@ -324,6 +324,11 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             let filter = CIFilter(name: "CIQRCodeGenerator")!; filter.setValue(Data(text.utf8), forKey: "inputMessage"); filter.setValue("M", forKey: "inputCorrectionLevel")
             guard let image = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)), let cg = CIContext().createCGImage(image, from: image.extent), let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { reply(NSNull()); return }
             reply("data:image/png;base64," + data.base64EncodedString())
+        case "post":
+            // A message for the app's other windows (a tab handed from a small window to the main one).
+            let message = args.first ?? NSNull()
+            for other in scenes.values where other !== scene { other.runtime.send("CRAFT_EVENT", ["event": "craftDesktopMessage", "detail": ["from": scene?.name ?? "", "message": message]]) }
+            reply(true)
         case "takeOpenedURLs": reply(openedURLs); openedURLs.removeAll()
         case "isDefaultBrowser": reply(isDefaultBrowser)
         case "setDefaultBrowser":
