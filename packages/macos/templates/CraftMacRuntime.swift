@@ -2,6 +2,7 @@ import AppKit
 import ZigJS
 import Foundation
 import Security
+import LocalAuthentication
 
 /// The macOS Keychain behind `craft.secureStorage`: one generic password per
 /// key, under a service named for the app. The data-protection keychain is
@@ -32,6 +33,11 @@ enum CraftMacKeychain {
         var result: AnyObject?
         let status = run(account) { query in
             var query = query; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
+            // Never stop the main thread on a Keychain permission prompt (a rebuilt,
+            // differently signed app is not trusted by an older item's access list):
+            // the read fails, the user signs in again, and the new item is trusted.
+            let context = LAContext(); context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
             return SecItemCopyMatching(query as CFDictionary, &result)
         }
         guard status == errSecSuccess, let data = result as? Data else { return nil }
