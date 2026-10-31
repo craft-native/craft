@@ -95,7 +95,9 @@ A single-line `TextInput` fires `onSubmitEditing` on Return and `onBlur` /
 `TextInput` with `ghostText` draws an inline completion after the caret and Tab
 fires `onAcceptCompletion`; any edit removes it. `Text` honors `line-through` and
 `underline`. Menus passed to `craft.desktop.setMenus` land between Edit and Window,
-and one titled `File` goes first after the app menu.
+and one titled `File` goes first after the app menu. A screen with a
+`craft.desktop.onQuit` handler holds the quit until its promise settles (a final
+save), for 3 seconds at most; an app without one quits at once.
 
 Launch the executable with `--api-url`, `--native-bundle`, `--title`, and an
 optional `--route`. The HTTP agent's `/native/session` endpoint must establish

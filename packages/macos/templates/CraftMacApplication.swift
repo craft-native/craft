@@ -19,6 +19,8 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     /// Where the close button's top-left corner sits, from the window's top-left (`--traffic-lights 18,18`):
     /// a browser lines the buttons up with its own toolbar row. Nil keeps AppKit's place.
     let trafficLights: CGPoint?
+    /// The screen has work to finish before the app quits (`craft.desktop.onQuit`).
+    var holdsQuit = false
     init(name: String, route: String, options: [String: Any], application: CraftMacApplication) {
         self.name = name
         runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
@@ -69,6 +71,7 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         runtime.dispose()
         CraftMacApplication.shared.scenes.removeValue(forKey: name)
+        CraftMacApplication.shared.quitReady(scene: name)
     }
     func windowDidBecomeKey(_ notification: Notification) { runtime.send("SCREEN_FOCUS", ["focused": true]) }
     func windowDidResignKey(_ notification: Notification) { runtime.send("SCREEN_FOCUS", ["focused": false]) }
@@ -99,6 +102,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var testTimer: Timer?
     var processedActions = Set<String>()
     var appearanceObservation: NSKeyValueObservation?
+    /// A quit waiting for screens to finish (`craft.desktop.onQuit`), for at most `quitGrace` seconds.
+    private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
+    static let quitGrace: TimeInterval = 3
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
@@ -128,6 +134,34 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { scenes["main"]?.window.makeKeyAndOrderFront(nil); return true }
     func applicationWillTerminate(_ notification: Notification) { scenes.values.forEach { $0.runtime.dispose() }; testTimer?.invalidate() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    /// Screens holding the quit hear `craftDesktopQuit` and answer `quitReady` once their work is saved.
+    /// The main queue keeps running while AppKit waits, so their timers and requests still complete,
+    /// unless `terminate` was called from inside a main-queue block: GCD runs no other main-queue
+    /// block until that one returns. So the host never calls it from one, and the timeout is a run
+    /// loop timer, which fires either way. A second quit while waiting quits at once.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let holding = scenes.values.filter(\.holdsQuit)
+        guard !holding.isEmpty, pendingQuit == nil else { return .terminateNow }
+        let token = UUID().uuidString
+        let timeout = Timer(timeInterval: Self.quitGrace, repeats: false) { [weak self] _ in self?.finishQuit(token) }
+        RunLoop.main.add(timeout, forMode: .common)
+        pendingQuit = (token, Set(holding.map(\.name)), timeout)
+        for scene in holding { scene.runtime.send("CRAFT_EVENT", ["event": "craftDesktopQuit", "detail": ["token": token]]) }
+        return .terminateLater
+    }
+    /// A screen finished its quit work, or went away. `token` nil matches the quit in progress.
+    func quitReady(scene: String, token: String? = nil) {
+        guard var pending = pendingQuit, token == nil || token == pending.token else { return }
+        pending.waiting.remove(scene)
+        pendingQuit = pending
+        if pending.waiting.isEmpty { finishQuit(pending.token) }
+    }
+    private func finishQuit(_ token: String) {
+        guard let pending = pendingQuit, pending.token == token else { return }
+        pending.timeout.invalidate()
+        pendingQuit = nil
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
     func open(name: String, route: String, options: [String: Any]) {
         if let scene = scenes[name] { scene.window.makeKeyAndOrderFront(nil); return }
         scenes[name] = CraftMacScene(name: name, route: route, options: options, application: self)
@@ -253,6 +287,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             guard let image = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)), let cg = CIContext().createCGImage(image, from: image.extent), let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { reply(NSNull()); return }
             reply("data:image/png;base64," + data.base64EncodedString())
         case "setBadge": let count = (args.first as? NSNumber)?.intValue ?? 0; NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil; reply(true)
+        case "holdQuit": scene?.holdsQuit = args.first as? Bool != false; reply(true)
+        case "quitReady": if let scene { quitReady(scene: scene.name, token: args.first as? String) }; reply(true)
         default: reply(["error": "Unsupported desktop operation: \(method)"])
         }
     }
@@ -322,7 +358,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     private func testAction(_ action: [String: Any]) -> [String: Any] {
         let kind = action["action"] as? String ?? ""
         if kind == "command", let id = action["id"] as? String { broadcast(id); return ["ok": true] }
-        if kind == "quit" { DispatchQueue.main.async { NSApp.terminate(nil) }; return ["ok": true] }
+        // After this result is written, from the run loop rather than a main-queue block (see applicationShouldTerminate).
+        if kind == "quit" { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0); return ["ok": true] }
         if kind == "appearance" {
             NSApp.appearance = NSAppearance(named: action["value"] as? String == "dark" ? .darkAqua : .aqua)
             appearanceChanged(); return ["ok": true]
