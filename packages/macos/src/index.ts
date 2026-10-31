@@ -2,8 +2,10 @@ import { cp, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
+import { assertZigJsEngine } from './engine.js'
 import { resolveMacOSToolchain } from './toolchain.js'
 
+export { assertZigJsEngine, systemEngineUse } from './engine.js'
 export { macosToolchain, pantryExecutable, resolveMacOSToolchain, resolveZig, toolchainCacheDir } from './toolchain.js'
 export type { MacOSToolchain } from './toolchain.js'
 
@@ -59,6 +61,7 @@ export async function buildMacOSNative(options: MacOSNativeBuildOptions): Promis
     join(templates, 'CraftMacRuntime.swift'), join(templates, 'CraftMacRenderer.swift'), join(templates, 'CraftMacApplication.swift'), mutation,
     bridge, dispatch, engine.library,
     '-Xlinker', '-force_load', '-Xlinker', layoutLibrary, '-Xlinker', '-export_dynamic', '-o', executable])
+  await assertZigJsEngine(executable)
   const bundle = join(outdir, 'native-screen.js')
   if (resolve(options.nativeBundle) !== bundle) await cp(options.nativeBundle, bundle)
   return { executable, bundle }

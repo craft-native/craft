@@ -11,6 +11,9 @@ The script engine is zig-js. Pass its checkout and built public static archive
 as `zigJS: { source, library }`, and the pinned Zig compiler as `zig`.
 The host imports zig-js's `ZigJS` module and owns its Objective-C bridge objects.
 It never links the system JavaScriptCore, and links WebKit only when built with `webkit: true` (see below).
+The build enforces the first half: after linking, it fails if the host imports any
+JavaScriptCore function or links `JavaScriptCore.framework`, since a WebKit build sits one
+framework away from it and zig-js exports the same C names (`assertZigJsEngine`).
 
 ```ts
 import { buildMacOSNative } from 'craft-native/macos'
