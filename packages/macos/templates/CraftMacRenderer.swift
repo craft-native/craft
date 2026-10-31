@@ -713,6 +713,10 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         if let text = control as? NSTextField, kind == "Text" {
             let rect = (text.stringValue as NSString).boundingRect(with: CGSize(width: max(1, limit - 6 - textPadding.left - textPadding.right), height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font ?? NSFont.systemFont(ofSize: 13)])
             size = CGSize(width: min(limit, ceil(rect.width) + 9 + textPadding.left + textPadding.right), height: max(18, ceil(rect.height) + 2))
+            // The field draws only whole lines inside its cell's insets, so a height short of what the cell
+            // asks for at the width it will draw at drops the last line. Ask the cell, not just the string.
+            let fieldWidth = max(1, size.width - textPadding.left - textPadding.right)
+            if let drawn = text.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: fieldWidth, height: 1_000_000)).height { size.height = max(size.height, ceil(drawn)) }
             if text.maximumNumberOfLines > 0 { size.height = min(size.height, ceil((text.font?.ascender ?? 13) - (text.font?.descender ?? -3) + (text.font?.leading ?? 0)) * CGFloat(text.maximumNumberOfLines) + 2) }
             if text.maximumNumberOfLines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
             size.height += textPadding.top + textPadding.bottom

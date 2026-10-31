@@ -58,6 +58,16 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "center"], [sized]))
         require(renderer.boxes["title"]!.frame.height < 40, "A shrink-wrapped title wrapped its last word")
 
+        // A wrapped paragraph gets the height its text field needs to draw every line, insets included:
+        // a frame one inset short makes AppKit drop the last line rather than draw part of it.
+        for size in [13, 15, 17] as [CGFloat] {
+            let paragraph = node("paragraph", "Text", ["fontSize": size], props: ["text": "Your tabs live in the sidebar, sorted into spaces. Pin what you keep, and let Today tidy itself. Ads and trackers are blocked from the start."])
+            renderer.render(node("root", "View", ["flexGrow": 1, "padding": 20], [paragraph]))
+            let field = renderer.boxes["paragraph"]!.control as! NSTextField
+            let needed = field.cell!.cellSize(forBounds: CGRect(x: 0, y: 0, width: field.frame.width, height: 1_000_000)).height
+            require(field.frame.height >= needed, "A \(size)pt paragraph was \(field.frame.height)pt tall but needs \(needed)pt, so its last line was not drawn")
+        }
+
         let body = node("body", "Text", ["fontSize": 13], props: ["text": String(repeating: "A long preview ", count: 30), "numberOfLines": 2])
         renderer.render(node("root", "View", ["flexGrow": 1], [body]))
         require(renderer.boxes["body"]!.measure(width: 120).height <= 36, "A two-line preview measured its hidden lines")
