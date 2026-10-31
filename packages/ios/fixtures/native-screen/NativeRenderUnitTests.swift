@@ -3397,6 +3397,66 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertGreaterThan(form.contentOffset.y, offsetBeforeTyping + 0.5, "typing beyond the viewport actually scrolls the caret into view")
     }
 
+    /// UIKit's text view answers the keyboard's end-of-entrance notification by
+    /// scrolling its containing scroll view to the selection, animated. On a
+    /// loaded simulator that notification arrived after an edit and before the
+    /// screen's caret pass, so UIKit aimed at the stale layout (the input's
+    /// top) and its animation carried the screen's reveal back with it: the
+    /// caret ended under the keyboard (releases 0.0.403 and 0.0.407). Post the
+    /// notification at exactly that point instead of waiting for the timing.
+    func testKeyboardFinishingItsEntranceAfterAnEditKeepsTheCaretAboveIt() async throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let long = (1...30).map { "\($0)) an answer to the coach's question" }.joined(separator: "\n")
+        controller.render(document([
+            ["type": "ScrollView", "props": ["key": "workout"], "style": ["flex": 1], "children": [
+                ["type": "View", "props": ["key": "above"], "style": ["height": 240]],
+                ["type": "TextInput", "props": ["key": "comment", "multiline": true, "value": long], "style": ["fontSize": 17]],
+                ["type": "View", "props": ["key": "below"], "style": ["height": 120]],
+            ]],
+        ]))
+        controller.view.layoutIfNeeded()
+        let input = try XCTUnwrap(find(UITextView.self, key: "comment", below: controller.view))
+        let form = try XCTUnwrap(find(UIScrollView.self, key: "workout", below: controller.view))
+        let keyboard = CGRect(x: 0, y: window.bounds.height - 336, width: window.bounds.width, height: 336)
+        var currentKeyboard = keyboard
+        // UIKit's real keyboard also comes up and may replace the synthetic
+        // frame while this test yields; measure against the latest one.
+        let keyboardObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
+        ) { notification in
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+            currentKeyboard = window.convert(frame.cgRectValue, from: nil)
+        }
+        defer { NotificationCenter.default.removeObserver(keyboardObserver) }
+        let keyboardInfo: [AnyHashable: Any] = [
+            UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: window.convert(keyboard, to: nil)),
+            UIResponder.keyboardAnimationDurationUserInfoKey: 0,
+            UIResponder.keyboardAnimationCurveUserInfoKey: 0,
+        ]
+        XCTAssertTrue(input.becomeFirstResponder())
+        input.selectedRange = NSRange(location: (input.text as NSString).length, length: 0)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil, userInfo: keyboardInfo)
+        controller.view.layoutIfNeeded()
+        await drainMainQueue()
+        let offsetBeforeTyping = form.contentOffset.y
+
+        input.text += "\n" + (31...40).map { "\($0)) continuing the answer" }.joined(separator: "\n")
+        input.selectedRange = NSRange(location: (input.text as NSString).length, length: 0)
+        input.delegate?.textViewDidChange?(input)
+        NotificationCenter.default.post(name: UIResponder.keyboardDidShowNotification, object: nil, userInfo: keyboardInfo)
+        await drainMainQueue()
+        let end = try XCTUnwrap(input.selectedTextRange?.end)
+        let shown = input.convert(input.caretRect(for: end), to: window)
+        XCTAssertTrue(window.bounds.intersects(currentKeyboard))
+        XCTAssertLessThanOrEqual(shown.maxY, currentKeyboard.minY + 0.5, "caret \(shown) above the keyboard at \(currentKeyboard.minY)")
+        XCTAssertGreaterThanOrEqual(shown.minY, window.safeAreaInsets.top - 0.5, "caret \(shown) on screen")
+        XCTAssertGreaterThan(form.contentOffset.y, offsetBeforeTyping + 0.5, "the edit scrolled the caret into view and kept it there")
+    }
+
     func testScrollKeyboardTapPreservesTextAreaFocusAndSelectionButDismissesBackground() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()

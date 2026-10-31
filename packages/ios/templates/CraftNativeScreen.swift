@@ -11133,6 +11133,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if self.keyboardScreenFrame != nil { self.insetScrollViewsForKeyboard() }
             guard let scroll = self.enclosingVerticalScroll(of: textView),
                   let rect = self.caretRect(of: textView, in: scroll) else { return }
+            // UIKit's text view scrolls this scroll view itself, animated, when
+            // the keyboard finishes appearing. Arriving after an edit and
+            // before this pass, it aims at the caret of the stale layout (the
+            // input's top), and while it runs it carries any offset set here
+            // back toward that target. This pass measured the current layout:
+            // stop that animation so the caret stays where it can be seen. A
+            // finger's drag or fling is the person's, and is left alone.
+            if !scroll.isTracking && !scroll.isDecelerating {
+                scroll.setContentOffset(scroll.contentOffset, animated: false)
+            }
             let visible = scroll.bounds.inset(by: scroll.adjustedContentInset)
             guard !visible.contains(rect) else { return }
             scroll.scrollRectToVisible(rect, animated: false)
