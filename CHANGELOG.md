@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.407...v0.0.408)
+
+## 🚀 Features
+
+- **macos**: drag and drop, and hover events, for native screens ([62065f8](https://github.com/craft-native/craft/commit/62065f8)) _(by Chris Breuer)_
+- **macos**: gradients, hover and press styles, eased changes, clipped shadowed cards ([6b05d80](https://github.com/craft-native/craft/commit/6b05d80)) _(by Chris Breuer)_
+
+## 🤖 Continuous Integration
+
+- **windows**: give vswhere time to enumerate on a cold runner ([1b5d330](https://github.com/craft-native/craft/commit/1b5d330)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.406...v0.0.407)
 
 ## 🚀 Features
