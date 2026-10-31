@@ -292,8 +292,19 @@ class NativeFlatListTest {
             celebration.layout()
             assertEquals(firstStart * 2, celebration.starts)
         }
-        SystemClock.sleep(3300)
-        scenario.onActivity { assertTrue(!celebration.isRunning) }
+        // The celebration's clock is a 3 s ValueAnimator on the Choreographer:
+        // it starts on the first frame after start() and ends on the first
+        // frame past its duration. A loaded emulator skips a second or more of
+        // frames, so a fixed 3.3 s sleep could look before that frame arrived.
+        // Wait for it to end on its own (nothing calls stop() here), bounded
+        // far beyond its duration so an endless celebration still fails.
+        val deadline = SystemClock.uptimeMillis() + 15_000
+        var running = true
+        while (running && SystemClock.uptimeMillis() < deadline) {
+            scenario.onActivity { running = celebration.isRunning }
+            if (running) SystemClock.sleep(50)
+        }
+        assertFalse("the celebration never ended on its own", running)
         scenario.close()
     }
 
