@@ -46,6 +46,17 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1], [node("message", "View", [:], [bubbleScope])]))
         require(renderer.boxes["message"]!.measure(width: 320).height == 40, "A component's outer margin was omitted from its parent's height")
 
+        // Margins on the cross axis offset and narrow a child, in a column and in a row.
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("inset", "View", ["height": 20, "marginLeft": 16, "marginRight": 24])]))
+        require(renderer.boxes["inset"]!.frame.minX == 16 && abs(renderer.boxes["inset"]!.frame.width - 280) < 1, "Cross-axis margins of a column child were ignored")
+        renderer.render(node("root", "View", ["flexGrow": 1, "flexDirection": "row"], [node("rowInset", "View", ["width": 50, "marginTop": 10, "marginBottom": 30])]))
+        require(renderer.boxes["rowInset"]!.frame.minY == 10 && abs(renderer.boxes["rowInset"]!.frame.height - 260) < 1, "Cross-axis margins of a row child were ignored")
+
+        // A shrink-wrapped text is measured wide enough that its last word does not wrap.
+        let sized = node("title", "Text", ["fontSize": 22, "fontWeight": "600"], props: ["text": "Sign in to Library"])
+        renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "center"], [sized]))
+        require(renderer.boxes["title"]!.frame.height < 40, "A shrink-wrapped title wrapped its last word")
+
         let body = node("body", "Text", ["fontSize": 13], props: ["text": String(repeating: "A long preview ", count: 30), "numberOfLines": 2])
         renderer.render(node("root", "View", ["flexGrow": 1], [body]))
         require(renderer.boxes["body"]!.measure(width: 120).height <= 36, "A two-line preview measured its hidden lines")
@@ -77,6 +88,12 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1], [sheetScope]))
         renderer.boxes["sheetScope"]!.control!.layout()
         require(renderer.boxes["sheet"]!.frame.size == CGSize(width: 480, height: 200), "A deferred component pass resized sheet-owned content")
+        // Content that arrives after the sheet opened grows it.
+        let before = renderer.sheets["sheet"]!.contentRect(forFrameRect: renderer.sheets["sheet"]!.frame).height
+        let grown = node("sheetScope", "View", [:], [node("sheet", "Modal", [:], [node("a", "View", ["height": 300]), node("b", "View", ["height": 200])], props: ["visible": true])], props: ["data-stx-component-wrapper": true])
+        renderer.render(node("root", "View", ["flexGrow": 1], [grown]))
+        let after = renderer.sheets["sheet"]!.contentRect(forFrameRect: renderer.sheets["sheet"]!.frame).height
+        require(after > before + 100, "A sheet stayed the size it opened at after its content grew")
         if let panel = renderer.sheets["sheet"] { window.endSheet(panel); panel.close() }
         window.close()
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")

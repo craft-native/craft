@@ -68,9 +68,17 @@ final class CraftMacFlow: NSView {
         let inner = CGSize(width: max(0, size.width - left - right), height: max(0, size.height - top - bottom))
         let visible = boxes.filter { !$0.isHidden && $0.kind != "Modal" && $0.layoutStyle["position"] as? String != "absolute" }
         let gap = dimension(style["gap"], base: inner.width) ?? 0
+        // Margins on the cross axis (left and right in a column, top and bottom in a row) shrink what a child may fill and offset it.
+        func crossMargins(_ box: CraftMacBox) -> (start: CGFloat, end: CGFloat) {
+            let layout = box.layoutStyle
+            let margin = number(layout["margin"]) ?? 0
+            let axis = number(layout[horizontal ? "marginVertical" : "marginHorizontal"]) ?? margin
+            return (number(layout[horizontal ? "marginTop" : "marginLeft"]) ?? axis, number(layout[horizontal ? "marginBottom" : "marginRight"]) ?? axis)
+        }
         let sizes = visible.map { box in
             let alignment = box.layoutStyle["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
-            return box.measure(width: inner.width, stretch: !horizontal && alignment == "stretch")
+            let margins = crossMargins(box)
+            return box.measure(width: horizontal ? inner.width : max(0, inner.width - margins.start - margins.end), stretch: !horizontal && alignment == "stretch")
         }
         let items = visible.enumerated().map { index, box -> CraftMacFlex.Item in
             let main = horizontal ? sizes[index].width : sizes[index].height
@@ -87,12 +95,13 @@ final class CraftMacFlow: NSView {
         }
         let frames = CraftMacFlex.layout(items, available: horizontal ? inner.width : inner.height, gap: gap, justify: style["justifyContent"] as? String ?? "flex-start")
         for (index, box) in visible.enumerated() {
-            let crossAvailable = horizontal ? inner.height : inner.width
+            let margins = crossMargins(box)
+            let crossAvailable = max(0, (horizontal ? inner.height : inner.width) - margins.start - margins.end)
             let crossExplicit = dimension(box.layoutStyle[horizontal ? "height" : "width"], base: crossAvailable)
             let alignment = box.layoutStyle["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
             let measured = horizontal ? box.measure(width: frames[index].0, stretch: true) : sizes[index]
             let cross = min(crossAvailable, crossExplicit ?? (alignment == "stretch" ? crossAvailable : (horizontal ? measured.height : measured.width)))
-            let offset = alignment == "center" ? (crossAvailable - cross) / 2 : alignment == "flex-end" ? crossAvailable - cross : 0
+            let offset = margins.start + (alignment == "center" ? (crossAvailable - cross) / 2 : alignment == "flex-end" ? crossAvailable - cross : 0)
             box.frame = horizontal ? CGRect(x: left + frames[index].1, y: top + offset, width: frames[index].0, height: cross)
                 : CGRect(x: left + offset, y: top + frames[index].1, width: cross, height: frames[index].0)
             box.layoutSubtreeIfNeeded()
@@ -134,7 +143,12 @@ final class CraftMacFlow: NSView {
             let margin = number(layout["marginVertical"]) ?? number(layout["margin"]) ?? 0
             return total + (number(layout["marginTop"]) ?? margin) + (number(layout["marginBottom"]) ?? margin)
         }
-        return CGSize(width: (sizes.map(\.width).max() ?? 0) + horizontalPadding, height: sizes.reduce(0) { $0 + $1.height } + verticalPadding + gaps + margins)
+        let crossMargins = zip(visible, sizes).map { box, size -> CGFloat in
+            let layout = box.layoutStyle
+            let margin = number(layout["marginHorizontal"]) ?? number(layout["margin"]) ?? 0
+            return size.width + (number(layout["marginLeft"]) ?? margin) + (number(layout["marginRight"]) ?? margin)
+        }
+        return CGSize(width: (crossMargins.max() ?? 0) + horizontalPadding, height: sizes.reduce(0) { $0 + $1.height } + verticalPadding + gaps + margins)
     }
 }
 
@@ -401,7 +415,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         var size = CGSize(width: limit, height: 0)
         if let text = control as? NSTextField, kind == "Text" {
             let rect = (text.stringValue as NSString).boundingRect(with: CGSize(width: max(1, limit - 6 - textPadding.left - textPadding.right), height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font ?? NSFont.systemFont(ofSize: 13)])
-            size = CGSize(width: min(limit, ceil(rect.width) + 6 + textPadding.left + textPadding.right), height: max(18, ceil(rect.height) + 2))
+            size = CGSize(width: min(limit, ceil(rect.width) + 9 + textPadding.left + textPadding.right), height: max(18, ceil(rect.height) + 2))
             if text.maximumNumberOfLines > 0 { size.height = min(size.height, ceil((text.font?.ascender ?? 13) - (text.font?.descender ?? -3) + (text.font?.leading ?? 0)) * CGFloat(text.maximumNumberOfLines) + 2) }
             if text.maximumNumberOfLines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
             size.height += textPadding.top + textPadding.bottom
@@ -611,6 +625,11 @@ final class CraftMacRenderer {
                 panel.title = modal.props["title"] as? String ?? ""; panel.isReleasedWhenClosed = false
                 modal.removeFromSuperview(); panel.contentView = modal; sheets[modal.id] = panel
                 window.beginSheet(panel)
+            }
+            if let panel = sheets[modal.id] {
+                // A sheet follows its content: rows loaded after it opened grow it, up to the screen's comfort.
+                let wanted = min(650, max(200, modal.measure(width: 480).height))
+                if abs(panel.contentRect(forFrameRect: panel.frame).height - wanted) > 1 { panel.setContentSize(CGSize(width: 480, height: wanted)) }
             }
             modal.frame = sheets[modal.id]!.contentView!.bounds; modal.needsLayout = true; modal.layoutSubtreeIfNeeded()
         }
