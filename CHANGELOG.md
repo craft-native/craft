@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.415...v0.0.416)
+
+## 🐛 Bug Fixes
+
+- **macos**: a wrapped Text is as tall as its field needs, so the last line is drawn ([2553c3a](https://github.com/craft-native/craft/commit/2553c3a)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.414...v0.0.415)
 
 ## 🐛 Bug Fixes
