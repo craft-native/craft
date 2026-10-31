@@ -266,6 +266,11 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     var material: NSVisualEffectView?
     var edgeBorders: [String: CALayer] = [:]
     var lastSelection = ""
+    /// The pointer is over the box, or pressing it: `hoverStyle` and `pressStyle` apply on top of `style`.
+    var hovering = false, pressing = false
+    var hoverArea: NSTrackingArea?
+    var gradient: CAGradientLayer?
+    var configuredOnce = false
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -325,10 +330,6 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         style = node["style"] as? [String: Any] ?? [:]
         events = node["events"] as? [String: String] ?? [:]
         isHidden = style["display"] as? String == "none" || props["hidden"] as? Bool == true
-        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = CraftMacColor.parse(style["backgroundColor"], fallback: .clear).cgColor
-            layer?.borderColor = CraftMacColor.parse(style["borderColor"], fallback: .separatorColor).cgColor
-        }
         layer?.cornerRadius = number(style["borderRadius"]) ?? 0
         layer?.borderWidth = number(style["borderWidth"]) ?? 0
         // AppKit views may draw their entire visibleRect, which can extend
@@ -340,11 +341,19 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         // `shadow-*` classes: a box with a shadow cannot clip its own layer, or the shadow is cut off.
         if let opacity = number(style["shadowOpacity"]), opacity > 0 {
             let offset = style["shadowOffset"] as? [String: Any] ?? [:]
+            // The shadow needs the box's own layer unclipped, so a rounded box that also clips
+            // (`rounded-xl overflow-hidden shadow-lg`, a card holding a web page) clips one level in.
+            let clipsContent = style["overflow"] as? String != "visible" && (number(style["borderRadius"]) ?? 0) > 0
             layer?.masksToBounds = false; clipsToBounds = false
+            if let inner = control, clipsContent {
+                inner.wantsLayer = true; inner.layer?.masksToBounds = true; inner.layer?.cornerCurve = .continuous
+                inner.layer?.cornerRadius = number(style["borderRadius"]) ?? 0
+            }
             layer?.shadowOpacity = Float(opacity); layer?.shadowRadius = number(style["shadowRadius"]) ?? 3
             layer?.shadowOffset = CGSize(width: number(offset["width"]) ?? 0, height: -(number(offset["height"]) ?? 1))
             layer?.shadowColor = CraftMacColor.parse(style["shadowColor"], fallback: .black).cgColor
-        } else { layer?.shadowOpacity = 0 }
+        } else { layer?.shadowOpacity = 0; layer?.shadowPath = nil; control?.layer?.cornerRadius = 0 }
+        layer?.cornerCurve = .continuous
         for edge in ["Top", "Right", "Bottom", "Left"] {
             let border = edgeBorders[edge] ?? CALayer()
             if edgeBorders[edge] == nil { edgeBorders[edge] = border; layer?.addSublayer(border) }
@@ -355,7 +364,6 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             if material == nil { let effect = NSVisualEffectView(); effect.blendingMode = .behindWindow; effect.state = .followsWindowActiveState; addSubview(effect, positioned: .below, relativeTo: control); material = effect }
             material?.material = name == "sidebar" ? .sidebar : .headerView
         } else { material?.removeFromSuperview(); material = nil }
-        alphaValue = number(style["opacity"]) ?? 1
         let identifier = props["testID"] as? String ?? props["testId"] as? String ?? props["accessibilityIdentifier"] as? String ?? id
         control?.setAccessibilityIdentifier(identifier)
         let label = props["accessibilityLabel"] as? String ?? props["aria-label"] as? String ?? props["title"] as? String
@@ -415,6 +423,9 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             }
         }
         if let sidebar = control as? CraftMacSidebar { sidebar.configure(props) }
+        updateTrackingAreas()
+        applyAppearance(animated: configuredOnce)
+        configuredOnce = true
         #if CRAFT_WEBKIT
         if let web = control as? CraftMacWebHost { web.show(props["tab"] as? String) }
         #endif
@@ -490,6 +501,94 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         }; imageTask?.resume()
     }
 
+    /// `style` with the pointer's layers on top: `hoverStyle` while hovered, `pressStyle` while pressed.
+    var appearanceStyle: [String: Any] {
+        var look = style
+        if hovering, let hover = style["hoverStyle"] as? [String: Any] { hover.forEach { look[$0.key] = $0.value } }
+        if pressing, let press = style["pressStyle"] as? [String: Any] { press.forEach { look[$0.key] = $0.value } }
+        return look
+    }
+
+    /// Background, border, opacity, gradient and text colour, eased over `transitionDuration` (ms) when it changes.
+    func applyAppearance(animated: Bool) {
+        let look = appearanceStyle
+        let duration = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? (number(style["transitionDuration"]) ?? 0) / 1000 : 0
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            ease("backgroundColor", to: CraftMacColor.parse(look["backgroundColor"], fallback: .clear).cgColor, duration)
+            ease("borderColor", to: CraftMacColor.parse(look["borderColor"], fallback: .separatorColor).cgColor, duration)
+            applyGradient(look, duration)
+            if kind == "Text", let text = control as? NSTextField, style["hoverStyle"] != nil || style["pressStyle"] != nil {
+                text.textColor = CraftMacColor.parse(look["color"])
+            }
+        }
+        let opacity = number(look["opacity"]) ?? 1
+        if duration > 0, abs(alphaValue - opacity) > 0.001 {
+            NSAnimationContext.runAnimationGroup { context in context.duration = duration; animator().alphaValue = opacity }
+        } else { alphaValue = opacity }
+    }
+
+    private func ease(_ key: String, to value: CGColor, _ duration: CFTimeInterval) {
+        guard let layer else { return }
+        if duration > 0, let from = (layer.presentation() ?? layer).value(forKey: key) {
+            let animation = CABasicAnimation(keyPath: key)
+            animation.fromValue = from; animation.toValue = value; animation.duration = duration
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(animation, forKey: key)
+        }
+        layer.setValue(value, forKey: key)
+    }
+
+    /// `bg-gradient-to-*` with `from-`, `via-` and `to-` colours, under the box's content as on the phone hosts.
+    private func applyGradient(_ look: [String: Any], _ duration: CFTimeInterval) {
+        guard let direction = look["gradientDirection"] as? String, look["gradientFrom"] != nil, look["gradientTo"] != nil else {
+            gradient?.removeFromSuperlayer(); gradient = nil; return
+        }
+        let layer = gradient ?? CAGradientLayer()
+        if gradient == nil { self.layer?.insertSublayer(layer, at: 0); gradient = layer; layer.frame = bounds }
+        let colors = [look["gradientFrom"], look["gradientVia"], look["gradientTo"]].compactMap { $0 }.map { CraftMacColor.parse($0, fallback: .clear).cgColor }
+        if duration > 0, let from = (layer.presentation() ?? layer).colors {
+            let animation = CABasicAnimation(keyPath: "colors")
+            animation.fromValue = from; animation.toValue = colors; animation.duration = duration
+            layer.add(animation, forKey: "colors")
+        }
+        layer.colors = colors
+        // The box is flipped (y grows downward), as UIKit is, so the phone hosts' points carry over.
+        let points: (CGPoint, CGPoint)
+        switch direction {
+        case "to-t": points = (CGPoint(x: 0.5, y: 1), CGPoint(x: 0.5, y: 0))
+        case "to-tr": points = (CGPoint(x: 0, y: 1), CGPoint(x: 1, y: 0))
+        case "to-r": points = (CGPoint(x: 0, y: 0.5), CGPoint(x: 1, y: 0.5))
+        case "to-br": points = (CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1))
+        case "to-bl": points = (CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1))
+        case "to-l": points = (CGPoint(x: 1, y: 0.5), CGPoint(x: 0, y: 0.5))
+        case "to-tl": points = (CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 0))
+        default: points = (CGPoint(x: 0.5, y: 0), CGPoint(x: 0.5, y: 1))
+        }
+        layer.startPoint = points.0; layer.endPoint = points.1
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        let wanted = style["hoverStyle"] is [String: Any] || style["pressStyle"] is [String: Any]
+        if !wanted, let area = hoverArea { removeTrackingArea(area); hoverArea = nil; hovering = false; pressing = false }
+        if wanted, hoverArea == nil {
+            let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+            addTrackingArea(area); hoverArea = area
+        }
+    }
+    override func mouseEntered(with event: NSEvent) {
+        guard hoverArea != nil, !hovering else { return }
+        hovering = true; applyAppearance(animated: true)
+    }
+    override func mouseExited(with event: NSEvent) {
+        guard hovering || pressing else { return }
+        hovering = false; pressing = false; applyAppearance(animated: true)
+    }
+    override func mouseUp(with event: NSEvent) {
+        if pressing { pressing = false; applyAppearance(animated: true) }
+        super.mouseUp(with: event)
+    }
+
     var textPadding: NSEdgeInsets {
         let all = number(style["padding"]) ?? 0
         let horizontal = number(style["paddingHorizontal"]) ?? all
@@ -538,6 +637,13 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             control?.frame = CGRect(x: padding.left, y: padding.top, width: max(0, bounds.width - padding.left - padding.right), height: max(0, bounds.height - padding.top - padding.bottom))
         } else { control?.frame = bounds }
         material?.frame = bounds
+        gradient?.frame = bounds
+        gradient?.cornerRadius = layer?.cornerRadius ?? 0
+        // An explicit path spares Core Animation an offscreen pass to find the shadow's shape, every frame.
+        if let layer, layer.shadowOpacity > 0 {
+            layer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: layer.cornerRadius, cornerHeight: layer.cornerRadius, transform: nil)
+            if let inner = control?.layer, inner.masksToBounds { inner.cornerRadius = layer.cornerRadius }
+        }
         for (edge, border) in edgeBorders {
             let thickness = number(style["border\(edge)Width"]) ?? 0
             switch edge {
@@ -603,7 +709,10 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         guard let text = notification.object as? NSTextView else { return }
         fire("onEndEditing", ["text": text.string, "value": text.string]); fire("onBlur", ["text": text.string, "value": text.string])
     }
-    override func mouseDown(with event: NSEvent) { if events["onPress"] != nil { fire("onPress") } else { super.mouseDown(with: event) } }
+    override func mouseDown(with event: NSEvent) {
+        if style["pressStyle"] is [String: Any] { pressing = true; applyAppearance(animated: false) }
+        if events["onPress"] != nil { fire("onPress") } else { super.mouseDown(with: event) }
+    }
     override func rightMouseDown(with event: NSEvent) { fire("onLongPress", ["x": event.locationInWindow.x, "y": event.locationInWindow.y]) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }

@@ -97,7 +97,38 @@ final class CraftMacRuntime {
         require(after > before + 100, "A sheet stayed the size it opened at after its content grew")
         if let panel = renderer.sheets["sheet"] { window.endSheet(panel); panel.close() }
         window.close()
+
+        // Gradients, and the pointer's layers: hover and press apply on top of the style and come off again.
+        renderer.root.frame = CGRect(x: 0, y: 0, width: 320, height: 300)
+        let rowStyle: [String: Any] = ["height": 40, "backgroundColor": "#00000000", "borderRadius": 8, "transitionDuration": 120,
+            "hoverStyle": ["backgroundColor": "#ffffff66"], "pressStyle": ["opacity": 0.7]]
+        renderer.render(node("root", "View", ["flexGrow": 1, "gradientDirection": "to-br", "gradientFrom": "#3b5bfd", "gradientVia": "#5b6cff", "gradientTo": "#2a3bd8"], [node("row", "View", rowStyle)]))
+        let painted = renderer.boxes["root"]!
+        require(painted.gradient?.colors?.count == 3, "A gradient lost a stop")
+        require(painted.gradient?.startPoint == CGPoint(x: 0, y: 0) && painted.gradient?.endPoint == CGPoint(x: 1, y: 1), "A to-br gradient runs the wrong way")
+        require(painted.layer?.sublayers?.first === painted.gradient, "A gradient is not under the box's content")
+        let row = renderer.boxes["row"]!
+        require(row.hoverArea != nil, "A box with hover styles does not track the pointer")
+        func alpha(_ color: CGColor?) -> CGFloat { NSColor(cgColor: color!)!.alphaComponent }
+        require(alpha(row.layer?.backgroundColor) < 0.01, "The resting background is wrong")
+        row.hovering = true; row.applyAppearance(animated: false)
+        require(abs(alpha(row.layer?.backgroundColor) - 0.4) < 0.01, "Hovering did not apply hoverStyle")
+        row.pressing = true; row.applyAppearance(animated: false)
+        require(abs(row.alphaValue - 0.7) < 0.01, "Pressing did not apply pressStyle")
+        row.hovering = false; row.pressing = false; row.applyAppearance(animated: true)
+        require(alpha(row.layer?.backgroundColor) < 0.01, "Leaving did not restore the background")
+        // A rounded card that clips its content and casts a shadow clips one level in.
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("card", "View", ["flexGrow": 1, "borderRadius": 12, "overflow": "hidden", "shadowOpacity": 0.2, "shadowRadius": 10], [node("page", "View", ["flexGrow": 1])])]))
+        renderer.boxes["root"]!.layoutSubtreeIfNeeded()
+        let card = renderer.boxes["card"]!
+        require(card.layer?.masksToBounds == false && card.layer?.shadowOpacity ?? 0 > 0, "A card clipped away its own shadow")
+        require(card.control?.layer?.masksToBounds == true && abs((card.control?.layer?.cornerRadius ?? 0) - 12) < 0.5, "A card with a shadow no longer clips its content to its corners")
+        require(card.layer?.shadowPath != nil, "A shadow has no explicit path")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("row", "View", ["height": 40])]))
+        require(renderer.boxes["root"]!.gradient == nil, "A gradient stayed after its classes went")
+        require(renderer.boxes["row"]!.hoverArea == nil, "A box kept tracking the pointer after its hover styles went")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions and filtered scrolling")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients and pointer styles")
     }
 }
