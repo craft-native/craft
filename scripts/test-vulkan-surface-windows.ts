@@ -66,7 +66,10 @@ try {
   await run('compile-native-public-consumer', [zig.path, 'build', '-Doptimize=ReleaseSafe', '--summary', 'all', '--verbose'], 300_000)
   const executable = join(workspace, 'zig-out/bin/vulkan-surface-consumer.exe')
   proof.nativeExecutableSha256 = Bun.SHA256.hash(await readFile(executable), 'hex')
-  const driver = await buildWindowsVulkanDriver(workspace, run)
+  // CI restores the driver an identical earlier run built from the same pinned
+  // sources and toolchain; without it the cold build runs here in full.
+  const driverCache = process.env.CRAFT_WINDOWS_VULKAN_DRIVER_CACHE || undefined
+  const driver = await buildWindowsVulkanDriver(workspace, run, driverCache)
   proof.testDriver = driver
   // The normal Vulkan loader is bundled beside this owned test executable.
   // Elevated Windows loaders ignore driver-path environment overrides. Install

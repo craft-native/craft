@@ -485,9 +485,41 @@ jobs:
           bun test ./scripts/native/windows-command.test.ts 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-windows-command-tests.log')
           if ($LASTEXITCODE -ne 0) { throw 'Native command ownership verification failed' }
 
+      # A cold SwiftShader build (its LLVM backend included) runs close to its
+      # 30-minute command budget on hosted runners, and timed out in 0.0.406.
+      # Keep the loader and ICD built from the pinned sources; the script
+      # reuses them only for the same sources, script, CMake and Visual Studio,
+      # and verifies every byte against the recorded hashes.
+      - name: Identify the runner image
+        id: runner-image
+        shell: pwsh
+        run: '"version=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
+
+      - name: Restore the source-built Windows Vulkan driver
+        id: vulkan-driver-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/craft-windows-vulkan-driver
+          key: windows-vulkan-driver-${{ steps.runner-image.outputs.version }}-${{ hashFiles('scripts/native/windows-vulkan-driver.ts') }}
+
       - name: Verify displayed Win32 Vulkan scene frames
         shell: pwsh
+        env:
+          CRAFT_WINDOWS_VULKAN_DRIVER_CACHE: ${{ runner.temp }}/craft-windows-vulkan-driver
         run: bun scripts/test-vulkan-surface-windows.ts --owner "$env:CRAFT_NATIVE_WINDOWS_COMMAND_OWNER" --output artifacts/native-vulkan-windows
+
+      - name: Check for a newly built Windows Vulkan driver
+        id: vulkan-driver-built
+        if: ${{ always() && steps.vulkan-driver-cache.outputs.cache-hit != 'true' }}
+        shell: pwsh
+        run: '"present=$(Test-Path (Join-Path $env:RUNNER_TEMP ''craft-windows-vulkan-driver/driver.json''))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
+
+      - name: Keep the source-built Windows Vulkan driver
+        if: ${{ always() && steps.vulkan-driver-built.outputs.present == 'True' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/craft-windows-vulkan-driver
+          key: ${{ steps.vulkan-driver-cache.outputs.cache-primary-key }}
 
       - name: Retain native Win32 Vulkan display evidence
         if: always()
