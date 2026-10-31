@@ -212,7 +212,12 @@ const dispatch_end = "func webView(";
 /// regression: no action left Zig.
 /// 62 when dcfa35f8 added discardHealthWorkout, a new Swift-owned non-saving
 /// counterpart to endHealthWorkout. No existing Zig handler was removed.
-const max_not_yet_migrated: usize = 62;
+/// 63 when the spec gained setLocationRecordingPowerMode: changing a running
+/// recording's power mode, which `CraftApp.swift` owns together with the
+/// power-saver state of its CLLocationManager (the Zig recorder has no power
+/// modes at all, and a linked runtime does not advertise the capability). No
+/// existing Zig handler was removed.
+const max_not_yet_migrated: usize = 63;
 
 fn dispatcherRegion() []const u8 {
     // CraftApp.swift also contains chrome, console and bridge-relay handlers.

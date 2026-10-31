@@ -1682,6 +1682,76 @@ describe('Craft Android builder', () => {
     expect(manifest).toContain('android:foregroundServiceType="location"')
   })
 
+  it('saves power on a recording by mode, changes it while it runs and lets auto follow Battery Saver', async () => {
+    const output = createTempDir('craft-android-location-power-')
+    await init({
+      name: 'WildLoop',
+      packageName: 'org.wildloop.app',
+      output,
+      config: { enableBackgroundLocation: true },
+    })
+    const nativeOutput = createTempDir('craft-android-location-power-native-')
+    await init({
+      name: 'WildLoop',
+      packageName: 'org.wildloop.app',
+      output: nativeOutput,
+      config: { enableBackgroundLocation: true, renderer: 'native', nativeScreens: {} },
+    })
+    const root = join(output, 'app/src/main/java')
+    const nativeRoot = join(nativeOutput, 'app/src/main/java')
+    const service = readFileSync(join(root, 'com/craft/runtime/LocationRecordingService.kt'), 'utf8')
+    const bridge = readFileSync(join(root, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const services = readFileSync(join(nativeRoot, 'org/wildloop/app/CraftNativeServices.kt'), 'utf8')
+    const native = readFileSync(join(root, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    // The mode asked for is stored (a build before this kept a powerSaver flag), validated before any side effect.
+    expect(service).toContain('fun start(context: Context, id: String, startedAt: Long, powerMode: String = "default")')
+    expect(service).toContain('.putString("powerMode", powerMode).remove("powerSaver")')
+    expect(service).toContain('?: if (values.getBoolean("powerSaver", false)) "saver" else "default"')
+    expect(service).toContain('start(context, id, System.currentTimeMillis(), requestedPowerMode(options, "default"))')
+    expect(service).toContain('throw CraftRecordingException("INVALID_ARGUMENT", "powerMode must be \'default\', \'saver\' or \'auto\'")')
+
+    // setRecordingPowerMode: fenced like pause (owner, then argument, then an active recording), stored, then applied by the service.
+    const update = service.slice(service.indexOf('fun updatePowerMode('))
+    const updateBody = update.slice(0, update.indexOf('\n    }\n'))
+    expect(updateBody.indexOf('requireOwner(context, options)')).toBeLessThan(updateBody.indexOf('requestedPowerMode(options, null)'))
+    expect(updateBody.indexOf('requestedPowerMode(options, null)')).toBeLessThan(updateBody.indexOf('"NO_ACTIVE_RECORDING"'))
+    expect(updateBody).toContain('edit(context) { it.putString("powerMode", mode).remove("powerSaver") }')
+    const perform = service.slice(service.indexOf('"setRecordingPowerMode" -> {'), service.indexOf('"pauseRecording" -> updatePause'))
+    expect(perform).toContain('updatePowerMode(context, options)')
+    expect(perform).toContain('LocationRecordingService.ACTION_START')
+    expect(bridge).toContain("setRecordingPowerMode: function(options) { return recordingCall('setRecordingPowerMode', options); },")
+    expect(services).toContain('"startRecording", "setRecordingPowerMode", "pauseRecording"')
+
+    // State reports the mode asked for and the one in use, which is "default" outside a recording.
+    expect(service).toContain('put("powerMode", powerMode(context))')
+    expect(service).toContain('put("effectivePowerMode", if (isPowerSaver(context)) "saver" else "default")')
+    expect(service).toContain('if (!isActive(context)) return false')
+
+    // auto: Battery Saver, or under 20% and not plugged in.
+    expect(service).toContain('"auto" -> deviceIsSavingPower(context)')
+    expect(service).toContain('isPowerSaveMode == true')
+    expect(service).toContain('level * 100 < scale * 20')
+    expect(service).toContain('BatteryManager.EXTRA_PLUGGED, 0) != 0')
+
+    // The service rebuilds its request only when the mode in use changed, and listens only while the mode is auto.
+    const start = service.slice(service.indexOf('private fun startUpdates(): Boolean {'))
+    const startBody = start.slice(0, start.indexOf('\n    private fun stopUpdates()'))
+    expect(startBody).toContain('callbackSaver == saver')
+    expect(startBody.indexOf('val saver = CraftLocationRecordingStore.isPowerSaver(this)')).toBeLessThan(startBody.indexOf('stopUpdates()'))
+    expect(startBody).toContain('callbackSaver = saver')
+    expect(service).toContain('val wanted = CraftLocationRecordingStore.powerMode(this) == "auto"')
+    expect(service).toContain('addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)')
+    expect(service).toContain('addAction(Intent.ACTION_BATTERY_CHANGED)')
+    expect(service).toContain('ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)')
+    expect(service).toContain('powerReceiver?.let { runCatching { unregisterReceiver(it) } }')
+
+    // Advertised like the other recording methods, to pages and to native screens.
+    expect(bridge).toContain('locationRecordingPowerMode: true && ${CraftNative.supportsRecordingPowerMode()},')
+    expect(services).toContain('if (CraftNative.supportsRecordingPowerMode()) add("locationRecordingPowerMode")')
+    expect(native).toContain('fun supportsRecordingPowerMode(): Boolean = supportsRecordingOwnership()')
+  })
+
   it('keeps offline media on WorkManager, resumed, queued and stopped at sign-out', async () => {
     const output = createTempDir('craft-android-media-')
     await init({ name: 'Glyph', packageName: 'dev.craft.media', output, config: { renderer: 'native', nativeScreens: {} } })

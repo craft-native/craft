@@ -1029,10 +1029,31 @@ export interface RecordingStartOptions {
  * Fixes stay under 30 s apart at any speed that counts as moving, so distance
  * and moving time come out as they would at full rate. Android asks for the
  * same spacing and batches delivery.
+ *
+ * `'auto'` saves power only while the device wants it: iOS Low Power Mode or
+ * Android Battery Saver is on, or the battery is under 20% and not charging.
+ * The host re-checks whenever the platform reports a change, so a recording
+ * moves between `'saver'` and `'default'` by itself. Read which one it is using
+ * from `effectivePowerMode` on the recording's state.
  */
+export type LocationRecordingPowerMode = 'default' | 'saver' | 'auto'
+
+/** What a recording is actually using right now: `'auto'` resolves to one of these. */
+export type LocationRecordingEffectivePowerMode = 'default' | 'saver'
+
 export interface LocationRecordingPowerOptions {
-  powerMode?: 'default' | 'saver'
+  powerMode?: LocationRecordingPowerMode
 }
+
+/**
+ * Change the power mode of the recording that is running, fenced to its ID
+ * like pause, resume and stop.
+ */
+export interface LocationRecordingPowerModeOptions extends RecordingOwnershipOptions {
+  powerMode: LocationRecordingPowerMode
+}
+
+const RECORDING_POWER_MODES: readonly string[] = ['default', 'saver', 'auto']
 
 /** Fence a recording operation to the ID returned by start or explicit recovery. */
 export interface RecordingOwnershipOptions {
@@ -1118,6 +1139,27 @@ function recordingIntentSupported(namespace: 'location' | 'heartRate'): boolean 
   return advertised && recordingOwnershipSupported(namespace) && typeof root?.[namespace]?.startRecording === 'function'
 }
 
+/** The host can change a running recording's power mode and resolve `'auto'`. */
+function recordingPowerModeSupported(): boolean {
+  const root = getCraftRoot()
+  const caps = root?.capabilities
+  const advertised = Array.isArray(caps) ? caps.includes('locationRecordingPowerMode') : caps?.locationRecordingPowerMode === true
+  return advertised && recordingOwnershipSupported('location') && typeof root?.location?.setRecordingPowerMode === 'function'
+}
+
+function validatePowerMode(value: unknown): LocationRecordingPowerMode {
+  if (typeof value !== 'string' || !RECORDING_POWER_MODES.includes(value))
+    throw Object.assign(new Error("powerMode must be 'default', 'saver' or 'auto'"), { code: 'INVALID_ARGUMENT' })
+  return value as LocationRecordingPowerMode
+}
+
+function validateRecordingPowerStart(options: LocationRecordingPowerOptions): void {
+  if (!Object.prototype.hasOwnProperty.call(options, 'powerMode') || options.powerMode === undefined) return
+  // `'saver'` predates the capability; only the newer `'auto'` needs it.
+  if (validatePowerMode(options.powerMode) === 'auto' && getCraftRoot() && !recordingPowerModeSupported())
+    throw Object.assign(new Error("This app build cannot start a recording in powerMode 'auto'"), { code: 'RECORDING_POWER_MODE_UNSUPPORTED' })
+}
+
 function validateRecordingStart(namespace: 'location' | 'heartRate', options: RecordingStartOptions): void {
   if (!Object.prototype.hasOwnProperty.call(options, 'recordingId')) return
   if (typeof options.recordingId !== 'string' || !options.recordingId.trim())
@@ -1148,6 +1190,10 @@ export interface LocationRecordingState {
   paused: boolean
   startedAt: number | null
   sampleCount?: number
+  /** The mode asked for (`'default'` on a host that predates power modes). */
+  powerMode?: LocationRecordingPowerMode
+  /** The mode in use now. `'default'` once the recording has stopped. */
+  effectivePowerMode?: LocationRecordingEffectivePowerMode
 }
 
 export interface LocationRecordingResult extends LocationRecordingState {
@@ -1160,6 +1206,18 @@ let webLocationRecording: LocationRecordingResult = {
   paused: false,
   startedAt: null,
   locations: []
+}
+// The browser has no battery or power-saving signal to resolve 'auto' with,
+// so it keeps the mode it was given and uses it as `'saver'` only when asked.
+let webLocationPowerMode: LocationRecordingPowerMode = 'default'
+
+function webLocationRecordingState(): LocationRecordingState {
+  return {
+    ...webLocationRecording,
+    sampleCount: webLocationRecording.locations.length,
+    powerMode: webLocationPowerMode,
+    effectivePowerMode: webLocationRecording.active && webLocationPowerMode === 'saver' ? 'saver' : 'default'
+  }
 }
 let webLocationRecordingWatchId: number | null = null
 
@@ -1184,6 +1242,8 @@ let webLocationRecordingWatchId: number | null = null
 export const location = {
   supportsRecordingOwnership: (): boolean => recordingOwnershipSupported('location'),
   supportsRecordingIntentIdentity: (): boolean => recordingIntentSupported('location'),
+  /** `setRecordingPowerMode()` and `powerMode: 'auto'` work on this host. */
+  supportsRecordingPowerMode: (): boolean => recordingPowerModeSupported(),
   /**
    * Get current position.
    *
@@ -1262,6 +1322,7 @@ export const location = {
 
   async startRecording(options: LocationOptions & RecordingStartOptions & LocationRecordingPowerOptions = {}): Promise<LocationRecordingState> {
     validateRecordingStart('location', options)
+    validateRecordingPowerStart(options)
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.location?.startRecording)
       return verifyRecordingStart(options, await craft.location.startRecording(options))
@@ -1277,10 +1338,40 @@ export const location = {
       startedAt: Date.now(),
       locations: []
     }
+    webLocationPowerMode = options.powerMode ?? 'default'
     webLocationRecordingWatchId = location.watchPosition((position) => {
       if (!webLocationRecording.paused) webLocationRecording.locations.push(position)
     }, options)
-    return { ...webLocationRecording, sampleCount: 0 }
+    return webLocationRecordingState()
+  },
+
+  /**
+   * Change how hard the running recording works the GPS, for example to
+   * `'saver'` while the screen shows nothing but a countdown and back to
+   * `'default'` afterwards, or to `'auto'` to follow the device's own power
+   * saving. Resolves with the recording's state, which reports the mode asked
+   * for (`powerMode`) and the one in use (`effectivePowerMode`).
+   *
+   * Rejects with `NO_ACTIVE_RECORDING` when nothing is recording,
+   * `RECORDING_CONFLICT` when `expectedId` is not the recording that is
+   * running, `INVALID_ARGUMENT` for an unknown mode, and
+   * `RECORDING_POWER_MODE_UNSUPPORTED` on a host built before this existed
+   * (check `supportsRecordingPowerMode()`).
+   */
+  async setRecordingPowerMode(options: LocationRecordingPowerModeOptions): Promise<LocationRecordingState> {
+    if (!options || !Object.prototype.hasOwnProperty.call(options, 'expectedId'))
+      throw Object.assign(new Error('setRecordingPowerMode needs expectedId'), { code: 'INVALID_ARGUMENT' })
+    validateRecordingOwnership('location', options)
+    const powerMode = validatePowerMode(options.powerMode)
+    if (getCraftRoot() && !recordingPowerModeSupported())
+      throw Object.assign(new Error('This app build cannot change the recording power mode'), { code: 'RECORDING_POWER_MODE_UNSUPPORTED' })
+    const craft = getCraftMobile()
+    if (typeof window !== 'undefined' && craft?.location?.setRecordingPowerMode)
+      return craft.location.setRecordingPowerMode({ expectedId: options.expectedId, powerMode })
+    if (!webLocationRecording.active)
+      throw Object.assign(new Error('No active location recording'), { code: 'NO_ACTIVE_RECORDING' })
+    webLocationPowerMode = powerMode
+    return webLocationRecordingState()
   },
 
   async pauseRecording(options?: RecordingOwnershipOptions): Promise<LocationRecordingState> {
@@ -1289,7 +1380,7 @@ export const location = {
     if (typeof window !== 'undefined' && craft?.location?.pauseRecording)
       return craft.location.pauseRecording(options)
     webLocationRecording.paused = true
-    return { ...webLocationRecording, sampleCount: webLocationRecording.locations.length }
+    return webLocationRecordingState()
   },
 
   async resumeRecording(options?: RecordingOwnershipOptions): Promise<LocationRecordingState> {
@@ -1298,7 +1389,7 @@ export const location = {
     if (typeof window !== 'undefined' && craft?.location?.resumeRecording)
       return craft.location.resumeRecording(options)
     webLocationRecording.paused = false
-    return { ...webLocationRecording, sampleCount: webLocationRecording.locations.length }
+    return webLocationRecordingState()
   },
 
   async stopRecording(options?: RecordingOwnershipOptions): Promise<LocationRecordingResult> {
@@ -1312,7 +1403,7 @@ export const location = {
     }
     webLocationRecording.active = false
     webLocationRecording.paused = false
-    return { ...webLocationRecording, locations: [...webLocationRecording.locations] }
+    return { ...webLocationRecordingState(), locations: [...webLocationRecording.locations] }
   },
 
   async getRecordingState(options?: RecordingOwnershipOptions): Promise<LocationRecordingState> {
@@ -1320,7 +1411,7 @@ export const location = {
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.location?.getRecordingState)
       return craft.location.getRecordingState(options)
-    return { ...webLocationRecording, sampleCount: webLocationRecording.locations.length }
+    return webLocationRecordingState()
   },
 
   async acknowledgeRecording(options: RecordingOwnershipOptions): Promise<boolean> {
@@ -1332,6 +1423,7 @@ export const location = {
     if (webLocationRecording.active)
       throw Object.assign(new Error('The recording is still active'), { code: 'RECORDING_ALREADY_ACTIVE' })
     webLocationRecording = { id: null, active: false, paused: false, startedAt: null, locations: [] }
+    webLocationPowerMode = 'default'
     return true
   },
 
@@ -3946,7 +4038,8 @@ interface CraftMobileBridge {
     getCurrentPosition(options: LocationOptions): Promise<Location>
     watchPosition(callback: (location: Location) => void, options: LocationOptions): number
     clearWatch(watchId: number): void
-    startRecording?(options: LocationOptions & RecordingStartOptions): Promise<LocationRecordingState>
+    startRecording?(options: LocationOptions & RecordingStartOptions & LocationRecordingPowerOptions): Promise<LocationRecordingState>
+    setRecordingPowerMode?(options: LocationRecordingPowerModeOptions): Promise<LocationRecordingState>
     pauseRecording?(options?: RecordingOwnershipOptions): Promise<LocationRecordingState>
     resumeRecording?(options?: RecordingOwnershipOptions): Promise<LocationRecordingState>
     stopRecording?(options?: RecordingOwnershipOptions): Promise<LocationRecordingResult>

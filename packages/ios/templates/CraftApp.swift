@@ -2338,10 +2338,25 @@ struct CraftWebView: UIViewRepresentable {
         private var isLocationRecordingPaused = false
         private var locationRecordingId: String?
         private var locationRecordingStartedAt: TimeInterval?
-        /// `startRecording({ powerMode: 'saver' })`: a long recording (an
-        /// ultra) that trades fixes nobody needs for battery. See
-        /// `applyLocationRecordingPower`.
-        private var locationRecordingPowerSaver = false
+        /// The power mode the recording was asked for: `default`, `saver` (a
+        /// long recording, an ultra, that trades fixes nobody needs for
+        /// battery) or `auto` (a saver while the device itself is saving
+        /// power). Set by `startRecording`, changed by `setRecordingPowerMode`
+        /// and kept in the state file. See `applyLocationRecordingPower`.
+        private var locationRecordingPowerMode = "default"
+        /// What the recorder is using: the mode, with `auto` resolved from the
+        /// device. Never true outside a recording.
+        private var locationRecordingPowerSaver: Bool {
+            guard isRecordingLocation else { return false }
+            switch locationRecordingPowerMode {
+            case "saver": return true
+            case "auto": return Self.deviceIsSavingPower
+            default: return false
+            }
+        }
+        /// The saver setting `applyLocationRecordingPower` last gave the manager.
+        private var locationRecordingAppliedSaver = false
+        private var locationRecordingPowerObservers: [NSObjectProtocol] = []
         /// Recent fix speeds while saving power; steady ones relax the accuracy.
         private var locationRecordingRecentSpeeds: [Double] = []
         private var locationRecordingSteady = false
@@ -2594,7 +2609,7 @@ struct CraftWebView: UIViewRepresentable {
         /// `craft_ios_deliver_result` instead of evaluating JavaScript here —
         /// one reply path, owned by whichever side received the page's message.
         func dispatch(action: String, body: [String: Any], callbackId: String?) {
-            if ["startLocationRecording", "pauseLocationRecording", "resumeLocationRecording", "stopLocationRecording", "getLocationRecordingState", "readLocationRecording", "acknowledgeLocationRecording"].contains(action),
+            if ["startLocationRecording", "setLocationRecordingPowerMode", "pauseLocationRecording", "resumeLocationRecording", "stopLocationRecording", "getLocationRecordingState", "readLocationRecording", "acknowledgeLocationRecording"].contains(action),
                locationRecordingRestoreError != nil {
                 rejectCallback(callbackId, error: "Unable to restore recording data", code: "RECORDING_STORAGE_ERROR")
                 return
@@ -2810,6 +2825,14 @@ struct CraftWebView: UIViewRepresentable {
             case "startLocationRecording":
                 if config.enableGeolocation {
                     startLocationRecording(body: body, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
+                }
+            case "setLocationRecordingPowerMode":
+                if !CraftZigRuntime.supportsRecordingPowerMode {
+                    rejectCallback(callbackId, error: "The linked runtime's recorder has no power modes", code: "RECORDING_POWER_MODE_UNSUPPORTED")
+                } else if config.enableGeolocation {
+                    if requireLocationRecordingOwner(body, callbackId: callbackId) { setLocationRecordingPowerMode(body: body, callbackId: callbackId) }
                 } else {
                     rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
                 }
@@ -4183,6 +4206,7 @@ struct CraftWebView: UIViewRepresentable {
                     crypto: true,
                     locationRecordingOwnership: \(config.enableGeolocation && CraftZigRuntime.supportsRecordingOwnership),
                     locationRecordingIntentIdentity: \(config.enableGeolocation && CraftZigRuntime.supportsRecordingIntentIdentity),
+                    locationRecordingPowerMode: \(config.enableGeolocation && CraftZigRuntime.supportsRecordingPowerMode),
                     backgroundLocation: \(config.enableBackgroundLocation),
                     healthKit: \(config.enableHealthKit),
                     liveActivities: \(config.enableLiveActivities),
@@ -5786,7 +5810,7 @@ struct CraftWebView: UIViewRepresentable {
                 };
                 craft._invoke = function(action, payload) {
                     var recordingOptions = action === 'heartRate' && payload && ['startRecording', 'pauseRecording', 'resumeRecording', 'stopRecording', 'readRecording', 'getRecordingState', 'acknowledgeRecording'].indexOf(payload.method) !== -1
-                        ? payload.options : ['startLocationRecording', 'pauseLocationRecording', 'resumeLocationRecording', 'stopLocationRecording', 'readLocationRecording', 'getLocationRecordingState', 'acknowledgeLocationRecording'].indexOf(action) !== -1 ? payload : null;
+                        ? payload.options : ['startLocationRecording', 'setLocationRecordingPowerMode', 'pauseLocationRecording', 'resumeLocationRecording', 'stopLocationRecording', 'readLocationRecording', 'getLocationRecordingState', 'acknowledgeLocationRecording'].indexOf(action) !== -1 ? payload : null;
                     if (recordingOptions && Object.prototype.hasOwnProperty.call(recordingOptions, 'recordingId') &&
                         (typeof recordingOptions.recordingId !== 'string' || !recordingOptions.recordingId.trim())) {
                         var invalidStart = new Error('recordingId must be a nonempty recording ID');
@@ -5964,6 +5988,7 @@ struct CraftWebView: UIViewRepresentable {
                         void stopLocationWatchIfUnused().catch(function() {});
                     },
                     startRecording: function(options) { return craft._invoke('startLocationRecording', options || {}); },
+                    setRecordingPowerMode: function(options) { return craft._invoke('setLocationRecordingPowerMode', options || {}); },
                     pauseRecording: function(options) { return craft._invoke('pauseLocationRecording', options || {}); },
                     resumeRecording: function(options) { return craft._invoke('resumeLocationRecording', options || {}); },
                     stopRecording: function(options) { return craft._invoke('stopLocationRecording', options || {}); },
@@ -7009,10 +7034,75 @@ struct CraftWebView: UIViewRepresentable {
 
         /// The manager's filter and accuracy for the recording's power mode.
         private func applyLocationRecordingPower() {
-            locationManager?.distanceFilter = locationRecordingPowerSaver && isRecordingLocation ? Self.powerSaverDistanceFilterM : kCLDistanceFilterNone
+            let saver = locationRecordingPowerSaver
+            locationRecordingAppliedSaver = saver
+            locationManager?.distanceFilter = saver ? Self.powerSaverDistanceFilterM : kCLDistanceFilterNone
             if singleLocationCallbackId == nil || (isRecordingLocation && !isLocationRecordingPaused) {
                 locationManager?.desiredAccuracy = recordingDesiredAccuracy
             }
+        }
+
+        /// A new mode, a resume or a change of the device's power state starts
+        /// the steady-pace history over: speeds seen under the old setting say
+        /// nothing about the new one.
+        private func resetLocationRecordingPace() {
+            locationRecordingRecentSpeeds.removeAll()
+            locationRecordingSteady = false
+        }
+
+        /// Under this charge, unplugged, `auto` saves power.
+        static let autoPowerSaverBatteryLevel: Float = 0.2
+
+        /// The device wants power saved: Low Power Mode, or a battery under
+        /// 20% that is not charging (`unplugged`; an unknown state, as in the
+        /// simulator, does not count).
+        static var deviceIsSavingPower: Bool {
+            if ProcessInfo.processInfo.isLowPowerModeEnabled { return true }
+            let device = UIDevice.current
+            return device.isBatteryMonitoringEnabled && device.batteryState == .unplugged
+                && device.batteryLevel >= 0 && device.batteryLevel < autoPowerSaverBatteryLevel
+        }
+
+        /// `auto` follows the platform's own change notifications, only while a
+        /// recording runs in that mode, so no other recording pays for them.
+        private func updateLocationRecordingPowerObservers() {
+            let wanted = isRecordingLocation && locationRecordingPowerMode == "auto"
+            guard wanted != !locationRecordingPowerObservers.isEmpty else { return }
+            let center = NotificationCenter.default
+            if !wanted {
+                locationRecordingPowerObservers.forEach { center.removeObserver($0) }
+                locationRecordingPowerObservers.removeAll()
+                UIDevice.current.isBatteryMonitoringEnabled = false
+                return
+            }
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            let names: [Notification.Name] = [
+                .NSProcessInfoPowerStateDidChange,
+                UIDevice.batteryLevelDidChangeNotification,
+                UIDevice.batteryStateDidChangeNotification,
+            ]
+            locationRecordingPowerObservers = names.map { name in
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    self?.locationRecordingDeviceStateChanged()
+                }
+            }
+        }
+
+        /// The device's power state changed: re-resolve `auto`, and only touch
+        /// the manager when the answer is different.
+        private func locationRecordingDeviceStateChanged() {
+            guard isRecordingLocation, locationRecordingPowerMode == "auto",
+                  locationRecordingPowerSaver != locationRecordingAppliedSaver else { return }
+            resetLocationRecordingPace()
+            applyLocationRecordingPower()
+        }
+
+        static let recordingPowerModes = ["default", "saver", "auto"]
+
+        /// A mode the page may ask for; nil for anything else, `nil` included.
+        private static func recordingPowerMode(_ value: Any?) -> String? {
+            guard let mode = value as? String, recordingPowerModes.contains(mode) else { return nil }
+            return mode
         }
 
         /// Steady: the last ten fixes within a fifth of their mean speed, at
@@ -7105,7 +7195,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func persistLocationRecordingState() throws {
-            let state: [String: Any] = ["active": isRecordingLocation, "paused": isLocationRecordingPaused, "id": locationRecordingId ?? NSNull(), "startedAt": locationRecordingStartedAt ?? NSNull(), "powerMode": locationRecordingPowerSaver ? "saver" : "default"]
+            let state: [String: Any] = ["active": isRecordingLocation, "paused": isLocationRecordingPaused, "id": locationRecordingId ?? NSNull(), "startedAt": locationRecordingStartedAt ?? NSNull(), "powerMode": locationRecordingPowerMode]
             try CraftRecordingArchive.writeAtomically(JSONSerialization.data(withJSONObject: state), locationRecordingStateURL)
         }
 
@@ -7126,7 +7216,7 @@ struct CraftWebView: UIViewRepresentable {
             isLocationRecordingPaused = state["paused"] as? Bool ?? false
             locationRecordingId = state["id"] as? String
             locationRecordingStartedAt = state["startedAt"] as? TimeInterval
-            locationRecordingPowerSaver = isRecordingLocation && state["powerMode"] as? String == "saver"
+            locationRecordingPowerMode = Self.recordingPowerMode(state["powerMode"]) ?? "default"
             if let id = locationRecordingId, try CraftRecordingArchive.isAcknowledged(recordingBaseDirectory, "location", id) {
                 try CraftRecordingArchive.acknowledge(recordingBaseDirectory, "location", id)
                 if FileManager.default.fileExists(atPath: locationRecordingTrackURL.path) { try FileManager.default.removeItem(at: locationRecordingTrackURL) }
@@ -7136,6 +7226,7 @@ struct CraftWebView: UIViewRepresentable {
                 isLocationRecordingPaused = false
                 try persistLocationRecordingState()
             }
+            updateLocationRecordingPowerObservers()
             if isRecordingLocation && !isLocationRecordingPaused {
                 locationManager?.delegate = self
                 configureBackgroundLocationIfNeeded()
@@ -7222,6 +7313,14 @@ struct CraftWebView: UIViewRepresentable {
                 rejectCallback(callbackId, error: "A location recording is already active", code: "RECORDING_ALREADY_ACTIVE")
                 return
             }
+            var powerMode = "default"
+            if let requested = body["powerMode"], !(requested is NSNull) {
+                guard let mode = Self.recordingPowerMode(requested) else {
+                    rejectCallback(callbackId, error: "powerMode must be 'default', 'saver' or 'auto'", code: "INVALID_ARGUMENT")
+                    return
+                }
+                powerMode = mode
+            }
             let directory = locationRecordingTrackURL.deletingLastPathComponent()
             let id: String
             do {
@@ -7237,23 +7336,23 @@ struct CraftWebView: UIViewRepresentable {
                 rejectCallback(callbackId, error: "Unable to create the location recording", code: "RECORDING_STORAGE_ERROR")
                 return
             }
-            let previous = (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerSaver)
+            let previous = (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerMode)
             locationRecordingId = id
             locationRecordingStartedAt = Date().timeIntervalSince1970 * 1000
             isRecordingLocation = true
             isLocationRecordingPaused = false
-            locationRecordingPowerSaver = body["powerMode"] as? String == "saver"
-            locationRecordingRecentSpeeds.removeAll()
-            locationRecordingSteady = false
+            locationRecordingPowerMode = powerMode
+            resetLocationRecordingPace()
             do { try persistLocationRecordingState() }
             catch {
-                (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerSaver) = previous
+                (locationRecordingId, locationRecordingStartedAt, isRecordingLocation, isLocationRecordingPaused, locationRecordingPowerMode) = previous
                 rejectCallback(callbackId, error: "Unable to persist the location recording", code: "RECORDING_STORAGE_ERROR")
                 return
             }
             locationManager?.delegate = self
             requestLocationAuthorization()
             configureBackgroundLocationIfNeeded()
+            updateLocationRecordingPowerObservers()
             applyLocationRecordingPower()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: locationRecordingSummary())
@@ -7261,6 +7360,31 @@ struct CraftWebView: UIViewRepresentable {
             #else
             rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
             #endif
+        }
+
+        /// Change the running recording's power mode. The state file carries it,
+        /// so a relaunch restores what was last asked for.
+        private func setLocationRecordingPowerMode(body: [String: Any], callbackId: String?) {
+            guard let mode = Self.recordingPowerMode(body["powerMode"]) else {
+                rejectCallback(callbackId, error: "powerMode must be 'default', 'saver' or 'auto'", code: "INVALID_ARGUMENT")
+                return
+            }
+            guard isRecordingLocation else {
+                rejectCallback(callbackId, error: "No active location recording", code: "NO_ACTIVE_RECORDING")
+                return
+            }
+            let previous = locationRecordingPowerMode
+            locationRecordingPowerMode = mode
+            do { try persistLocationRecordingState() }
+            catch {
+                locationRecordingPowerMode = previous
+                rejectCallback(callbackId, error: "Unable to persist the location recording", code: "RECORDING_STORAGE_ERROR")
+                return
+            }
+            resetLocationRecordingPace()
+            updateLocationRecordingPowerObservers()
+            applyLocationRecordingPower()
+            resolveCallback(callbackId, result: locationRecordingSummary())
         }
 
         private func pauseLocationRecording(callbackId: String?) {
@@ -7300,6 +7424,11 @@ struct CraftWebView: UIViewRepresentable {
             locationManager?.delegate = self
             requestLocationAuthorization()
             configureBackgroundLocationIfNeeded()
+            // The manager forgets nothing across a pause, but the pace seen
+            // before it says nothing about the pace after it, and a recording
+            // restored while paused never had its filter set at all.
+            resetLocationRecordingPace()
+            applyLocationRecordingPower()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: locationRecordingSummary())
 
@@ -7320,9 +7449,8 @@ struct CraftWebView: UIViewRepresentable {
                     locationManager?.stopUpdatingLocation()
                     locationManager?.allowsBackgroundLocationUpdates = false
                 }
-                locationRecordingPowerSaver = false
-                locationRecordingSteady = false
-                locationRecordingRecentSpeeds.removeAll()
+                resetLocationRecordingPace()
+                updateLocationRecordingPowerObservers()
                 applyLocationRecordingPower()
                 var summary = locationRecordingSummary()
                 summary["locations"] = locations
@@ -7357,6 +7485,8 @@ struct CraftWebView: UIViewRepresentable {
                 "active": isRecordingLocation,
                 "paused": isLocationRecordingPaused,
                 "startedAt": locationRecordingStartedAt ?? NSNull(),
+                "powerMode": locationRecordingPowerMode,
+                "effectivePowerMode": locationRecordingPowerSaver ? "saver" : "default",
             ]
         }
 
@@ -9964,6 +10094,10 @@ final class CraftZigRuntime: NSObject {
               let symbol = dlsym(image, "craft_ios_recording_ownership_version") else { return false }
         return unsafeBitCast(symbol, to: RecordingOwnershipVersionFn.self)() >= 1
     }
+
+    /// Power modes belong to Swift's recorder. A linked Zig runtime owns the
+    /// recorder instead and has no power mode, so it must not be advertised.
+    static var supportsRecordingPowerMode: Bool { !isLinked }
 
     static var supportsRecordingIntentIdentity: Bool {
         if !isLinked { return true }

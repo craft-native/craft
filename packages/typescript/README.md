@@ -598,6 +598,13 @@ precommitted ID without adopting an unknown recording. The asynchronous Crypto
 service uses the platform's secure UUID generator; an unsupported native host
 rejects with `CRYPTO_UNSUPPORTED` without falling back to JavaScript entropy.
 
+To save battery on a long effort, start with `powerMode: 'saver'`, or `'auto'` to
+save only while iOS Low Power Mode or Android Battery Saver is on or the battery
+is low. Change a running recording with
+`location.setRecordingPowerMode({ expectedId: id, powerMode })` after checking
+`location.supportsRecordingPowerMode()`; recording states report `powerMode` and
+`effectivePowerMode` (see `docs/api/mobile/location.md`).
+
 Pass `{ expectedId: id }` to pause, resume, stop, read and get-state calls. Heart-rate reads also accept
 `since`. A supplied empty, whitespace or non-string ID rejects with
 `INVALID_ARGUMENT`. Starting while another session is active rejects with

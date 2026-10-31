@@ -79,6 +79,7 @@ enum CraftNativeActions {
             values.append("geolocation")
             if CraftZigRuntime.supportsRecordingOwnership { values.append("locationRecordingOwnership") }
             if CraftZigRuntime.supportsRecordingIntentIdentity { values.append("locationRecordingIntentIdentity") }
+            if CraftZigRuntime.supportsRecordingPowerMode { values.append("locationRecordingPowerMode") }
         }
         // The Music app's song and transport are the coordinator's too.
         if config.enableAppleMusic { values.append("music") }
@@ -494,7 +495,8 @@ enum CraftNativeActions {
             }
             let actions = [
                 "getCurrentPosition": "getCurrentPosition", "watchPosition": "watchPosition", "clearWatch": "clearWatch",
-                "startRecording": "startLocationRecording", "pauseRecording": "pauseLocationRecording",
+                "startRecording": "startLocationRecording", "setRecordingPowerMode": "setLocationRecordingPowerMode",
+                "pauseRecording": "pauseLocationRecording",
                 "resumeRecording": "resumeLocationRecording", "stopRecording": "stopLocationRecording",
                 "getRecordingState": "getLocationRecordingState", "readRecording": "readLocationRecording",
                 "acknowledgeRecording": "acknowledgeLocationRecording",

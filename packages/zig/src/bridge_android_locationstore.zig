@@ -279,9 +279,11 @@ pub fn startStore(
     try prefs_api.putBoolean(j, allocator, editor, "active", true);
     try prefs_api.putBoolean(j, allocator, editor, "paused", false);
     try prefs_api.putLong(j, allocator, editor, "startedAt", started_at);
-    // Kotlin's start takes a power mode; this path has none, so a saver
-    // flag left by an earlier recording must not carry over.
+    // Kotlin's start takes a power mode; this path has none, so a mode left
+    // by an earlier recording (the legacy flag or the current string) must
+    // not carry over.
     try prefs_api.putBoolean(j, allocator, editor, "powerSaver", false);
+    try prefs_api.putString(j, allocator, editor, "powerMode", "default");
     try prefs_api.apply(j, editor);
 }
 

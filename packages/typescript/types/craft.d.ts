@@ -1278,6 +1278,8 @@ export type NativeBridgeErrorCode =
 export type CraftErrorCode = NativeBridgeErrorCode
   | 'RECORDING_OWNERSHIP_UNSUPPORTED'
   | 'RECORDING_INTENT_IDENTITY_UNSUPPORTED'
+  | 'NO_ACTIVE_RECORDING'
+  | 'RECORDING_POWER_MODE_UNSUPPORTED'
   | 'CRYPTO_UNSUPPORTED'
   | 'CRYPTO_INVALID_RESPONSE'
   | 'STORAGE_COMPARE_AND_SET_UNSUPPORTED'
@@ -1678,6 +1680,8 @@ export interface CraftCapabilities {
   geolocation: boolean;
   locationRecordingOwnership?: boolean;
   locationRecordingIntentIdentity?: boolean;
+  /** `location.setRecordingPowerMode()` and `powerMode: 'auto'` (the OS power-saving signals). */
+  locationRecordingPowerMode?: boolean;
   clipboard: boolean;
   contacts: boolean;
   calendar: boolean;

@@ -2889,10 +2889,14 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
 
     expect(swift).toContain('static let powerSaverDistanceFilterM: CLLocationDistance = 5')
-    expect(swift).toContain('locationRecordingPowerSaver = body["powerMode"] as? String == "saver"')
+    expect(swift).toContain('private var locationRecordingPowerMode = "default"')
+    expect(swift).toContain('locationRecordingPowerMode = powerMode')
     // Kept with the recording, so a relaunch restores the same mode.
-    expect(swift).toContain('"powerMode": locationRecordingPowerSaver ? "saver" : "default"')
-    expect(swift).toContain('locationRecordingPowerSaver = isRecordingLocation && state["powerMode"] as? String == "saver"')
+    expect(swift).toContain('"powerMode": locationRecordingPowerMode]')
+    expect(swift).toContain('locationRecordingPowerMode = Self.recordingPowerMode(state["powerMode"]) ?? "default"')
+    // The state the page reads: the mode asked for and the one in use.
+    expect(swift).toContain('"powerMode": locationRecordingPowerMode,')
+    expect(swift).toContain('"effectivePowerMode": locationRecordingPowerSaver ? "saver" : "default",')
 
     const finish = swift.slice(swift.indexOf('private func finishSingleLocationRequest() {'))
     expect(finish.slice(0, finish.indexOf('\n        }\n'))).toContain('locationManager?.desiredAccuracy = recordingDesiredAccuracy')
@@ -2905,7 +2909,73 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(body.indexOf('for earlier in locations.dropLast()')).toBeLessThan(body.indexOf('appendRecordedLocation(data)'))
 
     const stop = swift.slice(swift.indexOf('private func stopLocationRecording(callbackId: String?) {'))
-    expect(stop.slice(0, stop.indexOf('\n        }\n'))).toContain('locationRecordingPowerSaver = false')
+    const stopBody = stop.slice(0, stop.indexOf('\n        }\n'))
+    // Outside a recording nothing is saved, whatever mode it was asked for.
+    expect(stopBody).toContain('resetLocationRecordingPace()')
+    expect(stopBody).toContain('updateLocationRecordingPowerObservers()')
+    expect(stopBody.indexOf('isRecordingLocation = false')).toBeLessThan(stopBody.indexOf('applyLocationRecordingPower()'))
+    const effective = swift.slice(swift.indexOf('private var locationRecordingPowerSaver: Bool {'))
+    expect(effective.slice(0, effective.indexOf('\n        }\n'))).toContain('guard isRecordingLocation else { return false }')
+
+    // A pause forgets the pace, and a recording restored while paused had its
+    // filter set by nobody: resuming applies both.
+    const resume = swift.slice(swift.indexOf('private func resumeLocationRecording(callbackId: String?) {'))
+    const resumeBody = resume.slice(0, resume.indexOf('\n        }\n'))
+    expect(resumeBody.indexOf('resetLocationRecordingPace()')).toBeGreaterThan(-1)
+    expect(resumeBody.indexOf('applyLocationRecordingPower()')).toBeLessThan(resumeBody.indexOf('locationManager?.startUpdatingLocation()'))
+  })
+
+  it('changes a running recording\'s power mode and lets auto follow the device', async () => {
+    const output = createTempDir('craft-ios-location-power-mode-')
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: { enableGeolocation: true, enableBackgroundLocation: true } })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    const native = readFileSync(join(output, 'Sources', 'CraftNativeActions.swift'), 'utf8')
+
+    // setRecordingPowerMode is fenced like pause and resume, after the restore check.
+    const dispatch = swift.slice(swift.indexOf('case "setLocationRecordingPowerMode":'))
+    expect(dispatch.slice(0, dispatch.indexOf('case "pauseLocationRecording":'))).toContain('if requireLocationRecordingOwner(body, callbackId: callbackId) { setLocationRecordingPowerMode(body: body, callbackId: callbackId) }')
+    expect(swift).toContain('"startLocationRecording", "setLocationRecordingPowerMode", "pauseLocationRecording"')
+    expect(swift).toContain('setRecordingPowerMode: function(options) { return craft._invoke(\'setLocationRecordingPowerMode\', options || {}); },')
+
+    const set = swift.slice(swift.indexOf('private func setLocationRecordingPowerMode(body: [String: Any], callbackId: String?) {'))
+    const setBody = set.slice(0, set.indexOf('\n        }\n'))
+    expect(setBody).toContain('code: "INVALID_ARGUMENT"')
+    expect(setBody).toContain('code: "NO_ACTIVE_RECORDING"')
+    // Stored before it is applied, and put back if the state file cannot be written.
+    expect(setBody.indexOf('try persistLocationRecordingState()')).toBeLessThan(setBody.indexOf('applyLocationRecordingPower()'))
+    expect(setBody).toContain('locationRecordingPowerMode = previous')
+    expect(setBody).toContain('resetLocationRecordingPace()')
+    expect(setBody).toContain('updateLocationRecordingPowerObservers()')
+    expect(setBody).toContain('resolveCallback(callbackId, result: locationRecordingSummary())')
+
+    // A start with an unknown mode is refused before anything is created.
+    const start = swift.slice(swift.indexOf('private func startLocationRecording(body: [String: Any], callbackId: String?) {'))
+    const startBody = start.slice(0, start.indexOf('\n        }\n'))
+    expect(startBody.indexOf("powerMode must be 'default', 'saver' or 'auto'")).toBeLessThan(startBody.indexOf('CraftRecordingArchive.startId('))
+
+    // auto: Low Power Mode, or under 20% and unplugged, re-read on the platform's notifications.
+    expect(swift).toContain('static let recordingPowerModes = ["default", "saver", "auto"]')
+    expect(swift).toContain('case "auto": return Self.deviceIsSavingPower')
+    expect(swift).toContain('static let autoPowerSaverBatteryLevel: Float = 0.2')
+    expect(swift).toContain('if ProcessInfo.processInfo.isLowPowerModeEnabled { return true }')
+    expect(swift).toContain('device.batteryState == .unplugged')
+    expect(swift).toContain('.NSProcessInfoPowerStateDidChange,')
+    expect(swift).toContain('UIDevice.batteryLevelDidChangeNotification,')
+    expect(swift).toContain('UIDevice.batteryStateDidChangeNotification,')
+    // Only while a recording runs in that mode; the manager is left alone unless the answer changed.
+    expect(swift).toContain('let wanted = isRecordingLocation && locationRecordingPowerMode == "auto"')
+    expect(swift).toContain('UIDevice.current.isBatteryMonitoringEnabled = false')
+    expect(swift).toContain('locationRecordingPowerSaver != locationRecordingAppliedSaver else { return }')
+    // A relaunch re-arms the observers with the restored mode.
+    const restore = swift.slice(swift.indexOf('private func restoreLocationRecordingState() throws {'))
+    expect(restore.slice(0, restore.indexOf('\n        }\n'))).toContain('updateLocationRecordingPowerObservers()')
+
+    // Advertised like the other recording methods, to pages and to native screens.
+    expect(swift).toContain('locationRecordingPowerMode: \\(config.enableGeolocation && CraftZigRuntime.supportsRecordingPowerMode),')
+    expect(native).toContain('if CraftZigRuntime.supportsRecordingPowerMode { values.append("locationRecordingPowerMode") }')
+    expect(native).toContain('"setRecordingPowerMode": "setLocationRecordingPowerMode"')
+    // A linked Zig runtime's recorder has no power modes, so it must not claim them.
+    expect(swift).toContain('static var supportsRecordingPowerMode: Bool { !isLinked }')
   })
 
   it('asks again when Core Location has no fix yet, rather than failing the caller', async () => {

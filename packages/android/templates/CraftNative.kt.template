@@ -1954,6 +1954,13 @@ object CraftNative {
         return try { nativeRecordingOwnershipVersion() >= 1 } catch (_: UnsatisfiedLinkError) { false }
     }
 
+    /**
+     * `setRecordingPowerMode` and `powerMode: 'auto'`. The Kotlin store serves
+     * any method it is handed, so a linked runtime that passes recorder calls
+     * through (version 1 and up) supports it exactly as it supports ownership.
+     */
+    fun supportsRecordingPowerMode(): Boolean = supportsRecordingOwnership()
+
     fun supportsRecordingIntentIdentity(): Boolean {
         if (!isAvailable) return true
         return try { nativeRecordingOwnershipVersion() >= 2 } catch (_: UnsatisfiedLinkError) { false }

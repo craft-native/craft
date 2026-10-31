@@ -135,6 +135,7 @@ internal class CraftNativeServices(
             add("geolocation")
             if (CraftNative.supportsRecordingOwnership()) add("locationRecordingOwnership")
             if (CraftNative.supportsRecordingIntentIdentity()) add("locationRecordingIntentIdentity")
+            if (CraftNative.supportsRecordingPowerMode()) add("locationRecordingPowerMode")
         }
         if (config.optJSONObject("backgroundRefresh")?.optBoolean("enabled") == true || config.optBoolean("enablePushNotifications")) add("background")
         // A Bluetooth heart-rate strap (CraftHeartRate.kt), the app's own
@@ -513,7 +514,7 @@ internal class CraftNativeServices(
                 watchCallback = null
                 done(success(true))
             }
-            "startRecording", "pauseRecording", "resumeRecording", "stopRecording", "getRecordingState", "readRecording", "acknowledgeRecording" -> {
+            "startRecording", "setRecordingPowerMode", "pauseRecording", "resumeRecording", "stopRecording", "getRecordingState", "readRecording", "acknowledgeRecording" -> {
                 val invoke = {
                     val answer = JSONObject(store.perform(context, method, (args.optJSONObject(0) ?: JSONObject()).toString()))
                     if (answer.optBoolean("ok")) {

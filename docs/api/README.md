@@ -25,6 +25,7 @@ complete native message surface, see the [Bridge API](../BRIDGE_API.md).
 - [Runtime Compatibility](./mobile/runtime-compatibility.md) - Intentional validation and migration guidance
 - [Device API](./mobile/device.md) - Device information and capabilities
 - [Haptics API](./mobile/haptics.md) - Haptic feedback
+- [Location recording API](./mobile/location.md) - Route recording and its power modes
 - [Permissions API](./mobile/permissions.md) - Permission management
 - [Biometrics API](./mobile/biometrics.md) - Face ID, Touch ID, fingerprint
 - [Secure Storage API](./mobile/secure-storage.md) - Keychain/Keystore storage

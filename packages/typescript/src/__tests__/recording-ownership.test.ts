@@ -140,3 +140,100 @@ test('secure UUIDs use the advertised native service and never fall back on old 
   await expect(crypto.randomUUID()).rejects.toMatchObject({ code: 'CRYPTO_INVALID_RESPONSE' })
   expect(calls).toBe(2)
 })
+
+function powerHost(capable: boolean, recording = true) {
+  const calls: unknown[][] = []
+  const call = (method: string, state: () => unknown) => async (...args: unknown[]) => {
+    calls.push([method, ...args])
+    return state()
+  }
+  const state = () => ({ id: 'owned', active: true, paused: false, startedAt: 1, powerMode: 'saver', effectivePowerMode: 'saver' })
+  const namespace: Record<string, unknown> = Object.fromEntries(['startRecording', 'pauseRecording', 'resumeRecording', 'stopRecording', 'readRecording', 'getRecordingState', 'acknowledgeRecording'].map(method => [method, call(method, state)]))
+  if (recording) namespace.setRecordingPowerMode = call('setRecordingPowerMode', state)
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { craft: {
+    capabilities: { geolocation: true, locationRecordingOwnership: true, locationRecordingPowerMode: capable },
+    location: namespace,
+  } } })
+  return calls
+}
+
+test('the recording power mode is advertised like the other recording methods', () => {
+  powerHost(true)
+  expect(location.supportsRecordingPowerMode()).toBe(true)
+  powerHost(false)
+  expect(location.supportsRecordingPowerMode()).toBe(false)
+  // The flag without the method, and the method without the flag, are both an old host.
+  powerHost(true, false)
+  expect(location.supportsRecordingPowerMode()).toBe(false)
+  Reflect.deleteProperty(globalThis, 'window')
+  expect(location.supportsRecordingPowerMode()).toBe(false)
+})
+
+test('setRecordingPowerMode sends the fenced mode to the host and returns its state', async () => {
+  const calls = powerHost(true)
+  const state = await location.setRecordingPowerMode({ expectedId: 'owned', powerMode: 'auto' })
+  expect(calls).toEqual([['setRecordingPowerMode', { expectedId: 'owned', powerMode: 'auto' }]])
+  expect(state).toMatchObject({ id: 'owned', powerMode: 'saver', effectivePowerMode: 'saver' })
+})
+
+test('setRecordingPowerMode refuses an unfenced call, an unknown mode and an old host before any native operation', async () => {
+  let calls = powerHost(true)
+  await expect(location.setRecordingPowerMode({ powerMode: 'saver' } as never)).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+  for (const expectedId of ['', '  ', null, undefined, 42])
+    await expect(location.setRecordingPowerMode({ expectedId, powerMode: 'saver' } as never)).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+  for (const powerMode of ['', 'AUTO', 'battery', null, undefined, true])
+    await expect(location.setRecordingPowerMode({ expectedId: 'owned', powerMode } as never)).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+  expect(calls).toEqual([])
+
+  calls = powerHost(false)
+  await expect(location.setRecordingPowerMode({ expectedId: 'owned', powerMode: 'saver' })).rejects.toMatchObject({ code: 'RECORDING_POWER_MODE_UNSUPPORTED' })
+  expect(calls).toEqual([])
+})
+
+test('startRecording passes default, saver and auto, and asks an old host before using auto', async () => {
+  let calls = powerHost(true)
+  for (const powerMode of ['default', 'saver', 'auto'] as const) await location.startRecording({ powerMode })
+  expect(calls).toEqual(['default', 'saver', 'auto'].map(powerMode => ['startRecording', { powerMode }]))
+  await expect(location.startRecording({ powerMode: 'battery' as never })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+
+  // 'saver' predates the capability; only 'auto' needs it.
+  calls = powerHost(false)
+  await location.startRecording({ powerMode: 'saver' })
+  expect(calls).toEqual([['startRecording', { powerMode: 'saver' }]])
+  await expect(location.startRecording({ powerMode: 'auto' })).rejects.toMatchObject({ code: 'RECORDING_POWER_MODE_UNSUPPORTED' })
+  expect(calls).toHaveLength(1)
+})
+
+test('the browser recording reports its power mode and takes a new one while it runs', async () => {
+  Reflect.deleteProperty(globalThis, 'window')
+  const watches: ((position: GeolocationPosition) => void)[] = []
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { geolocation: {
+    watchPosition: (callback: (position: GeolocationPosition) => void) => watches.push(callback),
+    clearWatch: () => {},
+  } } })
+  try {
+    await expect(location.setRecordingPowerMode({ expectedId: 'nothing', powerMode: 'saver' })).rejects.toMatchObject({ code: 'RECORDING_CONFLICT' })
+
+    const started = await location.startRecording({ powerMode: 'saver' })
+    expect(started).toMatchObject({ active: true, powerMode: 'saver', effectivePowerMode: 'saver' })
+    await expect(location.setRecordingPowerMode({ expectedId: 'someone-else', powerMode: 'default' })).rejects.toMatchObject({ code: 'RECORDING_CONFLICT' })
+    await expect(location.setRecordingPowerMode({ expectedId: started.id as string, powerMode: 'nope' as never })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+
+    // The browser has no power-saving signal: auto is kept as asked and runs as default.
+    expect(await location.setRecordingPowerMode({ expectedId: started.id as string, powerMode: 'auto' }))
+      .toMatchObject({ powerMode: 'auto', effectivePowerMode: 'default' })
+    expect(await location.setRecordingPowerMode({ expectedId: started.id as string, powerMode: 'saver' }))
+      .toMatchObject({ powerMode: 'saver', effectivePowerMode: 'saver' })
+    expect(await location.getRecordingState({ expectedId: started.id as string })).toMatchObject({ powerMode: 'saver', effectivePowerMode: 'saver' })
+
+    const stopped = await location.stopRecording({ expectedId: started.id as string })
+    expect(stopped).toMatchObject({ active: false, powerMode: 'saver', effectivePowerMode: 'default' })
+    await expect(location.setRecordingPowerMode({ expectedId: started.id as string, powerMode: 'default' })).rejects.toMatchObject({ code: 'NO_ACTIVE_RECORDING' })
+    await location.acknowledgeRecording({ expectedId: started.id as string })
+    expect(await location.getRecordingState()).toMatchObject({ id: null, powerMode: 'default', effectivePowerMode: 'default' })
+  } finally {
+    if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor)
+    else Reflect.deleteProperty(globalThis, 'navigator')
+  }
+})
