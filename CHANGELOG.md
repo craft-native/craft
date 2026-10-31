@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.414...v0.0.415)
+
+## 🐛 Bug Fixes
+
+- **ios**: the test driver's dismiss waits for the prompt to go ([bc3b985](https://github.com/craft-native/craft/commit/bc3b985)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.413...v0.0.414)
 
 ## 🚀 Features
