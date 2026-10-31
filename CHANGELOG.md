@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.409...v0.0.410)
+
+## 🐛 Bug Fixes
+
+- **macos**: fail the host build if any script would run on the system JavaScriptCore instead of zig-js ([235cbc3](https://github.com/craft-native/craft/commit/235cbc3)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.408...v0.0.409)
 
 ## 🚀 Features
