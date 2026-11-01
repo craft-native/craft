@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.416...v0.0.417)
+
+## 🚀 Features
+
+- **ios**: guard a simulator step on text shown, for web content without identifiers ([1a7614d](https://github.com/craft-native/craft/commit/1a7614d)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.415...v0.0.416)
 
 ## 🐛 Bug Fixes
