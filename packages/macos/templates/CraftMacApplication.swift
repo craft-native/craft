@@ -421,6 +421,22 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         // After this result is written, from the run loop rather than a main-queue block (see applicationShouldTerminate).
         if kind == "quit" { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0); return ["ok": true] }
         if kind == "openURL", let url = (action["url"] as? String).flatMap(URL.init(string:)) { application(NSApp, open: [url]); return ["ok": true] }
+        #if CRAFT_WEBKIT
+        // Script in a tab's page, as a person's click or a page's own code would act: what the
+        // renderer cannot reach (a link inside the page, an element to zap). `value` is the
+        // script's result as text; return JSON.stringify(...) for anything structured.
+        if kind == "web", let id = action["tab"] as? String, let script = action["js"] as? String {
+            guard let tab = CraftMacWebTabs.shared.tabs[id] else { return ["ok": false, "error": "No tab \(id)"] }
+            var answer: [String: Any]?
+            tab.view.evaluateJavaScript(script) { value, error in
+                if let error { answer = ["ok": false, "error": error.localizedDescription]; return }
+                answer = ["ok": true, "value": value.map { "\($0)" } ?? NSNull()]
+            }
+            let deadline = Date().addingTimeInterval(5)
+            while answer == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return answer ?? ["ok": false, "error": "The page did not answer within 5 s"]
+        }
+        #endif
         if kind == "appearance" {
             NSApp.appearance = NSAppearance(named: action["value"] as? String == "dark" ? .darkAqua : .aqua)
             appearanceChanged(); return ["ok": true]
