@@ -68,7 +68,13 @@ final class CraftMacRuntime {
         #endif
         return list
     }
-    let context = ZigJSContext()!
+    /// zig-js's precise collector, not the default arena: an arena frees nothing until the
+    /// context goes, so a window open all day kept every object its screen ever made.
+    let context: ZigJSContext = {
+        let created = ZJSGlobalContextCreateGarbageCollected(true)!
+        defer { JSGlobalContextRelease(created) }
+        return ZigJSContext(jsGlobalContextRef: created)!
+    }()
     let route: String
     let network: CraftMacNetwork
     weak var scene: CraftMacScene?
