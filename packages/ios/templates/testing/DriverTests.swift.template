@@ -49,6 +49,7 @@ import Darwin
 ///   unlabelled            logs every hittable button without a label (FAIL if any)
 ///   dismiss [label]       a system prompt's button (default Not Now: "Save Password?")
 ///   ifid <id> <command…>  runs the command only when that element is there (a screen shown the first time)
+///   iftext <text> | <command…>  runs the command only when something shows text (web content has no identifiers)
 ///   log <text>
 ///
 /// With a bundled journey.txt, evidence is kept as native XCTest attachments
@@ -296,6 +297,12 @@ final class DriverTests: XCTestCase {
             let rest = arg.split(separator: " ", maxSplits: 1).map(String.init)
             if rest.count == 2, identified(rest[0]).waitForExistence(timeout: 3) { note("ifid \(rest[0]): shown"); run(rest[1]) }
             else { note("ifid \(rest.first ?? ""): not shown") }
+        case "iftext":
+            guard let split = arg.range(of: " | ") else { check(false, "iftext needs text | command"); return }
+            let text = String(arg[..<split.lowerBound])
+            let guarded = String(arg[split.upperBound...])
+            if poll(3, { element(containing: text) }) != nil { note("iftext \(text): shown"); run(guarded) }
+            else { note("iftext \(text): not shown") }
         case "launch": app.launch()
         case "activate": app.activate()
         case "terminate": app.terminate()

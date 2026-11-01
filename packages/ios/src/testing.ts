@@ -112,6 +112,12 @@ export type SimulatorStep =
   | { command: 'universallink', url: string }
   /** Runs `step` only when the element with this identifier is there (a screen shown the first time). */
   | { command: 'ifid', id: string, step: SimulatorStep }
+  /**
+   * Runs `step` only when something on screen shows this text, for content
+   * without identifiers: a web page's optional field that appears with a
+   * checkbox ticked, say.
+   */
+  | { command: 'iftext', text: string, step: SimulatorStep }
 
 /** Typed journeys use the same wire protocol as existing line-based scripts. */
 export function serializeSimulatorSteps(steps: readonly SimulatorStep[]): string {
@@ -146,7 +152,13 @@ export function serializeSimulatorSteps(steps: readonly SimulatorStep[]): string
       }
       arg = JSON.stringify(step.paths)
     }
-    else if ('step' in step) arg = `${token(step.id)} ${line(step.step)}`
+    else if ('step' in step) {
+      if (step.command === 'iftext') {
+        if (!step.text.trim() || step.text.includes('|') || /[\r\n]/.test(step.text)) throw new Error('iftext needs one line of text without |')
+        arg = `${step.text} | ${line(step.step)}`
+      }
+      else arg = `${token(step.id)} ${line(step.step)}`
+    }
     else if ('seconds' in step && !('text' in step)) arg = String(number(step.seconds!))
     else if ('milliseconds' in step) arg = String(number(step.milliseconds))
     else if ('state' in step) arg = step.state
