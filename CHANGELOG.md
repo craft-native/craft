@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.419...v0.0.420)
+
+## 🚀 Features
+
+- **macos**: screens run on zig-js's precise collector, at zig-js fef92e7f ([312c48d](https://github.com/craft-native/craft/commit/312c48d)) _(by Chris)_
+- **macos**: a web test action runs script in a tab's page ([96e593f](https://github.com/craft-native/craft/commit/96e593f)) _(by Chris)_
+- **macos**: tell the other windows when one closes ([4f960f2](https://github.com/craft-native/craft/commit/4f960f2)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **macos**: creating a tab that exists answers it, instead of reloading it ([cff762d](https://github.com/craft-native/craft/commit/cff762d)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.418...v0.0.419)
 
 ## 🚀 Features
