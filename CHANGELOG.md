@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.418...v0.0.419)
+
+## 🚀 Features
+
+- **macos**: craft.web.setCookies, and one store per private profile ([29df7c3](https://github.com/craft-native/craft/commit/29df7c3)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.417...v0.0.418)
 
 ## ⚡ Performance Improvements
