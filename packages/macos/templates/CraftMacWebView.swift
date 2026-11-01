@@ -543,6 +543,9 @@ final class CraftMacWebTabs {
     func perform(_ method: String, _ args: [Any], owner: CraftMacRuntime, answer: @escaping (Any) -> Void, fail: @escaping (String, String) -> Void) {
         let options = args.first as? [String: Any] ?? [:]
         if method == "create" {
+            // A tab that exists is answered as it is: loading the address again would reload a
+            // page that another window, say, hands over with its state intact.
+            if let id = options["id"] as? String, let existing = tabs[id] { answer(existing.state); return }
             let tab = make(id: options["id"] as? String, profile: options["profile"] as? String ?? "default", ephemeral: options["private"] as? Bool == true, owner: owner)
             tab.view.isInspectable = options["inspectable"] as? Bool ?? true
             if let address = options["url"] as? String, !address.isEmpty {

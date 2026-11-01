@@ -58,6 +58,13 @@ final class CraftMacRuntime {
         let created = call("create", [["id": "a", "url": page("First")]], runtime) as! [String: Any]
         require(created["tab"] as? String == "a", "create did not answer the tab's state")
         let first = CraftMacWebTabs.shared.tabs["a"]!
+        // Creating a tab that exists answers it as it is, without loading anything again.
+        require(wait { first.view.url?.absoluteString.hasPrefix("data:") == true && !first.view.isLoading }, "The first page did not load")
+        _ = call("evaluate", ["a", "window.__kept = 'yes'"], runtime)
+        let again = call("create", [["id": "a", "url": page("Other")]], runtime) as! [String: Any]
+        require(again["tab"] as? String == "a" && CraftMacWebTabs.shared.tabs["a"] === first, "create replaced a tab that exists")
+        require(!wait(1, until: { first.view.url?.absoluteString.contains("Other") == true }), "create navigated a tab that exists")
+        require(call("evaluate", ["a", "window.__kept || 'reloaded'"], runtime) as? String == "yes", "create reloaded a tab that exists")
         require(first.view.superview === host && !first.view.isHidden, "A tab created after its WebView rendered was not adopted")
         require(first.view.frame.size == host.bounds.size, "A tab does not fill its WebView")
 
