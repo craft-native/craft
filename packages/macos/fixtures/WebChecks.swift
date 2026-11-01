@@ -110,6 +110,22 @@ final class CraftMacRuntime {
         _ = call("removeContentRules", ["checks"], runtime); _ = call("removeContentRules", ["checks-2"], runtime)
         _ = call("setUserScripts", [[]], runtime)
         require(call("answerPermission", ["no-such-request", "grant"], runtime) as? Bool == false, "An unknown permission request was answered")
+        // A private profile is one store: what clears or adds data reaches the store its tabs use.
+        require(CraftMacWebProfiles.shared.store(profile: "checks", ephemeral: true) === CraftMacWebProfiles.shared.store(profile: "checks", ephemeral: true), "A private profile made a new store on every call")
+        // Imported cookies land in the profile's store and reach its pages.
+        let soon = Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
+        let imported = call("setCookies", [["profile": "checks", "private": true, "cookies": [
+            ["name": "session", "value": "abc", "domain": ".example.com", "path": "/", "expires": soon, "secure": true, "httpOnly": true, "sameSite": "lax"],
+            ["name": "plain", "value": "1", "domain": "app.example.com"],
+            ["name": "", "value": "no name", "domain": "example.com"],
+        ]]], runtime) as? [String: Any]
+        require(imported?["set"] as? Int == 2 && imported?["skipped"] as? Int == 1, "setCookies did not count what it set and skipped")
+        var stored: [HTTPCookie] = []
+        CraftMacWebProfiles.shared.store(profile: "checks", ephemeral: true).httpCookieStore.getAllCookies { stored = $0 }
+        require(wait { stored.count >= 2 }, "Imported cookies did not reach the profile's store")
+        let session = stored.first { $0.name == "session" }
+        require(session?.domain == ".example.com" && session?.isSecure == true && session?.isHTTPOnly == true && session?.sameSitePolicy == .sameSiteLax && session?.expiresDate != nil, "An imported cookie lost its attributes")
+        require(stored.first { $0.name == "plain" }?.isSessionOnly == true, "A cookie without an expiry was not a session cookie")
         require((call("clearData", [["profile": "checks", "private": true]], runtime) as? [String: Any])?["cleared"] as? Bool == true, "clearData did not answer")
 
         // Unknown tabs fail with NOT_FOUND instead of answering.

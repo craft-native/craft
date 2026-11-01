@@ -40,8 +40,17 @@ final class CraftMacWebProfiles {
         return configuration.copy() as! WKWebViewConfiguration
     }
 
+    /// One store per private profile for as long as the app runs, so clearing data or adding
+    /// cookies reaches the store its tabs use (each `.nonPersistent()` call makes a new, empty one).
+    private var ephemeralStores: [String: WKWebsiteDataStore] = [:]
+
     func store(profile: String, ephemeral: Bool) -> WKWebsiteDataStore {
-        if ephemeral { return .nonPersistent() }
+        if ephemeral {
+            if let existing = ephemeralStores[profile] { return existing }
+            let made = WKWebsiteDataStore.nonPersistent()
+            ephemeralStores[profile] = made
+            return made
+        }
         if profile == "default" { return .default() }
         if #available(macOS 14.0, *) { return WKWebsiteDataStore(forIdentifier: Self.identifier(profile)) }
         return .default()
@@ -494,6 +503,38 @@ final class CraftMacWebTabs {
         }
     }
 
+    /// Cookies put into a profile's store, as another browser's import brings them: `domain` with
+    /// a leading dot covers subdomains, `expires` is milliseconds since 1970 (absent for a session
+    /// cookie), `sameSite` is "lax", "strict" or "none". Answers how many were set, and how many
+    /// could not form a cookie (no name or domain).
+    func setCookies(_ options: [String: Any], answer: @escaping (Any) -> Void) {
+        let store = CraftMacWebProfiles.shared.store(profile: options["profile"] as? String ?? "default", ephemeral: options["private"] as? Bool == true).httpCookieStore
+        let cookies = (options["cookies"] as? [[String: Any]] ?? []).map(Self.cookie)
+        let group = DispatchGroup()
+        for case let cookie? in cookies {
+            group.enter()
+            store.setCookie(cookie) { group.leave() }
+        }
+        let set = cookies.compactMap { $0 }.count
+        group.notify(queue: .main) { answer(["set": set, "skipped": cookies.count - set]) }
+    }
+
+    static func cookie(_ fields: [String: Any]) -> HTTPCookie? {
+        guard let name = fields["name"] as? String, !name.isEmpty, let domain = fields["domain"] as? String, !domain.isEmpty else { return nil }
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .name: name, .value: fields["value"] as? String ?? "", .domain: domain, .path: fields["path"] as? String ?? "/",
+        ]
+        if let expires = fields["expires"] as? Double { properties[.expires] = Date(timeIntervalSince1970: expires / 1000) }
+        if fields["secure"] as? Bool == true { properties[.secure] = "TRUE" }
+        if fields["httpOnly"] as? Bool == true { properties[HTTPCookiePropertyKey("HttpOnly")] = "TRUE" }
+        switch fields["sameSite"] as? String {
+        case "lax": properties[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteLax
+        case "strict": properties[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteStrict
+        default: break
+        }
+        return HTTPCookie(properties: properties)
+    }
+
     /// A closed window takes its tabs with it.
     func closeAll(owner: CraftMacRuntime) {
         for (id, tab) in tabs where tab.owner == nil || tab.owner === owner { tabs.removeValue(forKey: id); tab.close() }
@@ -525,6 +566,7 @@ final class CraftMacWebTabs {
             let decision: WKPermissionDecision = { switch args.dropFirst().first as? String { case "grant": return .grant; case "prompt": return .prompt; default: return .deny } }()
             answer(self.answer(args.first as? String ?? "", decision)); return
         case "clearData": clearData(options, answer: answer); return
+        case "setCookies": setCookies(options, answer: answer); return
         case "cancelDownload": answer(CraftMacDownloads.shared.cancel(args.first as? String ?? "")); return
         case "revealDownload", "openDownload":
             guard let file = CraftMacDownloads.downloadedFile(args.first as? String ?? "") else { fail("NOT_FOUND", "Not a file in Downloads"); return }
