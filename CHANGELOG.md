@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.417...v0.0.418)
+
+## ⚡ Performance Improvements
+
+- **macos**: build screens on zig-js a9f246db, which parses a bundle in milliseconds ([ed3168f](https://github.com/craft-native/craft/commit/ed3168f)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.416...v0.0.417)
 
 ## 🚀 Features
