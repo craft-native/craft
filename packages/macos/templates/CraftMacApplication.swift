@@ -73,6 +73,8 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         runtime.dispose()
         CraftMacApplication.shared.scenes.removeValue(forKey: name)
+        // The app's other windows learn it is gone (its tabs closed with it), so none waits on it.
+        for other in CraftMacApplication.shared.scenes.values { other.runtime.send("CRAFT_EVENT", ["event": "craftDesktopWindowClosed", "detail": ["name": name]]) }
         CraftMacApplication.shared.quitReady(scene: name)
     }
     func windowDidBecomeKey(_ notification: Notification) { runtime.send("SCREEN_FOCUS", ["focused": true]) }
