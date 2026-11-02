@@ -7,6 +7,7 @@ import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../../io
 import { build, init } from '../src/index'
 import { createAndroidEmulator } from '../src/emulator'
 import { emulatorVersionCommand } from './vulkan-surface-probe'
+import { launchAndroidNativeFixture } from './native-fixture-launch'
 
 // #440: one controlled Android interruption boundary, not the full #396 matrix.
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' } } })
@@ -29,10 +30,11 @@ const output = resolve(values.output ?? join(root, 'artifacts/android-checkpoint
 let evidence = '', workspace = '', project = ''
 const scope = new NativeFixtureCommandScope(), cancellation = new AbortController()
 const commands: unknown[] = []
+const launches: unknown[] = []
 const proof: Record<string, unknown> = {
   purpose: 'Android checkpoint recovery after controlled pre-rename process termination', startedAt: new Date().toISOString(),
   bounds: { buildMs: nativeFixtureBuildTimeoutMs, emulatorBootMs: 600000, publicUiMs: 30000, renameBoundaryMs: 10000, commandMs: 10000 },
-  packageName, image, abi, commands,
+  packageName, image, abi, commands, launches,
 }
 let device: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
 let failure: unknown, sequence = 0
@@ -75,14 +77,14 @@ async function captureUi(label: string, budget = 10000) {
   if (xml.includes('class="android.webkit.WebView"')) throw new Error('Checkpoint fixture rendered a WebView instead of native controls')
   return xml
 }
-async function uiContaining(text: string, label: string) {
-  const deadline = performance.now() + 30000
+async function uiContaining(text: string, label: string, deadline = performance.now() + 30000) {
   while (performance.now() < deadline) {
     const remaining = Math.floor(deadline - performance.now())
     const xml = await captureUi(label, Math.min(10000, remaining))
     if (performance.now() > deadline) throw new Error(`Public UI exceeded its original 30000ms bound: ${label}`)
-    if (xml.includes(`text="${text}"`)) return xml
-    if (/unsupported|unavailable|failed|corrupt|error/i.test(xml)) throw new Error(`Native public UI reported a failure; ${label}`)
+    const owned = xml.includes(`package="${packageName}"`)
+    if (owned && xml.includes(`text="${text}"`)) return xml
+    if (owned && /unsupported|unavailable|failed|corrupt|error/i.test(xml)) throw new Error(`Native public UI reported a failure; ${label}`)
     await Bun.sleep(200)
   }
   throw new Error(`Public UI did not show ${text} within its original 30000ms bound`)
@@ -100,11 +102,11 @@ function session(xml: string) {
   if (!value) throw new Error('Missing public process session identity')
   return value
 }
-async function launch(label: string) {
-  await run(`${label}-launch`, adb('shell', 'am', 'start', '-W', '-n', `${packageName}/.MainActivity`))
-  const pid = (await run(`${label}-pid`, adb('shell', 'pidof', packageName))).trim()
-  if (!/^\d+$/.test(pid)) throw new Error('Expected exactly one fixture app process')
-  return pid
+async function launch(label: string, readyText: string) {
+  const result = await launchAndroidNativeFixture({ label, packageName, readyText, adb, run, waitForUi: uiContaining })
+  launches.push({ label, pid: result.pid, elapsedMs: result.elapsedMs, boundMs: result.boundMs, uiSha256: Bun.SHA256.hash(result.xml, 'hex') })
+  await save()
+  return result
 }
 async function stop(label: string) {
   await run(`${label}-force-stop`, adb('shell', 'am', 'force-stop', packageName))
@@ -145,9 +147,10 @@ try {
   await mkdir(join(evidence, 'authored'), { recursive: true })
   await cp(fixture, join(evidence, 'authored'), { recursive: true })
   await copyFile(import.meta.filename, join(evidence, 'authored/test-checkpoint-interruption.ts'))
+  await copyFile(join(import.meta.dir, 'native-fixture-launch.ts'), join(evidence, 'authored/native-fixture-launch.ts'))
   proof.authored = await Promise.all([...new Bun.Glob('*').scanSync({ cwd: fixture, absolute: true, onlyFiles: true })].map(identity))
   proof.sourceInputs = await Promise.all([
-    import.meta.filename, join(root, 'packages/ios/scripts/native-fixture-command.ts'), join(import.meta.dir, 'vulkan-surface-probe.ts'),
+    import.meta.filename, join(import.meta.dir, 'native-fixture-launch.ts'), join(root, 'packages/ios/scripts/native-fixture-command.ts'), join(import.meta.dir, 'vulkan-surface-probe.ts'),
     ...[...new Bun.Glob('**/*').scanSync({ cwd: join(root, 'packages/android/templates'), absolute: true, onlyFiles: true })],
     ...[...new Bun.Glob('*.ts').scanSync({ cwd: join(root, 'packages/android/src'), absolute: true, onlyFiles: true })].filter(path => !path.endsWith('.test.ts')),
     ...['package.json', 'bun.lock', 'pantry.lock', 'packages/android/package.json'].map(path => join(root, path)),
@@ -218,8 +221,7 @@ try {
   if (!provider) throw new Error('No actual selected native-screen script provider')
   proof.scriptProvider = { package: provider[1], version: provider[2], role: 'JavaScriptSandbox script engine; UI is Android native controls' }
   await run('install-fixture', adb('install', '-t', apk), 30000)
-  const firstPid = await launch('first')
-  const empty = await uiContaining('Checkpoint absent', 'first')
+  const { pid: firstPid, xml: empty } = await launch('first', 'Checkpoint absent')
   const firstSession = session(empty)
   const loaded = await run('preload-identity', app('cat', 'files/checkpoint-probe.loaded'))
   if (loaded.trim() !== `pid=${firstPid}`) throw new Error('Preload did not initialize in the actual native app process')
@@ -234,8 +236,7 @@ try {
   try { requireBoundary(passRecord, firstPid, 'hold') } catch { rejected = true }
   if (!rejected) throw new Error('Pass-through negative control satisfied the held boundary unexpectedly')
   await stop('pass-control')
-  const secondPid = await launch('pass-control-relaunch')
-  const passUi = await uiContaining('Recovered complete generation 2', 'pass-control-recovered')
+  const { pid: secondPid, xml: passUi } = await launch('pass-control-relaunch', 'Recovered complete generation 2')
   const secondSession = session(passUi)
   if (secondPid === firstPid || secondSession === firstSession) throw new Error('Negative control did not start a new app process')
   proof.negativeControl = { expectedBoundaryRejection: rejected, boundary: passRecord, firstPid, secondPid, firstSession, secondSession, recoveredGeneration: 2 }
@@ -256,8 +257,7 @@ try {
   await run('pull-held-screenshot', adb('pull', '/data/local/tmp/checkpoint-probe.png', join(evidence, 'held.png')))
   proof.interruption = { held, pending: true, publicUiResponsive: true, previousSha256: Bun.SHA256.hash(previous, 'hex'), stagedSha256: Bun.SHA256.hash(staged, 'hex') }
   await stop('interruption')
-  const thirdPid = await launch('recovery')
-  const recoveryUi = await uiContaining('Recovered complete generation 1', 'recovery')
+  const { pid: thirdPid, xml: recoveryUi } = await launch('recovery', 'Recovered complete generation 1')
   await run('recovery-screenshot', adb('shell', 'screencap', '-p', '/data/local/tmp/checkpoint-probe.png'))
   await run('pull-recovery-screenshot', adb('pull', '/data/local/tmp/checkpoint-probe.png', join(evidence, 'recovered.png')))
   const thirdSession = session(recoveryUi)
@@ -266,8 +266,7 @@ try {
   await click('Save generation 3', 'retry')
   await uiContaining('Acknowledgements 3', 'retry-ack')
   await stop('retry')
-  const fourthPid = await launch('retry-relaunch')
-  const retryUi = await uiContaining('Recovered complete generation 3', 'retry-recovered')
+  const { pid: fourthPid, xml: retryUi } = await launch('retry-relaunch', 'Recovered complete generation 3')
   const fourthSession = session(retryUi)
   if (fourthPid === thirdPid || fourthSession === thirdSession) throw new Error('Retry recovery did not start a new process')
   proof.recovery = { secondPid, thirdPid, fourthPid, secondSession, thirdSession, fourthSession, recoveredGeneration: 1, retryRecoveredGeneration: 3 }

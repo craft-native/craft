@@ -27,6 +27,12 @@ The runner uses fixed bounds: 300 seconds for native compilation, 600 seconds
 for emulator boot, 30 seconds for each public UI expectation, ten seconds for
 the rename boundary, and ten seconds for ordinary commands. APK installation
 and the tiny interposer compilation each retain a 30-second command bound.
+Activity intent acknowledgement keeps the ten-second command bound. Each
+launch, its owned native UI readiness and its single-process identity share
+one thirty-second public UI deadline. The runner does not use `am start -W`
+to hide the native draw wait inside the shorter transport deadline. Every
+launch records its elapsed time and the observed UI hash; the checkpoint,
+negative-control and process/session requirements remain the same.
 The emulator helper also bounds its SDK provisioning and cleanup commands.
 
 The authored debug Gradle overlay adds `wrap.sh` and an NDK-built interposer

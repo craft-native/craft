@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
+import { launchAndroidNativeFixture } from './native-fixture-launch'
 
 const root = resolve(import.meta.dir, '../../..')
 const runner = join(import.meta.dir, 'test-checkpoint-interruption.ts')
@@ -121,3 +122,60 @@ test('SIGINT during native work kills owned descendants, retains failure, and le
     finally { clearInterval(timer); unrelated.kill('SIGKILL'); await unrelated.exited }
   })
 }, 15000)
+
+// Unit checks for phase ownership. Actual Android interruption remains a native gate.
+function launchFixture() {
+  let clock = 0
+  const calls: { label: string, args: string[], timeoutMs: number }[] = []
+  const xml = '<hierarchy><node package="dev.craft.probe" text="Ready" /></hierarchy>'
+  const options = {
+    label: 'cold', packageName: 'dev.craft.probe', readyText: 'Ready',
+    adb: (...args: string[]) => ['adb', '-s', 'owned-device', ...args],
+    now: () => clock,
+    run: async (label: string, args: string[], timeoutMs: number): Promise<string> => {
+      calls.push({ label, args, timeoutMs })
+      clock += label.endsWith('-launch') ? 50 : 5
+      return label.endsWith('-pid') ? '12345\n' : 'Starting: Intent'
+    },
+    waitForUi: async (text: string, label: string, deadline: number) => {
+      expect([text, label, deadline]).toEqual(['Ready', 'cold', 30000])
+      clock += 15000
+      return xml
+    },
+  }
+  return { options, calls, xml, at(value: number) { clock = value } }
+}
+
+test('native first draw uses the shared UI budget after bounded intent acknowledgement', async () => {
+  const f = launchFixture()
+  const result = await launchAndroidNativeFixture(f.options)
+  expect(result).toEqual({ pid: '12345', xml: f.xml, elapsedMs: 15055, boundMs: 30000 })
+  expect(f.calls.map(call => call.label)).toEqual(['cold-launch', 'cold-pid'])
+  expect(f.calls[0]!.args).toEqual(['adb', '-s', 'owned-device', 'shell', 'am', 'start', '-n', 'dev.craft.probe/.MainActivity'])
+  expect(f.calls.every(call => call.timeoutMs <= 10000)).toBe(true)
+})
+
+test.each(['ui', 'pid'])('native launch rejects readiness returned after the shared deadline (%s)', async (stage) => {
+  const f = launchFixture()
+  if (stage === 'ui') f.options.waitForUi = async () => { f.at(30001); return f.xml }
+  else {
+    const run = f.options.run
+    f.options.run = async (label, args, timeoutMs) => {
+      const answer = await run(label, args, timeoutMs)
+      if (label.endsWith('-pid')) f.at(30001)
+      return answer
+    }
+  }
+  await expect(launchAndroidNativeFixture(f.options)).rejects.toThrow('original 30000ms bound')
+  if (stage === 'ui') expect(f.calls.map(call => call.label)).toEqual(['cold-launch'])
+})
+
+test('native launch refuses another application surface and multiple processes', async () => {
+  const foreign = launchFixture()
+  foreign.options.waitForUi = async () => '<node package="other.application" text="Ready" />'
+  await expect(launchAndroidNativeFixture(foreign.options)).rejects.toThrow('different application')
+  const multiple = launchFixture()
+  const run = multiple.options.run
+  multiple.options.run = async (label, args, timeoutMs) => label.endsWith('-pid') ? '12345 67890' : run(label, args, timeoutMs)
+  await expect(launchAndroidNativeFixture(multiple.options)).rejects.toThrow('exactly one fixture app process')
+})
