@@ -42,7 +42,7 @@ import Darwin
 ///   tabbar shown|hidden   the native tab bar (Today, Calendar, …) can be tapped, or not
 ///   selected <tab>        the tab bar's selected button is this one
 ///   tab <name>            tap a tab bar button
-///   scrollto <text>       swipes up (at most 8 times) until text is hittable
+///   scrollto <text>       at most 12 drags until the target is hittable and visible
 ///   swipe up|down|left|right
 ///   drag x1 y1 x2 y2     slow app-relative drag, held 0.3s before release
 ///   audit <name>          accessibility audit (element descriptions, Dynamic Type, contrast); logs each issue
@@ -162,6 +162,27 @@ final class DriverTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.5)
         } while Date() < end
         return nil
+    }
+
+    /// A short target fits entirely; an oversized target fills the viewport.
+    func visibleScrollFrame(_ target: CGRect, in viewport: CGRect) -> Bool {
+        let visible = target.intersection(viewport)
+        return !target.isEmpty && !viewport.isEmpty && !visible.isNull
+            && visible.width >= min(target.width, viewport.width)
+            && visible.height >= min(target.height, viewport.height)
+    }
+
+    func scrollTargetVisible(_ target: XCUIElement?) -> Bool {
+        guard let target, target.exists, target.isHittable,
+              visibleScrollFrame(target.frame, in: app.frame) else { return false }
+        // Hittable alone accepts controls clipped by the scroll view's edge.
+        // Only an ancestor scroll view clips this target, not its siblings.
+        let identity = NSPredicate(format: "identifier == %@ AND label == %@", target.identifier, target.label)
+        for scroll in app.scrollViews.allElementsBoundByIndex {
+            if scroll.descendants(matching: .any).matching(identity).firstMatch.exists,
+               !visibleScrollFrame(target.frame, in: scroll.frame.intersection(app.frame)) { return false }
+        }
+        return true
     }
 
     /// About a third of a screen of scrolling, as a held drag.
@@ -590,13 +611,13 @@ final class DriverTests: XCTestCase {
         case "scrollto":
             var found = element(containing: arg)
             var drags = 0
-            while (found == nil || !(found!.isHittable)) && drags < 12 {
+            while !scrollTargetVisible(found) && drags < 12 {
                 let towardTop = found.map { !$0.frame.isEmpty && $0.frame.midY < app.frame.midY } ?? false
                 scrollPage(towardTop: towardTop)
                 drags += 1
                 found = element(containing: arg)
             }
-            check(found != nil && found!.isHittable, "scrollto \(arg)")
+            check(scrollTargetVisible(found), "scrollto \(arg)")
         case "swipe":
             switch arg {
             case "up": app.swipeUp()

@@ -166,6 +166,8 @@ describe('package-owned iOS shells', () => {
     // A flick's distance depends on how its touches arrive; a held drag's does not.
     const scrolling = command('scrollto', 'swipe')
     expect(scrolling).toContain('scrollPage(towardTop: towardTop)')
+    expect(scrolling).toContain('while !scrollTargetVisible(found) && drags < 12')
+    expect(scrolling).toContain('check(scrollTargetVisible(found),')
     expect(scrolling).not.toContain('app.swipeUp()')
     expect(source).toContain('thenHoldForDuration: 0.2')
     expect(source).toContain('keyboard.frame.minY - 24')
