@@ -1830,6 +1830,11 @@ struct CraftConfig: Codable {
     var enableAudioRecording: Bool = false
     var enableVideoRecording: Bool = false
     var enableMotionSensors: Bool = false
+    /// Shaking the phone raises a `shake` event, for a report-a-problem
+    /// gesture. Its own flag rather than a corner of `enableMotionSensors`,
+    /// because it arms the accelerometer for as long as the app is in front:
+    /// an app that wanted only the motion API should not pay for that.
+    var enableShakeGesture: Bool = false
     var enableLocalDatabase: Bool = false
     var enableBluetooth: Bool = false
     var enableNFC: Bool = false
@@ -2413,6 +2418,10 @@ struct CraftWebView: UIViewRepresentable {
         private var motionManager: CMMotionManager?
         private var isMotionUpdating = false
 
+        // Shake gesture (enableShakeGesture), armed only while the app is in front
+        private var shakeMotion: CMMotionManager?
+        private var lastShakeAt: Date?
+
         // Bluetooth
         private var centralManager: CBCentralManager?
         private var peripheralManager: CBPeripheralManager?
@@ -2465,6 +2474,8 @@ struct CraftWebView: UIViewRepresentable {
             if config.enableMotionSensors {
                 motionManager = CMMotionManager()
             }
+            // The app starts in front, so the gesture starts armed.
+            armShakeGesture()
             #endif
             if config.enableHealthKit {
                 // Apple Health's heart rate as it arrives
@@ -3866,6 +3877,7 @@ struct CraftWebView: UIViewRepresentable {
         @objc private func appDidEnterBackground(_ notification: Notification) {
             backgroundedAt = Date()
             saveInteractionState()
+            disarmShakeGesture()
         }
 
         @objc private func appDidReceiveMemoryWarning(_ notification: Notification) {
@@ -3997,6 +4009,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         @objc private func appWillEnterForeground(_ notification: Notification) {
+            armShakeGesture()
             if recoverOnForeground, let webView {
                 // The page is about to be rebuilt; there is no one to resume.
                 backgroundedAt = nil
@@ -8498,6 +8511,56 @@ struct CraftWebView: UIViewRepresentable {
             rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
             #endif
         }
+
+        // MARK: - Shake Gesture
+
+        /// The accelerometer, watched for a shake while the app is in front.
+        ///
+        /// Deliberately not `startDeviceMotionUpdates`: that fuses attitude and
+        /// gravity every sample, and a shake needs neither. Raw acceleration at
+        /// 20 Hz is enough to see one and costs a fraction of the same watch.
+        ///
+        /// Armed on foreground and disarmed on background, because the sensor
+        /// is the whole cost of this feature and nobody can shake a phone at an
+        /// app they cannot see.
+        private func armShakeGesture() {
+            #if CRAFT_PERMISSION_MOTION
+            guard config.enableShakeGesture, shakeMotion == nil else { return }
+            let manager = CMMotionManager()
+            guard manager.isAccelerometerAvailable else { return }
+            manager.accelerometerUpdateInterval = 1.0 / 20.0
+            shakeMotion = manager
+            manager.startAccelerometerUpdates(to: .main) { [weak self] sample, _ in
+                guard let self, let sample else { return }
+                self.readShake(sample.acceleration)
+            }
+            #endif
+        }
+
+        private func disarmShakeGesture() {
+            #if CRAFT_PERMISSION_MOTION
+            shakeMotion?.stopAccelerometerUpdates()
+            shakeMotion = nil
+            #endif
+        }
+
+        #if CRAFT_PERMISSION_MOTION
+        private func readShake(_ force: CMAcceleration) {
+            // Total force, gravity included, so a phone at rest reads 1g and
+            // the threshold is what a deliberate shake adds on top of it. At
+            // 2.2g a pocket, a footfall and setting the phone down are all
+            // below it, which is what a fitness app has to clear.
+            let magnitude = sqrt(force.x * force.x + force.y * force.y + force.z * force.z)
+            guard magnitude >= 2.2 else { return }
+            let now = Date()
+            // One event per gesture, not one per sample. A shake is a second
+            // or two of samples over the threshold, and every one of them
+            // would otherwise be reported as its own shake.
+            if let lastShakeAt, now.timeIntervalSince(lastShakeAt) < 2.0 { return }
+            lastShakeAt = now
+            sendToWeb("shake", data: ["force": magnitude])
+        }
+        #endif
 
         // MARK: - Motion Sensors
         private func startMotionUpdates(interval: Double, callbackId: String?) {

@@ -161,6 +161,8 @@ export interface CraftConfig {
   enableAudioRecording?: boolean
   enableVideoRecording?: boolean
   enableMotionSensors?: boolean
+  /** Shaking the phone raises a `shake` event. Arms the accelerometer while the app is in front. */
+  enableShakeGesture?: boolean
   enableLocalDatabase?: boolean
   enableBluetooth?: boolean
   enableNFC?: boolean
@@ -764,6 +766,7 @@ const DEFAULT_CONFIG: Omit<CraftConfig, 'appName' | 'bundleId'> = {
   enableAudioRecording: false,
   enableVideoRecording: false,
   enableMotionSensors: false,
+  enableShakeGesture: false,
   enableLocalDatabase: false,
   enableBluetooth: false,
   enableNFC: false,

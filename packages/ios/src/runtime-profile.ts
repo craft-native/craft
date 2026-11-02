@@ -18,7 +18,11 @@ export function iosPermissions(config: Partial<CraftConfig>): IOSPermission[] {
     contacts: config.enableContacts,
     calendar: config.enableCalendar,
     bluetooth: config.enableBluetooth || config.enableHeartRate,
-    motion: config.enableMotionSensors,
+    // The shake gesture reads the accelerometer, so it needs the same
+    // framework code compiled in. It needs no usage description of its own:
+    // NSMotionUsageDescription covers activity and pedometer data, which
+    // raw acceleration is not.
+    motion: config.enableMotionSensors || config.enableShakeGesture,
     biometric: config.enableBiometric,
     music: config.enableAppleMusic,
     health: config.enableHealthKit,

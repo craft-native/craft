@@ -9,6 +9,10 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.database.ContentObserver
 import android.content.Intent
 import android.app.PictureInPictureParams
@@ -4683,6 +4687,7 @@ class MainActivity : AppCompatActivity() {
     private val capabilityHandler = Handler(Looper.getMainLooper())
     private var hapticsEnabled = false
     private var clipboardEnabled = false
+    private var shakeEnabled = false
     internal var nativeAppState = "inactive"
         private set
     private var deliveredInitialDeepLink = false
@@ -4755,6 +4760,7 @@ class MainActivity : AppCompatActivity() {
         }.getOrDefault(JSONObject())
         hapticsEnabled = config.optBoolean("enableHaptics", false)
         clipboardEnabled = config.optBoolean("enableClipboard", false)
+        shakeEnabled = config.optBoolean("enableShakeGesture", false)
         // Normally started already by its content provider; this covers a
         // process that skipped providers (instrumentation).
         CraftCrashReporter.start(this)
@@ -8246,7 +8252,45 @@ class MainActivity : AppCompatActivity() {
         publish("APP_STATE", JSONObject().put("state", nativeAppState))
     }
 
+    // MARK: - Shake gesture (enableShakeGesture)
+
+    /// The accelerometer, watched for a shake while the app is in front, as on
+    /// iOS. Armed on resume and disarmed on pause, because the sensor is the
+    /// whole cost of this feature and nobody can shake a phone at an app they
+    /// cannot see.
+    private var lastShakeAt = 0L
+    private val shakeSensors by lazy { getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    private val shakeListener = object : SensorEventListener {
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        override fun onSensorChanged(event: SensorEvent?) {
+            val reading = event?.values ?: return
+            if (reading.size < 3) return
+            // Android reports m/s^2 with gravity included, so a phone at rest
+            // reads about 9.81. Converted to g to match the iOS threshold and
+            // the force the event carries.
+            val magnitude = kotlin.math.sqrt((reading[0] * reading[0] + reading[1] * reading[1] + reading[2] * reading[2]).toDouble()) / SensorManager.GRAVITY_EARTH
+            if (magnitude < 2.2) return
+            val now = System.currentTimeMillis()
+            // One event per gesture, not one per sample.
+            if (now - lastShakeAt < 2000L) return
+            lastShakeAt = now
+            CraftNativeHub.broadcast("CRAFT_EVENT", JSONObject().put("event", "shake").put("detail", JSONObject().put("force", magnitude)))
+        }
+    }
+
+    private fun armShakeGesture() {
+        if (!shakeEnabled) return
+        val sensor = shakeSensors?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+        shakeSensors?.registerListener(shakeListener, sensor, SensorManager.SENSOR_DELAY_UI)
+    }
+
+    private fun disarmShakeGesture() {
+        if (!shakeEnabled) return
+        shakeSensors?.unregisterListener(shakeListener)
+    }
+
     override fun onPause() {
+        disarmShakeGesture()
         if (::services.isInitialized) services.pauseVoice()
         nativeAppState = "inactive"
         publish("APP_STATE", JSONObject().put("state", nativeAppState))
@@ -8306,6 +8350,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        armShakeGesture()
         if (::services.isInitialized) services.resumed()
     }
 
