@@ -1210,7 +1210,7 @@ final class NativeRenderUnitTests: XCTestCase {
         controller.render(document([scroll]))
 
         let scrollView = try XCTUnwrap(find(UIScrollView.self, key: "feed", below: controller.view))
-        let imageView = try XCTUnwrap(find(UIImageView.self, key: "avatar", below: controller.view))
+        let imageView = try XCTUnwrap(find(CraftNativePositionedImageView.self, key: "avatar", below: controller.view))
         XCTAssertNotNil(imageView.image)
         XCTAssertEqual(imageView.accessibilityLabel, "Profile photo")
         XCTAssertTrue(imageView.accessibilityTraits.contains(.image))
@@ -1218,7 +1218,7 @@ final class NativeRenderUnitTests: XCTestCase {
 
         controller.render(document([scroll]))
         XCTAssertTrue(scrollView === find(UIScrollView.self, key: "feed", below: controller.view))
-        XCTAssertTrue(imageView === find(UIImageView.self, key: "avatar", below: controller.view))
+        XCTAssertTrue(imageView === find(CraftNativePositionedImageView.self, key: "avatar", below: controller.view))
     }
 
     /// Calendar may retarget a retained screen twice in one update: an
@@ -1439,7 +1439,7 @@ final class NativeRenderUnitTests: XCTestCase {
                 "source": ["uri": uri, "headers": ["Authorization": "Bearer private-fixture"]]]]]))
         }
         render(address)
-        let image = try XCTUnwrap(find(UIImageView.self, key: "kept", below: controller.view))
+        let image = try XCTUnwrap(find(CraftNativePositionedImageView.self, key: "kept", below: controller.view))
         let deadline = Date().addingTimeInterval(3)
         while image.image == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         let decoded = try XCTUnwrap(image.image, "HTTPS .invalid cannot supply this image: the kept copy must be read")
@@ -1474,7 +1474,7 @@ final class NativeRenderUnitTests: XCTestCase {
         controller.render(document([[
             "type": "Image", "props": ["key": "broken", "source": ["uri": "data:image/png;base64,invalid"]]
         ]]))
-        let image = try XCTUnwrap(find(UIImageView.self, key: "broken", below: controller.view))
+        let image = try XCTUnwrap(find(CraftNativePositionedImageView.self, key: "broken", below: controller.view))
         XCTAssertNil(image.image)
         XCTAssertEqual(image.accessibilityValue, "Image data is invalid")
 
@@ -2894,7 +2894,7 @@ final class NativeRenderUnitTests: XCTestCase {
         }
 
         controller.render(document([backgroundNode(["tintColor": "#2563eb"])]))
-        let background = try XCTUnwrap(find(UIImageView.self, key: "background", below: controller.view))
+        let background = try XCTUnwrap(find(CraftNativePositionedImageView.self, key: "background", below: controller.view))
         XCTAssertEqual(background.tintColor, UIColor(hex: "#2563eb"))
 
         controller.render(document([backgroundNode([:])]))
@@ -3219,7 +3219,7 @@ final class NativeRenderUnitTests: XCTestCase {
         controller.render(document([[
             "type": "Image", "props": ["key": "local", "source": ["uri": "http://localhost:9/missing.png"]]
         ]]))
-        let image = find(UIImageView.self, key: "local", below: controller.view)
+        let image = find(CraftNativePositionedImageView.self, key: "local", below: controller.view)
         XCTAssertNotEqual(image?.accessibilityValue, "Unsupported image source")
     }
 
@@ -5190,6 +5190,133 @@ final class NativeImageGeometryUnitTests: XCTestCase {
         try XCTUnwrap(view.subviews.compactMap { $0 as? UIImageView }.first)
     }
 
+    private func raster(_ view: UIView) throws -> [UInt8] {
+        view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+        let image = UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { _ in
+            XCTAssertTrue(view.drawHierarchy(in: view.bounds, afterScreenUpdates: true))
+        }
+        let cg = try XCTUnwrap(image.cgImage)
+        let width = cg.width, height = cg.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        return bytes
+    }
+
+    /// Compare actual window-backed painting, not just the fitted child's frame.
+    /// The independent reference has no image getter on its UIView container.
+    private func assertRaster(_ view: UIView, source: UIImage?, frame: CGRect,
+                              mode: UIView.ContentMode = .scaleToFill,
+                              file: StaticString = #filePath, line: UInt = #line) throws {
+        view.backgroundColor = .black
+        let actual = try raster(view)
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let reference = UIView(frame: view.bounds)
+        reference.backgroundColor = .black; reference.clipsToBounds = true
+        let child = UIImageView(image: source)
+        child.frame = frame; child.contentMode = mode
+        reference.addSubview(child); controller.view.addSubview(reference)
+        let expected = try raster(reference)
+        let mismatch = actual.indices.first { actual[$0] != expected[$0] }
+        XCTAssertNil(mismatch, "Duplicate or misplaced image pixels; first differing byte: \(String(describing: mismatch))", file: file, line: line)
+    }
+
+    private func image(_ width: CGFloat, _ height: CGFloat) throws -> UIImage {
+        let data = try XCTUnwrap(Data(base64Encoded: String(try png(width, height).split(separator: ",")[1])))
+        return try XCTUnwrap(UIImage(data: data))
+    }
+
+    func testRasterContainsOnlyTheFittedImageAcrossEveryFitAndPosition() throws {
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let view = CraftNativePositionedImageView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        view.clipsToBounds = true; view.contentMode = .scaleAspectFit
+        controller.view.addSubview(view)
+        let source = try image(20, 10)
+        view.image = source
+        let cases: [(String, String, CGRect)] = [
+            ("scale-down", "right bottom", CGRect(x: 80, y: 90, width: 20, height: 10)),
+            ("contain", "left top", CGRect(x: 0, y: 0, width: 100, height: 50)),
+            ("cover", "right top", CGRect(x: -100, y: 0, width: 200, height: 100)),
+            ("none", "left bottom", CGRect(x: 0, y: 90, width: 20, height: 10)),
+            ("fill", "center", view.bounds),
+        ]
+        for (fit, position, frame) in cases {
+            view.configureObjectGeometry(props: ["objectFit": fit, "objectPosition": position], style: [:])
+            try assertRaster(view, source: source, frame: frame)
+            XCTAssertTrue(view.image === source)
+            XCTAssertEqual(view.subviews.count, 1)
+        }
+    }
+
+    func testRasterRestoresLegacyPaintingAndClearsReplacedSourceWithoutDuplication() throws {
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let view = CraftNativePositionedImageView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        view.clipsToBounds = true; controller.view.addSubview(view)
+        let source = try image(20, 10)
+        view.image = source
+        let child = try pixels(view)
+        for mode: UIView.ContentMode in [.scaleAspectFit, .scaleAspectFill, .scaleToFill, .center] {
+            view.contentMode = mode
+            view.configureObjectGeometry(props: ["objectFit": "scale-down", "objectPosition": "right bottom"], style: [:])
+            try assertRaster(view, source: source, frame: CGRect(x: 80, y: 90, width: 20, height: 10))
+            view.configureObjectGeometry(props: [:], style: [:])
+            try assertRaster(view, source: source, frame: view.bounds, mode: mode)
+            XCTAssertTrue(view.image === source); XCTAssertTrue(try pixels(view) === child)
+        }
+        let replacement = try image(10, 20)
+        view.image = replacement
+        view.configureObjectGeometry(props: ["objectFit": "none", "objectPosition": "left top"], style: [:])
+        try assertRaster(view, source: replacement, frame: CGRect(x: 0, y: 0, width: 10, height: 20))
+        view.image = nil
+        try assertRaster(view, source: nil, frame: .zero)
+        XCTAssertNil(view.image); XCTAssertNil(child.image)
+    }
+
+    func testRasterTracksHostMutationsSourceReplacementAndRemount() throws {
+        for type in ["Image", "ImageBackground"] {
+            let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+            window.rootViewController = screen; window.makeKeyAndVisible()
+            defer { window.isHidden = true }
+            screen.evaluateScript("globalThis.__loads = 0; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'image-loaded') __loads++; };")
+            let source = try png(20, 10)
+            let view = try render(screen, source: source, fit: "scale-down", position: "right bottom", type: type)
+            let decoded = try XCTUnwrap(view.image?.cgImage)
+            try assertRaster(view, source: view.image, frame: CGRect(x: 80, y: 90, width: 20, height: 10))
+            _ = try screen.applyMutation([
+                "version": 1, "batchId": "pixels", "baseRevision": 0, "revision": 1,
+                "operations": [["op": "updateNode", "id": "photo", "patch": ["props": ["objectFit": "contain", "objectPosition": "left top"]]]],
+            ])
+            view.layoutIfNeeded()
+            try assertRaster(view, source: view.image, frame: CGRect(x: 0, y: 0, width: 100, height: 50))
+            XCTAssertTrue(view.image?.cgImage === decoded)
+            XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 1)
+            let replacement = try png(10, 20)
+            XCTAssertTrue(try render(screen, source: replacement, fit: "none", position: "left top", type: type) === view)
+            try assertRaster(view, source: view.image, frame: CGRect(x: 0, y: 0, width: 10, height: 20))
+            XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 2)
+            screen.render(["type": "View", "id": "empty"])
+            let remounted = try render(screen, source: replacement, fit: "scale-down", position: "right bottom", type: type)
+            XCTAssertFalse(remounted === view)
+            try assertRaster(remounted, source: remounted.image, frame: CGRect(x: 90, y: 80, width: 10, height: 20))
+            XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 3)
+        }
+    }
+
     func testSmallImageScaleDownContainAndLivePositionKeepTheViewAndSource() throws {
         let screen = CraftNativeScreenController(config: CraftConfig()); screen.loadViewIfNeeded()
         let source = try png(20, 10)
@@ -5234,7 +5361,8 @@ final class NativeImageGeometryUnitTests: XCTestCase {
             _ = try render(screen, source: source, fit: "invalid", position: "invalid", type: type)
             XCTAssertEqual(try pixels(view).frame, view.bounds)
             _ = try render(screen, source: source, style: ["resizeMode": "cover"], type: type)
-            XCTAssertFalse(view.usesObjectGeometry); XCTAssertTrue(try pixels(view).isHidden)
+            XCTAssertFalse(view.usesObjectGeometry); XCTAssertFalse(try pixels(view).isHidden)
+            XCTAssertEqual(try pixels(view).contentMode, .scaleAspectFill)
             XCTAssertNotNil(view.image); XCTAssertEqual(view.contentMode, .scaleAspectFill)
             _ = try render(screen, source: source, type: type)
             XCTAssertEqual(view.contentMode, .scaleAspectFit)
@@ -5263,7 +5391,8 @@ final class NativeImageGeometryUnitTests: XCTestCase {
         XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 2)
         XCTAssertTrue(try pixels(view) === child); XCTAssertNotNil(view.superview)
         try patch(3, ["objectFit": NSNull(), "objectPosition": NSNull()])
-        XCTAssertFalse(view.usesObjectGeometry); XCTAssertTrue(child.isHidden)
+        XCTAssertFalse(view.usesObjectGeometry); XCTAssertFalse(child.isHidden)
+        XCTAssertEqual(child.contentMode, .scaleAspectFit)
         XCTAssertEqual(screen.evaluateScript("__loads")?.toInt32(), 2)
     }
 

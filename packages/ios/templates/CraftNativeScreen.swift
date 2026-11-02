@@ -2716,6 +2716,8 @@ enum CraftNativeFlexLayout {
                 ? label.sizeThatFits(CGSize(width: resolvedWidth, height: unbounded)).height
                 : maxContent.height)
             return CGSize(width: resolvedWidth, height: resolvedHeight)
+        case let image as CraftNativePositionedImageView where image.image == nil:
+            return CGSize(width: width ?? 0, height: height ?? 0)
         case let image as UIImageView where image.image == nil:
             return CGSize(width: width ?? 0, height: height ?? 0)
         default:
@@ -4165,25 +4167,37 @@ private extension UIImage {
 }
 
 /// Explicit CSS-facing image geometry; the loader and semantic view stay retained.
-class CraftNativePositionedImageView: UIImageView {
+class CraftNativePositionedImageView: UIView {
     private var storedImage: UIImage?
-    private var fittedImage: UIImageView?
+    private let fittedImage = UIImageView()
     private var fit: String?
     private var position = CGPoint(x: 0.5, y: 0.5)
 
-    override var image: UIImage? {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        fittedImage.isUserInteractionEnabled = false
+        fittedImage.isAccessibilityElement = false
+        addSubview(fittedImage)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    // Keep source identity separate from UIKit's image renderer. A UIImageView
+    // host with this stored-image getter painted an extra copy even with
+    // super.image set to nil; only the child owns image drawing now.
+    var image: UIImage? {
         get { storedImage }
         set {
             storedImage = newValue
-            super.image = fit == nil ? newValue : nil
-            fittedImage?.image = newValue
+            fittedImage.image = newValue
             invalidateIntrinsicContentSize()
             setNeedsLayout()
         }
     }
 
     override var intrinsicContentSize: CGSize {
-        fit == nil ? super.intrinsicContentSize : storedImage?.craftIntrinsicSize ?? CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+        fit == nil ? fittedImage.intrinsicContentSize : storedImage?.craftIntrinsicSize ?? CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
     }
 
     func configureObjectGeometry(props: [String: Any], style: [String: Any]) {
@@ -4197,20 +4211,26 @@ class CraftNativePositionedImageView: UIImageView {
             let requested = rawFit as? String ?? "fill"
             fit = ["fill", "contain", "cover", "none", "scale-down"].contains(requested) ? requested : "fill"
             position = Self.objectPosition(rawPosition)
-            if fittedImage == nil {
-                let child = UIImageView()
-                child.isUserInteractionEnabled = false
-                child.isAccessibilityElement = false
-                child.contentMode = .scaleToFill
-                insertSubview(child, at: 0)
-                fittedImage = child
-            }
         } else { fit = nil }
-        fittedImage?.isHidden = fit == nil
-        super.image = fit == nil ? storedImage : nil
-        fittedImage?.image = storedImage
+        fittedImage.contentMode = fit == nil ? contentMode : .scaleToFill
         invalidateIntrinsicContentSize()
         setNeedsLayout()
+    }
+
+    override var contentMode: UIView.ContentMode {
+        didSet {
+            fittedImage.contentMode = fit == nil ? contentMode : .scaleToFill
+            setNeedsLayout()
+        }
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        fit == nil ? fittedImage.sizeThatFits(size) : intrinsicContentSize
+    }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        fittedImage.tintColor = tintColor
     }
 
     var usesObjectGeometry: Bool { fit != nil }
@@ -4234,7 +4254,8 @@ class CraftNativePositionedImageView: UIImageView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard let fit, let child = fittedImage else { return }
+        let child = fittedImage
+        guard let fit else { child.frame = bounds; return }
         let source = storedImage?.craftIntrinsicSize ?? .zero
         guard source.width > 0, source.height > 0 else { child.frame = .zero; return }
         let contain = min(bounds.width / source.width, bounds.height / source.height)
@@ -9203,7 +9224,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "Icon":
             configureIcon(result as! UIImageView, props: props, style: style)
         case "Image":
-            let image = result as! UIImageView
+            let image = result as! CraftNativePositionedImageView
             let imageID = ObjectIdentifier(image)
             if let tint = color(style["tintColor"]) {
                 tintedImages.insert(imageID)
@@ -9215,7 +9236,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let current = image.image { image.image = imageForDisplay(current, view: image) }
             let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String
             image.contentMode = imageContentMode(requestedResizeMode)
-            (image as? CraftNativePositionedImageView)?.configureObjectGeometry(props: props, style: style)
+            image.configureObjectGeometry(props: props, style: style)
             applyImageClipping(image, contentMode: image.contentMode, style: style)
             updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: image)
             updateAuxiliaryHandler(events["onLoad"], in: &imageLoadHandlers, for: image)
@@ -10347,7 +10368,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.clipsToBounds = overflow == "hidden"
             || (view is UIScrollView && overflow != "visible")
             || (view is UILabel && (view.craftRequestedCornerRadius ?? 0) > 0)
-            || (view is UIImageView && (borderRadius > 0 || hasCornerRadii))
+            || ((view is UIImageView || view is CraftNativePositionedImageView) && (borderRadius > 0 || hasCornerRadii))
             // Per-corner rounding clips its content, as its mask did.
             || hasCornerRadii
         view.layer.masksToBounds = view.clipsToBounds
@@ -10659,7 +10680,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// The pixels a picture is drawn at, when its style fixes its size (a
     /// 40-point avatar, a card's photo): nil otherwise, for a picture whose
     /// own size lays it out, which must keep its full size.
-    static func displayPixels(of view: UIImageView) -> (size: CGSize, scale: CGFloat)? {
+    static func displayPixels(of view: UIView) -> (size: CGSize, scale: CGFloat)? {
         let style = view.craftLayoutStyle
         let points: CGSize
         switch (style.width, style.height, style.aspectRatio) {
@@ -10742,16 +10763,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return candidate
     }
 
-    private func applyImageClipping(_ view: UIImageView, contentMode: UIView.ContentMode, style: [String: Any]) {
+    private func applyImageClipping(_ view: CraftNativePositionedImageView, contentMode: UIView.ContentMode, style: [String: Any]) {
         let authored = (style["overflow"] as? String) == "hidden"
             || (view.craftRequestedCornerRadius ?? 0) > 0
             || view.craftRequestedCornerRadii != nil
-        let clips = authored || contentMode == .scaleAspectFill || (view as? CraftNativePositionedImageView)?.usesObjectGeometry == true
+        let clips = authored || contentMode == .scaleAspectFill || view.usesObjectGeometry
         view.clipsToBounds = clips
         view.layer.masksToBounds = clips
     }
 
-    private func updateImage(_ view: UIImageView, source: Any?, defaultSource: Any? = nil) {
+    private func updateImage(_ view: CraftNativePositionedImageView, source: Any?, defaultSource: Any? = nil) {
         let sourceObject = source as? [String: Any]
         let uri = (source as? String) ?? sourceObject?["uri"] as? String
         let headers = (sourceObject?["headers"] as? [String: Any])?.reduce(into: [String: String]()) { result, entry in
@@ -10793,7 +10814,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let url = imageURL(for: uri) {
             // Decoded at the size it is drawn, when the style fixes that size.
             let pixels = Self.displayPixels(of: view)
-            let fill = (view as? CraftNativePositionedImageView)?.objectCovers == true || view.contentMode == .scaleAspectFill
+            let fill = view.objectCovers || view.contentMode == .scaleAspectFill
             // media.keep owns private/offline copies keyed by the authored URL.
             // Read before the decoded/network cache, without retaining private
             // pixels there after the app clears its media on sign-out.
@@ -10884,7 +10905,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return !uri.contains(":") ? UIImage(named: uri) : nil
     }
 
-    private func imageFailure(_ view: UIImageView, uri: String?, message: String) {
+    private func imageFailure(_ view: CraftNativePositionedImageView, uri: String?, message: String) {
         imageErrors[ObjectIdentifier(view)] = message
         view.image = nil
         imageDidChange(view)
@@ -10895,19 +10916,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         NSLog("[craft native] %@: %@", message, uri ?? "<missing>")
     }
 
-    private func imageDidChange(_ view: UIImageView) {
+    private func imageDidChange(_ view: CraftNativePositionedImageView) {
         view.invalidateIntrinsicContentSize()
         CraftNativeFlexLayout.invalidateAncestors(of: view)
     }
 
-    private func imageForDisplay(_ image: UIImage, view: UIImageView) -> UIImage {
+    private func imageForDisplay(_ image: UIImage, view: CraftNativePositionedImageView) -> UIImage {
         let displayed = image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)
         displayed.craftIntrinsicSize = image.craftIntrinsicSize
         return displayed
     }
 
     private func emitImageEvent(
-        _ view: UIImageView,
+        _ view: CraftNativePositionedImageView,
         handler: String?,
         nativeEvent: [String: Any] = [:]
     ) {

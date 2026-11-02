@@ -511,7 +511,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('private var imageErrors: [ObjectIdentifier: String] = [:]')
     expect(nativeSwift).toContain('imageTasks.removeValue(forKey: id)?.cancel()')
     expect(nativeSwift).toContain('image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)')
-    expect(nativeSwift).toContain('private func imageDidChange(_ view: UIImageView)')
+    expect(nativeSwift).toContain('private func imageDidChange(_ view: CraftNativePositionedImageView)')
     expect(nativeSwift).toContain('view.invalidateIntrinsicContentSize()')
     expect(nativeSwift).toContain('CraftNativeFlexLayout.invalidateAncestors(of: view)')
     expect(nativeSwift).toContain('case "cover": return .scaleAspectFill')

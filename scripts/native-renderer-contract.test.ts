@@ -2984,7 +2984,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('imageTasks.removeValue(forKey: id)?.cancel()')
     expect(ios).toContain('guard self.imageSources[ObjectIdentifier(view)] == requestKey else { return }')
     expect(ios).toContain('image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)')
-    expect(ios).toContain('private func imageDidChange(_ view: UIImageView)')
+    expect(ios).toContain('private func imageDidChange(_ view: CraftNativePositionedImageView)')
     expect(ios).toContain('view.invalidateIntrinsicContentSize()')
     expect(ios).toContain('CraftNativeFlexLayout.invalidateAncestors(of: view)')
     expect(ios).toContain('case "cover": return .scaleAspectFill')

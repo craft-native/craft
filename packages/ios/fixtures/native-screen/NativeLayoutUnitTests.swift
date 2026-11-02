@@ -505,7 +505,7 @@ final class NativeLayoutUnitTests: XCTestCase {
                 ])
             }
             let controller = screen(document(9999))
-            let image = try XCTUnwrap(find("avatar", below: controller.view) as? UIImageView)
+            let image = try XCTUnwrap(find("avatar", below: controller.view) as? CraftNativePositionedImageView)
             XCTAssertTrue(image.clipsToBounds, kind)
             XCTAssertTrue(image.layer.masksToBounds, kind)
             XCTAssertEqual(image.layer.cornerRadius, 24, accuracy: 0.5, kind)
