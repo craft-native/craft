@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.425...v0.0.426)
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve image background accessibility identity ([6a24ec5](https://github.com/craft-native/craft/commit/6a24ec5)) _(by glennmichael123)_
+- **native**: let authored press handlers own link navigation ([78eeae3](https://github.com/craft-native/craft/commit/78eeae3)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.424...v0.0.425)
 
 ## 🐛 Bug Fixes
