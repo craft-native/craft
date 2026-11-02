@@ -470,7 +470,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                   let box = scene.renderer.boxes.values.first(where: { ($0.props["testID"] as? String ?? $0.props["testId"] as? String ?? $0.id) == target }) else { return ["ok": false, "error": "No control \(action["target"] ?? "")"] }
             let text = action["text"] as? String ?? ""
             switch kind {
-            case "press": if let button = box.control as? NSButton { button.performClick(nil) } else { box.fire("onPress") }
+            case "press": if let button = box.control as? NSButton { button.performClick(nil) } else if let toggle = box.control as? NSSwitch { toggle.performClick(nil) } else { box.fire("onPress") }
             case "type":
                 if let field = box.control as? NSTextField { field.stringValue = text }
                 else if let view = (box.control as? NSScrollView)?.documentView as? NSTextView { view.string = text }
@@ -515,7 +515,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             let editor = (target as? NSTextField)?.currentEditor() as? NSTextView ?? target as? NSTextView
             guard let editor else { return ["ok": false, "error": "Not a text input"] }
             editor.doCommand(by: command)
-        case "click": if let button = box.control as? NSButton { button.performClick(nil) } else { box.pressed() }
+        case "click": if let button = box.control as? NSButton { button.performClick(nil) } else if let toggle = box.control as? NSSwitch { toggle.performClick(nil) } else { box.pressed() }
         case "fill":
             let value = action["value"] as? String ?? ""
             if let field = box.control as? NSTextField { field.stringValue = value; box.input(value) }

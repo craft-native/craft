@@ -318,7 +318,10 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         case "Picker":
             let picker = NSPopUpButton(frame: .zero, pullsDown: false)
             picker.target = self; picker.action = #selector(changed); control = picker
-        case "Switch", "Checkbox":
+        case "Switch":
+            // A toggle, as System Settings draws one; a checkbox is the Checkbox primitive's.
+            let toggle = NSSwitch(); toggle.target = self; toggle.action = #selector(changed); control = toggle
+        case "Checkbox":
             let button = NSButton(checkboxWithTitle: "", target: self, action: #selector(changed)); control = button
         case "Icon", "Image":
             let image = NSImageView(); image.imageScaling = .scaleProportionallyUpOrDown; control = image
@@ -406,6 +409,11 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             text.alignment = style["textAlign"] as? String == "center" ? .center : style["textAlign"] as? String == "right" ? .right : .left
             text.maximumNumberOfLines = (props["numberOfLines"] as? NSNumber)?.intValue ?? 0
             text.lineBreakMode = text.maximumNumberOfLines == 1 ? .byTruncatingTail : .byWordWrapping
+        }
+        if let toggle = control as? NSSwitch {
+            toggle.state = (props["value"] as? Bool ?? props["checked"] as? Bool ?? false) ? .on : .off
+            toggle.isEnabled = props["disabled"] as? Bool != true
+            if let label { toggle.setAccessibilityLabel(label) }
         }
         if let button = control as? NSButton {
             let title = props["title"] as? String ?? nativeText(node)
@@ -811,7 +819,8 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     func fire(_ name: String, _ payload: [String: Any] = [:]) { renderer?.runtime.event(events[name], payload: payload) }
     @objc func pressed() { fire("onPress") }
     @objc func changed() {
-        let value: Any = (control as? NSPopUpButton)?.selectedItem?.representedObject ?? ((control as? NSButton)?.state == .on)
+        let state: NSControl.StateValue? = (control as? NSSwitch)?.state ?? (control as? NSButton)?.state
+        let value: Any = (control as? NSPopUpButton)?.selectedItem?.representedObject ?? (state == .on)
         fire("onValueChange", ["value": value, "nativeEvent": ["value": value]])
     }
     func controlTextDidChange(_ notification: Notification) { if let field = notification.object as? NSTextField { input(field.stringValue) } }
