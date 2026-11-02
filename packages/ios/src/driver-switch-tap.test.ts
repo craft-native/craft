@@ -3,15 +3,18 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
-test.skipIf(process.platform !== 'darwin')('counts a switch tap only once the switch has flipped', async () => {
+test.skipIf(process.platform !== 'darwin')('observes one switch gesture without retrying the tap', async () => {
   const template = readFileSync(join(import.meta.dir, '../templates/testing/DriverTests.swift.template'), 'utf8')
   const start = template.indexOf('    func switchFlipped(')
   const end = template.indexOf('    func press(', start)
   expect(start).toBeGreaterThan(0)
   expect(end).toBeGreaterThan(start)
-  // tapid taps a switch again, up to three times, until this rule holds.
+  // One tap is one gesture. Observe its result without hiding a dropped event.
   expect(template).toContain('flipped = switchFlipped(from: before, to: target.value as? String)')
   expect(template).toContain('check(flipped, "tapid \\(arg) flips the switch")')
+  const tapid = template.slice(template.indexOf('case "tapid":'), template.indexOf('case "longpressid":'))
+  expect(tapid).not.toContain('for _ in')
+  expect(tapid.match(/press\(target\)/g)?.length).toBe(2)
   const dir = createTempDir('craft-driver-switch-')
   try {
     const source = join(dir, 'main.swift')

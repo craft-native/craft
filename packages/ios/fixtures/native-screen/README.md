@@ -55,3 +55,9 @@ must land at the true end of the content rather than at an estimate.
 To run the same UI test against the actual compiler output, compile `Screen.stx` as shown above and set `CRAFT_NATIVE_RENDER_BUNDLE` to the absolute bundle path when invoking `test-native-render.ts`.
 
 Within one parent, use a unique `key` on children whose identity must survive reordering. The current compiler emits it as `props.key`; the native host also accepts a top-level IR `key` and uses `testID` for existing screens. Unkeyed children are matched by position. Duplicate sibling keys fall back to position, so they cannot promise identity through moves.
+
+The journey driver's `tapid` delivers one physical gesture. For a Switch it
+observes the value change for the existing 1.5-second bound, then fails if the
+value stayed unchanged. It does not repeat the gesture: doing so could hide a
+control-event or hit-testing defect. The scrolling Switch fixture likewise
+checks a single tap. See https://github.com/craft-native/craft/issues/449.

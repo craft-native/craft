@@ -285,8 +285,6 @@ final class DriverTests: XCTestCase {
         return (parts[0], parts.count > 1 ? Double(parts[1]) ?? 10 : 10)
     }
 
-    /// A tap that never fails the run: an element covered a moment (the big
-    /// timer coming up) is tapped where it is, and the check after says.
     /// A switch reports "0" or "1". Any other value is not a switch state to
     /// wait on, so the tap stands as it would for any other control.
     func switchFlipped(from before: String?, to after: String?) -> Bool {
@@ -295,6 +293,7 @@ final class DriverTests: XCTestCase {
         return before != after
     }
 
+    /// Deliver one gesture; the command's observation determines success.
     func press(_ element: XCUIElement) {
         if element.isHittable { element.tap() }
         else { element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
@@ -448,18 +447,16 @@ final class DriverTests: XCTestCase {
             let target = identified(arg)
             if !target.waitForExistence(timeout: 10) { XCTFail("Element not found"); note("FAIL tapid \(arg): NOT FOUND") }
             else if target.elementType == .switch {
-                // A switch still settling from a scroll can take a tap XCTest
-                // reports as delivered and stay as it was. Done means flipped.
+                // Observe one physical gesture. Retapping could conceal a
+                // renderer or hit-testing failure (HQ agreement job 7570).
                 let before = target.value as? String
+                press(target)
+                let settle = Date().addingTimeInterval(1.5)
                 var flipped = false
-                for _ in 0..<3 where !flipped {
-                    press(target)
-                    let settle = Date().addingTimeInterval(1.5)
-                    repeat {
-                        flipped = switchFlipped(from: before, to: target.value as? String)
-                        if !flipped { Thread.sleep(forTimeInterval: 0.25) }
-                    } while !flipped && Date() < settle
-                }
+                repeat {
+                    flipped = switchFlipped(from: before, to: target.value as? String)
+                    if !flipped { Thread.sleep(forTimeInterval: 0.25) }
+                } while !flipped && Date() < settle
                 check(flipped, "tapid \(arg) flips the switch")
             }
             else { press(target); note("tapid \(arg): ok") }
