@@ -218,6 +218,11 @@ keeps its RGB color but its alpha is forced to 1. The default is still `UISwitch
 Android ignores this iOS-only option. Choose the style when mounting: changing
 `ios_solid` replaces the native control, so supply `value` when changing styles
 to retain state. Ordinary value/color mutations retain the same control.
+For main-thread scripts, switch value-change callbacks are queued after the
+control action returns. Each event retains the value captured by that action,
+including rapid successive toggles. Background scripts receive events directly
+on their serial script queue. This scheduling does not replace the `ios_solid`
+option: the default control still uses UIKit's translucent animation.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.

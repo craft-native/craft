@@ -56,6 +56,33 @@ final class ScriptThreadUnitTests: XCTestCase {
         return controller
     }
 
+    func testSwitchEventsReachBackgroundScriptWithoutAnotherMainQueueTurn() throws {
+        for solid in [false, true] {
+            let controller = mounted()
+            controller.evaluateScript("""
+                globalThis.__switchEvents = [];
+                globalThis.__stxNativeCallback = function(json) {
+                    const message = JSON.parse(json);
+                    if (message.type === 'EVENT') __switchEvents.push(message.payload.nativeEvent.value);
+                };
+            """)
+            controller.render(["id": "toggle", "type": "Switch", "props": ["ios_solid": solid, "value": false],
+                               "events": ["onValueChange": "changed"]])
+            let toggle = try XCTUnwrap(find(UIControl.self, key: "toggle", below: controller.view))
+            for value in [true, false, true] {
+                if let native = toggle as? UISwitch { native.setOn(value, animated: false) }
+                if let opaque = toggle as? CraftNativeSolidSwitch { opaque.setOn(value) }
+                toggle.sendActions(for: .valueChanged)
+            }
+            // evaluateScript drains the serial script queue without yielding main.
+            // A misplaced main-queue hop would leave the event list empty here.
+            XCTAssertEqual(controller.evaluateScript("__switchEvents.join('|')")?.toString(), "true|false|true")
+            controller.viewDidDisappear(false)
+            window?.isHidden = true
+            window = nil
+        }
+    }
+
     /// requestAnimationFrame rides the display (CraftNativeFrameClock): a run
     /// of frames in order, a cancelled callback skipped, a throwing one not
     /// stopping the rest, a hidden screen waiting until it is shown, and the

@@ -86,6 +86,40 @@ final class NativeSolidSwitchUnitTests: XCTestCase {
         return view.subviews.compactMap { control($0) }.first
     }
 
+    func testMainThreadSwitchEventsYieldAndRetainEachValueInOrder() throws {
+        XCTAssertFalse(CraftNativeScriptThread.isBackground)
+        for solid in [false, true] {
+            let host = CraftNativeScreenController(config: CraftConfig())
+            host.loadViewIfNeeded()
+            defer { host.viewDidDisappear(false) }
+            host.evaluateScript("""
+                globalThis.__switchEvents = [];
+                globalThis.__stxNativeCallback = function(json) {
+                    const message = JSON.parse(json);
+                    if (message.type === 'EVENT') __switchEvents.push(message.payload);
+                };
+            """)
+            host.render(["id": "toggle", "type": "Switch", "props": ["ios_solid": solid, "value": false],
+                         "events": ["onValueChange": "changed"]])
+            let toggle = try XCTUnwrap(control(host.view))
+            for value in [true, false, true] {
+                if let native = toggle as? UISwitch { native.setOn(value, animated: false) }
+                if let opaque = toggle as? CraftNativeSolidSwitch { opaque.setOn(value) }
+                toggle.sendActions(for: .valueChanged)
+            }
+            XCTAssertEqual(host.evaluateScript("__switchEvents.length")?.toInt32(), 0,
+                           "Main-thread handlers must not execute inside the control action")
+            let deadline = Date().addingTimeInterval(2)
+            while host.evaluateScript("__switchEvents.length")?.toInt32() != 3, Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            }
+            XCTAssertEqual(host.evaluateScript("__switchEvents.map(p => p.handlerName + ':' + p.nativeEvent.value).join('|')")?.toString(),
+                           "changed:true|changed:false|changed:true",
+                           "Deferred actions must capture each value rather than rereading the final state")
+            XCTAssertTrue(control(host.view) === toggle)
+        }
+    }
+
     func testOptInIsStrictAndStyleChangesPreserveControlledValue() throws {
         let host = CraftNativeScreenController(config: CraftConfig())
         host.loadViewIfNeeded()
