@@ -6101,9 +6101,7 @@ class MainActivity : AppCompatActivity() {
                 val handler = craftNativeEventName(events, "onPress", "onClick")
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 setOnClickListener {
-                    screen.linkTargets[it]?.let { target -> navigateOpen(target); return@setOnClickListener }
-                    val current = screen.handlers[this] ?: return@setOnClickListener
-                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                    dispatchNativePress(screen, it)
                 }
             }
             "Button" -> (previous as? Button ?: CraftNativePointerButton(this).apply {
@@ -6877,9 +6875,7 @@ class MainActivity : AppCompatActivity() {
                 control.isClickable = true
                 if (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable")) {
                     control.setOnClickListener {
-                        screen.linkTargets[it]?.let { target -> navigateOpen(target); return@setOnClickListener }
-                        val current = screen.handlers[it] ?: return@setOnClickListener
-                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                        dispatchNativePress(screen, it)
                     }
                     control.setOnTouchListener { view, event ->
                         if (!CraftNativePointers.ownsTouch(view) && event.actionMasked != MotionEvent.ACTION_CANCEL) return@setOnTouchListener false
@@ -6907,9 +6903,7 @@ class MainActivity : AppCompatActivity() {
                                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                                 }
                                 if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
-                                    screen.linkTargets[view]?.let { target -> navigateOpen(target); return@setOnTouchListener true }
-                                    val current = screen.handlers[view] ?: return@setOnTouchListener true
-                                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                                    dispatchNativePress(screen, view)
                                 }
                                 true
                             }
@@ -6920,9 +6914,7 @@ class MainActivity : AppCompatActivity() {
                     control.setOnTouchListener(null)
                     if (screen.pressBaseBackgrounds.containsKey(control)) control.background = screen.pressBaseBackgrounds[control]
                     control.setOnClickListener {
-                        screen.linkTargets[control]?.let { target -> navigateOpen(target); return@setOnClickListener }
-                        val current = screen.handlers[control] ?: return@setOnClickListener
-                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                        dispatchNativePress(screen, control)
                     }
                 }
             } else {
@@ -8368,6 +8360,18 @@ class MainActivity : AppCompatActivity() {
                         .put("width", bounds.width)
                         .put("height", bounds.height))))
             }
+        }
+    }
+
+    // The authored handler owns navigation. The bridge is asynchronous, so
+    // opening the link as well cannot honor a handler's preventDefault intent.
+    private fun dispatchNativePress(screen: Screen, view: View) {
+        if (!view.isEnabled) return
+        val handler = screen.handlers[view]
+        if (handler != null) {
+            send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject()))
+        } else {
+            screen.linkTargets[view]?.let { target -> navigateOpen(target) }
         }
     }
 

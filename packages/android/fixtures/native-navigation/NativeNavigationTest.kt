@@ -2397,6 +2397,98 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun linkedPressHandlersOwnNavigationAcrossNativeClicksTouchesAndMutations() {
+        for (type in listOf("Link", "Pressable", "TouchableOpacity", "TouchableHighlight")) {
+            for (targetKey in listOf("href", "to")) {
+                val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+                lateinit var activity: MainActivity
+                lateinit var screen: Any
+                lateinit var isolate: androidx.javascriptengine.JavaScriptIsolate
+                lateinit var control: View
+                var revision = 0
+                fun screens(): List<*> = MainActivity::class.java.getDeclaredField("screens")
+                    .apply { isAccessible = true }.get(activity) as List<*>
+                fun evaluate(source: String): String = isolate.evaluateJavaScriptAsync(source)
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS)
+                fun patch(body: String) {
+                    revision++
+                    MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, JSONObject::class.java)
+                        .apply { isAccessible = true }.invoke(activity, screen, JSONObject("""{
+                          "version":1,"batchId":"linked-$revision","baseRevision":${revision - 1},"revision":$revision,
+                          "operations":[{"op":"updateNode","id":"linked","patch":$body}]
+                        }"""))
+                    assertSame("Mutation replaced the linked control", control, find(activity.window.decorView, "linked-action"))
+                }
+                fun tap() {
+                    val now = SystemClock.uptimeMillis()
+                    for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                        val event = MotionEvent.obtain(now, now + if (action == MotionEvent.ACTION_UP) 50 else 0,
+                            action, control.width / 2f, control.height / 2f, 0)
+                        try { control.dispatchTouchEvent(event) } finally { event.recycle() }
+                    }
+                }
+                fun expectPresses(expected: String) {
+                    val deadline = SystemClock.uptimeMillis() + 3000
+                    var actual = evaluate("__linkedPresses.join(',')")
+                    while (actual != expected && SystemClock.uptimeMillis() < deadline) {
+                        SystemClock.sleep(20)
+                        actual = evaluate("__linkedPresses.join(',')")
+                    }
+                    assertEquals("$type/$targetKey lost or duplicated a handler", expected, actual)
+                    scenario.onActivity { assertSame("Handler must own navigation", screen, screens().last()) }
+                }
+                try {
+                    scenario.onActivity { activity = it }
+                    awaitView(activity, "navigation-home-state")
+                    scenario.onActivity {
+                        screen = requireNotNull(screens().last())
+                        isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+                    }
+                    // Observe the real native bridge transport. Keep lifecycle
+                    // messages flowing, but do not let fixture handlers rerender.
+                    evaluate("""(function() {
+                      globalThis.__linkedPresses = [];
+                      const port = globalThis.__craftPort;
+                      const previous = port ? port.onmessage : globalThis.__stxNativeCallback;
+                      function receive(value) {
+                        const message = JSON.parse(value);
+                        if (message.type === 'EVENT') __linkedPresses.push(message.payload.handlerName);
+                        else if (previous) previous(port ? {data:value} : value);
+                      }
+                      if (port) port.onmessage = function(event) { receive(event.data); };
+                      else globalThis.__stxNativeCallback = receive;
+                    })(); 'ready'""")
+                    scenario.onActivity {
+                        val document = JSONObject("""{"id":"linked","type":"$type",
+                          "props":{"testID":"linked-action","title":"Document","$targetKey":"/linked-details"},
+                          "style":{"width":200,"height":60},"events":{"onPress":"first"}}
+                        """)
+                        MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                            .apply { isAccessible = true }.invoke(activity, screen, document)
+                    }
+                    control = awaitView(activity, "linked-action") { it.width > 0 && it.height > 0 }
+                    scenario.onActivity { control.performClick() }
+                    expectPresses("first")
+                    scenario.onActivity { tap() }
+                    expectPresses("first,first")
+                    scenario.onActivity { patch("""{"events":{"onPress":null,"onClick":"second"}}"""); control.performClick() }
+                    expectPresses("first,first,second")
+                    scenario.onActivity { patch("""{"props":{"$targetKey":null}}"""); tap() }
+                    expectPresses("first,first,second,second")
+                    scenario.onActivity { patch("""{"props":{"$targetKey":"/linked-details","disabled":true}}"""); tap(); control.performClick() }
+                    instrumentation.waitForIdleSync()
+                    expectPresses("first,first,second,second")
+                    scenario.onActivity {
+                        patch("""{"props":{"disabled":false},"events":{"onClick":null}}""")
+                        control.performClick()
+                    }
+                    awaitText(activity, "details-title", "Details for ")
+                } finally { scenario.close() }
+            }
+        }
+    }
+
+    @Test
     fun nativeLinkOpensRoute() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

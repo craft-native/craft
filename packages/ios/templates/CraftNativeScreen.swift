@@ -11044,11 +11044,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func buttonPressed(_ sender: UIButton) {
         let focused = firstResponder(in: rootStack) ?? lastFocusedInput
-        if let target = linkTargets[ObjectIdentifier(sender)] {
-        hybridEvents?.nativeScreen(self, open: target, props: [:])
+        let id = ObjectIdentifier(sender)
+        // An authored handler owns navigation; the asynchronous bridge cannot
+        // wait for preventDefault before opening the link.
+        guard let handler = handlers[id] else {
+            if let target = linkTargets[id] { hybridEvents?.nativeScreen(self, open: target, props: [:]) }
             return
         }
-        guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
         restoreFocus(focused)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak focused] in
@@ -11427,11 +11429,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view else { return }
         let id = ObjectIdentifier(view)
-        if let target = linkTargets[id] {
-        hybridEvents?.nativeScreen(self, open: target, props: [:])
+        guard let handler = handlers[id] else {
+            if let target = linkTargets[id] { hybridEvents?.nativeScreen(self, open: target, props: [:]) }
             return
         }
-        guard let handler = handlers[id] else { return }
         if pressInHandlers[id] == nil, pressOutHandlers[id] == nil,
            let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
             UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in

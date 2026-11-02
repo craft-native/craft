@@ -226,6 +226,18 @@ option: the default control still uses UIKit's translucent animation.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.
+When a `Link`, `Pressable`, `TouchableOpacity`, or `TouchableHighlight` has both
+an `href`/`to` target and an authored `onPress`/`onClick` handler, **the handler
+owns navigation** on iOS and Android. The host dispatches the handler once and
+does not also open the target. Call `craft.navigation.open(...)` from the handler
+if it should navigate. Without a handler (including after removing it), the
+link opens normally. An empty handler name counts as absent.
+
+This changes the previous link-first behavior, which silently skipped the
+handler. It is not synchronous `preventDefault`: the native bridge cannot wait
+for the script's decision. Screens that relied on the target winning must remove
+the unused handler or explicitly navigate from it.
+
 `Button.color` and `Link.color` set the native action-label color;
 `style.color` remains the shared fallback when either prop is omitted.
 `Pressable`, `TouchableOpacity`, and `TouchableHighlight` are native flow

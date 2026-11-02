@@ -5011,6 +5011,74 @@ final class NativeTypingEventTests: XCTestCase {
 }
 
 @MainActor
+final class NativeLinkPressUnitTests: XCTestCase {
+    private final class Navigation: CraftHybridScreenEvents {
+        var paths: [String] = []
+        func nativeScreenDidRender(_ screen: CraftNativeScreenController) {}
+        func nativeScreen(_ screen: CraftNativeScreenController, didFail message: String) {}
+        func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any]) { paths.append(path) }
+        func nativeScreen(_ screen: CraftNativeScreenController, replace path: String) { XCTFail("Unexpected replacement") }
+    }
+
+    private func find(_ view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == "linked-action" { return view }
+        return view.subviews.lazy.compactMap { self.find($0) }.first
+    }
+
+    private func activate(_ view: UIView, host: CraftNativeScreenController) throws {
+        if let button = view as? UIButton {
+            button.sendActions(for: .touchUpInside)
+        } else {
+            let tap = try XCTUnwrap(view.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first)
+            // Invoke the installed native gesture action, not the STX testing
+            // kit's handler shortcut (which cannot observe native navigation).
+            _ = host.perform(NSSelectorFromString("viewPressed:"), with: tap)
+        }
+    }
+
+    func testAuthoredHandlerOwnsLinkedControlAndMutationsRestorePlainNavigation() throws {
+        for type in ["Link", "Pressable", "TouchableOpacity", "TouchableHighlight"] {
+            for targetKey in ["href", "to"] {
+                let host = CraftNativeScreenController(config: CraftConfig())
+                host.loadViewIfNeeded()
+                defer { host.viewDidDisappear(false) }
+                let navigation = Navigation()
+                host.hybridEvents = navigation
+                host.evaluateScript("globalThis.__linkedPresses = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT') __linkedPresses.push(m.payload.handlerName); };")
+                host.render(["id": "linked", "type": type, "props": ["testID": "linked-action", "title": "Document", targetKey: "/original"],
+                             "events": ["onPress": "first"], "style": ["width": 200, "height": 60]])
+                let control = try XCTUnwrap(find(host.view))
+                var revision = 0
+                func patch(_ value: [String: Any]) throws {
+                    revision += 1
+                    _ = try host.applyMutation(["version": 1, "batchId": "link-\(revision)", "baseRevision": revision - 1, "revision": revision,
+                                               "operations": [["op": "updateNode", "id": "linked", "patch": value]]])
+                    XCTAssertTrue(find(host.view) === control, "Retain the linked native control")
+                }
+                try activate(control, host: host)
+                XCTAssertEqual(host.evaluateScript("__linkedPresses.join(',')")?.toString(), "first", "\(type)/\(targetKey)")
+                XCTAssertEqual(navigation.paths, [])
+                try patch(["props": [targetKey: "/changed"], "events": ["onPress": NSNull(), "onClick": "second"]])
+                try activate(control, host: host)
+                XCTAssertEqual(host.evaluateScript("__linkedPresses.join(',')")?.toString(), "first,second")
+                XCTAssertEqual(navigation.paths, [])
+                try patch(["props": [targetKey: NSNull()]])
+                try activate(control, host: host)
+                XCTAssertEqual(host.evaluateScript("__linkedPresses.join(',')")?.toString(), "first,second,second")
+                XCTAssertEqual(navigation.paths, [])
+                try patch(["props": [targetKey: "/restored"], "events": ["onClick": NSNull()]])
+                try activate(control, host: host)
+                XCTAssertEqual(navigation.paths, ["/restored"])
+                XCTAssertEqual(host.evaluateScript("__linkedPresses.join(',')")?.toString(), "first,second,second")
+                try patch(["events": ["onPress": "", "onClick": ""]])
+                try activate(control, host: host)
+                XCTAssertEqual(navigation.paths, ["/restored", "/restored"], "Empty handlers retain plain link behavior")
+            }
+        }
+    }
+}
+
+@MainActor
 final class NativePointerEventsUnitTests: XCTestCase {
     private func find(_ id: String, in view: UIView) -> UIView? {
         if view.accessibilityIdentifier == id { return view }
