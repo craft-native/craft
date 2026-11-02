@@ -17,7 +17,7 @@ pub const NativeWindow = union(enum) {
     android: ?*anyopaque,
 };
 pub const Config = struct {
-    /// Actual native pixel extent; fixed surface extents take precedence.
+    /// Requested native pixel extent, clamped to the surface image bounds.
     width: u32,
     height: u32,
     /// Sum of actual upload/readback VkDeviceMemory allocations. Driver-owned
@@ -72,6 +72,11 @@ fn createAndroidSurface(instance: vk.VkInstance, window: NativeWindow, surface: 
     var native = info(vk.VkAndroidSurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR);
     native.window = @ptrCast(try androidWindow(window));
     try result(create(instance, &native, null, surface));
+}
+// Surface image bounds define legal swapchain dimensions. Some platforms
+// require a fixed extent, while Android reports a preferred current extent.
+fn selectExtent(width: u32, height: u32, capabilities: vk.VkSurfaceCapabilitiesKHR) vk.VkExtent2D {
+    return .{ .width = std.math.clamp(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width), .height = std.math.clamp(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height) };
 }
 fn result(code: vk.VkResult) Error!void {
     return switch (code) {
@@ -405,7 +410,7 @@ const VulkanSurface = struct {
         errdefer self.destroyFrameResources();
         var capabilities: vk.VkSurfaceCapabilitiesKHR = undefined;
         try result(self.functions.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical, self.surface, &capabilities));
-        const extent = if (capabilities.currentExtent.width != std.math.maxInt(u32)) capabilities.currentExtent else vk.VkExtent2D{ .width = std.math.clamp(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width), .height = std.math.clamp(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height) };
+        const extent = selectExtent(width, height, capabilities);
         const layout = try Layout.init(extent.width, extent.height, self.config.max_buffer_bytes);
         const usage = vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT | vk.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         if (capabilities.supportedUsageFlags & usage != usage) return error.Unavailable;
@@ -812,4 +817,29 @@ test "Android surface creation forwards the owned native window and preserves dr
     Probe.code = vk.VK_ERROR_OUT_OF_HOST_MEMORY;
     try std.testing.expectError(error.AllocationFailed, createAndroidSurface(instance, window, &surface, Probe.create));
     try std.testing.expectEqual(@as(usize, 3), Probe.calls);
+}
+
+test "Vulkan image bounds permit requested Android pixels despite a stale preferred extent" {
+    var capabilities = std.mem.zeroes(vk.VkSurfaceCapabilitiesKHR);
+    capabilities.currentExtent = .{ .width = 256, .height = 192 };
+    capabilities.minImageExtent = .{ .width = 1, .height = 1 };
+    capabilities.maxImageExtent = .{ .width = 4096, .height = 4096 };
+    try std.testing.expectEqual(vk.VkExtent2D{ .width = 160, .height = 120 }, selectExtent(160, 120, capabilities));
+}
+test "fixed desktop image bounds retain the native window extent" {
+    var capabilities = std.mem.zeroes(vk.VkSurfaceCapabilitiesKHR);
+    capabilities.currentExtent = .{ .width = 256, .height = 192 };
+    capabilities.minImageExtent = capabilities.currentExtent;
+    capabilities.maxImageExtent = capabilities.currentExtent;
+    try std.testing.expectEqual(vk.VkExtent2D{ .width = 256, .height = 192 }, selectExtent(160, 120, capabilities));
+}
+test "flexible Vulkan image bounds clamp both requested dimensions independently" {
+    var capabilities = std.mem.zeroes(vk.VkSurfaceCapabilitiesKHR);
+    capabilities.currentExtent = .{ .width = 800, .height = 600 };
+    capabilities.minImageExtent = .{ .width = 64, .height = 32 };
+    capabilities.maxImageExtent = .{ .width = 1024, .height = 768 };
+    try std.testing.expectEqual(vk.VkExtent2D{ .width = 64, .height = 768 }, selectExtent(16, 2048, capabilities));
+    try std.testing.expectEqual(vk.VkExtent2D{ .width = 1024, .height = 32 }, selectExtent(2048, 16, capabilities));
+    capabilities.currentExtent = .{ .width = std.math.maxInt(u32), .height = std.math.maxInt(u32) };
+    try std.testing.expectEqual(vk.VkExtent2D{ .width = 160, .height = 120 }, selectExtent(160, 120, capabilities));
 }
