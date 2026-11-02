@@ -173,7 +173,37 @@ final class CraftMacRuntime {
         """)
     }
 
-    func load(_ bundle: String) { context.evaluateScript(bundle); ZJSContextRunMicrotasks(context) }
+    func load(_ bundle: String) {
+        startProfileIfAsked()
+        context.evaluateScript(bundle); ZJSContextRunMicrotasks(context)
+    }
+
+    /// `CRAFT_JS_PROFILE=<file>`: sample this screen's JavaScript from the moment its bundle loads,
+    /// for `CRAFT_JS_PROFILE_MS` milliseconds (5000, every `CRAFT_JS_PROFILE_INTERVAL_US`, 1000),
+    /// and write it as Chrome's `.cpuprofile` (DevTools and speedscope open it). A window other
+    /// than Main writes beside it, its route in the name.
+    private func startProfileIfAsked() {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["CRAFT_JS_PROFILE"], !path.isEmpty, let ref = context.jsGlobalContextRef else { return }
+        guard ZJSContextStartCPUProfile(ref, UInt32(env["CRAFT_JS_PROFILE_INTERVAL_US"] ?? "") ?? 0) else { return }
+        let seconds = (Double(env["CRAFT_JS_PROFILE_MS"] ?? "") ?? 5000) / 1000
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in self?.writeProfile(to: path) }
+    }
+
+    private func writeProfile(to path: String) {
+        guard !disposed, let ref = context.jsGlobalContextRef, let json = ZJSContextStopCPUProfile(ref) else { return }
+        defer { JSStringRelease(json) }
+        let size = JSStringGetMaximumUTF8CStringSize(json)
+        var bytes = [CChar](repeating: 0, count: size)
+        JSStringGetUTF8CString(json, &bytes, size)
+        let url = URL(fileURLWithPath: path)
+        let target = route == "Main" ? url : url.deletingPathExtension().appendingPathExtension("\(route).cpuprofile")
+        do {
+            try String(cString: bytes).write(to: target, atomically: true, encoding: .utf8)
+            fputs("[craft] JavaScript profile written to \(target.path)\n", stderr)
+        }
+        catch { fputs("[craft] could not write the JavaScript profile to \(target.path): \(error)\n", stderr) }
+    }
 
     func dispose() {
         guard !disposed else { return }
