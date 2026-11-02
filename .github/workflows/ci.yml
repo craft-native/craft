@@ -836,6 +836,9 @@ jobs:
       - name: Test native Metal suite admission
         run: bun test ./packages/ios/scripts/metal-xctest-steps.test.ts
 
+      - name: Test Android checkpoint runner failure and cancellation
+        run: bun test ./packages/android/scripts/test-checkpoint-interruption.test.ts
+
       - name: Run pickier (lint + format check)
         run: bun run lint
 

@@ -113,7 +113,7 @@ test('Android disk preparation accepts the exact capacity floor and propagates c
 test('SDK and native Android acceptance reserve disk before installing toolchains', () => {
   for (const [file, names] of [
     ['ci.yml', ['android-sdk-emulator', 'android-software-cold-provisioning-diagnostic']],
-    ['mobile-e2e.yml', ['android-navigation']],
+    ['mobile-e2e.yml', ['android-navigation', 'android-checkpoints']],
   ] as const) {
     const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as { jobs: Record<string, Job> }
     for (const name of names) {
@@ -345,7 +345,8 @@ test('focused native diagnostics retain their service gates and complete release
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-hybrid')
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-checkpoints')
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('android-vulkan')
-  const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'android-vulkan']
+  expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('android-checkpoints')
+  const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'android-vulkan', 'android-checkpoints']
   const evaluate = (expression: string | undefined, scope: string, outcomes: Record<string, string> = {}) => expression === undefined || runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\bneeds\.([\w-]+)\.result/g, 'needs["$1"].result'), {
     inputs: { scope },
     needs: Object.fromEntries(legs.map(name => [name, { result: outcomes[name] ?? 'success' }])),
@@ -362,7 +363,7 @@ test('focused native diagnostics retain their service gates and complete release
     }
     expect(evaluate(reject, scope)).toBe(false)
   }
-  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native'], ['android-vulkan', 'android-vulkan']]) {
+  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native'], ['android-vulkan', 'android-vulkan'], ['android-checkpoints', 'android-checkpoints']]) {
     const selected = ['harness', service]
     expect(legs.filter(name => evaluate(workflow.jobs[name].if, scope))).toEqual(selected)
     const skipped = Object.fromEntries(legs.filter(name => !selected.includes(name)).map(name => [name, 'skipped']))
@@ -372,6 +373,25 @@ test('focused native diagnostics retain their service gates and complete release
       expect(evaluate(reject, scope, { ...skipped, [name]: 'skipped' })).toBe(true)
     }
   }
+})
+
+test('Android checkpoint interruption is required native acceptance with original failure artifacts', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job & { 'continue-on-error'?: boolean }> }
+  const job = workflow.jobs['android-checkpoints']
+  expect(job).toBeDefined()
+  expect(job['continue-on-error']).not.toBe(true)
+  expect(steps(job)).toContain('ndk;27.2.12479018')
+  expect(steps(job)).toContain('platforms;android-36')
+  expect((job.steps?.find(step => step.uses === 'gradle/actions/setup-gradle@v6')?.with as Record<string, string>)['gradle-version']).toBe('8.11.1')
+  expect(steps(job)).toContain('bun packages/android/scripts/test-checkpoint-interruption.ts --output artifacts/mobile-e2e/android-checkpoints')
+  expect(needs(workflow.jobs['mobile-summary'])).toContain('android-checkpoints')
+  const upload = job.steps?.find(step => step.uses === 'actions/upload-artifact@v4')
+  expect(upload?.if).toBe('always()')
+  expect((upload?.with as Record<string, string>).path).toBe('artifacts/mobile-e2e/android-checkpoints')
+  expect((upload?.with as Record<string, string>)['if-no-files-found']).toBe('error')
+  expect(steps(workflow.jobs.harness)).toContain('./packages/android/scripts/test-checkpoint-interruption.test.ts')
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  expect(steps(ci.jobs.lint)).toContain('./packages/android/scripts/test-checkpoint-interruption.test.ts')
 })
 
 test('navigation shards retain both complete XCTest targets and focused selection', () => {
