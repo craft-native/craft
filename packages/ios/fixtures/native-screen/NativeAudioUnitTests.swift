@@ -273,10 +273,134 @@ final class NativeAudioUnitTests: XCTestCase {
         private let lock = NSLock()
         private var records = 0
         private var stops = 0
+        /// Runs inside stop(), on the audio queue: a stalled encoder holds it.
+        var onStop: () -> Void = {}
         var recordCount: Int { lock.withLock { records } }
         var stopCount: Int { lock.withLock { stops } }
         func record(forDuration duration: TimeInterval) -> Bool { lock.withLock { records += 1 }; return true }
-        func stop() { lock.withLock { stops += 1 } }
+        func stop() { lock.withLock { stops += 1 }; onStop() }
+    }
+
+    /// A real, readable AAC file where the recorder would have written one.
+    private static func writeVoice(to file: URL) throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000))
+        buffer.frameLength = 16000
+        buffer.floatChannelData?[0].initialize(repeating: 0, count: 16000)
+        let output = try AVAudioFile(forWriting: file, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1])
+        try output.write(from: buffer)
+    }
+
+    private func startVoice(_ service: CraftVoiceRecording, _ key: String) async {
+        let started = expectation(description: "recording started")
+        service.perform(method: "start", args: [key]) { result in
+            if case .failure(let error) = result { XCTFail("start failed: \(error.code)") }
+            started.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+    }
+
+    func testVoiceStopAnswersBeforeASlowAudioSessionDeactivation() async throws {
+        let queue = DispatchQueue(label: "voice-stop-deactivation-test")
+        let recorder = VoiceRecorder()
+        let release = DispatchSemaphore(value: 0)
+        let holdDeactivation = NSLock()
+        var stopping = false
+        let service = CraftVoiceRecording(audioQueue: queue, permission: { $0(true) }, makeRecorder: { file in
+            try Self.writeVoice(to: file)
+            return recorder
+        }, deactivate: {
+            // Releasing the audio session can take seconds on a busy route;
+            // the recording is finished by then and must already be answered.
+            if holdDeactivation.withLock({ stopping }) { release.wait() }
+        })
+        let key = UUID().uuidString
+        await startVoice(service, key)
+        holdDeactivation.withLock { stopping = true }
+        let stopped = expectation(description: "stop answered while deactivation is held")
+        service.perform(method: "stop", args: [key]) { result in
+            switch result {
+            case .success(let value):
+                let info = value as? [String: Any]
+                XCTAssertGreaterThan((info?["durationSeconds"] as? Double) ?? 0, 0.5)
+                XCTAssertGreaterThan((info?["size"] as? Int) ?? 0, 0)
+            case .failure(let error):
+                XCTFail("stop failed: \(error.code)")
+            }
+            stopped.fulfill()
+        }
+        await fulfillment(of: [stopped], timeout: 3)
+        release.signal()
+        let drained = expectation(description: "audio queue drained")
+        queue.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        service.perform(method: "cancel", args: [key]) { _ in }
+    }
+
+    func testStalledVoiceStopTimesOutOnceAndErasesTheRecording() async throws {
+        let queue = DispatchQueue(label: "voice-stop-timeout-test")
+        let recorder = VoiceRecorder()
+        let release = DispatchSemaphore(value: 0)
+        var recordingFile: URL?
+        let service = CraftVoiceRecording(audioQueue: queue, stopTimeout: 0.1, permission: { $0(true) }, makeRecorder: { file in
+            recordingFile = file
+            try Self.writeVoice(to: file)
+            return recorder
+        }, deactivate: {})
+        let key = UUID().uuidString
+        await startVoice(service, key)
+        recorder.onStop = { release.wait() }
+        let timedOut = expectation(description: "stop bounded by its deadline")
+        var answers = 0
+        service.perform(method: "stop", args: [key]) { result in
+            answers += 1
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "RECORDING_TIMEOUT") }
+            else { XCTFail("a stalled encoder must not answer with a recording") }
+            timedOut.fulfill()
+        }
+        await fulfillment(of: [timedOut], timeout: 2)
+        let erased = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            recordingFile.map { !FileManager.default.fileExists(atPath: $0.path) } ?? false
+        }, object: nil)
+        await fulfillment(of: [erased], timeout: 2)
+        // The stalled encoder returns late; its result must not answer again.
+        recorder.onStop = {}
+        release.signal()
+        let drained = expectation(description: "late stop drained")
+        queue.async { DispatchQueue.main.async { drained.fulfill() } }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertEqual(answers, 1)
+        // The timed-out recording is gone: a new one can start at once.
+        await startVoice(service, UUID().uuidString)
+    }
+
+    func testRepeatedVoiceStopIsRefusedWhileTheFirstIsFinishing() async throws {
+        let queue = DispatchQueue(label: "voice-stop-repeat-test")
+        let recorder = VoiceRecorder()
+        let release = DispatchSemaphore(value: 0)
+        let service = CraftVoiceRecording(audioQueue: queue, permission: { $0(true) }, makeRecorder: { file in
+            try Self.writeVoice(to: file)
+            return recorder
+        }, deactivate: {})
+        let key = UUID().uuidString
+        await startVoice(service, key)
+        recorder.onStop = { release.wait() }
+        let first = expectation(description: "first stop answered")
+        let second = expectation(description: "second stop refused")
+        service.perform(method: "stop", args: [key]) { result in
+            if case .failure(let error) = result { XCTFail("first stop failed: \(error.code)") }
+            first.fulfill()
+        }
+        service.perform(method: "stop", args: [key]) { result in
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "RECORDING_BUSY") }
+            else { XCTFail("a second stop must not answer with the same recording") }
+            second.fulfill()
+        }
+        await fulfillment(of: [second], timeout: 2)
+        recorder.onStop = {}
+        release.signal()
+        await fulfillment(of: [first], timeout: 2)
+        service.perform(method: "cancel", args: [key]) { _ in }
     }
 
     func testBlockedVoiceStartupKeepsMainResponsiveAndCancellationPreventsRecording() async {

@@ -69,6 +69,7 @@ final class CraftVoiceRecording {
         var recorder: CraftVoiceRecorder? // audio queue only
         var completion: ((Result<Any, CraftNativeActionError>) -> Void)? // main only
         var deadline: DispatchWorkItem?
+        var stopping = false // main only
         private let lock = NSLock()
         private var cancelled = false
         init(key: String, completion: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
@@ -86,15 +87,23 @@ final class CraftVoiceRecording {
         }
     }
     private var current: Session?
+    /// Each microphone step in the unified log (`subsystem == "craft.native"`,
+    /// category `voice-recording`), so a recording that never finished says
+    /// whether its stop arrived, and where AVFoundation held it.
+    private static func trace(_ message: String) {
+        CraftNativeConsole.write("info", category: "voice-recording", message: message)
+    }
     private let audioQueue: DispatchQueue
     private let permission: (@escaping (Bool) -> Void) -> Void
     private let makeRecorder: (URL) throws -> CraftVoiceRecorder
     private let deactivate: () -> Void
     private let startupTimeout: TimeInterval
+    private let stopTimeout: TimeInterval
     private var backgroundObserver: NSObjectProtocol?
 
     init(audioQueue: DispatchQueue = DispatchQueue(label: "craft.voice-recording", qos: .userInitiated),
          startupTimeout: TimeInterval = 15,
+         stopTimeout: TimeInterval = 10,
          permission: @escaping (@escaping (Bool) -> Void) -> Void = { answer in
              #if CRAFT_PERMISSION_MICROPHONE
              AVAudioSession.sharedInstance().requestRecordPermission(answer)
@@ -116,6 +125,7 @@ final class CraftVoiceRecording {
         Self.prepareForLaunch()
         self.audioQueue = audioQueue
         self.startupTimeout = startupTimeout
+        self.stopTimeout = stopTimeout
         self.permission = permission
         self.makeRecorder = makeRecorder
         self.deactivate = deactivate
@@ -150,6 +160,7 @@ final class CraftVoiceRecording {
     private func performOnMain(method: String, args: [Any], isActive: @escaping () -> Bool, completion: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
         func fail(_ code: String, _ message: String) { completion(.failure(CraftNativeActionError(code: code, message: message))) }
         guard let key = args.first as? String, UUID(uuidString: key) != nil else { fail("INVALID_ARGUMENT", "A recording owner UUID is required"); return }
+        Self.trace("\(method) \(key.prefix(8)) (current \(current.map { String($0.key.prefix(8)) } ?? "none"))")
         if method == "cancel" {
             if current?.key == key { clear() }
             completion(.success(true))
@@ -157,11 +168,36 @@ final class CraftVoiceRecording {
         }
         if method == "stop" {
             guard let session = current, session.key == key, let file = session.file else { fail("RECORDING_NOT_FOUND", "This recording is no longer available"); return }
+            guard !session.stopping else { fail("RECORDING_BUSY", "This recording is already finishing"); return }
+            session.stopping = true
+            // Answered exactly once: by the encoder's result, or by the
+            // deadline when AVFoundation never returns (a stalled encoder or
+            // audio route), which then erases the recording like a cancel.
+            var settled = false
+            var timeout: DispatchWorkItem?
+            func settle(_ result: Result<Any, CraftNativeActionError>) {
+                timeout?.cancel()
+                guard !settled else { return }
+                settled = true
+                completion(result)
+            }
+            let late = CraftNativeActionError(code: "RECORDING_TIMEOUT", message: "The recording took too long to finish. Please try again.")
+            timeout = DispatchWorkItem { [weak self] in
+                guard !settled else { return }
+                Self.trace("stop \(key.prefix(8)) timed out waiting for the encoder")
+                if let self, self.current === session { self.clear(late) }
+                settle(.failure(late))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + stopTimeout, execute: timeout!)
             audioQueue.async {
-                guard !session.isCancelled else { return DispatchQueue.main.async { fail("RECORDING_CANCELLED", "Recording was cancelled") } }
+                guard !session.isCancelled else {
+                    return DispatchQueue.main.async { settle(.failure(CraftNativeActionError(code: "RECORDING_CANCELLED", message: "Recording was cancelled"))) }
+                }
                 session.recorder?.stop()
                 session.recorder = nil
-                self.deactivate()
+                Self.trace("stop \(key.prefix(8)): encoder stopped")
+                // Read the finished file before releasing the audio session:
+                // the answer must not wait on a deactivation that can stall.
                 let result: Result<Any, CraftNativeActionError>
                 if let audio = try? AVAudioFile(forReading: file), audio.length > 0 {
                     let duration = Double(audio.length) / audio.processingFormat.sampleRate
@@ -170,14 +206,17 @@ final class CraftVoiceRecording {
                     result = .failure(CraftNativeActionError(code: "EMPTY_RECORDING", message: "The recording was empty"))
                 }
                 DispatchQueue.main.async {
+                    guard !settled else { return }
                     guard self.current === session, isActive(), !session.isCancelled else {
                         if self.current === session { self.clear() }
-                        fail("RECORDING_CANCELLED", "Recording was cancelled")
+                        settle(.failure(CraftNativeActionError(code: "RECORDING_CANCELLED", message: "Recording was cancelled")))
                         return
                     }
                     if case .failure = result { self.clear() }
-                    completion(result)
+                    Self.trace("stop \(key.prefix(8)) answered")
+                    settle(result)
                 }
+                self.deactivate()
             }
             return
         }
@@ -220,6 +259,7 @@ final class CraftVoiceRecording {
                                 if self.current === session { self.clear() }
                                 return
                             }
+                            Self.trace("start \(key.prefix(8)): recording")
                             session.finish(.success(true))
                         }
                     }
