@@ -21,6 +21,8 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     let trafficLights: CGPoint?
     /// The screen has work to finish before the app quits (`craft.desktop.onQuit`).
     var holdsQuit = false
+    /// The content width the screen last heard, so a resize that changes nothing sends nothing.
+    var reportedViewportWidth: CGFloat = -1
     init(name: String, route: String, options: [String: Any], application: CraftMacApplication) {
         self.name = name
         runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
@@ -49,7 +51,20 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         if name == "main" && application.testDirectory == nil { window.setFrameAutosaveName("\(application.appName)NativeMain") }
         window.makeKeyAndOrderFront(nil)
         placeTrafficLights()
+        // The screen starts knowing its width, so `md:`/`lg:` classes and `matchMedia` are right on the first frame.
+        let size = window.contentLayoutRect.size
+        reportedViewportWidth = size.width
+        runtime.context.evaluateScript("__stxNativeBridge.viewportWidth = \(Double(size.width)); __stxNativeBridge.viewportHeight = \(Double(size.height));")
         runtime.load(application.bundle)
+    }
+
+    /// Tells the screen its new width (VIEWPORT, as a phone does on rotation): only when the width changed,
+    /// since a live resize lays out every frame.
+    func reportViewport() {
+        let size = window.contentLayoutRect.size
+        guard size.width > 0, abs(size.width - reportedViewportWidth) >= 0.5 else { return }
+        reportedViewportWidth = size.width
+        runtime.send("VIEWPORT", ["width": Double(size.width), "height": Double(size.height)])
     }
 
     /// AppKit lays the title bar out again on resize, full screen and appearance changes, so this runs after each.
@@ -64,8 +79,8 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
             window.standardWindowButton(type)?.setFrameOrigin(CGPoint(x: inset.x + CGFloat(index) * (size.width + 6), y: (height - size.height) / 2))
         }
     }
-    func windowDidResize(_ notification: Notification) { placeTrafficLights() }
-    func windowDidExitFullScreen(_ notification: Notification) { placeTrafficLights() }
+    func windowDidResize(_ notification: Notification) { placeTrafficLights(); reportViewport() }
+    func windowDidExitFullScreen(_ notification: Notification) { placeTrafficLights(); reportViewport() }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if name == "main" { sender.orderOut(nil); return false }
         return true
@@ -536,7 +551,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 return node
             }
             func classes(_ view: NSView) -> [String] { [String(describing: type(of: view))] + view.subviews.flatMap(classes) }
-            return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: type(of: scene.runtime.context)), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "errors": scene.runtime.errors]
+            return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: type(of: scene.runtime.context)), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "viewportWidth": Double(scene.reportedViewportWidth), "errors": scene.runtime.errors]
         }
         let webViews = windows.reduce(0) { count, window in count + ((window["viewClasses"] as? [String] ?? []).filter { $0.contains("WKWebView") || $0 == "WebView" }.count) }
         return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews, "menu": testMenu]
