@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
-import { launchAndroidNativeFixture } from './native-fixture-launch'
+import { captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
 
 const root = resolve(import.meta.dir, '../../..')
 const runner = join(import.meta.dir, 'test-checkpoint-interruption.ts')
@@ -178,4 +178,60 @@ test('native launch refuses another application surface and multiple processes',
   const run = multiple.options.run
   multiple.options.run = async (label, args, timeoutMs) => label.endsWith('-pid') ? '12345 67890' : run(label, args, timeoutMs)
   await expect(launchAndroidNativeFixture(multiple.options)).rejects.toThrow('exactly one fixture app process')
+})
+
+// Actual Android 430 output: the tool exits zero before a root tree exists.
+test('native UI capture treats an explicitly missing root as not yet observed', async () => {
+  const calls: string[] = []
+  const xml = await captureAndroidNativeUi({
+    label: 'first', deadline: 30000, now: () => 0,
+    adb: (...args) => ['adb', ...args],
+    run: async (label) => {
+      calls.push(label)
+      if (label === 'first-dump') return 'ERROR: null root node returned by UiTestAutomationBridge.\n'
+      throw new Error('cat: /data/local/tmp/checkpoint-probe.xml: No such file or directory')
+    },
+  })
+  expect(xml).toBeNull()
+  expect(calls).toEqual(['first-dump'])
+})
+
+
+test('native UI capture accepts only a fresh complete tree and preserves its command cap', async () => {
+  const paths: string[] = []
+  const xml = '<?xml version="1.0"?><hierarchy><node package="dev.craft.probe" /></hierarchy>'
+  for (let observation = 0; observation < 2; observation++) {
+    let clock = 0
+    const calls: string[] = []
+    expect(await captureAndroidNativeUi({
+      label: 'ready', deadline: 30000, now: () => clock,
+      adb: (...args) => ['adb', ...args],
+      run: async (label, args, timeoutMs) => {
+        expect(timeoutMs).toBe(10000 - clock)
+        clock += 10
+        calls.push(label)
+        if (label.endsWith('-dump')) {
+          const path = args.at(-1)!
+          paths.push(path)
+          return `UI hierchary dumped to: ${path}\n`
+        }
+        return label.endsWith('-xml') ? xml : ''
+      },
+    })).toBe(xml)
+    expect(calls).toEqual(['ready-dump', 'ready-xml', 'ready-remove'])
+  }
+  expect(paths[0]).not.toBe(paths[1])
+})
+
+test.each(['transport', 'unknown-output', 'invalid-tree', 'late-root'])('native UI capture propagates failure rather than treating it as missing root (%s)', async (failure) => {
+  await expect(captureAndroidNativeUi({
+    label: 'bad', deadline: 30000, now: (() => { let calls = 0; return () => failure === 'late-root' && calls++ > 1 ? 10001 : 0 })(),
+    adb: (...args) => ['adb', ...args],
+    run: async (label, args) => {
+      if (failure === 'transport') throw new Error('adb disconnected')
+      if (failure === 'late-root') return 'ERROR: null root node returned by UiTestAutomationBridge.\n'
+      if (failure === 'unknown-output') return 'ERROR: permission denied'
+      return label.endsWith('-dump') ? `UI hierchary dumped to: ${args.at(-1)}` : '<hierarchy>truncated'
+    },
+  })).rejects.toThrow()
 })

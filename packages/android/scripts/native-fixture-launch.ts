@@ -26,3 +26,33 @@ export async function launchAndroidNativeFixture(options: {
   if (!/^[1-9]\d*$/.test(pid)) throw new Error('Expected exactly one fixture app process')
   return { pid, xml, elapsedMs: now() - started, boundMs }
 }
+
+/** Capture one native UI observation inside the existing command budget. */
+export async function captureAndroidNativeUi(options: {
+  label: string
+  adb: (...args: string[]) => string[]
+  run: (label: string, args: string[], timeoutMs: number) => Promise<string>
+  deadline: number
+  now?: () => number
+}): Promise<string | null> {
+  const now = options.now ?? (() => performance.now())
+  const deadline = Math.min(options.deadline, now() + 10000)
+  const remaining = () => {
+    const value = Math.floor(deadline - now())
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`Native UI capture exceeded its original bound: ${options.label}`)
+    return value
+  }
+  const path = `/data/local/tmp/craft-checkpoint-${crypto.randomUUID()}.xml`
+  const output = await options.run(`${options.label}-dump`, options.adb('shell', 'uiautomator', 'dump', '--compressed', path), remaining())
+  remaining()
+  // Android reports this pre-draw state with status zero and writes no file.
+  // It is an observation of no tree, never permission to read a stale tree.
+  if (output.trim() === 'ERROR: null root node returned by UiTestAutomationBridge.') return null
+  if (!output.includes(`UI hierchary dumped to: ${path}`)) throw new Error(`Native UI dump did not produce a tree: ${options.label}`)
+  const xml = await options.run(`${options.label}-xml`, options.adb('shell', 'cat', path), remaining())
+  remaining()
+  if (!/^\s*<\?xml\b/.test(xml) || !/<hierarchy\b[^>]*>/.test(xml) || !/<\/hierarchy>\s*$/.test(xml)) throw new Error(`Native UI dump produced an invalid tree: ${options.label}`)
+  await options.run(`${options.label}-remove`, options.adb('shell', 'rm', path), remaining())
+  remaining()
+  return xml
+}

@@ -77,3 +77,10 @@ This is the bounded child #440 of #396. It does not establish every interruption
 point, OS eviction, power-loss durability, native game behavior or the complete
 ordering/background/quota/cancellation matrix. Already-admitted writes can still
 commit after screen disposal; rejected completion does not imply rollback.
+
+A cold activity can acknowledge its intent before Android exposes an accessibility
+root. The UI observer treats only the tool's explicit null-root result as no
+observation and continues inside that same thirty-second phase. Each valid dump
+uses a fresh owned path and must contain a complete XML hierarchy; transport
+errors, unknown dump output and late observations fail. No previous dump can
+stand in for the current surface.

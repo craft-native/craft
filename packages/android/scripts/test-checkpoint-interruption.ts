@@ -7,7 +7,7 @@ import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../../io
 import { build, init } from '../src/index'
 import { createAndroidEmulator } from '../src/emulator'
 import { emulatorVersionCommand } from './vulkan-surface-probe'
-import { launchAndroidNativeFixture } from './native-fixture-launch'
+import { captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
 
 // #440: one controlled Android interruption boundary, not the full #396 matrix.
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' } } })
@@ -66,26 +66,18 @@ function shell(...args: string[]) {
 }
 function app(...args: string[]) { return shell('run-as', packageName, ...args) }
 function expected(generation: number) { return JSON.stringify({ generation, payload: String(generation).repeat(262144) }) }
-async function captureUi(label: string, budget = 10000) {
-  const deadline = performance.now() + budget
-  await run(`${label}-dump`, adb('shell', 'uiautomator', 'dump', '--compressed', '/data/local/tmp/checkpoint-probe.xml'), budget)
-  const remaining = Math.floor(deadline - performance.now())
-  if (remaining <= 0) throw new Error(`Native UI capture exceeded its original bound: ${label}`)
-  const xml = await run(`${label}-xml`, adb('shell', 'cat', '/data/local/tmp/checkpoint-probe.xml'), remaining)
-  if (performance.now() > deadline) throw new Error(`Native UI capture exceeded its original bound: ${label}`)
-  if (!xml.includes(`package="${packageName}"`)) throw new Error(`Public native UI not in foreground: ${label}`)
-  if (xml.includes('class="android.webkit.WebView"')) throw new Error('Checkpoint fixture rendered a WebView instead of native controls')
-  return xml
-}
 async function uiContaining(text: string, label: string, deadline = performance.now() + 30000) {
   while (performance.now() < deadline) {
     const remaining = Math.floor(deadline - performance.now())
-    const xml = await captureUi(label, Math.min(10000, remaining))
+    const xml = await captureAndroidNativeUi({ label, adb, run, deadline: Math.min(deadline, performance.now() + Math.min(10000, remaining)) })
     if (performance.now() > deadline) throw new Error(`Public UI exceeded its original 30000ms bound: ${label}`)
-    const owned = xml.includes(`package="${packageName}"`)
-    if (owned && xml.includes(`text="${text}"`)) return xml
-    if (owned && /unsupported|unavailable|failed|corrupt|error/i.test(xml)) throw new Error(`Native public UI reported a failure; ${label}`)
-    await Bun.sleep(200)
+    if (xml) {
+      if (xml.includes('class="android.webkit.WebView"')) throw new Error('Checkpoint fixture rendered a WebView instead of native controls')
+      const owned = xml.includes(`package="${packageName}"`)
+      if (owned && xml.includes(`text="${text}"`)) return xml
+      if (owned && /unsupported|unavailable|failed|corrupt|error/i.test(xml)) throw new Error(`Native public UI reported a failure; ${label}`)
+    }
+    await Bun.sleep(Math.min(200, Math.max(0, deadline - performance.now())))
   }
   throw new Error(`Public UI did not show ${text} within its original 30000ms bound`)
 }
