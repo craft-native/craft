@@ -52,6 +52,15 @@ function profileFixture(directory: string, names: string[]): void {
 }
 
 describe('Craft iOS builder', () => {
+  it.each([undefined, false, true])('keeps shake gesture opt-in separate from motion sensor access (%s)', async (enabled) => {
+    const output = createTempDir('craft-shake-config-')
+    await init({ name: 'ShakeConfig', output, runtimeDir: null, config: { enableMotionSensors: false, enableShakeGesture: enabled } })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.enableShakeGesture).toBe(Boolean(enabled))
+    expect(config.enableMotionSensors).toBe(false)
+    expect(iosPermissions(config).includes('motion')).toBe(Boolean(enabled))
+  })
+
   it('bakes each permission gate into restored Swift without changing unrelated build conditions', () => {
     const source = iosPermissionNames.map(name => `#if CRAFT_PERMISSION_${name.toUpperCase()}\nuse_${name}()\n#endif`).join('\n')
     expect(renderPermissionSource(source, {})).not.toContain('#if CRAFT_PERMISSION_')

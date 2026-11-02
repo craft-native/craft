@@ -52,6 +52,14 @@ decoration. Resuming does not replay it. Available on both native renderers.
 - **Audio Recording** - AVAudioRecorder with compressed output
 - **Video Recording** - UIImagePickerController video capture
 
+### Shake gesture configuration
+
+`enableShakeGesture` is an opt-in boolean, separate from
+`enableMotionSensors`. It defaults to false and arms the host's shake gesture
+only while the app is in the foreground. Both configuration readers validate
+its type: an invalid value rejects the configuration instead of letting the
+Swift and Zig hosts disagree about which capabilities are enabled.
+
 ### Native voice capture
 
 With `enableAudioRecording`, the native renderer exposes

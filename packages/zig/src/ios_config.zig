@@ -174,7 +174,7 @@ pub const Flags = std.EnumSet(Feature);
 /// Stored config keys whose present values Swift validates after overlaying
 /// the bundled object on its defaults. Missing and null values keep defaults.
 const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
-const extra_bool_keys = [_][]const u8{"darkMode"};
+const extra_bool_keys = [_][]const u8{ "darkMode", "enableShakeGesture" };
 const array_of_string_keys = [_][]const u8{ "associatedDomains", "trustedOrigins" };
 const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "tintColor", "fontFamily", "headingFontFamily", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
 const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains", "allowsLinkPreview", "keyboardAccessory", "disableZoom" };
@@ -667,7 +667,9 @@ fn mentions(comptime overrides: []const u8, comptime key: []const u8) bool {
 
 fn placeholderFor(comptime key: []const u8) []const u8 {
     if (std.mem.eql(u8, key, "associatedDomains") or std.mem.eql(u8, key, "trustedOrigins")) return "[]";
-    if (std.mem.eql(u8, key, "darkMode")) return "true";
+    inline for (extra_bool_keys) |boolean_key| {
+        if (std.mem.eql(u8, key, boolean_key)) return "true";
+    }
     return "\"T\"";
 }
 
@@ -722,6 +724,18 @@ test "a partial config enables only explicitly true capabilities" {
     try testing.expectEqual(@as(usize, 1), flags_out.count());
     try testing.expect(flags_out.contains(.clipboard));
     try testing.expect(!flags_out.contains(.haptics));
+}
+
+test "shake gesture configuration follows Swift boolean decoding" {
+    inline for (.{ "true", "false", "null" }) |value| {
+        const flags_out = parse(testing.allocator, "{\"enableClipboard\":true,\"enableShakeGesture\":" ++ value ++ "}");
+        try testing.expect(flags_out.contains(.clipboard));
+        try testing.expectEqual(@as(usize, 1), flags_out.count());
+    }
+    inline for (.{ "1", "\"true\"", "[]", "{}" }) |value| {
+        const flags_out = parse(testing.allocator, "{\"enableClipboard\":true,\"enableShakeGesture\":" ++ value ++ "}");
+        try testing.expectEqual(@as(usize, 0), flags_out.count());
+    }
 }
 
 test "a wrongly typed flag is a throw, not a coercion" {
