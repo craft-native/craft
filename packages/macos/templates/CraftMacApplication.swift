@@ -228,6 +228,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         defer { CATransaction.commit() }
         let scheme = CraftMacColor.isDark ? "dark" : "light"
         for scene in scenes.values {
+            // AppKit lays the title bar out again for the new appearance, after this returns.
+            scene.placeTrafficLights()
+            DispatchQueue.main.async { [weak scene] in scene?.placeTrafficLights() }
             scene.runtime.context.evaluateScript("__stxNativeBridge.colorScheme = '\(scheme)';")
             // The protocol's own message: the screen restyles its `dark:` classes and tells `craft.appearance.onChange`.
             scene.runtime.send("APPEARANCE", ["colorScheme": scheme])
