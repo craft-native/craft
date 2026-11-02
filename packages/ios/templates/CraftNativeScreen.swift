@@ -11191,7 +11191,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func solidSwitchChanged(_ sender: CraftNativeSolidSwitch) {
         guard sender.isEnabled, let handler = handlers[ObjectIdentifier(sender)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isOn]])
+        sendAfterThumb(handler: handler, value: sender.isOn)
     }
 
     @objc private func switchChanged(_ sender: UISwitch) {
@@ -11202,7 +11202,28 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             self.switchUserValues.removeValue(forKey: id)
         }
         guard let handler = handlers[id] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isOn]])
+        sendAfterThumb(handler: handler, value: sender.isOn)
+    }
+
+    /// A switch's value, told to the script after UIKit has been left to draw
+    /// the thumb.
+    ///
+    /// On the default main-thread script a handler runs inline, inside the
+    /// control's own action, so the touch's CATransaction stays open until the
+    /// script has finished its work and whatever render it causes. UIKit has
+    /// already set the new value by then, so the thumb does not travel: the
+    /// switch sits still for as long as the script takes and then appears in
+    /// its new state. Yielding the runloop turn first lets that transaction
+    /// commit, the animation is handed to the render server, and the script's
+    /// work no longer holds the thumb. A background script never blocks the
+    /// main thread, so it is told at once.
+    private func sendAfterThumb(handler: String, value: Bool) {
+        let payload: [String: Any] = ["handlerName": handler, "nativeEvent": ["value": value]]
+        guard !CraftNativeScriptThread.isBackground else {
+            send(type: "EVENT", payload: payload)
+            return
+        }
+        DispatchQueue.main.async { [weak self] in self?.send(type: "EVENT", payload: payload) }
     }
 
     @objc private func sliderChanged(_ sender: UISlider) {
