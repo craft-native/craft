@@ -1,5 +1,17 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.422...v0.0.423)
+
+## 🐛 Bug Fixes
+
+- **android**: query emulator identity through its headless frontend ([2ce8af3](https://github.com/craft-native/craft/commit/2ce8af3)) _(by Chris)_ ([#435](https://github.com/craft-native/craft/issues/435))
+- **android**: retain native failure evidence before teardown ([9551b38](https://github.com/craft-native/craft/commit/9551b38)) _(by Chris)_ ([#438](https://github.com/craft-native/craft/issues/438))
+- **android**: type native database and notification opt-ins ([21d9607](https://github.com/craft-native/craft/commit/21d9607)) _(by Chris)_ ([#439](https://github.com/craft-native/craft/issues/439))
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.421...v0.0.422)
 
 ## 🚀 Features
