@@ -277,6 +277,18 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     var lastDropPosition = ""
     var acceptsDrops = false
     var wantedFocus = false
+    /// Measurements are pure in a box's subtree (its style, props, text and children) and the size
+    /// offered, but a flex pass asks for the same ones over and over: a column measures its children
+    /// twice, a row measures them again at their final widths, and each child's own layout measures its
+    /// subtree once more. Unremembered, that repeats exponentially with nesting depth (a browser window
+    /// spent most of its first render here). Every change to a box (its style, props, text, visibility
+    /// or children) arrives through `render`, which starts a new generation and so forgets every measurement.
+    static var measureGeneration = 0
+    /// Measurements computed rather than remembered; the layout checks hold it to the size of the tree.
+    static var measuredCount = 0
+    private struct MeasureKey: Hashable { let width: CGFloat, stretch: Bool }
+    private var measured: [MeasureKey: CGSize] = [:]
+    private var measuredGeneration = -1
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -705,6 +717,15 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         return NSEdgeInsets(top: number(style["paddingTop"]) ?? vertical, left: number(style["paddingLeft"]) ?? horizontal, bottom: number(style["paddingBottom"]) ?? vertical, right: number(style["paddingRight"]) ?? horizontal)
     }
     func measure(width: CGFloat, stretch: Bool = false) -> CGSize {
+        if measuredGeneration != CraftMacBox.measureGeneration || measured.count > 64 { measured.removeAll(keepingCapacity: true); measuredGeneration = CraftMacBox.measureGeneration }
+        let key = MeasureKey(width: width, stretch: stretch)
+        if let size = measured[key] { return size }
+        let size = measureSubtree(width: width, stretch: stretch)
+        measured[key] = size
+        return size
+    }
+    private func measureSubtree(width: CGFloat, stretch: Bool) -> CGSize {
+        CraftMacBox.measuredCount &+= 1
         if isHidden { return .zero }
         if let child = componentRoot { return child.measure(width: width, stretch: stretch) }
         let specifiedWidth = dimension(style["width"], base: width)
@@ -966,6 +987,8 @@ final class CraftMacRenderer {
             return box
         }
         let box = reconcile(document)
+        // Boxes were reconfigured and children replaced: nothing measured before now holds.
+        CraftMacBox.measureGeneration &+= 1
         for (id, box) in boxes where !retained.contains(id) {
             box.imageTask?.cancel(); box.removeFromSuperview(); boxes.removeValue(forKey: id)
             if let sheet = sheets.removeValue(forKey: id) { window?.endSheet(sheet); sheet.close() }

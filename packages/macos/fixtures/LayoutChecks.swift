@@ -160,7 +160,26 @@ final class CraftMacRuntime {
         require(renderer.boxes["root"]!.gradient == nil, "A gradient stayed after its classes went")
         require(renderer.boxes["row"]!.hoverArea == nil, "A box kept tracking the pointer after its hover styles went")
 
+        // A measurement is remembered through a layout pass and forgotten when anything changes.
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("column", "View", [:], [node("grow", "Text", ["fontSize": 13], props: ["text": "Short"])])]))
+        let shortHeight = renderer.boxes["column"]!.frame.height
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("column", "View", [:], [node("grow", "Text", ["fontSize": 13], props: ["text": String(repeating: "Much longer words that wrap ", count: 12)])])]))
+        require(renderer.boxes["column"]!.frame.height > shortHeight * 2, "A remembered measurement outlived a change of text")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("column", "View", [:], [node("a", "View", ["height": 20]), node("b", "View", ["height": 20]), node("c", "View", ["height": 20])])]))
+        require(abs(renderer.boxes["column"]!.frame.height - 60) < 1, "A remembered measurement outlived new children")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("column", "View", [:], [node("a", "View", ["height": 20]), node("b", "View", ["height": 20, "display": "none"])])]))
+        require(abs(renderer.boxes["column"]!.frame.height - 20) < 1, "A remembered measurement outlived a hidden child")
+        // Rows inside columns inside rows: each box is measured a few times per pass, not once per path through its ancestors.
+        func nested(_ depth: Int) -> [String: Any] {
+            depth == 0 ? node("leaf", "Text", [:], props: ["text": "Leaf"])
+                : node("level\(depth)", "View", depth % 2 == 0 ? ["flexDirection": "row"] : [:], [nested(depth - 1), node("side\(depth)", "Text", [:], props: ["text": "Side \(depth)"])])
+        }
+        CraftMacBox.measuredCount = 0
+        renderer.render(node("root", "View", ["flexGrow": 1], [nested(14)]))
+        require(CraftMacBox.measuredCount < 30 * 12, "A 30-box tree took \(CraftMacBox.measuredCount) measurements")
+        require(renderer.boxes["leaf"]!.frame.width > 0 && renderer.boxes["side14"]!.frame.height > 0, "The nested tree was not laid out")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients and pointer styles")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles and remembered measurements")
     }
 }
