@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.431...v0.0.432)
+
+## 🐛 Bug Fixes
+
+- **ios**: retain the timed receiver after delivery acknowledgement ([ee1f6af](https://github.com/craft-native/craft/commit/ee1f6af)) _(by Chris Breuer)_
+- **android**: distinguish a pending UI root from a failed capture ([d1d66ba](https://github.com/craft-native/craft/commit/d1d66ba)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.430...v0.0.431)
 
 ## 🐛 Bug Fixes
