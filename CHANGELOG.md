@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.429...v0.0.430)
+
+## 🐛 Bug Fixes
+
+- **android**: keep native readiness inside one owned UI phase ([5bbceec](https://github.com/craft-native/craft/commit/5bbceec)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.428...v0.0.429)
 
 ## 🐛 Bug Fixes
