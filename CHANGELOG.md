@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.434...v0.0.435)
+
+## ⚡ Performance Improvements
+
+- **macos**: zig-js with minor collections proportional to the nursery ([f56023f](https://github.com/craft-native/craft/commit/f56023f)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.433...v0.0.434)
 
 ## 🐛 Bug Fixes
