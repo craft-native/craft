@@ -257,10 +257,10 @@ test('cold-provisioning measurements cannot replace pending release acceptance',
   expect(group(true)).not.toBe(group(false))
 })
 
-test('a release commit keeps its own acceptance run, which later pushes cannot replace', () => {
-  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { concurrency: { group: string } }
-  const group = (message: string, sha: string, event = 'push') => workflow.concurrency.group.replace(/\$\{\{.*?\}\}/g, expression => String(runInNewContext(expression.slice(3, -2), {
-    inputs: { software_cold_provisioning_diagnostic: false },
+test.each(['ci.yml', 'mobile-e2e.yml'])('%s keeps a release acceptance run that later pushes cannot replace', (file) => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as { concurrency: { group: string } }
+  const group = (message: string, sha: string, event = 'push', scope = 'all') => workflow.concurrency.group.replace(/\$\{\{.*?\}\}/g, expression => String(runInNewContext(expression.slice(3, -2), {
+    inputs: { software_cold_provisioning_diagnostic: false, scope },
     startsWith: (text: string, prefix: string) => String(text ?? '').startsWith(prefix),
     github: { workflow: 'CI', head_ref: '', ref: 'refs/heads/main', sha, event_name: event, event: { head_commit: { message } } },
   })))
@@ -271,6 +271,12 @@ test('a release commit keeps its own acceptance run, which later pushes cannot r
   expect(group('chore: release v0.0.409', 'c3')).not.toBe(group('chore: release v0.0.410', 'd4'))
   // A pull request titled like a release is still a pull request.
   expect(group('chore: release v0.0.409', 'e5', 'pull_request')).toBe(group('feat: a change', 'f6', 'pull_request'))
+  // Dispatching a focused diagnostic never replaces the complete mobile gate.
+  if (file === 'mobile-e2e.yml') {
+    expect(group('chore: release v0.0.409', 'c3', 'workflow_dispatch', 'android')).not.toBe(group('chore: release v0.0.409', 'c3'))
+    expect(group('', 'g7', 'workflow_dispatch', 'android')).not.toBe(group('', 'g7', 'workflow_dispatch', 'all'))
+    expect(group('chore: release v0.0.409', 'c3', 'workflow_dispatch')).toBe(group('fix: ordinary', 'h8', 'workflow_dispatch'))
+  }
 })
 
 test('mobile device jobs use the same released stx compiler version', () => {
