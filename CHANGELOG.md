@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.423...v0.0.424)
+
+## ⚡ Performance Improvements
+
+- **macos**: build screens on zig-js a6739721, which compiles each regexp once ([273e841](https://github.com/craft-native/craft/commit/273e841)) _(by Chris)_
+- **macos**: remember each box's measurements through a layout pass ([d7cb624](https://github.com/craft-native/craft/commit/d7cb624)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.422...v0.0.423)
 
 ## 🐛 Bug Fixes
