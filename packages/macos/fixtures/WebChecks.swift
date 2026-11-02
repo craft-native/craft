@@ -115,6 +115,24 @@ final class CraftMacRuntime {
         CraftMacContentRules.shared.allowed = ["example.com"]
         require(CraftMacContentRules.shared.isAllowed("news.example.com") && !CraftMacContentRules.shared.isAllowed("example.org"), "An allowed site did not cover its subdomains")
         _ = call("removeContentRules", ["checks"], runtime); _ = call("removeContentRules", ["checks-2"], runtime)
+        // A bridged script posts to its handler in its own world, and the screen's answer resolves (or rejects) the post.
+        _ = call("setUserScripts", [[["id": "bridged", "hosts": [], "world": "isolated", "at": "start", "bridge": "checks-bridge",
+                                      "js": "window.__answers = []; const post = body => webkit.messageHandlers['checks-bridge'].postMessage(body).then(value => window.__answers.push(JSON.stringify(value)), error => window.__answers.push('error:' + error.message)); post({ v: 1, api: 'ping' }).then(() => post({ v: 1, api: 'refuse' }))"]]], runtime)
+        runtime.sent.removeAll()
+        _ = call("create", [["id": "bridged"]], runtime)
+        CraftMacWebTabs.shared.tabs["bridged"]!.view.loadHTMLString("<title>Bridged</title>", baseURL: URL(string: "https://checks.invalid/"))
+        let bridged = { runtime.sent.filter { $0["type"] as? String == "bridge" && $0["tab"] as? String == "bridged" } }
+        require(wait { bridged().count == 1 }, "A bridged script's message did not reach the screen")
+        let ping = bridged()[0]
+        require(ping["handler"] as? String == "checks-bridge" && (ping["body"] as? [String: Any])?["api"] as? String == "ping" && (ping["url"] as? String)?.hasPrefix("https://checks.invalid") == true && ping["mainFrame"] as? Bool == true, "A bridge message lost its handler, body or frame")
+        require(call("answerBridge", [ping["request"] as! String, ["pong": 1]], runtime) as? Bool == true, "answerBridge did not take its request")
+        require(wait { bridged().count == 2 }, "The script did not post again once answered")
+        _ = call("answerBridge", [bridged()[1]["request"] as! String, NSNull(), "refused"], runtime)
+        let answers = { call("evaluate", ["bridged", "JSON.stringify(window.__answers || [])", ["isolated": true]], runtime) as? String ?? "" }
+        require(wait { answers() == "[\"{\\\"pong\\\":1}\",\"error:refused\"]" }, "A bridged script did not get the answer and the refusal: \(answers())")
+        require(call("evaluate", ["bridged", "String(!!(window.webkit && webkit.messageHandlers && webkit.messageHandlers['checks-bridge']))"], runtime) as? String == "false", "The page's own world could reach an isolated script's handler")
+        require(call("answerBridge", ["no-such-request", NSNull()], runtime) as? Bool == false, "An unknown bridge request was answered")
+        _ = call("close", ["bridged"], runtime)
         _ = call("setUserScripts", [[]], runtime)
         require(call("answerPermission", ["no-such-request", "grant"], runtime) as? Bool == false, "An unknown permission request was answered")
         // A private profile is one store: what clears or adds data reaches the store its tabs use.

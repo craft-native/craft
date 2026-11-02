@@ -334,11 +334,20 @@ final class CraftMacContentRules {
 /// an isolated world the page's scripts cannot see; `world: 'page'` runs one in the page's own world,
 /// for a script that must wrap the page's `fetch` before the site does. CSS lands at document start,
 /// JS at document end unless `at: 'start'`.
-final class CraftMacUserScripts {
+final class CraftMacUserScripts: NSObject, WKScriptMessageHandlerWithReply {
     static let shared = CraftMacUserScripts()
     private var scripts: [WKUserScript] = []
+    /// Message handlers the scripts post to (`bridge`), each in its script's content world.
+    private var bridges: [(name: String, world: WKContentWorld)] = []
 
     func set(_ entries: [[String: Any]]) {
+        var named: [(name: String, world: WKContentWorld)] = []
+        for entry in entries {
+            guard let name = entry["bridge"] as? String, !name.isEmpty else { continue }
+            let world: WKContentWorld = entry["world"] as? String == "page" ? .page : .defaultClient
+            if !named.contains(where: { $0.name == name && $0.world == world }) { named.append((name, world)) }
+        }
+        bridges = named
         scripts = entries.flatMap { entry -> [WKUserScript] in
             let hosts = (entry["hosts"] as? [String] ?? []).map { $0.lowercased() }.filter { !$0.isEmpty }
             let everySite = hosts.isEmpty || hosts.contains("*")
@@ -365,6 +374,25 @@ final class CraftMacUserScripts {
     func apply(to controller: WKUserContentController) {
         controller.removeAllUserScripts()
         scripts.forEach(controller.addUserScript)
+        controller.removeAllScriptMessageHandlers()
+        for bridge in bridges { controller.addScriptMessageHandler(self, contentWorld: bridge.world, name: bridge.name) }
+    }
+
+    /// A bridged script posted to its handler (`webkit.messageHandlers[name].postMessage(body)`).
+    /// The tab's screen answers with `answerBridge`; the script's promise resolves to that answer,
+    /// or rejects with its error. A tab no screen hears, or one that does not answer within 30
+    /// seconds, is answered with an error, so the page never waits forever.
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let tab = CraftMacWebTabs.shared.tabs.values.first(where: { $0.view === message.webView }), tab.owner != nil else {
+            replyHandler(nil, "No screen is listening to this tab"); return
+        }
+        // A body WebKit can carry but JSON cannot (a Date) never reaches the screen.
+        guard JSONSerialization.isValidJSONObject(["body": message.body]) else { replyHandler(nil, "The message is not JSON"); return }
+        let request = CraftMacWebTabs.shared.awaitBridge(tab: tab, reply: replyHandler)
+        tab.emit("bridge", [
+            "request": request, "handler": message.name, "body": message.body,
+            "url": message.frameInfo.request.url?.absoluteString ?? "", "mainFrame": message.frameInfo.isMainFrame,
+        ])
     }
 }
 
@@ -478,8 +506,24 @@ final class CraftMacWebTabs {
         waiting.decide(decision); return true
     }
 
+    /// Bridge messages waiting for the screen, by request id.
+    private var bridgeReplies: [String: (tab: String, reply: (Any?, String?) -> Void)] = [:]
+    func awaitBridge(tab: CraftMacTab, reply: @escaping (Any?, String?) -> Void) -> String {
+        let request = UUID().uuidString
+        bridgeReplies[request] = (tab.id, reply)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.answerBridge(request, nil, error: "The app did not answer") }
+        return request
+    }
+    @discardableResult
+    func answerBridge(_ request: String, _ value: Any?, error: String?) -> Bool {
+        guard let waiting = bridgeReplies.removeValue(forKey: request) else { return false }
+        // JSON's null crosses as NSNull, which a reply carries as the page's `null`.
+        waiting.reply(error == nil ? (value is NSNull ? nil : value) : nil, error); return true
+    }
+
     func close(_ id: String) {
         for (request, waiting) in pending where waiting.tab == id { answer(request, .deny) }
+        for (request, waiting) in bridgeReplies where waiting.tab == id { answerBridge(request, nil, error: "The tab closed") }
         tabs.removeValue(forKey: id)?.close()
     }
 
@@ -568,6 +612,10 @@ final class CraftMacWebTabs {
         case "answerPermission":
             let decision: WKPermissionDecision = { switch args.dropFirst().first as? String { case "grant": return .grant; case "prompt": return .prompt; default: return .deny } }()
             answer(self.answer(args.first as? String ?? "", decision)); return
+        case "answerBridge":
+            // [request, value] answers; [request, null, error] rejects the page's promise with `error`.
+            let error = args.dropFirst(2).first as? String
+            answer(answerBridge(args.first as? String ?? "", args.dropFirst().first, error: error)); return
         case "clearData": clearData(options, answer: answer); return
         case "setCookies": setCookies(options, answer: answer); return
         case "cancelDownload": answer(CraftMacDownloads.shared.cancel(args.first as? String ?? "")); return
