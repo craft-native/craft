@@ -2882,6 +2882,39 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(list.refreshControl)
     }
 
+    func testImageBackgroundRetainsImageAccessibilityAcrossRoleMutations() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        defer { controller.viewDidDisappear(false) }
+        controller.render(document([[
+            "id": "background", "type": "ImageBackground",
+            "props": ["key": "background", "alt": "Trail scenery", "accessibilityHint": "Behind the trail summary"],
+        ]]))
+        let background = try XCTUnwrap(find(CraftNativePositionedImageView.self, key: "background", below: controller.view))
+        XCTAssertTrue(background.isAccessibilityElement)
+        XCTAssertTrue(background.accessibilityTraits.contains(.image), "The UIView host must keep the image's semantic identity")
+        XCTAssertEqual(background.accessibilityLabel, "Trail scenery")
+        XCTAssertEqual(background.accessibilityHint, "Behind the trail summary")
+        XCTAssertFalse(try XCTUnwrap(background.subviews.compactMap { $0 as? UIImageView }.first).isAccessibilityElement,
+                       "The pixel renderer must not duplicate the accessible image")
+        func role(_ value: Any, revision: Int) throws {
+            _ = try controller.applyMutation([
+                "version": 1, "batchId": "background-role-\(revision)", "baseRevision": revision - 1, "revision": revision,
+                "operations": [["op": "updateNode", "id": "background", "patch": ["props": ["accessibilityRole": value]]]],
+            ])
+            XCTAssertTrue(find(CraftNativePositionedImageView.self, key: "background", below: controller.view) === background)
+        }
+        try role("button", revision: 1)
+        XCTAssertTrue(background.accessibilityTraits.contains(.button))
+        XCTAssertFalse(background.accessibilityTraits.contains(.image))
+        try role("none", revision: 2)
+        XCTAssertFalse(background.isAccessibilityElement)
+        try role(NSNull(), revision: 3)
+        XCTAssertTrue(background.isAccessibilityElement)
+        XCTAssertTrue(background.accessibilityTraits.contains(.image))
+        XCTAssertEqual(background.accessibilityLabel, "Trail scenery")
+    }
+
     func testImageBackgroundTintFollowsStyle() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

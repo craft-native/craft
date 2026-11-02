@@ -911,8 +911,11 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["cover"].waitForExistence(timeout: 5), "dynamic image resize mode did not restore cover")
         let imageBackground = app.images["native-image-background"]
         XCTAssertTrue(imageBackground.waitForExistence(timeout: 10), "ImageBackground did not mount as a native image container")
+        XCTAssertEqual(imageBackground.label, "Native image background")
+        XCTAssertEqual(app.images.matching(identifier: "native-image-background").count, 1, "Pixel renderer must not duplicate the accessible image")
         let unsupportedBackground = app.images["unsupported-image-background"]
         XCTAssertTrue(unsupportedBackground.waitForExistence(timeout: 10), "unsupported ImageBackground did not mount")
+        XCTAssertEqual(unsupportedBackground.label, "Unsupported background")
         XCTAssertTrue(waitForLabel(app.staticTexts["image-background-error-status"], "background failed"))
         let unsupportedBackgroundValue = (unsupportedBackground.value as? String) ?? ""
         XCTAssertTrue(unsupportedBackgroundValue.contains("Unsupported image source"), "ImageBackground error did not reach accessibilityValue")

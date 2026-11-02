@@ -10982,7 +10982,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         switch role ?? type.lowercased() {
         case "tablist": traits.insert(.tabBar)
         case "button", "checkbox": traits.insert(.button)
-        case "image": traits.insert(.image)
+        case "image", "imagebackground": traits.insert(.image)
         case "header": traits.insert(.header)
         case "link": traits.insert(.link)
         case "search": traits.insert(.searchField)
