@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.428...v0.0.429)
+
+## 🐛 Bug Fixes
+
+- **ios**: bound voice stop with a deadline and answer before releasing the audio session ([9d38bc9](https://github.com/craft-native/craft/commit/9d38bc9)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.427...v0.0.428)
 
 ## 🐛 Bug Fixes
