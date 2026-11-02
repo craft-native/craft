@@ -293,7 +293,9 @@ persistent JSON storage, SQLite queries and transactions, lifecycle and deep-lin
 events, and local notifications. Storage and SQLite survive process relaunch;
 notifications use `AlarmManager`, so delivery does not require a running
 JavaScriptSandbox process. Enable `enableLocalDatabase`,
-`enableLocalNotifications`, and `enableDeepLinks` explicitly. Disabled or
+`enableLocalNotifications`, and `enableDeepLinks` explicitly. These optional
+boolean fields are accepted by `CraftAndroidConfig` and `InitOptions.config`;
+omitting them or setting them to `false` keeps the capabilities disabled. Disabled or
 malformed calls reject with stable capability/error codes, and in-flight calls
 have a deadline and cancellation path. The broader browser bridge remains
 specific to WebView mode. JavaScriptSandbox has no DOM `window`; Craft aliases

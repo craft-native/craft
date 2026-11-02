@@ -168,6 +168,10 @@ export interface CraftAndroidConfig {
   enableCamera?: boolean
   enableBiometric?: boolean
   enablePushNotifications?: boolean
+  /** Enable native SQLite queries and transactions. Disabled unless explicitly true. */
+  enableLocalDatabase?: boolean
+  /** Enable native AlarmManager local notification scheduling. Disabled unless explicitly true. */
+  enableLocalNotifications?: boolean
   enableSecureStorage?: boolean
   enableGeolocation?: boolean
   enableBackgroundLocation?: boolean

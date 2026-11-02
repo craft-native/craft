@@ -38,6 +38,20 @@ const result: Promise<void> = init(options)
 // @ts-expect-error name must be a string, even outside the workspace
 init({ name: 42, output: '/tmp/consumer' })
 void result
+${platform === 'android' ? `
+import type { CraftAndroidConfig } from '@craft-native/android'
+const enabled: CraftAndroidConfig = { appName: 'Consumer', packageName: 'org.example.consumer', enableLocalDatabase: true, enableLocalNotifications: true }
+const notificationsOnly: CraftAndroidConfig = { appName: 'Consumer', packageName: 'org.example.consumer', enableLocalNotifications: true }
+const disabled: CraftAndroidConfig = { ...enabled, enableLocalDatabase: false, enableLocalNotifications: false }
+const native: InitOptions = { name: 'Native', output: '/tmp/consumer', runtimeDir: null, config: { renderer: 'native', enableLocalDatabase: true, enableLocalNotifications: true } }
+// @ts-expect-error database enablement must be a boolean
+const invalidDatabase: CraftAndroidConfig = { ...enabled, enableLocalDatabase: 'yes' }
+// @ts-expect-error notification enablement must be a boolean
+const invalidNotifications: CraftAndroidConfig = { ...enabled, enableLocalNotifications: 1 }
+// @ts-expect-error unknown option names remain rejected
+const misspelled: CraftAndroidConfig = { ...enabled, enableLocalDatabse: true }
+void [notificationsOnly, disabled, native, invalidDatabase, invalidNotifications, misspelled]
+` : ''}
 ${platform === 'ios' ? `
 import { initSimulatorDriver, serializeSimulatorSteps, createNativeMutationValidator, restoreShell } from '@craft-native/ios'
 initSimulatorDriver({ output: '/tmp/driver', bundleId: 'org.example.consumer', tabs: ['Home'] })

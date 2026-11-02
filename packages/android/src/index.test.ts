@@ -18,6 +18,24 @@ function generatedFiles(path: string): string[] {
 }
 
 describe('Craft Android builder', () => {
+  it('preserves explicit native database and local notification opt-ins without enabling omitted capabilities', async () => {
+    const root = createTempDir('craft-android-local-capability-config-')
+    for (const enabled of [true, false, undefined]) {
+      const output = join(root, String(enabled))
+      await init({ name: 'Local Capabilities', output, runtimeDir: null, config: {
+        renderer: 'native',
+        ...(enabled === undefined ? {} : { enableLocalDatabase: enabled, enableLocalNotifications: enabled }),
+      } })
+      for (const path of ['craft.config.json', 'app/src/main/assets/craft.config.json']) {
+        const config = JSON.parse(readFileSync(join(output, path), 'utf8'))
+        for (const flag of ['enableLocalDatabase', 'enableLocalNotifications']) {
+          expect(Object.hasOwn(config, flag)).toBe(enabled !== undefined)
+          expect(config[flag]).toBe(enabled)
+        }
+      }
+    }
+  })
+
   it('runs a declared postGenerate command from the project root with metadata', async () => {
     const output = createTempDir('craft-android-post-generate-')
     await init({ name: 'Hook App', output, runtimeDir: null, config: {
