@@ -1354,6 +1354,19 @@ These fixtures do not establish OS eviction under memory pressure or device
 power-loss durability. The native unit suite separately exercises concurrent
 writers, failed-write preservation/retry, and disposal.
 
+Android has a maintained [checkpoint interruption fixture](../../packages/android/fixtures/checkpoint-interruption/README.md)
+using the same public native-screen snapshot promises and unchanged generated
+backend. Its debug-only preload holds the real worker immediately before atomic
+replacement. The runner requires complete staged and previous payloads, a pending
+acknowledgement with responsive native controls, process termination, recovery of
+the previous checkpoint in a fresh process, and persistent acknowledged retry.
+A pass-through negative control distinguishes that boundary from ordinary
+save/reload. Android's stock WebView provider supplies the JavaScriptSandbox
+script engine; the fixture UI is native Android controls, without a WebView.
+The required Mobile E2E `android-checkpoints` job retains original execution and
+failure artifacts. Its local arm64 evidence does not establish hosted x86_64
+acceptance or the remainder of the checkpoint matrix.
+
 ## Capability bridge
 
 The generated iOS and Android hosts advertise a versioned capability bridge on

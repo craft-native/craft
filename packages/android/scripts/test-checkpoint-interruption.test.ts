@@ -1,0 +1,123 @@
+import { expect, test } from 'bun:test'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
+
+const root = resolve(import.meta.dir, '../../..')
+const runner = join(import.meta.dir, 'test-checkpoint-interruption.ts')
+
+async function fixture(run: (directory: string, scope: NativeFixtureCommandScope) => Promise<void>) {
+  const directory = await mkdtemp(join(tmpdir(), 'craft-checkpoint-runner-test-'))
+  const scope = new NativeFixtureCommandScope()
+  try { await run(directory, scope) }
+  finally {
+    if (!scope.allDisposed) throw new Error(`Owned runner process group remains: ${directory}`)
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+async function toolchain(directory: string, mode: 'failure' | 'cancellation') {
+  const bin = join(directory, 'bin'), ndk = join(directory, 'ndk'), sdk = join(directory, 'sdk'), output = join(directory, 'output')
+  await Promise.all([mkdir(bin), mkdir(sdk), mkdir(output)])
+  const compilerDirectory = join(ndk, 'toolchains/llvm/prebuilt', process.platform === 'darwin' ? 'darwin-x86_64' : 'linux-x86_64', 'bin')
+  await mkdir(compilerDirectory, { recursive: true })
+  await writeFile(join(ndk, 'source.properties'), 'Pkg.Revision = 27.2.12479018\n')
+  for (const [name, version] of [['sdkmanager', 'Android SDK fixture'], ['avdmanager', 'Android AVD fixture'], ['gradle', 'Gradle 8.11.1'], ['java', 'openjdk version "17.0.19"']]) {
+    const file = join(bin, name!)
+    await writeFile(file, `#!${process.execPath}\nif (process.argv.includes('--version') || process.argv.includes('-version')) console.log(${JSON.stringify(version)}); else { await Bun.write(${JSON.stringify(join(directory, 'unexpected-native-work'))}, process.argv.join(' ')); process.exit(90); }\n`)
+    await chmod(file, 0o755)
+  }
+  const compiler = join(compilerDirectory, `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-linux-android35-clang`)
+  const marker = join(directory, 'compiler-processes.json')
+  await writeFile(compiler, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('Android fixture clang version 18.0.3'); else {
+    ${mode === 'failure' ? 'console.error("actual compiler exit 7"); process.exit(7);' : `
+    process.on('SIGTERM',()=>{});
+    const child=Bun.spawn([process.execPath,'-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdin:'ignore',stdout:'ignore',stderr:'ignore'});
+    await Bun.write(${JSON.stringify(marker)},JSON.stringify({runner:process.ppid,compiler:process.pid,child:child.pid}));
+    setInterval(()=>{},1000);`}
+  }\n`)
+  await chmod(compiler, 0o755)
+  await writeFile(join(compilerDirectory, 'clang'), await readFile(compiler))
+  await chmod(join(compilerDirectory, 'clang'), 0o755)
+  return { output, marker, env: [`ANDROID_HOME=${sdk}`, 'ANDROID_SDK_ROOT=', `ANDROID_NDK_HOME=${ndk}`, `PATH=${bin}:${process.env.PATH}`] }
+}
+
+async function receipt(output: string) {
+  const runs = await readdir(output)
+  expect(runs).toHaveLength(1)
+  return JSON.parse(await readFile(join(output, runs[0]!, 'verification.json'), 'utf8'))
+}
+
+test('missing Android prerequisites allocate no output or workspace', async () => {
+  await fixture(async (directory, scope) => {
+    const result = await scope.run(['/usr/bin/env', `TMPDIR=${directory}`, 'ANDROID_HOME=', 'ANDROID_SDK_ROOT=', 'ANDROID_NDK_HOME=', `PATH=${directory}`, process.execPath, runner, '--output', join(directory, 'output')], { cwd: root, timeoutMs: 10000 })
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('Select SDK, NDK and Pantry Android command-line tools')
+    expect(await readdir(directory)).toEqual([])
+  })
+})
+
+test('workspace acquisition failure retains its original failure and disposes everything acquired', async () => {
+  await fixture(async (directory, scope) => {
+    const tools = await toolchain(directory, 'failure')
+    const blocked = join(directory, 'blocked')
+    await writeFile(blocked, 'not a directory')
+    const result = await scope.run(['/usr/bin/env', ...tools.env, `TMPDIR=${blocked}`, process.execPath, runner, '--output', tools.output], { cwd: root, timeoutMs: 10000 })
+    expect(result.code).not.toBe(0)
+    expect(result.stdout).toContain('"status":"failed"')
+    const report = await receipt(tools.output)
+    expect(report.status).toBe('failed')
+    expect(report.error).toContain('mkdtemp')
+    expect(report.commandGroupsDisposed).toBe(true)
+    expect(await Bun.file(join(directory, 'unexpected-native-work')).exists()).toBe(false)
+  })
+})
+
+test('real compiler failure preserves exit status and full log without starting an emulator', async () => {
+  await fixture(async (directory, scope) => {
+    const tools = await toolchain(directory, 'failure')
+    const result = await scope.run(['/usr/bin/env', ...tools.env, `TMPDIR=${directory}`, process.execPath, runner, '--output', tools.output], { cwd: root, timeoutMs: 10000 })
+    expect(result.code).not.toBe(0)
+    const report = await receipt(tools.output)
+    expect(report.status).toBe('failed')
+    expect(report.workspaceDisposed).toBe(true)
+    expect(report.commandGroupsDisposed).toBe(true)
+    const command = report.commands.find((item: { name: string }) => item.name === 'compile-debug-interposer')
+    expect(command.code).toBe(7)
+    expect(await readFile(command.logPath, 'utf8')).toBe('actual compiler exit 7\n')
+    expect(await Bun.file(join(directory, 'unexpected-native-work')).exists()).toBe(false)
+    expect(report.serial).toBeUndefined()
+  })
+})
+
+test('SIGINT during native work kills owned descendants, retains failure, and leaves unrelated processes alive', async () => {
+  await fixture(async (directory, scope) => {
+    const tools = await toolchain(directory, 'cancellation')
+    const unrelated = Bun.spawn([process.execPath, '-e', 'setInterval(()=>{},1000)'], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' })
+    let sent = false
+    const timer = setInterval(() => {
+      if (sent || !existsSync(tools.marker)) return
+      const data = readFileSync(tools.marker, 'utf8')
+      if (!data.trim().endsWith('}')) return
+      const owned = JSON.parse(data)
+      process.kill(owned.runner, 'SIGINT'); sent = true
+    }, 10)
+    try {
+      const result = await scope.run(['/usr/bin/env', ...tools.env, `TMPDIR=${directory}`, process.execPath, runner, '--output', tools.output], { cwd: root, timeoutMs: 10000 })
+      expect(sent).toBe(true)
+      expect(result.code).not.toBe(0)
+      const report = await receipt(tools.output)
+      expect(report.status).toBe('failed')
+      expect(report.workspaceDisposed).toBe(true)
+      expect(report.commandGroupsDisposed).toBe(true)
+      expect(report.commands.find((item: { name: string }) => item.name === 'compile-debug-interposer').cancelled).toBe(true)
+      const owned = JSON.parse(await readFile(tools.marker, 'utf8'))
+      for (const pid of [owned.compiler, owned.child]) expect(() => process.kill(pid, 0)).toThrow()
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow()
+      expect(await Bun.file(join(directory, 'unexpected-native-work')).exists()).toBe(false)
+    }
+    finally { clearInterval(timer); unrelated.kill('SIGKILL'); await unrelated.exited }
+  })
+}, 15000)

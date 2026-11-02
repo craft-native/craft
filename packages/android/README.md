@@ -344,6 +344,13 @@ when those features are unavailable. If neither bridge is supported, the app
 displays a clear unsupported-device error; it never silently opens a WebView.
 The native-navigation emulator fixture also relaunches the generated app and
 reads back storage and SQLite data through the compiled STX bundle.
+The [checkpoint interruption fixture](fixtures/checkpoint-interruption/README.md)
+additionally tests public native snapshot promises across a controlled process
+termination immediately before the real atomic file replacement. Its debug-only
+preload leaves generated storage code unchanged and renders native controls.
+The stock provider supplies only the script engine. This bounded fixture does
+not establish the complete background/quota/cancellation matrix or power-loss
+durability; original per-run receipts identify which device actually ran it.
 Support depends on the installed WebView provider, so validate on each device
 class you plan to ship. The [Android JavaScriptEngine guide](https://developer.android.com/develop/ui/views/layout/webapps/jsengine)
 documents the sandbox and device-support check.
