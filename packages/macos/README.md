@@ -185,3 +185,23 @@ Escape that reaches a window or a text control unhandled arrives in the screen a
 desktop command `escape` (`craft.desktop.onCommand`), unless a ghost completion is
 showing. With `--titlebar-style transparent` the content runs under the title bar
 (full-size content view): leave room for the traffic lights.
+
+## Profiling a screen's JavaScript
+
+Set `CRAFT_JS_PROFILE` to a file path and the host samples the screen's
+JavaScript from the moment its bundle loads, then writes Chrome's
+`.cpuprofile` there. Open it in Chrome DevTools (Performance, then Load
+profile) or speedscope.
+
+```bash
+CRAFT_JS_PROFILE=/tmp/main.cpuprofile CRAFT_JS_PROFILE_MS=8000 ./MyApp.app/Contents/MacOS/craft-runtime
+```
+
+- `CRAFT_JS_PROFILE_MS` sets how long it samples (5000 by default); include the
+  interaction you are measuring.
+- `CRAFT_JS_PROFILE_INTERVAL_US` sets the sampling interval (1000 by default).
+- A window other than `Main` writes beside the file, its route in the name.
+- Build the screen unminified so the profile names your functions.
+- Samples are taken at statement boundaries, so time spent inside one native
+  call (rendering, JSON, the network), and idle time before an event, is counted
+  at the statement that runs next.
