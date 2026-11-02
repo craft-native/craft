@@ -374,6 +374,40 @@ final class NativeAudioUnitTests: XCTestCase {
         await startVoice(service, UUID().uuidString)
     }
 
+    func testStalledSessionReleaseDoesNotHoldTheNextRecording() async throws {
+        let queue = DispatchQueue(label: "voice-release-test")
+        let recorder = VoiceRecorder()
+        let release = DispatchSemaphore(value: 0)
+        let entered = expectation(description: "deactivation started")
+        let lock = NSLock()
+        var deactivations = 0
+        // A short startup deadline: a start queued behind the stalled
+        // release would time out instead of recording.
+        let service = CraftVoiceRecording(audioQueue: queue, startupTimeout: 1, permission: { $0(true) }, makeRecorder: { file in
+            try Self.writeVoice(to: file)
+            return recorder
+        }, deactivate: {
+            let first = lock.withLock { deactivations += 1; return deactivations == 1 }
+            if first { entered.fulfill(); release.wait() }
+        })
+        let discarded = UUID().uuidString
+        await startVoice(service, discarded)
+        service.perform(method: "cancel", args: [discarded]) { _ in }
+        await fulfillment(of: [entered], timeout: 2)
+        // The discarded take's session release is stuck; recording again
+        // must neither wait for it nor be deactivated by a later release.
+        let next = UUID().uuidString
+        await startVoice(service, next)
+        let stopped = expectation(description: "stop answered while the release is stuck")
+        service.perform(method: "stop", args: [next]) { result in
+            if case .failure(let error) = result { XCTFail("stop failed: \(error.code)") }
+            stopped.fulfill()
+        }
+        await fulfillment(of: [stopped], timeout: 2)
+        release.signal()
+        service.perform(method: "cancel", args: [next]) { _ in }
+    }
+
     func testRepeatedVoiceStopIsRefusedWhileTheFirstIsFinishing() async throws {
         let queue = DispatchQueue(label: "voice-stop-repeat-test")
         let recorder = VoiceRecorder()

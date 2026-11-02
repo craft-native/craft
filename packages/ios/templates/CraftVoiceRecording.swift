@@ -97,6 +97,12 @@ final class CraftVoiceRecording {
     private let permission: (@escaping (Bool) -> Void) -> Void
     private let makeRecorder: (URL) throws -> CraftVoiceRecorder
     private let deactivate: () -> Void
+    /// Releasing the audio session runs here, never on `audioQueue`: a
+    /// deactivation that stalls (seen on simulators with a virtual input)
+    /// must not hold the next recording's start or stop behind it.
+    private let releaseQueue = DispatchQueue(label: "craft.voice-recording-release", qos: .utility)
+    private let generationLock = NSLock()
+    private var generation = 0
     private let startupTimeout: TimeInterval
     private let stopTimeout: TimeInterval
     private var backgroundObserver: NSObjectProtocol?
@@ -138,7 +144,17 @@ final class CraftVoiceRecording {
         session.recorder?.stop()
         session.recorder = nil
         if let file = session.file { CraftNativeFiles.remove(file.path) }
-        deactivate()
+        releaseAudioSession()
+    }
+
+    /// Deactivate off the recording queue, and not at all once a newer
+    /// recording has started: it would only take the microphone from it.
+    private func releaseAudioSession() {
+        let mine = generationLock.withLock { generation }
+        releaseQueue.async { [weak self] in
+            guard let self, self.generationLock.withLock({ self.generation }) == mine else { return }
+            self.deactivate()
+        }
     }
 
     private func clear(_ error: CraftNativeActionError = CraftNativeActionError(code: "RECORDING_CANCELLED", message: "Recording was cancelled")) {
@@ -216,7 +232,7 @@ final class CraftVoiceRecording {
                     Self.trace("stop \(key.prefix(8)) answered")
                     settle(result)
                 }
-                self.deactivate()
+                self.releaseAudioSession()
             }
             return
         }
@@ -248,6 +264,7 @@ final class CraftVoiceRecording {
                 self.audioQueue.async {
                     do {
                         guard !session.isCancelled else { return }
+                        self.generationLock.withLock { self.generation += 1 }
                         session.recorder = try self.makeRecorder(file)
                         guard !session.isCancelled else { self.erase(session); return }
                         guard session.recorder?.record(forDuration: max(0.5, seconds - 0.25)) == true else {
