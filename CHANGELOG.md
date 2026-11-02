@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.420...v0.0.421)
+
+## 🐛 Bug Fixes
+
+- **macos**: build screens on zig-js 8caf8881, so closures keep reading their own variables ([426c56c](https://github.com/craft-native/craft/commit/426c56c)) _(by Chris)_
+- **android**: own emulator cancellation through complete cleanup ([31d8891](https://github.com/craft-native/craft/commit/31d8891)) _(by Chris)_ ([#434](https://github.com/craft-native/craft/issues/434))
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.419...v0.0.420)
 
 ## 🚀 Features
