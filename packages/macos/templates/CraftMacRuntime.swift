@@ -215,7 +215,9 @@ final class CraftMacRuntime {
         case "MUTATE":
             do {
                 let result = try document.apply(payload)
-                if let tree = result.document { scene?.renderer.render(tree) }
+                // Drawn where it changed; the whole tree only when the batch reshaped it.
+                if result.requiresFullRender || scene?.renderer.update(result.affectedNodeIds, parentOf: document.parentId(of:), node: document.node) != true,
+                   let tree = result.document { scene?.renderer.render(tree) }
                 send("MUTATION_ACK", ["version": 1, "batchId": result.batchId, "revision": result.revision])
             } catch let error as CraftNativeMutationFailure {
                 send("MUTATION_ERROR", ["version": 1, "batchId": payload["batchId"] ?? "", "code": error.code, "message": error.message])

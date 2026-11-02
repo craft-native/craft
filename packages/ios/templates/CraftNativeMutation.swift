@@ -18,10 +18,22 @@ struct CraftNativeMutationFailure: Error, Equatable {
 struct CraftNativeMutationResult {
     let batchId: String
     let revision: Int
-    let document: [String: Any]?
     let updatedNodeIds: [String]
     let affectedNodeIds: [String]
     let requiresFullRender: Bool
+    private let materialize: () -> [String: Any]?
+    /// The committed tree, built when asked for: a host that redraws only the
+    /// nodes a batch touched never needs the whole tree.
+    var document: [String: Any]? { materialize() }
+
+    init(batchId: String, revision: Int, document: @escaping () -> [String: Any]?, updatedNodeIds: [String], affectedNodeIds: [String], requiresFullRender: Bool) {
+        self.batchId = batchId
+        self.revision = revision
+        self.materialize = document
+        self.updatedNodeIds = updatedNodeIds
+        self.affectedNodeIds = affectedNodeIds
+        self.requiresFullRender = requiresFullRender
+    }
 }
 
 /// Validates and applies versioned native-tree mutations without touching UIKit.
@@ -91,6 +103,8 @@ final class CraftNativeMutationDocument {
         var updatedNodeIds: [String] = []
         var affectedNodeIds: [String] = []
         var requiresFullRender = false
+        // Only an operation that adds, moves or removes nodes can leave one unreachable.
+        var reshaped = false
         for (index, value) in operations.enumerated() {
             guard let operation = value as? [String: Any], let name = operation["op"] as? String else {
                 throw CraftNativeMutationFailure(
@@ -99,6 +113,7 @@ final class CraftNativeMutationDocument {
                     operationIndex: index
                 )
             }
+            if name != "updateNode" { reshaped = true }
             do {
                 switch name {
                 case "createNode":
@@ -147,7 +162,7 @@ final class CraftNativeMutationDocument {
             guard let root = candidateNodes[candidateRoot], root.parent == nil else {
                 throw CraftNativeMutationFailure("INVALID_TREE", "root node must not have a parent")
             }
-            guard descendants(of: candidateRoot, nodes: candidateNodes).count + 1 == candidateNodes.count else {
+            guard !reshaped || descendants(of: candidateRoot, nodes: candidateNodes).count + 1 == candidateNodes.count else {
                 throw CraftNativeMutationFailure("INVALID_TREE", "all nodes must be reachable from the root")
             }
         }
@@ -158,7 +173,7 @@ final class CraftNativeMutationDocument {
         return CraftNativeMutationResult(
             batchId: batchId,
             revision: nextRevision,
-            document: candidateRoot.flatMap { materialize($0, nodes: candidateNodes) },
+            document: { [candidateRoot, candidateNodes, weak self] in candidateRoot.flatMap { self?.materialize($0, nodes: candidateNodes) } },
             updatedNodeIds: updatedNodeIds,
             affectedNodeIds: affectedNodeIds,
             requiresFullRender: requiresFullRender

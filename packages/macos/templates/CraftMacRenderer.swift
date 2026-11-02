@@ -288,6 +288,8 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     static var measuredCount = 0
     private struct MeasureKey: Hashable { let width: CGFloat, stretch: Bool }
     private var measured: [MeasureKey: CGSize] = [:]
+    /// What this box measured is stale: it or something inside it changed (CraftMacRenderer.update).
+    func forgetMeasurements() { measured.removeAll(keepingCapacity: true) }
     private var measuredGeneration = -1
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
@@ -966,6 +968,77 @@ final class CraftMacRenderer {
     weak var window: NSWindow?
     var sheets: [String: NSPanel] = [:]
     init(runtime: CraftMacRuntime) { self.runtime = runtime }
+    /// The box for `node`, made or reconfigured, and its children's in order; every id drawn goes into `retained`.
+    func reconcile(_ node: [String: Any], retained: inout Set<String>) -> CraftMacBox {
+        let id = node["id"] as? String ?? "root", kind = node["type"] as? String ?? "View"
+        retained.insert(id)
+        let box = boxes[id] ?? CraftMacBox(id: id, kind: kind, renderer: self)
+        boxes[id] = box; box.configure(node)
+        if let flow = box.flow, kind != "Button" {
+            let children = (node["children"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map { reconcile($0, retained: &retained) }
+            for child in flow.boxes where !children.contains(where: { $0 === child }) { child.removeFromSuperview() }
+            flow.boxes = children
+            for child in children where child.superview !== flow && sheets[child.id] == nil { flow.addSubview(child) }
+            // `zIndex` draws a child above its siblings (an overlay over a web page), highest last.
+            let raised = children.filter { (number($0.layoutStyle["zIndex"]) ?? 0) > 0 && $0.superview === flow }
+                .sorted { (number($0.layoutStyle["zIndex"]) ?? 0) < (number($1.layoutStyle["zIndex"]) ?? 0) }
+            if !raised.isEmpty, Array(flow.subviews.suffix(raised.count)) != raised {
+                for child in raised { flow.addSubview(child, positioned: .above, relativeTo: nil) }
+            }
+        }
+        return box
+    }
+
+    /// A batch drawn where it happened rather than across the window: each changed node's subtree
+    /// (or, for a node the batch created, its nearest drawn ancestor's) is reconciled again, and only
+    /// those boxes and the boxes above them measure and lay out again. A hover on one row used to
+    /// reconfigure every view in the window and forget every measurement. False when it cannot be
+    /// done in place (nothing drawn yet, a sheet, a node changing kind): the caller renders the tree.
+    func update(_ ids: [String], parentOf: (String) -> String?, node nodeFor: (String) -> [String: Any]?) -> Bool {
+        guard !boxes.isEmpty else { return false }
+        var targets: [String] = []
+        for id in ids {
+            var current: String? = id
+            while let candidate = current, boxes[candidate] == nil { current = parentOf(candidate) }
+            guard let target = current else { return false }
+            if !targets.contains(target) { targets.append(target) }
+        }
+        // A target inside another is drawn with it.
+        let chosen = targets.filter { target in
+            guard let box = boxes[target] else { return false }
+            return !targets.contains { other in other != target && boxes[other].map { box.isDescendant(of: $0) } == true }
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for target in chosen {
+            guard let box = boxes[target], box.window === window, sheets[target] == nil, box.kind != "Modal",
+                  let node = nodeFor(target), (node["type"] as? String ?? "View") == box.kind else { return false }
+            var before = Set<String>()
+            collectIds(box, into: &before)
+            var retained = Set<String>()
+            _ = reconcile(node, retained: &retained)
+            for id in before where !retained.contains(id) {
+                guard let gone = boxes.removeValue(forKey: id) else { continue }
+                gone.imageTask?.cancel(); gone.removeFromSuperview()
+            }
+            for id in retained { if let drawn = boxes[id] { drawn.forgetMeasurements(); drawn.needsLayout = true } }
+            var above: NSView? = box.superview
+            while let view = above {
+                (view as? CraftMacBox)?.forgetMeasurements()
+                view.needsLayout = true
+                above = view.superview
+            }
+        }
+        root.needsLayout = true
+        root.layoutSubtreeIfNeeded()
+        return true
+    }
+
+    private func collectIds(_ box: CraftMacBox, into ids: inout Set<String>) {
+        ids.insert(box.id)
+        for child in box.flow?.boxes ?? [] { collectIds(child, into: &ids) }
+    }
+
     func render(_ document: [String: Any]) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -976,26 +1049,7 @@ final class CraftMacRenderer {
             let bottom = bounds.maxY >= (scroll.documentView?.bounds.height ?? 0) - 8
             scrolls.append((box, bounds.origin, bottom))
         } }
-        func reconcile(_ node: [String: Any]) -> CraftMacBox {
-            let id = node["id"] as? String ?? "root", kind = node["type"] as? String ?? "View"
-            retained.insert(id)
-            let box = boxes[id] ?? CraftMacBox(id: id, kind: kind, renderer: self)
-            boxes[id] = box; box.configure(node)
-            if let flow = box.flow, kind != "Button" {
-                let children = (node["children"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map(reconcile)
-                for child in flow.boxes where !children.contains(where: { $0 === child }) { child.removeFromSuperview() }
-                flow.boxes = children
-                for child in children where child.superview !== flow && sheets[child.id] == nil { flow.addSubview(child) }
-                // `zIndex` draws a child above its siblings (an overlay over a web page), highest last.
-                let raised = children.filter { (number($0.layoutStyle["zIndex"]) ?? 0) > 0 && $0.superview === flow }
-                    .sorted { (number($0.layoutStyle["zIndex"]) ?? 0) < (number($1.layoutStyle["zIndex"]) ?? 0) }
-                if !raised.isEmpty, Array(flow.subviews.suffix(raised.count)) != raised {
-                    for child in raised { flow.addSubview(child, positioned: .above, relativeTo: nil) }
-                }
-            }
-            return box
-        }
-        let box = reconcile(document)
+        let box = reconcile(document, retained: &retained)
         // Boxes were reconfigured and children replaced: nothing measured before now holds.
         CraftMacBox.measureGeneration &+= 1
         for (id, box) in boxes where !retained.contains(id) {

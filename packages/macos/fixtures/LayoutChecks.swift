@@ -179,7 +179,34 @@ final class CraftMacRuntime {
         require(CraftMacBox.measuredCount < 30 * 12, "A 30-box tree took \(CraftMacBox.measuredCount) measurements")
         require(renderer.boxes["leaf"]!.frame.width > 0 && renderer.boxes["side14"]!.frame.height > 0, "The nested tree was not laid out")
 
+        // A batch is drawn where it changed: the changed row and the rows inserted under a list,
+        // and nothing else reconfigured or measured again.
+        var tree: [String: [String: Any]] = [:]
+        var parents: [String: String] = [:]
+        func listNode(_ ids: [String], label: (String) -> String) -> [String: Any] {
+            let rows = ids.map { node($0, "Text", ["height": 20], props: ["text": label($0)]) }
+            for row in rows { tree[row["id"] as! String] = row; parents[row["id"] as! String] = "list" }
+            let list = node("list", "View", [:], rows); tree["list"] = list; parents["list"] = "root"
+            let root = node("root", "View", ["flexGrow": 1], [node("header", "View", ["height": 30]), list]); tree["root"] = root
+            return root
+        }
+        renderer.render(listNode(["r1", "r2", "r3"]) { "Row \($0)" })
+        let untouched = renderer.boxes["header"]!
+        CraftMacBox.measuredCount = 0
+        _ = listNode(["r1", "r2", "r3"]) { $0 == "r2" ? "Changed" : "Row \($0)" }
+        require(renderer.update(["r2"], parentOf: { parents[$0] }, node: { tree[$0] }), "A row's change could not be drawn in place")
+        require((renderer.boxes["r2"]!.control as? NSTextField)?.stringValue == "Changed", "An in-place update did not reach the row")
+        require(renderer.boxes["header"] === untouched && CraftMacBox.measuredCount < 12, "An in-place update measured \(CraftMacBox.measuredCount) boxes")
+        _ = listNode(["r1", "r2", "r3", "r4"]) { "Row \($0)" }
+        require(renderer.update(["r4", "list"], parentOf: { parents[$0] }, node: { tree[$0] }), "An inserted row could not be drawn in place")
+        require(abs(renderer.boxes["r4"]!.frame.minY - renderer.boxes["r3"]!.frame.minY - 20) < 1, "An inserted row was not laid out after its siblings")
+        _ = listNode(["r1", "r4"]) { "Row \($0)" }
+        require(renderer.update(["list"], parentOf: { parents[$0] }, node: { tree[$0] }), "Removed rows could not be drawn in place")
+        require(renderer.boxes["r2"] == nil && renderer.boxes["r3"] == nil && abs(renderer.boxes["r4"]!.frame.minY - renderer.boxes["r1"]!.frame.minY - 20) < 1, "Removed rows stayed drawn")
+        let empty = CraftMacRenderer(runtime: runtime)
+        require(!empty.update(["r1"], parentOf: { parents[$0] }, node: { tree[$0] }), "An update with nothing drawn did not ask for a full render")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles and remembered measurements")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements and in-place updates")
     }
 }
