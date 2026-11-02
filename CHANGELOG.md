@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.427...v0.0.428)
+
+## 🐛 Bug Fixes
+
+- **ios**: mirror shake gesture configuration validation in Zig ([a597075](https://github.com/craft-native/craft/commit/a597075)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.426...v0.0.427)
 
 ## 🚀 Features
