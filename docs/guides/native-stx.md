@@ -1685,6 +1685,11 @@ On iOS and Android, stopping, replacing, or closing a sound while it is still
 loading rejects that pending play request with `CANCELLED` exactly once.
 A late readiness callback cannot report success for a removed sound or affect
 another sound that reuses its id; decode failures retain `AUDIO_ERROR`.
+Android validates replacement input before stopping an existing sound. A rejected
+non-finite `volume` or invalid `fadeIn` leaves the current player, pending load,
+volume and cancellation handle intact; a valid replacement still cancels the old
+load exactly once. This does not roll back a replacement after preparation or
+OS audio-focus admission fails.
 Control calls resolve `false` when their sound id is not owned by the screen,
 matching the browser host instead of reporting a false success.
 

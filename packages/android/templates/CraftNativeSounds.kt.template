@@ -57,13 +57,14 @@ internal class CraftNativeSounds(
         if (id.isBlank()) return done(failure("INVALID_ARGUMENT", "audio.play needs an id"))
         val uri = source(address)
             ?: return done(failure("INVALID_ARGUMENT", "audio.play needs an absolute http, https, file or content URL"))
-        stop(id, 0.0)
-
         val requestedVolume = options.optDouble("volume", 1.0)
         val volume = requestedVolume.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)?.toFloat()
             ?: return done(failure("INVALID_ARGUMENT", "audio.play volume must be a finite number between 0 and 1"))
         val fadeIn = options.optDouble("fadeIn", 0.0)
         if (!fadeIn.isFinite() || fadeIn < 0) return done(failure("INVALID_ARGUMENT", "audio.play fadeIn must be a non-negative finite number"))
+        // Reject malformed options before cancelling a sound with the same id.
+        // Its player, pending load and cancellation handle still belong to it.
+        stop(id, 0.0)
         val player = MediaPlayer()
         val sound = Sound(player, if (fadeIn > 0) 0f else volume, pending = done)
         sounds[id] = sound

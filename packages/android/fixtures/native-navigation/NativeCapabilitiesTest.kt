@@ -16,6 +16,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -364,6 +365,70 @@ class NativeCapabilitiesTest {
                 instrumentation.waitForIdleSync()
             }
         } finally { file.delete() }
+    }
+
+    @Test
+    fun invalidReplacementDoesNotCancelAPreparingSound() = invalidReplacementKeepsSound(false)
+
+    @Test
+    fun invalidReplacementDoesNotStopAPlayingSound() = invalidReplacementKeepsSound(true)
+
+    private fun invalidReplacementKeepsSound(awaitReady: Boolean) {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                // Strings permit non-finite values to reach native validation
+                // through valid JSON; JSONObject rejects non-finite Doubles.
+                for (options in listOf(
+                    JSONObject().put("volume", "NaN"),
+                    JSONObject().put("fadeIn", -1),
+                    JSONObject().put("fadeIn", "Infinity"),
+                )) {
+                    lateinit var service: CraftNativeSounds
+                    lateinit var original: Any
+                    lateinit var cancelOriginal: () -> Unit
+                    val results = mutableListOf<CraftNativeCapabilityResult>()
+                    val ready = CountDownLatch(1)
+                    try {
+                        scenario.onActivity { activity ->
+                            service = CraftNativeSounds(activity)
+                            service.play("tone", file.toURI().toString(), JSONObject().put("loop", true).put("volume", 0.6)) {
+                                results.add(it)
+                                ready.countDown()
+                            }
+                            original = sound(service)
+                            cancelOriginal = service.cancellation("tone")
+                            if (!awaitReady) {
+                                assertTrue("readiness must still be pending", results.isEmpty())
+                                assertInvalidReplacement(service, file, options, original)
+                                assertTrue("invalid replacement cancelled the pending play", results.isEmpty())
+                            }
+                        }
+                        assertTrue("original sound did not prepare", ready.await(10, TimeUnit.SECONDS))
+                        scenario.onActivity {
+                            assertEquals(1, results.size)
+                            assertNull(results.single().message, results.single().code)
+                            if (awaitReady) assertInvalidReplacement(service, file, options, original)
+                            assertSame(original, sound(service))
+                            assertTrue("invalid replacement stopped playback", (field(original, "player") as MediaPlayer).isPlaying)
+                            assertEquals(0.6f, outputVolume(service, "tone"), 0.001f)
+                            cancelOriginal()
+                            assertFalse("the original cancellation must still own the player", service.resume("tone"))
+                            assertEquals("late callbacks must not settle the original again", 1, results.size)
+                        }
+                    } finally { scenario.onActivity { service.close() } }
+                }
+            }
+        } finally { file.delete() }
+    }
+
+    private fun assertInvalidReplacement(service: CraftNativeSounds, file: java.io.File, options: JSONObject, original: Any) {
+        val rejected = mutableListOf<CraftNativeCapabilityResult>()
+        service.play("tone", file.toURI().toString(), options) { rejected.add(it) }
+        assertEquals("invalid options must settle once: $options", 1, rejected.size)
+        assertEquals("INVALID_ARGUMENT", rejected.single().code)
+        val retained = CraftNativeSounds::class.java.getDeclaredField("sounds").apply { isAccessible = true }.get(service) as Map<*, *>
+        assertSame("invalid options removed or replaced the existing sound: $options", original, retained["tone"])
     }
 
     @Test
