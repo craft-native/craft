@@ -1,5 +1,29 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.435...v0.0.436)
+
+## 🚀 Features
+
+- **macos**: CRAFT_JS_PROFILE writes a screen's JavaScript profile ([7398181](https://github.com/craft-native/craft/commit/7398181)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios-driver**: observe one switch gesture without retapping ([5c40d9a](https://github.com/craft-native/craft/commit/5c40d9a)) _(by Chris Breuer)_
+- **ios-driver**: count a switch tap only once the switch has flipped ([6d3b72d](https://github.com/craft-native/craft/commit/6d3b72d)) _(by Chris Breuer)_
+
+## ⚡ Performance Improvements
+
+- **macos**: draw a mutation batch where it changed ([961bcd0](https://github.com/craft-native/craft/commit/961bcd0)) _(by Chris)_
+
+## 📚 Documentation
+
+- **macos**: profiling a screen's JavaScript ([8e7d543](https://github.com/craft-native/craft/commit/8e7d543)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.434...v0.0.435)
 
 ## ⚡ Performance Improvements
