@@ -2,6 +2,8 @@ package dev.craft.navigationtest
 
 import android.content.Intent
 import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.MediaPlayer
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -300,6 +302,85 @@ class NativeCapabilitiesTest {
                         assertFalse(service.resume("effect"))
                     }
                 } finally { scenario.onActivity { service.close() } }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun systemAudioFocusInterruptionResumesMusicButKeepsUserPausedEffectsPaused() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var service: CraftNativeSounds
+                lateinit var manager: AudioManager
+                lateinit var competitor: AudioFocusRequest
+                val ready = CountDownLatch(2)
+                val results = mutableListOf<CraftNativeCapabilityResult>()
+                lateinit var music: MediaPlayer
+                lateinit var effect: MediaPlayer
+                fun awaitState(description: String, predicate: () -> Boolean) {
+                    val deadline = android.os.SystemClock.uptimeMillis() + 5000
+                    var matched = false
+                    while (!matched && android.os.SystemClock.uptimeMillis() < deadline) {
+                        scenario.onActivity { matched = predicate() }
+                        if (!matched) android.os.SystemClock.sleep(20)
+                    }
+                    assertTrue(description, matched)
+                }
+                try {
+                    scenario.onActivity { activity ->
+                        manager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+                        // A distinct owned client goes through Android's real
+                        // focus stack. Never call the service's callback here.
+                        competitor = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                            .setAudioAttributes(AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                            .setOnAudioFocusChangeListener({ _ -> }, android.os.Handler(android.os.Looper.getMainLooper()))
+                            .build()
+                        service = CraftNativeSounds(activity)
+                        for (id in listOf("music", "effect")) {
+                            service.play(id, file.toURI().toString(), JSONObject().put("loop", true)) {
+                                results.add(it)
+                                ready.countDown()
+                            }
+                        }
+                        music = field(sound(service, "music"), "player") as MediaPlayer
+                        effect = field(sound(service, "effect"), "player") as MediaPlayer
+                    }
+                    assertTrue("both real players must prepare", ready.await(10, TimeUnit.SECONDS))
+                    scenario.onActivity { results.forEach { assertNull(it.message, it.code) } }
+                    awaitState("both sounds must initially play") { music.isPlaying && effect.isPlaying }
+                    repeat(2) {
+                        scenario.onActivity {
+                            assertEquals("competing focus request must be admitted", AudioManager.AUDIOFOCUS_REQUEST_GRANTED,
+                                manager.requestAudioFocus(competitor))
+                        }
+                        awaitState("system focus loss must pause both real players") {
+                            !music.isPlaying && !effect.isPlaying && field(sound(service, "music"), "interrupted") == true
+                                && field(sound(service, "effect"), "interrupted") == true
+                        }
+                        scenario.onActivity {
+                            assertFalse("manual resume must respect the active system interruption", service.resume("music"))
+                            assertTrue(service.pause("effect"))
+                            assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, manager.abandonAudioFocusRequest(competitor))
+                        }
+                        awaitState("system focus gain must resume only the interrupted music") {
+                            music.isPlaying && !effect.isPlaying && field(sound(service, "music"), "interrupted") == false
+                        }
+                        scenario.onActivity {
+                            assertSame(music, field(sound(service, "music"), "player"))
+                            assertSame(effect, field(sound(service, "effect"), "player"))
+                            assertEquals("interruption must not settle the loads again", 2, results.size)
+                            assertTrue(service.resume("effect"))
+                        }
+                        awaitState("an explicitly resumed effect must play") { effect.isPlaying }
+                    }
+                } finally {
+                    scenario.onActivity {
+                        try { manager.abandonAudioFocusRequest(competitor) } finally { service.close() }
+                    }
+                }
             }
         } finally { file.delete() }
     }

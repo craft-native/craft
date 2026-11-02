@@ -1693,6 +1693,13 @@ OS audio-focus admission fails.
 Control calls resolve `false` when their sound id is not owned by the screen,
 matching the browser host instead of reporting a false success.
 
+The Android capability fixture exercises transient interruption through the real
+`AudioManager` focus stack using a second owned client in its foreground app. It
+checks two interruption/recovery cycles with overlapping native players and
+retains a user pause across focus gain. This emulator coverage does not establish
+physical interruption events or captured audible output; ducking and denial
+still have separate deterministic callback/decision tests.
+
 Checkpoint names use the same bounded filename contract on both native hosts:
 letters, digits, `.`, `_`, and `-`, up to 128 characters, without a leading
 dot. Non-JSON values and invalid names are rejected before a write is posted;

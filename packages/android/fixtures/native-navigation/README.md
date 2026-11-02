@@ -149,3 +149,31 @@ Android 15 system-bar screenshots wait for a focused window's measured
 navigation insets after startup or an appearance change. Finding a rendered
 protocol view alone does not establish that the first inset dispatch finished.
 The pixel and button-contrast assertions still require a visible system bar.
+
+## System audio-focus acceptance
+
+`NativeCapabilitiesTest.systemAudioFocusInterruptionResumesMusicButKeepsUserPausedEffectsPaused`
+starts two real looping `MediaPlayer` instances through `CraftNativeSounds`. A
+second owned `AudioFocusRequest` in the foreground test app requests transient
+focus through Android's `AudioManager`; the test never invokes Craft's focus
+callback directly. Both players must pause, manual resume must be refused while
+interrupted, and abandoning the competing request must resume only the music.
+An effect explicitly paused by the user must remain paused until explicitly
+resumed. Two complete interruption/recovery cycles retain the original players
+and settle each load only once. Both focus clients and the temporary WAV are
+released during teardown, including after a failed assertion.
+
+Run this case on an owned booted emulator with the same STX CLI version used by
+CI:
+
+```bash
+STX_CLI=/path/to/stx/packages/stx/bin/cli.ts \
+CRAFT_ANDROID_TEST_CLASS=dev.craft.navigationtest.NativeCapabilitiesTest#systemAudioFocusInterruptionResumesMusicButKeepsUserPausedEffectsPaused \
+bun packages/android/scripts/test-native-navigation.ts
+```
+
+Normal API 34 and 35 navigation CI includes this case in the capability suite.
+The WAV is silent: this checks real OS focus arbitration and native player state,
+not captured audible output, another app's UID, a telephone call, or physical
+device behavior. Separate injected focus tests still cover deterministic ducking
+and denial paths.
