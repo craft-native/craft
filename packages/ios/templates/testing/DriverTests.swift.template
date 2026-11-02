@@ -143,13 +143,29 @@ final class DriverTests: XCTestCase {
         return any.exists ? any : nil
     }
 
+    /// Where a label is looked for, in order: the topmost presented alert,
+    /// then the topmost sheet, then the whole app. A sheet's "Sign out" and
+    /// the row that opened it share a label, and the row behind the sheet
+    /// is still reported hittable, so the presented one has to win.
+    func searchScopes<Scope>(alerts: [Scope], sheets: [Scope], app: Scope) -> [Scope] {
+        [alerts.last, sheets.last].compactMap { $0 } + [app]
+    }
+
+    func presentedScopes() -> [XCUIElement] {
+        let alerts = app.alerts.allElementsBoundByIndex.filter { $0.exists }
+        let sheets = app.sheets.allElementsBoundByIndex.filter { $0.exists }
+        return searchScopes(alerts: alerts, sheets: sheets, app: app as XCUIElement)
+    }
+
     func exact(_ label: String) -> XCUIElement? {
         let predicate = NSPredicate(format: "label == %@", label)
-        for query in [app.buttons, app.links, app.staticTexts] {
-            let matches = query.matching(predicate)
-            for index in 0..<min(matches.count, 25) {
-                let candidate = matches.element(boundBy: index)
-                if candidate.exists && candidate.isHittable { return candidate }
+        for scope in presentedScopes() {
+            for query in [scope.buttons, scope.links, scope.staticTexts] {
+                let matches = query.matching(predicate)
+                for index in 0..<min(matches.count, 25) {
+                    let candidate = matches.element(boundBy: index)
+                    if candidate.exists && candidate.isHittable { return candidate }
+                }
             }
         }
         return nil
@@ -665,7 +681,9 @@ final class DriverTests: XCTestCase {
             // A system prompt over the app ("Save Password?" → Not Now), wherever iOS shows it.
             let label = arg.isEmpty ? "Not Now" : arg
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            let candidates = [app.buttons[label], springboard.buttons[label]]
+            // The app's own alert or sheet first (its button can share a
+            // label with the control behind it), then the app, then iOS.
+            let candidates = { self.presentedScopes().map { $0.buttons[label] } + [springboard.buttons[label]] }
             let end = Date().addingTimeInterval(6)
             // A tap is not a dismissal. iOS 26 draws "Save Password?" as a
             // sheet that is in the tree, and hittable, while it still slides
@@ -676,7 +694,7 @@ final class DriverTests: XCTestCase {
             var tapped = false
             var gone = false
             while !gone && Date() < end {
-                guard let button = candidates.first(where: { $0.exists && $0.isHittable }) else {
+                guard let button = candidates().first(where: { $0.exists && $0.isHittable }) else {
                     if tapped { gone = true } else { Thread.sleep(forTimeInterval: 0.5) }
                     continue
                 }
