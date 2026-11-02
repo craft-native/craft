@@ -111,18 +111,32 @@ describe('Android native runner failure evidence', () => {
       writeFileSync(adb, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n'); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`)
       chmodSync(adb, 0o755)
       const before = performance.now()
+      let launchedPids: number[] = []
       try {
         retainNativeNavigationEvidence({ project: directory, directory: join(directory, 'evidence'), serial: 'emulator-owned', adbPath: adb, timeoutMs: 500 })
         expect(performance.now() - before).toBeLessThan(4000)
         const report = JSON.parse(readFileSync(join(directory, 'evidence/diagnostics.json'), 'utf8'))
         expect(report.commands).toHaveLength(3)
         expect(report.commands.every((command: { signalCode: string }) => command.signalCode === 'SIGKILL')).toBe(true)
-        const ownedPids = readFileSync(pids, 'utf8').trim().split('\n').map(Number)
-        expect(ownedPids).toHaveLength(3)
-        for (const pid of ownedPids) expect(() => process.kill(pid, 0)).toThrow()
+        const reportedPids = report.commands.map((command: { pid: number }) => command.pid)
+        expect(reportedPids.every((pid: number) => Number.isSafeInteger(pid) && pid > 0)).toBe(true)
+        launchedPids = reportedPids
+        expect(new Set(launchedPids).size).toBe(3)
+        for (const pid of launchedPids) expect(() => process.kill(pid, 0)).toThrow()
+        // A cold client can be killed before it writes a startup receipt.
+        // Still require a running TERM-ignoring fixture, but prove all three
+        // launches were reaped from the parent's OS process identities.
+        const startedPids = readFileSync(pids, 'utf8').trim().split('\n').map(Number)
+        expect(startedPids.length).toBeGreaterThan(0)
+        expect(startedPids.every(pid => launchedPids.includes(pid))).toBe(true)
       }
       finally {
-        // A failed assertion still rescues only the PIDs this fixture recorded.
+        // A failed assertion still rescues only this fixture's owned clients,
+        // including one killed before reaching its startup receipt.
+        for (const pid of launchedPids) {
+          try { process.kill(pid, 'SIGKILL') }
+          catch { /* already reaped */ }
+        }
         if (existsSync(pids)) {
           for (const pid of readFileSync(pids, 'utf8').trim().split('\n').map(Number)) {
             try { process.kill(pid, 'SIGKILL') }

@@ -344,6 +344,13 @@ when those features are unavailable. If neither bridge is supported, the app
 displays a clear unsupported-device error; it never silently opens a WebView.
 The native-navigation emulator fixture also relaunches the generated app and
 reads back storage and SQLite data through the compiled STX bundle.
+Before its project or emulator is removed, the native-navigation runner retains
+instrumentation reports and bounded diagnostics from the selected device in
+`CRAFT_ANDROID_NATIVE_ARTIFACTS` (default `artifacts/android-native-navigation`).
+`diagnostics.json` records each launched ADB client's parent-observed PID, exit
+code and terminating signal, including clients killed before their own startup
+logging runs. Diagnostic failures do not replace the instrumentation verdict;
+an absent `ANDROID_SERIAL` prevents device queries entirely.
 The [checkpoint interruption fixture](fixtures/checkpoint-interruption/README.md)
 additionally tests public native snapshot promises across a controlled process
 termination immediately before the real atomic file replacement. Its debug-only

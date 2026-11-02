@@ -18,7 +18,7 @@ export function retainNativeNavigationEvidence(options: EvidenceOptions): void {
     serial: string | null
     deviceCaptureSkipped?: string
     copies: { source: string, missing?: boolean, error?: string }[]
-    commands: { args: string[], exitCode?: number, signalCode?: string | number | null, error?: string }[]
+    commands: { args: string[], pid?: number, exitCode?: number, signalCode?: string | number | null, error?: string }[]
   } = { serial: serial || null, copies: [], commands: [] }
 
   // These outputs, unlike generated source/build caches, are needed to locate
@@ -55,6 +55,9 @@ export function retainNativeNavigationEvidence(options: EvidenceOptions): void {
           cwd: project, stdin: 'ignore', stdout: descriptor, stderr: descriptor,
           timeout: timeoutMs, killSignal: 'SIGKILL',
         })
+        // Parent-side identity survives a deadline that fires before the
+        // client reaches its own logging or startup code.
+        command.pid = result.pid
         command.exitCode = result.exitCode
         command.signalCode = result.signalCode
       }
