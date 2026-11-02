@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.430...v0.0.431)
+
+## 🐛 Bug Fixes
+
+- **ios**: release the voice audio session off the recording queue ([3cf6e52](https://github.com/craft-native/craft/commit/3cf6e52)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.429...v0.0.430)
 
 ## 🐛 Bug Fixes
