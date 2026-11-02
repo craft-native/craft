@@ -363,8 +363,10 @@ test('the SDK process fixture records hardware mode and reaps only its owned pro
     expect(readFileSync(join(options.sdkRoot, 'calls'), 'utf8')).toContain('-gpu software')
     expect(readFileSync(join(options.sdkRoot, 'calls'), 'utf8')).not.toContain('swiftshader_indirect')
     const owned = readFileSync(join(options.sdkRoot, 'owned'), 'utf8')
-    await session.dispose()
-    await session.dispose()
+    const closing = session.dispose()
+    expect(session.dispose()).toBe(closing)
+    await closing
+    expect(session.dispose()).toBe(closing)
     expect(existsSync(owned)).toBe(false)
     expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(false)
     expect(existsSync(options.sdkmanager)).toBe(true)
@@ -468,3 +470,244 @@ test('an emulator process that exits before boot reports its exit instead of a f
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+const waitForOwnedFile = async (path: string): Promise<void> => {
+  const deadline = performance.now() + 2000
+  while (!existsSync(path) && performance.now() < deadline) await Bun.sleep(10)
+  expect(existsSync(path)).toBe(true)
+}
+
+test('a pre-cancelled emulator request starts no SDK command or private registry', async () => {
+  const { root, options } = fixture(true)
+  const controller = new AbortController()
+  controller.abort(new Error('Native acceptance cancelled'))
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    await expect(createAndroidEmulator({ ...options, signal: controller.signal }).then(value => { session = value; return value })).rejects.toThrow('Native acceptance cancelled')
+    expect(existsSync(join(options.sdkRoot, 'calls'))).toBe(false)
+    expect(existsSync(options.temporaryDirectory!)).toBe(false)
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 10000)
+
+test('cancelling provisioning reaps its SDK process group before returning and preserves foreign registries', async () => {
+  const { root, options } = fixture(true)
+  const foreign = join(root, 'user-avds')
+  mkdirSync(foreign)
+  writeFileSync(join(foreign, 'phone.ini'), 'existing user device')
+  options.env = { ANDROID_AVD_HOME: foreign }
+  writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\necho $$ > "$ANDROID_HOME/provision.pid"\nsleep 2\ntouch "$ANDROID_HOME/after-cancel"\n', { mode: 0o755 })
+  const controller = new AbortController()
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    const starting = createAndroidEmulator({ ...options, signal: controller.signal }).then(value => { session = value; return value })
+    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
+    const pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    controller.abort(new Error('Provisioning cancelled'))
+    await expect(starting).rejects.toThrow('Provisioning cancelled')
+    expect(() => process.kill(-pid, 0)).toThrow()
+    expect(existsSync(join(options.sdkRoot, 'after-cancel'))).toBe(false)
+    expect(readFileSync(join(foreign, 'phone.ini'), 'utf8')).toBe('existing user device')
+    expect(readdirSync(options.temporaryDirectory!)).toEqual([])
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 10000)
+
+test('cancelling boot reaps only the owned guest and does not reconnect or stop foreign devices', async () => {
+  const { root, options } = fixture(true, false, false, false, 'offline')
+  options.bootTimeoutMs = 1000
+  const controller = new AbortController()
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    const starting = createAndroidEmulator({ ...options, signal: controller.signal }).then(value => { session = value; return value })
+    await waitForOwnedFile(join(options.sdkRoot, 'started'))
+    const pid = Number(readFileSync(join(options.sdkRoot, 'emulator.pid'), 'utf8'))
+    controller.abort(new Error('Boot cancelled'))
+    await expect(starting).rejects.toThrow('Boot cancelled')
+    expect(() => process.kill(pid, 0)).toThrow()
+    const calls = readFileSync(join(options.sdkRoot, 'calls'), 'utf8')
+    expect(calls).not.toContain('kill-server')
+    expect(calls).not.toContain('reconnect')
+    expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 10000)
+
+test('post-return cancellation disposes a TERM-ignoring guest before acknowledging the closed session', async () => {
+  const { root, options } = fixture(true)
+  const executable = join(options.sdkRoot, 'emulator/emulator')
+  writeFileSync(executable, readFileSync(executable, 'utf8').replace("trap 'exit 0' TERM INT", "trap '' TERM INT"), { mode: 0o755 })
+  const controller = new AbortController()
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    session = await createAndroidEmulator({ ...options, signal: controller.signal })
+    const pid = Number(readFileSync(join(options.sdkRoot, 'emulator.pid'), 'utf8'))
+    controller.abort(new Error('Returned session cancelled'))
+    expect(session.closed).toBeInstanceOf(Promise)
+    await session.closed
+    expect(() => process.kill(-pid, 0)).toThrow()
+    expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 15000)
+
+test('failed guest disposal retains the private registry until its process group can be reaped', async () => {
+  const { root, options } = fixture(true)
+  const originalKill = process.kill
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  let pid = 0
+  try {
+    session = await createAndroidEmulator(options)
+    pid = Number(readFileSync(join(options.sdkRoot, 'emulator.pid'), 'utf8'))
+    const owned = readFileSync(join(options.sdkRoot, 'owned'), 'utf8')
+    process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
+      if (selected === -pid && signal !== 0) throw Object.assign(new Error('Fixture signal denied'), { code: 'EPERM' })
+      return originalKill(selected, signal)
+    }) as typeof process.kill
+    await expect(session.dispose()).rejects.toThrow()
+    expect(existsSync(owned)).toBe(true)
+    expect(() => originalKill(-pid, 0)).not.toThrow()
+    process.kill = originalKill
+    await session.dispose()
+    expect(existsSync(owned)).toBe(false)
+    expect(() => originalKill(-pid, 0)).toThrow()
+    await expect(session.closed).rejects.toThrow('disposal failed')
+  }
+  finally {
+    process.kill = originalKill
+    if (pid) { try { originalKill(-pid, 'SIGKILL') } catch { /* The owned group may already have exited. */ } }
+    await session?.dispose().catch(() => {})
+    await Bun.sleep(50)
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15000)
+
+test('failed provisioning cancellation retains its registry and reports signaling errors through the setup promise', async () => {
+  const { root, options } = fixture(true)
+  writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\necho $$ > "$ANDROID_HOME/provision.pid"\ntrap "" TERM INT\nwhile :; do sleep 1; done\n', { mode: 0o755 })
+  const originalKill = process.kill
+  const controller = new AbortController()
+  let pid = 0
+  try {
+    const outcome = createAndroidEmulator({ ...options, signal: controller.signal }).then(session => ({ session, error: undefined }), error => ({ session: undefined, error }))
+    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
+    pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
+      if (selected === -pid && signal !== 0) throw Object.assign(new Error('Fixture provisioning signal denied'), { code: 'EPERM' })
+      return originalKill(selected, signal)
+    }) as typeof process.kill
+    expect(() => controller.abort(new Error('Provisioning cancelled'))).not.toThrow()
+    const result = await outcome
+    expect(result.session).toBeUndefined()
+    expect(result.error).toBeInstanceOf(AggregateError)
+    expect(readdirSync(options.temporaryDirectory!)).toHaveLength(1)
+    expect(() => originalKill(-pid, 0)).not.toThrow()
+  }
+  finally {
+    process.kill = originalKill
+    if (pid) { try { originalKill(-pid, 'SIGKILL') } catch { /* Rescue only the owned fixture group. */ } }
+    await Bun.sleep(50)
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('post-return signaling failures reject closed without escaping the abort callback and still reap the guest', async () => {
+  const { root, options } = fixture(true)
+  const originalKill = process.kill
+  const controller = new AbortController()
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  let pid = 0
+  try {
+    session = await createAndroidEmulator({ ...options, signal: controller.signal })
+    pid = Number(readFileSync(join(options.sdkRoot, 'emulator.pid'), 'utf8'))
+    process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
+      if (selected === -pid && signal === 'SIGTERM') throw Object.assign(new Error('Fixture TERM denied'), { code: 'EPERM' })
+      return originalKill(selected, signal)
+    }) as typeof process.kill
+    expect(() => controller.abort()).not.toThrow()
+    await expect(session.closed).rejects.toThrow('disposal failed')
+    expect(() => originalKill(-pid, 0)).toThrow()
+    expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
+  }
+  finally {
+    process.kill = originalKill
+    if (pid) { try { originalKill(-pid, 'SIGKILL') } catch { /* The owned group may already have exited. */ } }
+    await session?.dispose().catch(() => {})
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15000)
+
+test('an escaped provisioning child holding command pipes open fails promptly and retains the private registry', async () => {
+  const { root, options } = fixture(true)
+  // Model a vendor daemon escaping the command group while retaining stdout.
+  // The helper must not guess at unrelated PIDs or wait forever for pipe EOF.
+  const escapedCode = 'await Bun.write(process.env.ANDROID_HOME + "/escaped.pid", String(process.pid)); await Bun.sleep(30000)'
+  writeFileSync(options.sdkmanager, `#!${process.execPath}\nBun.spawn([process.execPath, '-e', ${JSON.stringify(escapedCode)}], { detached: true, stdout: 'inherit', stderr: 'inherit' });\nwhile (!await Bun.file(process.env.ANDROID_HOME + '/escaped.pid').exists()) await Bun.sleep(10);\nprocess.exit(0);\n`, { mode: 0o755 })
+  let pid = 0
+  try {
+    const outcome = createAndroidEmulator(options).then(session => ({ session, error: undefined }), error => ({ session: undefined, error }))
+    await waitForOwnedFile(join(options.sdkRoot, 'escaped.pid'))
+    pid = Number(readFileSync(join(options.sdkRoot, 'escaped.pid'), 'utf8'))
+    const started = performance.now()
+    const result = await outcome
+    expect(result.session).toBeUndefined()
+    expect(result.error).toBeInstanceOf(AggregateError)
+    expect(performance.now() - started).toBeLessThan(3000)
+    expect(readdirSync(options.temporaryDirectory!)).toHaveLength(1)
+    expect(() => process.kill(-pid, 0)).not.toThrow()
+  }
+  finally {
+    if (pid) { try { process.kill(-pid, 'SIGKILL') } catch { /* Rescue only the escaped fixture process. */ } }
+    await Bun.sleep(50)
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('a timed-out owned ADB readiness probe is reaped and retried within the original boot deadline', async () => {
+  const { root, options } = fixture(true)
+  options.bootTimeoutMs = 16000
+  const adb = join(options.sdkRoot, 'platform-tools/adb')
+  writeFileSync(adb, readFileSync(adb, 'utf8').replace('if [ "$1" = devices ]; then', `if [ "$1" = devices ] && [ -f "$ANDROID_HOME/started" ] && [ ! -f "$ANDROID_HOME/probe-timed-out" ]; then
+  touch "$ANDROID_HOME/probe-timed-out"
+  sleep 30
+fi
+if [ "$1" = devices ]; then`), { mode: 0o755 })
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    session = await createAndroidEmulator(options)
+    const trace = readFileSync(join(options.artifactsDirectory, 'device-commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    expect(trace.some(entry => entry.timedOut && entry.commandGroupDisposed)).toBe(true)
+    expect(trace.some(entry => entry.args.includes('sys.boot_completed') && entry.code === 0)).toBe(true)
+    const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
+    expect(identity.bootElapsedMs).toBeLessThanOrEqual(options.bootTimeoutMs)
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 20000)
+
+test('cancelling between readiness probes preserves the exact abort reason after successful cleanup', async () => {
+  const { root, options } = fixture(true, false, false, false, 'offline')
+  const controller = new AbortController()
+  const reason = new Error('Between-probe cancellation')
+  let outcome: Promise<{ session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined, error: unknown }> | undefined
+  try {
+    outcome = createAndroidEmulator({ ...options, signal: controller.signal }).then(session => ({ session, error: undefined }), error => ({ session: undefined, error }))
+    const log = join(options.artifactsDirectory, 'device-commands.jsonl')
+    const deadline = performance.now() + 4000
+    let waiting = false
+    while (!waiting && performance.now() < deadline) {
+      waiting = existsSync(log) && readFileSync(log, 'utf8').split('\n').filter(Boolean).some(line => JSON.parse(line).stdout.includes('emulator-5558\toffline'))
+      if (!waiting) await Bun.sleep(10)
+    }
+    expect(waiting).toBe(true)
+    controller.abort(reason)
+    const result = await outcome
+    expect(result.session).toBeUndefined()
+    expect(result.error).toBe(reason)
+    expect(readdirSync(options.temporaryDirectory!)).toEqual([])
+  }
+  finally {
+    controller.abort(reason)
+    await (await outcome)?.session?.dispose().catch(() => {})
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 10000)

@@ -1,6 +1,7 @@
 import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs'
 import { availableParallelism, cpus, tmpdir, totalmem } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export interface AndroidEmulatorOptions {
   sdkRoot: string
@@ -19,6 +20,8 @@ export interface AndroidEmulatorOptions {
   /** Requested guest CPU count, 1–8; defaults to 2. */
   virtualCpus?: number
   env?: Record<string, string | undefined>
+  /** Cancels provisioning, boot and the owned session without touching other devices. */
+  signal?: AbortSignal
 }
 
 export interface AndroidEmulatorSession {
@@ -27,10 +30,13 @@ export interface AndroidEmulatorSession {
   env: Record<string, string | undefined>
   /** Stops only this session's process and removes only its disposable AVD. */
   dispose: () => Promise<void>
+  /** First disposal result, including cancellation. A failure stays recorded even if dispose() later retries successfully. */
+  closed: Promise<void>
 }
 
 /** Provision and own a real Android emulator on a macOS or Linux SDK host. */
 export async function createAndroidEmulator(options: AndroidEmulatorOptions): Promise<AndroidEmulatorSession> {
+  options.signal?.throwIfAborted()
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Android emulator sessions require macOS or Linux')
   if (!['hardware', 'software'].includes(options.acceleration)) throw new Error('Select hardware or software Android emulation explicitly')
   if (![options.sdkmanager, options.avdmanager].every(isAbsolute)) throw new Error('Select absolute Android command-line tool paths')
@@ -83,6 +89,20 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
   let cpuStart = 0
   let idleStart = 0
   let identity: Record<string, unknown> | undefined
+  interface OwnedProcess {
+    process: ReturnType<typeof Bun.spawn>
+    graceMs: number
+    output?: Promise<PromiseSettledResult<string>[]>
+    stdout?: string
+    closing?: Promise<void>
+  }
+  const processes = new Set<OwnedProcess>()
+  let resolveClosed!: () => void
+  let rejectClosed!: (error: unknown) => void
+  const closed = new Promise<void>((resolve, reject) => { resolveClosed = resolve; rejectClosed = reject })
+  // Cancellation can finish before a caller receives its session. Retain the
+  // rejection for callers of `closed` without an unhandled background error.
+  void closed.catch(() => {})
   async function recordBootResult(status: 'booted' | 'failed', endedAt = Date.now()): Promise<void> {
     if (!identity) return
     const cpuEnd = cpus()
@@ -94,33 +114,117 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
       hostCpuInterval: { totalDeltaMs, idleDeltaMs, busyDeltaMs: totalDeltaMs - idleDeltaMs },
     }, null, 2) + '\n')
   }
-  async function run(args: string[], input?: string, timeout = 900_000, allowFailure = false): Promise<{ code: number, stdout: string }> {
-    const startedAt = new Date().toISOString()
-    const command = Bun.spawn(args, { env, stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input), stdout: 'pipe', stderr: 'pipe', signal: AbortSignal.timeout(timeout) })
-    const [code, stdout, stderr] = await Promise.all([command.exited, new Response(command.stdout).text(), new Response(command.stderr).text()])
-    // A cold boot may need hundreds of ADB readiness polls. Keep their full
-    // diagnostics together so artifact collectors can retain the emulator log.
-    appendFileSync(join(artifacts, 'device-commands.jsonl'), JSON.stringify({ sequence: ++sequence, startedAt, finishedAt: new Date().toISOString(), args, code, stdout, stderr }) + '\n')
-    if (code !== 0 && !allowFailure) throw new Error(`${basename(args[0]!)} failed with exit ${code}; inspect ${artifacts}`)
-    return { code, stdout }
+  function groupExists(pid: number): boolean {
+    try { process.kill(-pid, 0); return true }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') return true
+      throw error
+    }
   }
-  const dispose = (): Promise<void> => disposal ??= (async () => {
-    try {
-      if (child && child.exitCode === null) {
-        child.kill('SIGTERM')
-        await Promise.race([child.exited, Bun.sleep(10_000)])
-        if (child.exitCode === null) child.kill('SIGKILL')
-        await child.exited
+  function signalGroup(pid: number, signal: NodeJS.Signals): void {
+    try { process.kill(-pid, signal) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
+  }
+  async function disposeGroup(pid: number, graceMs: number): Promise<unknown[]> {
+    const errors: unknown[] = []
+    if (!groupExists(pid)) return errors
+    let termSent = false
+    try { signalGroup(pid, 'SIGTERM'); termSent = true } catch (error) { errors.push(error) }
+    if (termSent) {
+      const grace = performance.now() + graceMs
+      while (groupExists(pid) && performance.now() < grace) await Bun.sleep(10)
+    }
+    if (!groupExists(pid)) return errors
+    try { signalGroup(pid, 'SIGKILL') } catch (error) { errors.push(error) }
+    const deadline = performance.now() + 1000
+    while (groupExists(pid) && performance.now() < deadline) await Bun.sleep(10)
+    if (groupExists(pid)) throw new AggregateError([...errors, new Error(`Owned Android process group ${pid} remained after disposal`)], `Android cleanup failed; private registry retained at ${owned}`)
+    return errors
+  }
+  function closeProcess(record: OwnedProcess): Promise<void> {
+    if (record.closing) return record.closing
+    const attempt = (async () => {
+      const errors = await disposeGroup(record.process.pid, record.graceMs)
+      await record.process.exited
+      if (record.output) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const output = await Promise.race([
+            record.output,
+            new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 1000) }),
+          ])
+          if (!output) throw new Error(`Owned Android command pipes did not close; private registry retained at ${owned}`)
+          for (const stream of output) if (stream.status === 'rejected') errors.push(stream.reason)
+          record.stdout = output[0]?.status === 'fulfilled' ? output[0].value : ''
+        }
+        finally { if (timer) clearTimeout(timer) }
       }
+      processes.delete(record)
+      if (errors.length) throw new AggregateError(errors, 'Owned Android process cleanup encountered an error')
+    })()
+    record.closing = attempt
+    void attempt.catch(() => { if (record.closing === attempt) record.closing = undefined })
+    return attempt
+  }
+  async function run(args: string[], input?: string, timeout = 900_000, allowFailure = false): Promise<{ code: number, stdout: string }> {
+    options.signal?.throwIfAborted()
+    const startedAt = new Date().toISOString()
+    const command = Bun.spawn(args, { env, detached: true, stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input), stdout: 'pipe', stderr: 'pipe' })
+    const record: OwnedProcess = { process: command, graceMs: 250, output: Promise.allSettled([new Response(command.stdout).text(), new Response(command.stderr).text()]) }
+    processes.add(record)
+    let stop!: (reason: 'aborted' | 'timeout') => void
+    const stopping = new Promise<'aborted' | 'timeout'>((resolve) => { stop = resolve })
+    const onCommandAbort = (): void => stop('aborted')
+    const timer = setTimeout(() => stop('timeout'), timeout)
+    options.signal?.addEventListener('abort', onCommandAbort, { once: true })
+    try {
+      if (options.signal?.aborted) stop('aborted')
+      const result = await Promise.race([command.exited, stopping])
+      // Reap every owned descendant before waiting for pipe EOF or returning.
+      await closeProcess(record)
+      const code = await command.exited
+      const output = await record.output!
+      const stdout = record.stdout ?? ''
+      const stderr = output[1]?.status === 'fulfilled' ? output[1].value : ''
+      const timedOut = result === 'timeout'
+      appendFileSync(join(artifacts, 'device-commands.jsonl'), JSON.stringify({ sequence: ++sequence, startedAt, finishedAt: new Date().toISOString(), args, code, stdout, stderr, timedOut, commandGroupDisposed: true }) + '\n')
+      options.signal?.throwIfAborted()
+      if (timedOut && !allowFailure) throw new Error(`${basename(args[0]!)} timed out; inspect ${artifacts}`)
+      if (code !== 0 && !allowFailure) throw new Error(`${basename(args[0]!)} failed with exit ${code}; inspect ${artifacts}`)
+      // Readiness probes retry transient timeouts within the original boot
+      // deadline. Even a process handling TERM with exit zero is not ready.
+      return { code: timedOut ? code || 1 : code, stdout }
     }
     finally {
-      if (log !== undefined) closeSync(log)
-      // Every Android user/AVD registry is inside this private tree. Once
-      // its process is reaped, deleting that tree is the complete teardown;
-      // invoking the provisioning JVM again adds no state to clean up.
-      rmSync(owned, { recursive: true, force: true })
+      clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onCommandAbort)
     }
-  })()
+  }
+  const dispose = (): Promise<void> => {
+    if (disposal) return disposal
+    const attempt = (async () => {
+      const results = await Promise.allSettled([...processes].map(closeProcess))
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => result.reason)
+      try {
+        if (!processes.size) {
+          options.signal?.removeEventListener('abort', onAbort)
+          if (log !== undefined) { closeSync(log); log = undefined }
+          rmSync(owned, { recursive: true, force: true })
+        }
+        else errors.push(new Error(`Owned Android processes remain; private registry retained at ${owned}`))
+      }
+      catch (error) { errors.push(error) }
+      if (errors.length) throw new AggregateError(errors, `Android emulator disposal failed; inspect ${artifacts}`)
+    })().then(resolveClosed, (error) => { rejectClosed(error); throw error })
+    disposal = attempt
+    // Share concurrent/successful disposal, but let a caller retry after the
+    // OS permits signaling again. `closed` retains the first failure.
+    void attempt.catch(() => { if (disposal === attempt) disposal = undefined })
+    return attempt
+  }
+  const onAbort = (): void => { void dispose().catch(() => {}) }
+  options.signal?.addEventListener('abort', onAbort, { once: true })
   try {
     mkdirSync(env.ANDROID_AVD_HOME!, { recursive: true })
     mkdirSync(env.ANDROID_USER_HOME!, { recursive: true })
@@ -140,7 +244,11 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     const hostCpus = cpus()
     cpuStart = hostCpus.reduce((total, cpu) => total + Object.values(cpu.times).reduce((sum, value) => sum + value, 0), 0)
     idleStart = hostCpus.reduce((total, cpu) => total + cpu.times.idle, 0)
-    child = Bun.spawn([executable, '-avd', name, '-port', String(port), '-no-window', '-no-snapshot', '-no-audio', '-no-boot-anim', '-gpu', 'software', '-memory', String(memoryMb), '-cores', String(virtualCpus), '-accel', options.acceleration === 'software' ? 'off' : 'on'], { env, stdout: log, stderr: log })
+    child = Bun.spawn([executable, '-avd', name, '-port', String(port), '-no-window', '-no-snapshot', '-no-audio', '-no-boot-anim', '-gpu', 'software', '-memory', String(memoryMb), '-cores', String(virtualCpus), '-accel', options.acceleration === 'software' ? 'off' : 'on'], { env, detached: true, stdout: log, stderr: log })
+    // Keep the established ten-second guest shutdown budget, and own every
+    // descendant before the caller can cancel or receive the session.
+    processes.add({ process: child, graceMs: 10_000 })
+    if (options.signal?.aborted) onAbort()
     identity = {
       image: options.image, acceleration: options.acceleration, accelerationProbeExitCode: acceleration.code,
       bootTimeoutMs, bootStartedAt: new Date(bootStartedAt).toISOString(),
@@ -153,6 +261,7 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     let connected = false
     let lastReconnectAt = 0
     while (Date.now() < deadline && child.exitCode === null) {
+      options.signal?.throwIfAborted()
       let booted = false
       // Nonzero ADB exits are expected while services initialize. Filesystem,
       // logging and process-launch errors must remain fatal and visible.
@@ -213,14 +322,22 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
       const checkedAt = Date.now()
       if (booted && checkedAt <= deadline) {
         await recordBootResult('booted', checkedAt)
-        return { serial, adb, env, dispose }
+        options.signal?.throwIfAborted()
+        return { serial, adb, env, dispose, closed }
       }
-      await Bun.sleep(Math.min(2000, Math.max(0, deadline - Date.now())))
+      await delay(Math.min(2000, Math.max(0, deadline - Date.now())), undefined, { signal: options.signal })
     }
+    options.signal?.throwIfAborted()
     if (child.exitCode !== null) throw new Error(`The owned Android emulator exited with code ${child.exitCode} before boot; inspect ${join(artifacts, 'emulator.log')}`)
     throw new Error(`The owned Android emulator did not boot within ${bootTimeoutMs}ms; inspect ${artifacts}`)
   }
   catch (error) {
+    // Node's abortable timer wraps signal.reason in AbortError.cause. Keep
+    // the caller's exact reason for ordinary cancellation at every phase.
+    const timerAborted = options.signal?.aborted && error instanceof Error && error.name === 'AbortError' && error.cause === options.signal.reason
+    const failure = timerAborted ? options.signal!.reason : options.signal?.aborted && error !== options.signal.reason
+      ? new AggregateError([options.signal.reason, error], `Android emulator setup failed: ${String(options.signal.reason)}`)
+      : error
     if (child) {
       try { await recordBootResult('failed') }
       catch (diagnostic) { console.error(`Could not retain emulator boot timing: ${diagnostic}`) }
@@ -230,7 +347,7 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
       }
     }
     try { await dispose() }
-    catch (cleanup) { throw new AggregateError([error, cleanup], 'Android emulator setup and cleanup failed') }
-    throw error
+    catch (cleanup) { throw new AggregateError([failure, cleanup], 'Android emulator setup and cleanup failed') }
+    throw failure
   }
 }
