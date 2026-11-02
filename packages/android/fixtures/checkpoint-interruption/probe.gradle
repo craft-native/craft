@@ -1,0 +1,9 @@
+// Authored debug overlay, passed with --init-script. No generated source edits.
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        def android = project.extensions.getByName('android')
+        android.sourceSets.debug.jniLibs.srcDir(System.getenv('CRAFT_CHECKPOINT_DEBUG_LIBS'))
+        android.sourceSets.debug.resources.srcDir(System.getenv('CRAFT_CHECKPOINT_DEBUG_RESOURCES'))
+        android.packagingOptions.jniLibs.useLegacyPackaging = true
+    }
+}
