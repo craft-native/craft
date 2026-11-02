@@ -1,5 +1,30 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.424...v0.0.425)
+
+## 🐛 Bug Fixes
+
+- **ios**: paint positioned images only through their fitted child ([30b4613](https://github.com/craft-native/craft/commit/30b4613)) _(by glennmichael123)_
+- **ios**: let a switch draw its thumb before the script runs ([2140bc7](https://github.com/craft-native/craft/commit/2140bc7)) _(by glennmichael123)_
+- **android**: preserve sibling files during import cleanup ([e288cf7](https://github.com/craft-native/craft/commit/e288cf7)) _(by glennmichael123)_
+- **ios**: preserve idle intervals in timed native taps ([1e141f1](https://github.com/craft-native/craft/commit/1e141f1)) _(by glennmichael123)_ ([#432](https://github.com/craft-native/craft/issues/432))
+
+## 🧪 Tests
+
+- **ios**: verify switch callback scheduling and captured values ([c7984f0](https://github.com/craft-native/craft/commit/c7984f0)) _(by glennmichael123)_
+- **android**: verify diagnostic cleanup with launched process IDs ([26dd2f8](https://github.com/craft-native/craft/commit/26dd2f8)) _(by glennmichael123)_
+- **android**: verify checkpoint recovery across process interruption ([3fccd06](https://github.com/craft-native/craft/commit/3fccd06)) _(by Chris)_ ([#440](https://github.com/craft-native/craft/issues/440))
+- **android**: add native checkpoint interruption fixture ([9ae225e](https://github.com/craft-native/craft/commit/9ae225e)) _(by Chris)_ ([#440](https://github.com/craft-native/craft/issues/440))
+
+## 🤖 Continuous Integration
+
+- **android**: require checkpoint interruption acceptance ([eca85e8](https://github.com/craft-native/craft/commit/eca85e8)) _(by Chris)_ ([#440](https://github.com/craft-native/craft/issues/440))
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.423...v0.0.424)
 
 ## ⚡ Performance Improvements
