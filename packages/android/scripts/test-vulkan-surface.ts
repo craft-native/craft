@@ -7,6 +7,7 @@ import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-comm
 import { createAndroidEmulator } from '../src/emulator'
 import { resolveZig } from '../../../scripts/zig'
 import { nativeVulkanResult } from './vulkan-surface-result'
+import { emulatorVersionCommand } from './vulkan-surface-probe'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' }, image: { type: 'string' } } })
 if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Android Vulkan acceptance requires a macOS or Linux Android SDK host')
@@ -61,7 +62,7 @@ try {
     proof[name] = (await readFile(join(evidence, `${name}.log`), 'utf8')).trim()
   }
   proof.sourceFiles = Object.fromEntries(await Promise.all([
-    'packages/android/scripts/test-vulkan-surface.ts', 'packages/android/scripts/vulkan-surface-result.ts',
+    'packages/android/scripts/test-vulkan-surface.ts', 'packages/android/scripts/vulkan-surface-result.ts', 'packages/android/scripts/vulkan-surface-probe.ts',
     'packages/android/src/emulator.ts', 'packages/ios/scripts/native-fixture-command.ts', 'scripts/zig.ts', 'packages/zig/src/vulkan_surface.zig', 'packages/zig/src/vulkan_api.zig',
     'packages/zig/src/graphics.zig', 'packages/zig/src/graphics_scene.zig', 'packages/zig/test/fixtures/vulkan-surface-consumer/src/fixture.zig',
     'packages/zig/test/fixtures/vulkan-surface-consumer/build.zig',
@@ -111,7 +112,7 @@ try {
   const imageDirectory = join(sdk, ...image.split(';'))
   proof.systemImage = { sourceProperties: await readFile(join(imageDirectory, 'source.properties'), 'utf8'), files: await Promise.all(['source.properties', 'package.xml', 'system.img', 'vendor.img', 'kernel-ranchu', 'ramdisk.img'].map(file => identity(join(imageDirectory, file)))) }
   for (const file of ['source.properties', 'package.xml']) await copyFile(join(imageDirectory, file), join(evidence, `system-image-${file}`))
-  await run('emulator-toolchain', [join(sdk, 'emulator/emulator'), '-version'], 10000)
+  await run('emulator-toolchain', emulatorVersionCommand(join(sdk, 'emulator/emulator')), 10000)
   const adb = [emulator.adb, '-s', emulator.serial]
   await run('platform-identity', [...adb, 'shell', 'getprop'], 30000)
   await run('driver-capabilities', [...adb, 'shell', 'cmd', 'gpu', 'vkjson'], 30000)

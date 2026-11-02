@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
 import { pinnedZigVersion } from '../../../scripts/zig'
+import { emulatorVersionCommand } from './vulkan-surface-probe'
 
 const root = resolve(import.meta.dir, '../../..')
 const runner = join(import.meta.dir, 'test-vulkan-surface.ts')
@@ -49,5 +50,28 @@ test('workspace allocation failure retains an honest failure receipt without sta
     expect(receipt.status).toBe('failed')
     expect(receipt.commandGroupsDisposed).toBe(true)
     expect(receipt.error).toContain('mkdtemp')
+  })
+})
+
+test('emulator identity reaches the headless frontend when GUI audio dependencies are absent', async () => {
+  await fixture(async (directory, scope) => {
+    const executable = join(directory, 'emulator'), gui = join(directory, 'gui.ts'), headless = join(directory, 'headless.ts'), selected = join(directory, 'selected.json')
+    await writeFile(gui, `await Bun.write(${JSON.stringify(selected)}, JSON.stringify({ frontend: 'gui' })); console.error('qemu-system-x86_64: libpulse.so.0: cannot open shared object file'); process.exit(127);\n`)
+    await writeFile(headless, `await Bun.write(${JSON.stringify(selected)}, JSON.stringify({ frontend: 'headless', audioEnabled: !process.argv.includes('-no-audio') })); if (!process.argv.includes('-version')) process.exit(90); console.log('Android emulator version 37.2.13.0 (isolated SDK fixture)');\n`)
+    await writeFile(executable, `#!${process.execPath}\nconst frontend = process.argv.includes('-no-window') ? ${JSON.stringify(headless)} : ${JSON.stringify(gui)}; const child = Bun.spawnSync([process.execPath, frontend, ...process.argv.slice(2)], { stdout: 'inherit', stderr: 'inherit' }); process.exit(child.exitCode);\n`)
+    await chmod(executable, 0o755)
+
+    // The original public command reproduces the Linux loader failure.
+    const original = await scope.run([executable, '-version'], { cwd: directory, timeoutMs: 10000 })
+    expect(original.code).toBe(127)
+    expect(original.stderr).toContain('libpulse.so.0')
+    expect(original.groupDisposed).toBe(true)
+    expect(JSON.parse(await readFile(selected, 'utf8')).frontend).toBe('gui')
+
+    const identity = await scope.run(emulatorVersionCommand(executable), { cwd: directory, timeoutMs: 10000 })
+    expect(identity.code).toBe(0)
+    expect(identity.stdout).toContain('Android emulator version 37.2.13.0')
+    expect(identity.groupDisposed).toBe(true)
+    expect(JSON.parse(await readFile(selected, 'utf8'))).toEqual({ frontend: 'headless', audioEnabled: false })
   })
 })
