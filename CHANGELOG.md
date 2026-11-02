@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.432...v0.0.433)
+
+## 🚀 Features
+
+- **macos**: tell the screen its width, at start and when the window resizes ([bfc44c0](https://github.com/craft-native/craft/commit/bfc44c0)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **macos**: traffic lights keep their inset when the appearance changes ([00a63f9](https://github.com/craft-native/craft/commit/00a63f9)) _(by Chris)_
+- **macos**: a Switch is a toggle, not a checkbox ([c0e8619](https://github.com/craft-native/craft/commit/c0e8619)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.431...v0.0.432)
 
 ## 🐛 Bug Fixes
