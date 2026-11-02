@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 import { Glob } from 'bun'
 import { bootSimulator, init, pickSimulator, type CraftConfig } from '../src/index'
 import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
+import { analyzeTimedInputAttachments } from './analyze-timed-input'
 import { checkLoadFailureClassifier } from './load-failure'
 import { checkRecoveryBudget } from './recovery-budget'
 import { watchCompanionProblems } from './watch-bundle'
@@ -143,6 +144,13 @@ function retainTimedInputEvidence(requirePassed = false): void {
   }
   if (output) cpSync(results, join(output, 'TimedInputDriver.xcresult'), { recursive: true, force: false, errorOnExist: true })
   if (requirePassed) {
+    const attachments = join(workspace, 'timed-input-attachments')
+    run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', results, '--output-path', attachments],
+      workspace, 'Exporting the independent timed input receipt')
+    const report = analyzeTimedInputAttachments(attachments)
+    console.log('Native timed input acceptance:', JSON.stringify(report))
+    if (output) writeFileSync(join(output, 'timed-input-analysis.json'), JSON.stringify(report, null, 2))
+    if (!report.passed) throw new Error(`Native timed input failed: ${report.issues.join('; ')}`)
     if (!summary || summary.exitCode !== 0) throw new Error('Unable to verify the timed input XCTest summary')
     const counts = JSON.parse(summary.output)
     if (counts.result !== 'Passed' || !Number.isInteger(counts.totalTestCount) || counts.totalTestCount < 1 || counts.passedTests !== counts.totalTestCount || counts.failedTests !== 0 || counts.skippedTests !== 0)

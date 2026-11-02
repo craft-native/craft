@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 
 const sequence = Array.from({ length: 24 }, (_, index) => ['One', 'Two', 'Three', 'Four'][index % 4]!)
 const tolerance = 0.05 // Allow native frame quantization, not cumulative schedule compression.
@@ -83,6 +84,38 @@ export function analyzeTimedInput(schedule: unknown, values: unknown) {
       maxDeliveryLagSeconds: touches.length ? Math.max(...touches.map(event => Number(event.deliveredAt) - Number(event.timestamp))) : null,
     },
   }
+}
+
+/** Require a single complete attempt; never borrow a receipt from another retry. */
+export function analyzeTimedInputAttachments(directory: string) {
+  const manifest: unknown = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'))
+  if (!Array.isArray(manifest)) throw new Error('Invalid XCTest attachment manifest')
+  const tests = manifest.filter(test => object(test) && test.testIdentifier === 'DriverTests/testScript()')
+  if (tests.length !== 1 || !Array.isArray(tests[0].attachments))
+    throw new Error('Expected exactly one timed input test attachment group')
+  const attachments = tests[0].attachments as unknown[]
+  const select = (pattern: RegExp) => {
+    const matches = attachments.filter(item => object(item)
+      && typeof item.suggestedHumanReadableName === 'string' && pattern.test(item.suggestedHumanReadableName))
+    if (matches.length !== 1) throw new Error('Expected exactly one schedule and receiver receipt, without retries')
+    const item = matches[0] as Record<string, unknown>
+    if (typeof item.exportedFileName !== 'string' || !item.exportedFileName
+      || basename(item.exportedFileName) !== item.exportedFileName || /[/\\]/.test(item.exportedFileName)
+      || item.exportedFileName === '.' || item.exportedFileName === '..'
+      || typeof item.deviceId !== 'string' || !item.deviceId
+      || typeof item.configurationName !== 'string' || !item.configurationName || !finite(item.timestamp))
+      throw new Error('Invalid XCTest attachment identity')
+    return { deviceId: item.deviceId, configurationName: item.configurationName, timestamp: item.timestamp,
+      exportedFileName: item.exportedFileName, repetition: pattern.exec(item.suggestedHumanReadableName as string)![1] }
+  }
+  const schedule = select(/^timed-input-\d+_(\d+)_.*\.json$/)
+  const values = select(/^timed-input-receiver-values_(\d+)_.*\.json$/)
+  if (schedule.deviceId !== values.deviceId || schedule.configurationName !== values.configurationName
+    || schedule.repetition !== values.repetition || Number(schedule.timestamp) > Number(values.timestamp)
+    || schedule.exportedFileName === values.exportedFileName)
+    throw new Error('Schedule and receiver must belong to the same attempt')
+  const read = (item: Record<string, unknown>) => JSON.parse(readFileSync(join(directory, String(item.exportedFileName)), 'utf8'))
+  return analyzeTimedInput(read(schedule), read(values))
 }
 
 if (import.meta.main) {

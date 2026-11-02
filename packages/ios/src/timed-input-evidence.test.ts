@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createTempDir } from '../../typescript/src/temp-dir'
-import { analyzeTimedInput } from '../scripts/analyze-timed-input'
+import { analyzeTimedInput, analyzeTimedInputAttachments } from '../scripts/analyze-timed-input'
 
 const names = Array.from({ length: 24 }, (_, i) => ['One', 'Two', 'Three', 'Four'][i % 4]!)
 const schedule = names.map((_, i) => [{ x: 0.2, y: 0.9, at: i * 0.08 }, { x: 0.2, y: 0.9, at: i * 0.08 + 0.025 }])
@@ -88,6 +88,45 @@ describe('independent timed input evidence', () => {
     const report = analyzeTimedInput(schedule, values(events))
     expect(report.passed).toBe(true)
     expect(report.timing.maxDeliveryLagSeconds).toBeCloseTo(0.205)
+  })
+  it('qualifies exported evidence only from one complete native attempt', () => {
+    const folder = createTempDir('craft-input-attachments-')
+    const scheduled = { suggestedHumanReadableName: 'timed-input-123_0_A.json', exportedFileName: 'schedule.txt',
+      deviceId: 'owned-simulator', configurationName: 'Test', timestamp: 100 }
+    const received = { ...scheduled, suggestedHumanReadableName: 'timed-input-receiver-values_0_B.json',
+      exportedFileName: 'values.txt', timestamp: 102 }
+    const manifest = (attachments: unknown[]) => writeFileSync(join(folder, 'manifest.json'),
+      JSON.stringify([{ testIdentifier: 'DriverTests/testScript()', attachments }]))
+    try {
+      writeFileSync(join(folder, 'schedule.txt'), JSON.stringify(schedule))
+      writeFileSync(join(folder, 'values.txt'), JSON.stringify(values(fixture())))
+      manifest([received, scheduled])
+      expect(analyzeTimedInputAttachments(folder).passed).toBe(true)
+      for (const changed of [
+        { ...received, deviceId: 'different-simulator' },
+        { ...received, configurationName: 'different-config' },
+        { ...received, suggestedHumanReadableName: 'timed-input-receiver-values_1_B.json' },
+        { ...received, timestamp: 99 },
+        { ...received, exportedFileName: scheduled.exportedFileName },
+      ]) {
+        manifest([scheduled, changed])
+        expect(() => analyzeTimedInputAttachments(folder)).toThrow('same attempt')
+      }
+      for (const exportedFileName of ['../outside.json', '/outside.json', '..', 'nested/file.json', 'nested\\file.json']) {
+        manifest([scheduled, { ...received, exportedFileName }])
+        expect(() => analyzeTimedInputAttachments(folder)).toThrow('identity')
+      }
+      for (const attachments of [[], [scheduled], [scheduled, received, received]]) {
+        manifest(attachments)
+        expect(() => analyzeTimedInputAttachments(folder)).toThrow('exactly one')
+      }
+      manifest([scheduled, received])
+      writeFileSync(join(folder, 'values.txt'), JSON.stringify(values(fixture(1 / 30, 1 / 30))))
+      expect(analyzeTimedInputAttachments(folder).passed).toBe(false)
+      writeFileSync(join(folder, 'manifest.json'), '[]')
+      expect(() => analyzeTimedInputAttachments(folder)).toThrow('attachment group')
+    }
+    finally { rmSync(folder, { recursive: true, force: true }) }
   })
   it('returns a failing CLI exit status for compressed timing and malformed input', () => {
     const folder = createTempDir('craft-input-evidence-')
