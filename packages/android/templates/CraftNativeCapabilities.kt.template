@@ -478,7 +478,7 @@ internal class CraftNativeCapabilities(
         }
         "remove" -> {
             val file = ownedFile(args.optString(0)) ?: return failure("INVALID_ARGUMENT", "files.remove needs a file made by craft.files")
-            success(file.delete())
+            success(removeOwnedFile(file))
         }
         "download" -> download(requestToken, args)
             else -> failure("UNKNOWN_ACTION", "Unsupported Files method")
@@ -802,7 +802,7 @@ internal class CraftNativeCapabilities(
             success(copied)
         } catch (error: Exception) {
             for (index in 0 until copied.length()) {
-                copied.optJSONObject(index)?.optString("path")?.let { ownedFile(it)?.parentFile?.deleteRecursively() }
+                copied.optJSONObject(index)?.optString("path")?.let { ownedFile(it)?.let(::removeOwnedFile) }
             }
             val message = error.message ?: "The selected document could not be read"
             if (message.startsWith("CANCELLED:")) failure("CANCELLED", message.removePrefix("CANCELLED:").trim())
@@ -915,6 +915,18 @@ internal class CraftNativeCapabilities(
         return file.takeIf { it.path.startsWith(root.path + File.separator) }
     }
 
+    /** Delete only a validated owned file; never sweep siblings or the shared root. */
+    private fun removeOwnedFile(file: File): Boolean {
+        // File.delete is non-recursive and reports permission failures. Reject
+        // directories before removal; parent pruning must remain best effort.
+        if (!runCatching { file.isFile && file.delete() }.getOrDefault(false)) return false
+        runCatching {
+            val parent = file.parentFile
+            if (parent != null && parent != fileRoot.canonicalFile && parent.isDirectory) parent.delete()
+        }
+        return true
+    }
+
     private fun safeFileName(raw: String): String {
         val name = raw.substringAfterLast('/').substringAfterLast('\\').trim()
         return name.ifBlank { "file" }.replace(Regex("[\\\\/:*?\"<>|\\r\\n]"), "_")
@@ -939,7 +951,7 @@ internal class CraftNativeCapabilities(
         val files = if (data is JSONArray) (0 until data.length()).mapNotNull { data.optJSONObject(it) }
             else listOfNotNull(data as? JSONObject)
         files.forEach { file ->
-            ownedFile(file.optString("path"))?.parentFile?.deleteRecursively()
+            ownedFile(file.optString("path"))?.let(::removeOwnedFile)
         }
     }
 

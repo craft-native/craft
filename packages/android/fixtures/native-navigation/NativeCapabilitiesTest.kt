@@ -880,6 +880,84 @@ class NativeCapabilitiesTest {
     }
 
     @Test
+    fun fileRemovalPrunesOnlyEmptyParentsAndRejectsDirectories() {
+        val context = importContext()
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val root = java.io.File(context.cacheDir, "craft-files")
+        try {
+            val written = call(capabilities, "Files", "write", JSONArray().put("owned.txt").put("payload"))
+            assertNull(written.message, written.code)
+            val file = java.io.File((written.data as JSONObject).getString("path"))
+            val parent = file.parentFile!!
+            val sibling = java.io.File(parent, "keep.txt").apply { writeText("keep") }
+            assertEquals(true, call(capabilities, "Files", "remove", JSONArray().put(file.path)).data)
+            assertEquals("keep", sibling.readText())
+            assertEquals(false, call(capabilities, "Files", "remove", JSONArray().put(file.path)).data)
+            assertEquals(true, call(capabilities, "Files", "remove", JSONArray().put(sibling.path)).data)
+            assertFalse("the last file must not leave its empty staging directory", parent.exists())
+            assertTrue("the shared root must survive", root.isDirectory)
+
+            val directory = java.io.File(root, "directory").apply { mkdirs() }
+            assertEquals(false, call(capabilities, "Files", "remove", JSONArray().put(directory.path)).data)
+            assertTrue("files.remove is not a directory remover", directory.isDirectory)
+        } finally { capabilities.close(); context.cacheDir.deleteRecursively() }
+    }
+
+    @Test
+    fun cancelledFileDeliveryPreservesSiblingsAndSharedRoot() {
+        for (close in listOf(false, true)) {
+            for (nested in listOf(false, true)) {
+                val context = importContext()
+                val capabilities = CraftNativeCapabilities(context, JSONObject())
+                val root = java.io.File(context.cacheDir, "craft-files").apply { mkdirs() }
+                val parent = if (nested) java.io.File(root, UUID.randomUUID().toString()).apply { mkdirs() } else root
+                val file = java.io.File(parent, "undelivered.txt").apply { writeText("discard") }
+                val sibling = java.io.File(parent, "delivered.txt").apply { writeText("keep") }
+                val other = java.io.File(root, "other/content.txt").apply { parentFile!!.mkdirs(); writeText("other") }
+                val replies = java.util.concurrent.atomic.AtomicInteger()
+                try {
+                    // Exercise the delivery boundary with actual files, after
+                    // ownership has transferred from the copy worker.
+                    instrumentation.runOnMainSync {
+                        if (close) capabilities.close() else capabilities.cancel("discard")
+                        val completion: (CraftNativeCapabilityResult) -> Unit = { replies.incrementAndGet() }
+                        CraftNativeCapabilities::class.java.getDeclaredMethod("completeFile", String::class.java,
+                            CraftNativeCapabilityResult::class.java, kotlin.jvm.functions.Function1::class.java)
+                            .apply { isAccessible = true }.invoke(capabilities, "discard",
+                                CraftNativeCapabilityResult(data = JSONObject().put("path", file.path)), completion)
+                    }
+                    instrumentation.waitForIdleSync()
+                    assertEquals(0, replies.get())
+                    assertFalse("undelivered file must be removed", file.exists())
+                    assertTrue("cleanup must preserve a delivered sibling", sibling.isFile)
+                    assertTrue("cleanup must preserve other imports", other.isFile)
+                    assertTrue("cleanup must preserve the shared root", root.isDirectory)
+                } finally { capabilities.close(); instrumentation.waitForIdleSync(); context.cacheDir.deleteRecursively() }
+            }
+        }
+    }
+
+    @Test
+    fun fileRemovalReportsPermissionDenialAndAllowsRetry() {
+        val context = importContext()
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val root = java.io.File(context.cacheDir, "craft-files").apply { mkdirs() }
+        val parent = java.io.File(root, UUID.randomUUID().toString()).apply { mkdirs() }
+        val file = java.io.File(parent, "denied.txt").apply { writeText("keep") }
+        try {
+            android.system.Os.chmod(parent.path, 0b101000000) // owner read/execute, no write
+            assertEquals(false, call(capabilities, "Files", "remove", JSONArray().put(file.path)).data)
+            assertEquals("keep", file.readText())
+            android.system.Os.chmod(parent.path, 0b111000000)
+            assertEquals(true, call(capabilities, "Files", "remove", JSONArray().put(file.path)).data)
+            assertFalse(parent.exists())
+        } finally {
+            if (parent.exists()) android.system.Os.chmod(parent.path, 0b111000000)
+            capabilities.close(); context.cacheDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun nativeFilesStayOwnedAndUploadAsMultipart() {
         val server = ServerSocket(0)
         val errorServer = ServerSocket(0)

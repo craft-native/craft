@@ -1577,9 +1577,11 @@ needed; browser-rendered apps continue using their existing web fallbacks.
 The `files` capability keeps picked, downloaded, and generated files in an
 app-owned temporary directory that survives Activity recreation; stale entries
 are swept after a day. `craft.files.remove` refuses paths outside that
-directory. On iOS, it resolves `true` only when the requested file was actually
-removed; missing, unowned, or permission-denied files resolve `false`. A refused
-deletion can be retried after the underlying restriction is lifted. Cleanup
+directory. On iOS and Android, it resolves `true` only when the requested file
+was actually removed; missing or permission-denied files resolve `false`.
+Unowned paths resolve `false` on iOS and reject with `INVALID_ARGUMENT` on Android.
+Directories cannot be removed through this file API. A refused deletion can
+be retried after the underlying restriction is lifted. Cleanup
 removes only that file, preserving siblings and the shared temporary root.
 Removing its empty parent directory is best effort and does not change a
 successful file-removal result. Cancelled-import cleanup uses the same bounded
