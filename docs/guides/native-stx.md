@@ -1845,6 +1845,11 @@ The configured token key can match an existing website session. Snapshots and
 ordinary storage are scoped by a SHA-256 account identifier; an account change
 clears the previous account’s retained data, files and media. Cross-tab account
 changes reload the screen so old controllers cannot continue under a new login.
+If account cleanup or identity hashing fails, the operation rejects and retained
+account reads remain blocked. A subsequent account check retries cleanup; the
+new session is announced only after cleanup and hashing succeed. Storage calls
+captured during the transition still reject with `STORAGE_SCOPE_CHANGED` instead
+of silently moving an old operation into the new account.
 Browser storage retains browser security semantics; it does not become Keychain
 or Android encrypted storage.
 

@@ -126,7 +126,7 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
   }
   const accountChanged = async (): Promise<void> => {
     const next = storage.getItem(tokenKey)
-    if (next === token) { await transition; return }
+    if (next === token && (!transitioning || transition)) { await transition; return }
     const previous = scope
     const current = ++revision
     transitioning = true
@@ -151,7 +151,14 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
       reported = next
       if (before !== next) options.sessionChanged?.(next, before)
     })()
-    await transition
+    const attempt = transition
+    try { await attempt }
+    catch (error) {
+      // Keep reads blocked, but let the next account check retry cleanup after
+      // storage/hash recovery. An older failure must not reset a newer attempt.
+      if (current === revision && transition === attempt) transition = null
+      throw error
+    }
   }
   const secureKey = (name: string): string => name === sessionTokenKey ? tokenKey : key(`credential:${name}`)
   return {

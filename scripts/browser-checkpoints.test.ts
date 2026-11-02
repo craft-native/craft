@@ -310,6 +310,43 @@ scenario('account-transition-removes-committed-checkpoints-and-sync-writes-share
   expect(await call(page, 'get', ['campaign'])).toBeNull()
 })
 
+scenario('failed-account-cleanup-retries-after-real-transaction-abort', async (context) => {
+  const page = await open(context)
+  await call(page, 'set', ['campaign', { owner: 'guest' }])
+  const failure = await page.evaluate(async () => {
+    const original = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (value, key) {
+      const request = original.call(this, value, key!)
+      if (this.name === 'checkpoints') request.addEventListener('success', () => this.transaction.abort(), { once: true })
+      return request
+    }
+    try {
+      await window.platform.call('SecureStorage', 'set', ['auth.token', 'account-a'], new AbortController().signal)
+      return 'unexpected-success'
+    }
+    catch (error) { return (error as Error).name }
+    finally { IDBObjectStore.prototype.put = original }
+  })
+  expect(failure).toBe('AbortError')
+  expect(await page.evaluate(() => (window.platform.craft.storage as { getSync(key: string): unknown }).getSync('campaign'))).toBeNull()
+  // The first call retries cleanup but cannot be retargeted into account A.
+  const recovery = await page.evaluate(async () => {
+    try {
+      await window.platform.call('Storage', 'set', ['campaign', { owner: 'stale' }], new AbortController().signal)
+      return 'unexpected-success'
+    }
+    catch (error) { return (error as { code?: string }).code ?? (error as Error).name }
+  })
+  expect(recovery).toBe('STORAGE_SCOPE_CHANGED')
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
+  expect(await call(page, 'set', ['campaign', { owner: 'a' }])).toBe(true)
+  await reload(page)
+  expect(await call(page, 'get', ['campaign'])).toEqual({ owner: 'a' })
+  await page.evaluate(() => window.platform.call('SecureStorage', 'remove', ['auth.token'], new AbortController().signal))
+  await reload(page)
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
+})
+
 scenario('missing-transactional-storage-does-not-advertise-atomic-writes', async (context) => {
   const page = await context.newPage()
   await page.goto(server.url.href)

@@ -12,6 +12,65 @@ async function fixture() {
   return { saved, browser, changes }
 }
 describe('browser account persistence', () => {
+  it('recovers through the next storage call without retargeting that stale call', async () => {
+    const { saved, browser } = await fixture()
+    await browser.call('SecureStorage', 'set', ['auth.token', 'ava'])
+    await browser.call('Storage', 'set', ['draft', 'private'])
+    const remove = saved.removeItem
+    saved.removeItem = () => { throw new Error('Storage unavailable') }
+    saved.setItem('auth_token', 'ben')
+    await expect(browser.call('Storage', 'get', ['draft'])).rejects.toThrow('Storage unavailable')
+    // Another failed attempt must remain retryable, without exposing Ava's data.
+    await expect(browser.accountChanged()).rejects.toThrow('Storage unavailable')
+    expect(browser.craft.storage.getSync('draft')).toBeNull()
+    saved.removeItem = remove
+    await expect(browser.call('Storage', 'set', ['draft', 'stale']))
+      .rejects.toMatchObject({ code: 'STORAGE_SCOPE_CHANGED' })
+    expect(await browser.call('Storage', 'get', ['draft'])).toBeNull()
+    expect(await browser.call('Storage', 'set', ['draft', 'new account'])).toBe(true)
+    expect(browser.craft.storage.getSync('draft')).toBe('new account')
+  })
+
+  it.each(['cleanup', 'hash'])('retries a failed account %s without exposing stale checkpoints', async (stage) => {
+    const saved = storage()
+    saved.setItem('auth_token', 'ava')
+    const notifications: unknown[][] = []
+    let unavailable = false
+    const originalRemove = saved.removeItem
+    saved.removeItem = (key) => {
+      if (unavailable && stage === 'cleanup') throw new DOMException('Storage unavailable', 'SecurityError')
+      originalRemove(key)
+    }
+    const browser = await createBrowserStorage({
+      storage: saved, namespace: 'retry', tokenKey: 'auth_token', lock: locks(),
+      hash: async (value) => {
+        if (unavailable && stage === 'hash') throw new Error('Hash unavailable')
+        return `hash-${value}`
+      },
+      changed: () => {}, sessionChanged: (...args) => { notifications.push(args) },
+    })
+    await browser.call('Storage', 'set', ['draft', { owner: 'ava' }])
+    await browser.craft.snapshots.set('today', { owner: 'ava' })
+    saved.setItem('other-app', 'preserved')
+    saved.setItem('auth_token', 'ben')
+    unavailable = true
+    await expect(browser.accountChanged()).rejects.toThrow(stage === 'cleanup' ? 'Storage unavailable' : 'Hash unavailable')
+    expect(browser.craft.storage.getSync('draft')).toBeNull()
+    expect(browser.craft.snapshots.get('today')).toBeNull()
+    expect(await browser.craft.snapshots.set('today', 'stale')).toBe(false)
+    expect(notifications).toEqual([])
+    unavailable = false
+    // Concurrent retries must join one cleanup and notify the session once.
+    await Promise.all([browser.accountChanged(), browser.accountChanged()])
+    expect(browser.scope()).toBe('hash-ben')
+    expect(notifications).toEqual([['ben', 'ava']])
+    expect(saved.getItem('retry:account:hash-ava:storage:draft')).toBeNull()
+    expect(saved.getItem('retry:account:hash-ava:snapshot:today')).toBeNull()
+    expect(saved.getItem('other-app')).toBe('preserved')
+    expect(await browser.call('Storage', 'set', ['draft', { owner: 'ben' }])).toBe(true)
+    expect(await browser.call('Storage', 'get', ['draft'])).toEqual({ owner: 'ben' })
+  })
+
   it('retains only the current account and shares the configured sign-in key', async () => {
     const { saved, browser, changes } = await fixture()
     await browser.craft.snapshots.set('app', { apiBase: '/api' })
