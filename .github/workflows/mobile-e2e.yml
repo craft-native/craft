@@ -43,8 +43,16 @@ on:
       # Shared layout is compiled into both mobile runtimes.
       - packages/zig/src/native_layout.zig
       - packages/zig/src/metal_surface.zig
+      - packages/zig/src/vulkan_surface.zig
+      - packages/zig/src/vulkan_api.zig
+      - packages/zig/src/graphics.zig
+      - packages/zig/src/graphics_scene.zig
+      - packages/zig/test/fixtures/vulkan-surface-consumer/**
       - packages/zig/src/objc_runtime.zig
       - packages/zig/build.zig
+      - packages/zig/build.zig.zon
+      - scripts/zig.ts
+      - pantry.lock
       - scripts/mobile-e2e.ts
       - scripts/mobile-e2e/**
       - scripts/media-cache.ts
@@ -65,8 +73,16 @@ on:
       - packages/zig/src/platform_uuid.zig
       - packages/zig/src/native_layout.zig
       - packages/zig/src/metal_surface.zig
+      - packages/zig/src/vulkan_surface.zig
+      - packages/zig/src/vulkan_api.zig
+      - packages/zig/src/graphics.zig
+      - packages/zig/src/graphics_scene.zig
+      - packages/zig/test/fixtures/vulkan-surface-consumer/**
       - packages/zig/src/objc_runtime.zig
       - packages/zig/build.zig
+      - packages/zig/build.zig.zon
+      - scripts/zig.ts
+      - pantry.lock
       - scripts/mobile-e2e.ts
       - scripts/mobile-e2e/**
       - scripts/media-cache.ts
@@ -79,7 +95,7 @@ on:
       scope:
         description: Test all mobile suites or focused Android/rendering/navigation/hybrid suites
         type: choice
-        options: [all, android, ios-render, ios-checkpoints, ios-navigation, ios-hybrid, android-navigation]
+        options: [all, android, android-vulkan, ios-render, ios-checkpoints, ios-navigation, ios-hybrid, android-navigation]
         default: all
       android_suite:
         description: Android native fixture coverage for the android-navigation scope
@@ -113,7 +129,7 @@ env:
 
 jobs:
   media-cache:
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     uses: ./.github/workflows/media-cache.yml
 
   # The transcript reader and the required-case list are the part of this
@@ -141,10 +157,10 @@ jobs:
       # repository and run out of file descriptors under the hoisted linker.
       # See the note in native-lifecycle.yml.
       - name: Test the report protocol
-        run: bun test ./scripts/mobile-e2e/protocol.test.ts
+        run: bun test ./scripts/mobile-e2e/protocol.test.ts ./packages/android/scripts/test-vulkan-surface.test.ts ./packages/android/scripts/vulkan-surface-result.test.ts
 
   ios-native:
-    if: ${{ inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     name: iOS native UI (${{ matrix.suite }})
     strategy:
       fail-fast: false
@@ -270,7 +286,7 @@ jobs:
 
   ios-metal:
     name: iOS native Metal surface
-    if: ${{ inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -302,7 +318,7 @@ jobs:
 
   ios-hybrid:
     name: iOS hybrid navigation
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && inputs.scope != 'android-vulkan' }}
     runs-on: macos-15
     timeout-minutes: 35
     env:
@@ -347,7 +363,7 @@ jobs:
 
   ios-simulator:
     name: iOS simulator
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     runs-on: macos-15
     # Keep protocol acceptance separate from hybrid XCTest. Both are required;
     # combining them exhausted this budget after all app assertions passed.
@@ -444,7 +460,7 @@ jobs:
 
   android-emulator:
     name: Android emulator
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -614,7 +630,7 @@ jobs:
   # passing, and wired into no workflow.
   ios-zig-slice:
     name: iOS Zig runtime slice
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -680,7 +696,7 @@ jobs:
     env:
       CRAFT_ANDROID_NATIVE_SUITE: ${{ inputs.scope != 'android-navigation' && 'full' || inputs.android_suite || 'focused' }}
       CRAFT_ANDROID_TEST_CLASS: ${{ inputs.scope == 'android-navigation' && inputs.android_suite == 'teardown' && 'dev.craft.navigationtest.NativeCapabilitiesTest,dev.craft.navigationtest.NativeNavigationTest#nativeTeardownRecordsSynchronousStorageBeforeReturning' || inputs.scope == 'android-navigation' && inputs.android_suite == 'capabilities' && 'dev.craft.navigationtest.NativeCapabilitiesTest' || inputs.scope == 'android-navigation' && inputs.android_suite == 'accessibility' && 'dev.craft.navigationtest.NativeNavigationTest#nativeTestIdsRemainQueryableWithoutReplacingVisibleLabels' || inputs.scope == 'android-navigation' && inputs.android_suite == 'maps' && 'dev.craft.navigationtest.NativeMapTest#keyFreeBasemapsKeepTheRecordedRouteAndDirectionSignsVisible,dev.craft.navigationtest.NativeMapTest#nativeMapStrokeWidthsStayInLogicalPointsAcrossDensities,dev.craft.navigationtest.NativeMapTest#nativeMapMutationsUpdateThePinAndCameraWithoutReloadingTheStyle,dev.craft.navigationtest.NativeMapTest#showingTheLocationDotDoesNotRequestPermissionDuringRendering,dev.craft.navigationtest.NativeMapTest#controlledRegionEchoPreservesTheCameraAfterANativeDrag,dev.craft.navigationtest.NativeMapTest#backgroundAndResumeKeepTheNativeMapAndCamera' || inputs.scope == 'android-navigation' && inputs.android_suite == 'identity' && 'dev.craft.navigationtest.NativeNavigationTest#repeatedTestIdsKeepDistinctProtocolViewsAcrossReorders' || inputs.scope == 'android-navigation' && inputs.android_suite == 'system-bars' && 'dev.craft.navigationtest.NativeNavigationTest#nativeScreenBackgroundOptionAppliesAndResets,dev.craft.navigationtest.NativeNavigationTest#nativeStatusBarPropsUpdateWithoutNavigation,dev.craft.navigationtest.NativeNavigationTest#nativeStatusBarTracksLiveDeviceAppearance,dev.craft.navigationtest.NativeMutationTest#materializesTheCommittedRootWithoutAssumingItsProtocolId,dev.craft.navigationtest.NativeNavigationTest#compiledBundleRendersNavigatesAndRetainsNativeControls,dev.craft.navigationtest.NativeNavigationTest#safeAreaInsetsPreserveAuthoredPaddingWhenRetained' || inputs.scope == 'android-navigation' && inputs.android_suite != 'full' && 'dev.craft.navigationtest.NativeNavigationTest#nativeStatusBarPropsUpdateWithoutNavigation,dev.craft.navigationtest.NativeNavigationTest#nativeStatusBarTracksLiveDeviceAppearance,dev.craft.navigationtest.NativeMutationTest#materializesTheCommittedRootWithoutAssumingItsProtocolId,dev.craft.navigationtest.NativeNavigationTest#compiledBundleRendersNavigatesAndRetainsNativeControls,dev.craft.navigationtest.NativeNavigationTest#safeAreaInsetsPreserveAuthoredPaddingWhenRetained,dev.craft.navigationtest.NativeNavigationTest#outgoingTabTapWinsOverSettlingSwipe,dev.craft.navigationtest.NativeNavigationTest#thirdTabTapWinsOverSettlingSwipe,dev.craft.navigationtest.NativeNavigationTest#cancelledSwipeTargetIsVisibleWhenSelectedLater,dev.craft.navigationtest.NativeNavigationTest#completedReverseSwipeKeepsRetainedTabVisible,dev.craft.navigationtest.NativeNavigationTest#nativePullToRefreshSurvivesViewReattachment,dev.craft.navigationtest.NativeFlatListTest#refreshAppearanceUsesTheScreenContrastFallback,dev.craft.navigationtest.NativeNavigationTest#pushedScreenTabAccessoryOpensNativeRouteAndClearsOnBack,dev.craft.navigationtest.NativeNavigationTest#nativeDatePickerKeepsFollowingControlsMounted' || '' }}
-    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' }}
+    if: ${{ inputs.scope != 'ios-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-vulkan' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -772,9 +788,57 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  android-vulkan:
+    name: Android native Vulkan surface
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'android' || inputs.scope == 'android-vulkan' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-android-disk
+      - name: Install the pinned native fixture toolchain
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        with:
+          version: '0.11.120'
+          install: 'false'
+          packages: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install the qualified NDK and Android compile platform
+        run: sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.11.1'
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/first-party-zig-deps
+      - name: Enable owned emulator hardware CPU virtualization
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Require actual software-Vulkan pixels and native lifecycle ownership
+        run: >-
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          bun packages/android/scripts/test-vulkan-surface.ts
+          --image 'system-images;android-35;google_apis;x86_64'
+          --output artifacts/mobile-e2e/android-vulkan
+      - name: Retain original Android Vulkan qualification and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native-vulkan-surface
+          path: artifacts/mobile-e2e/android-vulkan
+          if-no-files-found: error
+          retention-days: 30
+
   mobile-summary:
     name: Mobile E2E summary
-    needs: [harness, ios-native, ios-metal, ios-hybrid, ios-simulator, android-emulator, ios-zig-slice, android-navigation, media-cache]
+    needs: [harness, ios-native, ios-metal, ios-hybrid, ios-simulator, android-emulator, ios-zig-slice, android-navigation, android-vulkan, media-cache]
     runs-on: ubuntu-latest
     if: always()
 
@@ -789,6 +853,7 @@ jobs:
             echo
             echo "| Leg | Result |"
             echo "|-----|--------|"
+            echo "| Android native Vulkan surface | ${{ needs.android-vulkan.result }} |"
             echo "| Android native navigation | ${{ needs.android-navigation.result }} |"
             echo "| Harness unit tests | ${{ needs.harness.result }} |"
             echo "| iOS native UIKit and navigation | ${{ needs.ios-native.result }} |"
@@ -811,12 +876,13 @@ jobs:
       - name: Fail if any leg failed
         if: >-
           contains(fromJSON('["failure", "skipped"]'), needs.harness.result)
-          || (inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && contains(fromJSON('["failure", "skipped"]'), needs.android-navigation.result))
-          || (inputs.scope != 'ios-hybrid' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && contains(fromJSON('["failure", "skipped"]'), needs.ios-native.result))
+          || ((inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'android' || inputs.scope == 'android-vulkan') && contains(fromJSON('["failure", "skipped"]'), needs.android-vulkan.result))
+          || (inputs.scope != 'android-vulkan' && inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && contains(fromJSON('["failure", "skipped"]'), needs.android-navigation.result))
+          || (inputs.scope != 'android-vulkan' && inputs.scope != 'ios-hybrid' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && contains(fromJSON('["failure", "skipped"]'), needs.ios-native.result))
           || (inputs.scope == 'android' && contains(fromJSON('["failure", "skipped"]'), needs.android-emulator.result))
           || (inputs.scope == 'ios-hybrid' && contains(fromJSON('["failure", "skipped"]'), needs.ios-hybrid.result))
-          || (inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && contains(fromJSON('["failure", "skipped"]'), needs.ios-metal.result))
-          || (inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && (
+          || (inputs.scope != 'android-vulkan' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'android' && contains(fromJSON('["failure", "skipped"]'), needs.ios-metal.result))
+          || (inputs.scope != 'android-vulkan' && inputs.scope != 'ios-hybrid' && inputs.scope != 'ios-navigation' && inputs.scope != 'android-navigation' && inputs.scope != 'ios-render' && inputs.scope != 'ios-checkpoints' && inputs.scope != 'android' && (
             contains(fromJSON('["failure", "skipped"]'), needs.ios-simulator.result)
             || contains(fromJSON('["failure", "skipped"]'), needs.ios-hybrid.result)
             || contains(fromJSON('["failure", "skipped"]'), needs.android-emulator.result)

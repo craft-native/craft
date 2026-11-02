@@ -55,11 +55,9 @@ Loader and driver are separate original build outputs; the ICD is never
 renamed to impersonate the loader. Production accepts the normal system or
 application-bundled Vulkan loader and does not search the current directory.
 
-This source change is under development. Local ownership tests and cross
-compilation do not prove Linux native execution. Actual retained window output
-and complete source/release acceptance are required before publication claims.
-The Win32 adapter and its native acceptance are under development; cross
-compilation alone does not prove Windows execution.
+Each host is qualified by its actual retained native execution and original
+source/release artifacts. Cross-compilation and ownership unit tests alone do
+not establish successful native presentation.
 
 The Android core adapter accepts an acquired `ANativeWindow` through
 `NativeWindow.android` on 64-bit little-endian targets. It uses `libvulkan.so`
@@ -72,9 +70,55 @@ Like the desktop adapters, this requires Vulkan 1.1 and KHR/EXT surface and
 swapchain maintenance. Unsupported drivers fail explicitly; no blank fallback
 is reported as successful presentation.
 
-Android is **not execution-qualified** by this fixture yet. An Android activity,
-surface-recreation/input lifecycle harness, NDK build, actual displayed-frame
-captures and emulator/device CI remain required for #393. Host-side driver-call
-tests and Android cross-compilation establish only adapter routing and ABI
-coverage, not successful native Android presentation or lifecycle acceptance.
-The fixture does not establish full native game rendering or Gold Edition fidelity.
+Android swapchain dimensions use the requested pixel extent clamped to the
+surface image bounds. Its `currentExtent` is a preferred consumer size and can
+lag a real SurfaceView resize; it does not override valid requested dimensions.
+Fixed desktop min/max image bounds still force the native desktop extent.
+
+The authored Android Activity/JNI fixture lives in
+`packages/android/fixtures/vulkan-surface`. It acquires the real SurfaceView's
+ANativeWindow, serializes native calls on one render thread and drives
+Choreographer frames, real native Button/pointer input, a View resize,
+Home/background disposal, foreground surface recreation and two Activity
+sessions. Every GPU readback pixel must match the shared scene. Five actual
+Android compositor captures also require independent literal atlas, triangle,
+glyph, changing-frame and touch-marker anchors. Blank or stale rendering
+cannot qualify by matching a blank CPU oracle. Acceptance requires at least 370
+frames, 4 native sessions, 2 pointer events and complete native/process disposal,
+with unchanged 1000ms native waits and 61-frame/30-second stage deadlines.
+
+Run with Java 17, Gradle 8.11.1, Android platform/build-tools 35, NDK 27.2.12479018,
+the pinned compiler, SDK command-line tools and hardware CPU virtualization:
+
+```sh
+ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" \
+  bun packages/android/scripts/test-vulkan-surface.ts \
+  --image 'system-images;android-35;google_apis;arm64-v8a' \
+  --output artifacts/native-vulkan-android
+```
+
+Use `x86_64` instead of `arm64-v8a` on an x86 host. The maintained
+`mobile-e2e.yml` Android Vulkan job runs the Google APIs 35 image on Linux x86
+with a software Vulkan GPU and KVM CPU virtualization; the focused manual
+scope is `android-vulkan`. A missing, failed or skipped selected native job
+fails the workflow summary. It retains original APKs, native library/source
+archive, every command/disposal result, compiler/NDK/Gradle/emulator/image
+identities and all five PNGs. Failing native stages retain their original
+JUnit/logcat/capture output before the owned emulator is disposed.
+
+The local macOS arm64 matrix for [#435](https://github.com/craft-native/craft/issues/435)
+used the identical consumed source and decompressed public archive:
+
+| Android 35 image | Actual result |
+| --- | --- |
+| Google APIs revision 9 | Passed 370 frames, 4 native sessions, 2 native pointer events and 5 complete displayed captures. |
+| Default revision 2 | Failed the original 61-frame/30-second initial stage at 31 frames; native presentation took about 984ms per frame. |
+
+The [default-image gate](https://github.com/craft-native/craft/issues/437) remains
+open. Its external-fence worker finishes promptly while its enclosing
+Vulkan wait often returns near a full second later. This failed row remains
+unqualified; no polling, resize retry, shorter scene or larger budget hides it.
+The local passing row establishes software-emulator execution only. Linux CI,
+physical GPUs/devices, failure-path coverage and verified publication/adoption
+retain their own evidence requirements. This fixture does not establish full
+native game rendering or Gold Edition fidelity.

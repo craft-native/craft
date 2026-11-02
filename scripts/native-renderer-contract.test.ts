@@ -4280,11 +4280,13 @@ describe('native renderer component contract', () => {
 
 describe('mobile acceptance scopes', () => {
   const workflow = readFileSync(join(root, '.github/workflows/mobile-e2e.yml'), 'utf8')
-  const legs = ['harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'media-cache']
+  const legs = ['harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'android-vulkan', 'media-cache']
   const selected: Record<string, string[]> = {
     '': legs,
     'all': legs,
-    'android': ['harness', 'android-emulator', 'android-navigation'],
+    'android': ['harness', 'android-emulator', 'android-navigation', 'android-vulkan'],
+    'android-vulkan': ['harness', 'android-vulkan'],
+    'ios-checkpoints': ['harness', 'ios-native'],
     'ios-render': ['harness', 'ios-native', 'ios-metal'],
     'ios-navigation': ['harness', 'ios-native'],
     'ios-hybrid': ['harness', 'ios-hybrid'],

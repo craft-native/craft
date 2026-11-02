@@ -6,8 +6,14 @@ const graphics = craft.graphics;
 const scene = graphics.scene;
 const native = craft.vulkan_surface;
 const allocator = std.heap.c_allocator;
-const Context = struct { surface: native.Surface, canvas: graphics.Canvas, readback: []u32 };
+const Context = struct { surface: native.Surface, canvas: graphics.Canvas, readback: []u32, metrics: native.Metrics };
 var last_error: ?anyerror = null;
+const AndroidTrace = struct {
+    extern fn craft_vulkan_trace(stage: c_int) void;
+};
+fn trace(stage: c_int) void {
+    if (builtin.abi == .android) AndroidTrace.craft_vulkan_trace(stage);
+}
 fn failed(err: anyerror) c_int {
     last_error = err;
     return 1;
@@ -34,6 +40,7 @@ export fn craft_vulkan_create(display: ?*anyopaque, window: usize, width: u32, h
         return null;
     };
     const native_window: native.NativeWindow = if (builtin.abi == .android) .{ .android = if (window == 0) null else @ptrFromInt(window) } else if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = display, .window = if (window == 0) null else @ptrFromInt(window) } } else .{ .xlib = .{ .display = display, .window = window } };
+    trace(0);
     const surface = native.Surface.init(native_window, .{ .width = width, .height = height }) catch |err| {
         allocator.free(pixels);
         var owned = canvas;
@@ -42,7 +49,8 @@ export fn craft_vulkan_create(display: ?*anyopaque, window: usize, width: u32, h
         _ = failed(err);
         return null;
     };
-    context.* = .{ .surface = surface, .canvas = canvas, .readback = pixels };
+    trace(1);
+    context.* = .{ .surface = surface, .canvas = canvas, .readback = pixels, .metrics = .{ .width = width, .height = height } };
     return context;
 }
 export fn craft_vulkan_resize(context: *Context, width: u32, height: u32) c_int {
@@ -56,6 +64,7 @@ export fn craft_vulkan_resize(context: *Context, width: u32, height: u32) c_int 
         allocator.free(pixels);
         return failed(err);
     };
+    context.metrics = metrics;
     if (metrics.width != width or metrics.height != height) {
         canvas.deinit();
         allocator.free(pixels);
@@ -75,14 +84,18 @@ export fn craft_vulkan_draw(context: *Context, frame: u32, input_x: i32, input_y
     const white = [_]u8{ 255, 255, 255, 255 };
     const glyphs = [_]scene.Glyph{.{ .codepoint = 'V', .source = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .advance = 2 }};
     const font: scene.BitmapFont = .{ .bitmap = .{ .width = 1, .height = 1, .pixels = &white }, .glyphs = &glyphs, .line_height = 2 };
+    trace(2);
     scene.drawFrame(&context.canvas, &.{
         .{ .sprite = .{ .bitmap = .{ .width = 2, .height = 2, .pixels = &atlas }, .source = .{ .x = 0, .y = 0, .width = 2, .height = 2 }, .transform = .{ .a = @as(f64, @floatFromInt(width)) / 2, .d = @as(f64, @floatFromInt(height)) / 2, .tx = @floatFromInt(frame % 4) } } },
         .{ .triangle = .{ .bitmap = .{ .width = 1, .height = 1, .pixels = &white }, .vertices = .{ .{ .x = 8, .y = 8, .u = 0, .v = 0 }, .{ .x = 16, .y = 8, .u = 1, .v = 0 }, .{ .x = 8, .y = 16, .u = 0, .v = 1 } } } },
         .{ .text = .{ .font = font, .text = "VV", .transform = .{ .a = 3, .d = 3, .tx = 20, .ty = 8 } } },
     }, .{}) catch |err| return failed(err);
     if (input_x >= 0 and input_y >= 0) context.canvas.drawRect(.{ .x = input_x, .y = input_y, .width = 4, .height = 4 }, graphics.Color.rgb(255, 255, 255));
+    trace(3);
     context.surface.present(context.canvas.pixels) catch |err| return failed(err);
+    trace(4);
     context.surface.readPixels(context.readback) catch |err| return failed(err);
+    trace(5);
     if (!std.mem.eql(u32, context.canvas.pixels, context.readback)) return failed(error.ActualGpuPixelsDiffer);
     return 0;
 }
@@ -103,4 +116,12 @@ export fn craft_vulkan_dispose(context: *Context) c_int {
     allocator.free(context.readback);
     allocator.destroy(context);
     return 0;
+}
+
+// Test diagnostics retain the actual extent returned by the public resize API.
+export fn craft_vulkan_width(context: *Context) u32 {
+    return context.metrics.width;
+}
+export fn craft_vulkan_height(context: *Context) u32 {
+    return context.metrics.height;
 }

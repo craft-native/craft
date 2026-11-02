@@ -344,7 +344,8 @@ test('focused native diagnostics retain their service gates and complete release
   }
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-hybrid')
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-checkpoints')
-  const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation']
+  expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('android-vulkan')
+  const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'android-vulkan']
   const evaluate = (expression: string | undefined, scope: string, outcomes: Record<string, string> = {}) => expression === undefined || runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\bneeds\.([\w-]+)\.result/g, 'needs["$1"].result'), {
     inputs: { scope },
     needs: Object.fromEntries(legs.map(name => [name, { result: outcomes[name] ?? 'success' }])),
@@ -361,7 +362,7 @@ test('focused native diagnostics retain their service gates and complete release
     }
     expect(evaluate(reject, scope)).toBe(false)
   }
-  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native']]) {
+  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native'], ['android-vulkan', 'android-vulkan']]) {
     const selected = ['harness', service]
     expect(legs.filter(name => evaluate(workflow.jobs[name].if, scope))).toEqual(selected)
     const skipped = Object.fromEntries(legs.filter(name => !selected.includes(name)).map(name => [name, 'skipped']))
