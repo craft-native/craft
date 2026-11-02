@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.421...v0.0.422)
+
+## 🚀 Features
+
+- **macos**: user scripts can post to the app and get its answer ([4f002f7](https://github.com/craft-native/craft/commit/4f002f7)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **vulkan**: honor requested extents within native image bounds ([cf8b31f](https://github.com/craft-native/craft/commit/cf8b31f)) _(by Chris)_ ([#435](https://github.com/craft-native/craft/issues/435))
+- **ci**: preserve mobile acceptance for each release commit ([c93d348](https://github.com/craft-native/craft/commit/c93d348)) _(by Chris)_ ([#436](https://github.com/craft-native/craft/issues/436))
+
+## 🧪 Tests
+
+- **android**: qualify Vulkan frames and surface lifecycle ([fd55fd1](https://github.com/craft-native/craft/commit/fd55fd1)) _(by Chris)_ ([#435](https://github.com/craft-native/craft/issues/435), [#437](https://github.com/craft-native/craft/issues/437))
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.420...v0.0.421)
 
 ## 🐛 Bug Fixes
