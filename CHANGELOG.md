@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.433...v0.0.434)
+
+## 🐛 Bug Fixes
+
+- **ios**: find a label in the presented alert or sheet before the screen behind it ([35798dc](https://github.com/craft-native/craft/commit/35798dc)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.432...v0.0.433)
 
 ## 🚀 Features
