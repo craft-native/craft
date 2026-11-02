@@ -29,6 +29,19 @@ describe('independent timed input evidence', () => {
     expect(report.passed).toBe(true)
     expect(report.timing.observedSpanSeconds).toBeCloseTo(1.865)
   })
+  it('rejects the premature empty receiver observed in Craft 428 CI', () => {
+    // Artifact 13172192149, SHA-256 05bb1427c63279c918560f10e1308a9d9cb1f6a746e11098970f22793a5bbeb4.
+    // The later XCTest delivery assertions passed; this earlier capture is not
+    // evidence of delivery and must never be qualified as a native pass.
+    const report = analyzeTimedInput(schedule, [
+      { id: 'native-touch-counts', value: 'began=0;ended=0;cancelled=0' },
+      { id: 'received-callbacks', value: '' },
+      { id: 'native-input-journal-0', value: '[]' },
+    ])
+    expect(report.passed).toBe(false)
+    expect(report.counts).toEqual({ began: 0, ended: 0, cancelled: 0, callbacks: 0 })
+    expect(report.timing.observedSpanSeconds).toBeNull()
+  })
   it('detects compressed timing in the retained passing CI attempt', () => {
     const receipt = JSON.parse(readFileSync(join(import.meta.dir, '../fixtures/timed-input/compressed-ci-receipt.json'), 'utf8'))
     const report = analyzeTimedInput(receipt.schedule, receipt.values)
@@ -100,7 +113,8 @@ describe('independent timed input evidence', () => {
     try {
       writeFileSync(join(folder, 'schedule.txt'), JSON.stringify(schedule))
       writeFileSync(join(folder, 'values.txt'), JSON.stringify(values(fixture())))
-      manifest([received, scheduled])
+      manifest([received, scheduled, { ...received, suggestedHumanReadableName: 'timed-input-receiver-immediate-values_0_C.json', exportedFileName: 'immediate.txt' }])
+      writeFileSync(join(folder, 'immediate.txt'), JSON.stringify([{ id: 'native-input-journal-0', value: '[]' }]))
       expect(analyzeTimedInputAttachments(folder).passed).toBe(true)
       for (const changed of [
         { ...received, deviceId: 'different-simulator' },

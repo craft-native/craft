@@ -13,9 +13,10 @@ and application state. Button callbacks independently record their names and
 the SwiftUI array before/after the append. Recording does not render UI or write
 to disk; the first 256 observations are retained in memory.
 
-After synthesis, the driver attaches `timed-input-receiver.txt` **before**
+After synthesis, the driver attaches `timed-input-receiver-immediate.txt` before
 asserting 24 began phases, 24 ended phases, zero cancellations, the 24 callback
-names, and the original SwiftUI label. Its companion
+names. It then retains the canonical `timed-input-receiver.txt` and verifies the
+original SwiftUI label. Its companion
 `timed-input-receiver-values.json` attachment includes the complete
 `native-input-journal-N` values. Sort by numeric suffix and concatenate to
 recover the JSON journal; each chunk stays below XCTest’s 512-character value
@@ -96,3 +97,11 @@ Local iOS 26.5 execution with the owned player and no initial delay delivered
 24 began phases, 24 ended phases, zero cancellations and all 24 callbacks, over
 the requested 1.865 s. The original compressed CI receipt remains a required
 negative regression. Hosted acceptance on the changed source is still required.
+
+Craft 428 CI retained an immediate empty journal even though the subsequent
+unchanged native counts and callback assertions passed. The immediate capture
+is diagnostic; playback completion alone does not acknowledge delivery to the
+receiver. Analysis uses only the canonical capture taken after those existing
+bounded assertions, from the same attempt. Both snapshots are retained, and
+missing acknowledgements or final evidence still fail. The empty receipt remains
+a negative regression; no extra delay, touch, retry or timing tolerance was added.

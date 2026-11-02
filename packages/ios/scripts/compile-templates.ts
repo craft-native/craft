@@ -2,7 +2,8 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path'
 import { Glob } from 'bun'
 import { bootSimulator, init, pickSimulator, type CraftConfig } from '../src/index'
-import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
+import { initSimulatorDriver } from '../src/testing'
+import { timedInputAcceptanceJourney } from './timed-input-journey'
 import { analyzeTimedInputAttachments } from './analyze-timed-input'
 import { checkLoadFailureClassifier } from './load-failure'
 import { checkRecoveryBudget } from './recovery-budget'
@@ -107,6 +108,7 @@ const pushFixture: CompileFixture = {
 
 const keepProjects = process.argv.includes('--keep')
 const workspace = createTempDir('craft-ios-templates-')
+let retainedTimedInputEvidence = false
 
 function run(args: string[], cwd: string, label: string): void {
   console.log(`\n${label}`)
@@ -142,7 +144,10 @@ function retainTimedInputEvidence(requirePassed = false): void {
       writeFileSync(join(output, `${kind}.exit-code.txt`), String(report.exitCode))
     }
   }
-  if (output) cpSync(results, join(output, 'TimedInputDriver.xcresult'), { recursive: true, force: false, errorOnExist: true })
+  if (output && !retainedTimedInputEvidence) {
+    cpSync(results, join(output, 'TimedInputDriver.xcresult'), { recursive: true, force: false, errorOnExist: true })
+    retainedTimedInputEvidence = true
+  }
   if (requirePassed) {
     const attachments = join(workspace, 'timed-input-attachments')
     run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', results, '--output-path', attachments],
@@ -265,26 +270,7 @@ try {
   // Compile the separate test host too: the application template builds cannot
   // catch Swift/Objective-C importer or bridging-header failures in the driver.
   const driverOutput = join(workspace, 'TimedInputDriver')
-  const inputNames = ['One', 'Two', 'Three', 'Four']
-  const inputSequence = Array.from({ length: 24 }, (_, index) => inputNames[index % 4]!)
-  const script = serializeSimulatorSteps([
-    { command: 'launch' }, { command: 'labelid', id: 'received-taps', text: 'none' },
-    { command: 'touches', paths: inputSequence.map((tab, index) => [
-      { tab, at: index * 0.08 }, { tab, at: index * 0.08 + 0.025 },
-    ]) },
-    // Capture what the independent receiver actually received before any
-    // assertion can abort the journey. The scheduled paths alone cannot say
-    // whether a missing callback was lost in delivery or receiver state.
-    { command: 'tree', name: 'timed-input-receiver' },
-    { command: 'valueid', id: 'native-touch-counts', text: 'began=24;ended=24;cancelled=0' },
-    { command: 'valueid', id: 'received-callbacks', text: inputSequence.join(',') },
-    { command: 'labelid', id: 'received-taps', text: inputSequence.join(',') },
-    { command: 'selected', text: 'Four' },
-    { command: 'scrollto', text: 'End of scroll fixture' },
-    { command: 'expectid', text: 'driver-scroll-end' },
-    { command: 'scrollto', text: 'Start of scroll fixture' },
-    { command: 'expectid', text: 'driver-scroll-start' },
-  ])
+  const { tabs: inputNames, script } = timedInputAcceptanceJourney()
   initSimulatorDriver({ output: driverOutput, bundleId: 'dev.craft.timedinput.host',
     bundleIdPrefix: 'dev.craft.timedinput', projectName: 'TimedInputDriver', tabs: inputNames, script })
   copyFileSync(join(import.meta.dir, '../fixtures/timed-input/HostApp.swift'), join(driverOutput, 'Host/HostApp.swift'))
@@ -294,6 +280,7 @@ try {
     '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', join(workspace, 'DriverDerivedData'),
     'CODE_SIGNING_ALLOWED=NO', 'build-for-testing'], driverOutput, 'Compiling generated native input test host')
   const inputDevice = await pickSimulator()
+  if (!inputDevice) throw new Error('No compatible iOS simulator is available for timed input acceptance')
   await bootSimulator(inputDevice)
   run(['xcodebuild', '-quiet', '-project', 'TimedInputDriver.xcodeproj', '-scheme', 'TimedInputDriver',
     '-destination', `id=${inputDevice.udid}`, '-derivedDataPath', join(workspace, 'DriverDerivedData'),
