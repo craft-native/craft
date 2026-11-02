@@ -1,5 +1,26 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.426...v0.0.427)
+
+## 🚀 Features
+
+- **native**: raise a shake event for a report-a-problem gesture ([46437b6](https://github.com/craft-native/craft/commit/46437b6)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: reveal scroll targets inside their native viewport ([addccb9](https://github.com/craft-native/craft/commit/addccb9)) _(by Chris Breuer)_
+- **browser**: retry failed account cleanup without exposing stale saves ([685f820](https://github.com/craft-native/craft/commit/685f820)) _(by glennmichael123)_
+- **android**: preserve sounds when replacement options are invalid ([2b80e36](https://github.com/craft-native/craft/commit/2b80e36)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **android**: exercise system audio focus interruption and recovery ([309f8ab](https://github.com/craft-native/craft/commit/309f8ab)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.425...v0.0.426)
 
 ## 🐛 Bug Fixes
