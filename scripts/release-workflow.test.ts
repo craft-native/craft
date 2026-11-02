@@ -439,6 +439,20 @@ test('mobile device jobs preserve runner diagnostics when the harness fails', ()
   }
 })
 
+test('Android native evidence is captured inside the live emulator action and uploaded', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const job = workflow.jobs['android-emulator']!
+  const harness = job.steps?.find(step => step.id === 'harness')
+  expect(harness?.uses).toBe('reactivecircus/android-emulator-runner@v2')
+  const script = (harness?.with as Record<string, string>).script!
+  expect(script).toContain('ANDROID_SERIAL=emulator-5554')
+  expect(script).toContain('CRAFT_ANDROID_NATIVE_ARTIFACTS="$GITHUB_WORKSPACE/artifacts/mobile-e2e/android-emulator/native-navigation"')
+  expect(script).toContain('bun packages/android/scripts/test-native-navigation.ts')
+  const upload = job.steps?.find(step => step.name === 'Upload Android evidence')
+  expect(upload?.if).toBe('always()')
+  expect((upload?.with as Record<string, string>).path).toContain('artifacts/mobile-e2e/android-emulator/**')
+})
+
 test('workflow setup uses a known Pantry CLI instead of resolving latest', () => {
   for (const file of ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'benchmarks.yml', 'binary-size.yml', 'native-lifecycle.yml', 'windows-source-provenance.yml', 'windows-managed-git.yml']) {
     const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }

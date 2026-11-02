@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { build, init } from '../src/index'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
+import { retainNativeNavigationEvidence } from './native-navigation-evidence'
 
 const fixture = resolve(import.meta.dir, '../../ios/fixtures/native-navigation')
 // The @stacksjs/stx CLI (`stx native compile`), from a sibling checkout unless CI pins one.
@@ -79,9 +80,19 @@ try {
       const selection = process.env.CRAFT_ANDROID_TEST_CLASS
       run(['gradle', '--no-daemon', ':app:connectedDebugAndroidTest', ...(selection ? [`-Pandroid.testInstrumentationRunnerArguments.class=${selection}`] : [])], output)
     }
-    catch (error) {
-      run(['adb', 'logcat', '-d', '-s', 'CraftNativeAndroid:V', 'AndroidRuntime:E'], output)
-      throw error
+    finally {
+      // The emulator action stops its device before the next workflow step.
+      // Retain provider/system evidence and Gradle reports here, before either
+      // that teardown or our own project cleanup. Diagnostic errors must never
+      // replace the original instrumentation failure.
+      try {
+        retainNativeNavigationEvidence({
+          project: output,
+          directory: resolve(process.env.CRAFT_ANDROID_NATIVE_ARTIFACTS || 'artifacts/android-native-navigation'),
+          serial: process.env.ANDROID_SERIAL,
+        })
+      }
+      catch (error) { console.error(`Could not retain Android native evidence: ${error}`) }
     }
   }
   console.log(process.argv.includes('--prepare-only') ? 'Android native navigation fixture prepared' : 'Android native navigation test passed')

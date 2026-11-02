@@ -577,7 +577,7 @@ jobs:
           script: |
             adb wait-for-device
             bun scripts/mobile-e2e.ts --platform android --android-runtime packages/zig/zig-out/android
-            STX_CLI="$GITHUB_WORKSPACE/.stx-compiler/packages/stx/bin/cli.ts" bun packages/android/scripts/test-native-navigation.ts
+            ANDROID_SERIAL=emulator-5554 CRAFT_ANDROID_NATIVE_ARTIFACTS="$GITHUB_WORKSPACE/artifacts/mobile-e2e/android-emulator/native-navigation" STX_CLI="$GITHUB_WORKSPACE/.stx-compiler/packages/stx/bin/cli.ts" bun packages/android/scripts/test-native-navigation.ts
 
       - name: Collect Android emulator diagnostics
         id: diagnostics
