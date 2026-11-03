@@ -304,17 +304,25 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     private struct MeasureKey: Hashable { let width: CGFloat, stretch: Bool }
     private var measured: [MeasureKey: CGSize] = [:]
     /// What this box measured is stale: it or something inside it changed (CraftMacRenderer.update).
-    func forgetMeasurements() { measured.removeAll(keepingCapacity: true); controlSize = nil }
+    func forgetMeasurements() { measured.removeAll(keepingCapacity: true); controlSize = nil; mergedLayoutStyle = nil }
     private var measuredGeneration = -1
     /// A control's own size (a button, a switch, a picker), asked once rather than at every width the box is
     /// measured at: a button answers through SwiftUI's layout on current macOS. Forgotten with the measurements.
     private var controlSize: CGSize?
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
+    static let componentLayoutKeys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "zIndex", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
+    /// A component wrapper's style with its root's layout keys merged in, kept as its measurements are (it
+    /// depends on the same things): a flex pass asks for each child's several times, and a wrapper's merge
+    /// asked its root for its own once per key, so nested wrappers rebuilt their styles many times over.
+    private var mergedLayoutStyle: [String: Any]?
+    private var mergedGeneration = -1
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
-        let keys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "zIndex", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
+        if mergedGeneration == CraftMacBox.measureGeneration, let merged = mergedLayoutStyle { return merged }
+        let inner = child.layoutStyle
         var result = style
-        for key in keys where result[key] == nil { result[key] = child.layoutStyle[key] }
+        for key in Self.componentLayoutKeys where result[key] == nil { result[key] = inner[key] }
+        mergedLayoutStyle = result; mergedGeneration = CraftMacBox.measureGeneration
         return result
     }
     override var isFlipped: Bool { true }
@@ -371,7 +379,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     required init?(coder: NSCoder) { fatalError("Native controls are created from STX") }
 
     func configure(_ node: [String: Any]) {
-        controlSize = nil
+        controlSize = nil; mergedLayoutStyle = nil
         props = node["props"] as? [String: Any] ?? [:]
         flow?.componentScope = props["data-stx-component-wrapper"] != nil
         style = node["style"] as? [String: Any] ?? [:]
@@ -775,11 +783,16 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             let rect = (text.stringValue as NSString).boundingRect(with: CGSize(width: max(1, limit - 6 - textPadding.left - textPadding.right), height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font ?? NSFont.systemFont(ofSize: 13)])
             size = CGSize(width: min(limit, ceil(rect.width) + 9 + textPadding.left + textPadding.right), height: max(18, ceil(rect.height) + 2))
             // The field draws only whole lines inside its cell's insets, so a height short of what the cell
-            // asks for at the width it will draw at drops the last line. Ask the cell, not just the string.
-            let fieldWidth = max(1, size.width - textPadding.left - textPadding.right)
-            if let drawn = text.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: fieldWidth, height: 1_000_000)).height { size.height = max(size.height, ceil(drawn)) }
-            if text.maximumNumberOfLines > 0 { size.height = min(size.height, ceil((text.font?.ascender ?? 13) - (text.font?.descender ?? -3) + (text.font?.leading ?? 0)) * CGFloat(text.maximumNumberOfLines) + 2) }
-            if text.maximumNumberOfLines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
+            // asks for at the width it will draw at drops the last line. Ask the cell, not just the string,
+            // unless the line limit decides the height anyway: one line, or a cap the string already reaches.
+            let lines = text.maximumNumberOfLines
+            let cap = lines > 0 ? ceil((text.font?.ascender ?? 13) - (text.font?.descender ?? -3) + (text.font?.leading ?? 0)) * CGFloat(lines) + 2 : .infinity
+            if lines != 1, size.height < cap {
+                let fieldWidth = max(1, size.width - textPadding.left - textPadding.right)
+                if let drawn = text.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: fieldWidth, height: 1_000_000)).height { size.height = max(size.height, ceil(drawn)) }
+            }
+            if lines > 0 { size.height = min(size.height, cap) }
+            if lines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
             size.height += textPadding.top + textPadding.bottom
         } else if kind == "ScrollView" || kind == "FlatList" || kind == "Sidebar" { size = CGSize(width: limit, height: 100) }
         else if kind == "WebView" { size = CGSize(width: limit, height: 300) }
