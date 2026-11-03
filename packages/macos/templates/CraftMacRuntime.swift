@@ -431,7 +431,7 @@ final class CraftMacRuntime {
             if (data?.count ?? 0) > 32 * 1024 * 1024 { self.fail(id, "RESPONSE_TOO_LARGE", "Response exceeds 32 MB"); return }
             self.answer(id, CraftMacNetwork.response(http, original: request.url, body: String(decoding: data ?? Data(), as: UTF8.self)))
         }
-        tasks[id] = task; task.resume()
+        tasks[id] = task; network.resume(task)
     }
 
     /// `Storage` and `SecureStorage`, on the script thread: UserDefaults and the Keychain answer on any.
@@ -507,6 +507,10 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
     private(set) var session: URLSession!
     private struct Stream { let id: String; weak var owner: CraftMacRuntime?; let requestId: String; var opened: Bool = false; var carry = Data() }
     private var streams: [Int: Stream] = [:]
+    /// Requests made before the agent issued the session cookie, sent once it has (`authorize`).
+    private let gate = NSLock()
+    private var authorized = true
+    private var held: [URLSessionTask] = []
     init(base: URL) {
         self.base = base
         super.init()
@@ -514,6 +518,28 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
         configuration.timeoutIntervalForRequest = 300
         configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+    }
+    /// Apps that ship their own agent (Attic) hand out a session cookie at `/native/session`. It is asked
+    /// for at once, while the window opens and the screen starts, and every request waits for it: the
+    /// agent answers nothing else without it. The cookie is HttpOnly and stays in this session, shared
+    /// by native windows; it never reaches JavaScript. `answered` gets nil, or why there is no session.
+    func authorize(_ answered: @escaping (String?) -> Void) {
+        gate.lock(); authorized = false; gate.unlock()
+        session.dataTask(with: URLRequest(url: base.appendingPathComponent("native/session"))) { [self] _, response, error in
+            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
+                // What waits stays unsent: the app shows why and quits.
+                answered(error?.localizedDescription ?? "The local agent did not issue a native session."); return
+            }
+            gate.lock(); authorized = true; let waiting = held; held.removeAll(); gate.unlock()
+            waiting.forEach { $0.resume() }
+            answered(nil)
+        }.resume()
+    }
+    /// Sends `task` now, or once the session is issued. Every request to the agent goes through here.
+    func resume(_ task: URLSessionTask) {
+        gate.lock()
+        if authorized { gate.unlock(); task.resume(); return }
+        held.append(task); gate.unlock()
     }
     func request(_ options: [String: Any]) -> URLRequest? {
         guard let address = options["url"] as? String, let url = URL(string: address, relativeTo: base)?.absoluteURL,
@@ -532,7 +558,7 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
     }
     func stream(_ request: URLRequest, id: String, owner: CraftMacRuntime, requestId: String) {
         let task = session.dataTask(with: request)
-        queue.addOperation { self.streams[task.taskIdentifier] = Stream(id: id, owner: owner, requestId: requestId); task.resume() }
+        queue.addOperation { self.streams[task.taskIdentifier] = Stream(id: id, owner: owner, requestId: requestId); self.resume(task) }
     }
     func cancelStream(_ id: String, owner: CraftMacRuntime) {
         queue.addOperation {

@@ -585,7 +585,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
                 image?.image = data.flatMap(NSImage.init(data:))
                 self.fire(image?.image == nil ? "onError" : "onLoad")
             }
-        }; imageTask?.resume()
+        }; imageTask.map { renderer?.runtime.network.resume($0) }
     }
 
     /// `style` with the pointer's layers on top: `hoverStyle` while hovered, `pressStyle` while pressed.

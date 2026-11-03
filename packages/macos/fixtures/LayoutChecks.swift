@@ -5,6 +5,7 @@ import AppKit
 final class FixtureNetwork {
     let session = URLSession.shared
     func request(_ options: [String: Any]) -> URLRequest? { nil }
+    func resume(_ task: URLSessionTask) { task.resume() }
 }
 final class CraftMacRuntime {
     var errors: [String] = []

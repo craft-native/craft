@@ -139,8 +139,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var titlebarStyle = "standard"
     var trafficLights: [Any]?
     /// Apps that ship their own agent (Attic) hand out a session cookie at
-    /// `/native/session`. An app that talks to a hosted API has no such
-    /// endpoint and starts with `--no-session`.
+    /// `/native/session` (`authorize`). An app that talks to a hosted API has
+    /// no such endpoint and starts with `--no-session`.
     var requiresSession = true
     var mainWindowOptions: [String: Any] = [:]
     /// The Dock icon's menu (`craft-app.json` `dockMenu`): each item sends its action as a desktop command.
@@ -163,6 +163,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     /// The appearance it started with, which AppKit could not be asked yet.
     var preparedColorScheme = ""
     var mainOptions: [String: Any] { mainWindowOptions.merging(["title": appName]) { _, new in new } }
+    /// Launch finished, and why the agent issued no session, if it did not (shown once both are known).
+    var launched = false
+    var sessionFailure: String?
     /// A quit waiting for screens to finish (`craft.desktop.onQuit`), for at most `quitGrace` seconds.
     private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
     static let quitGrace: TimeInterval = 3
@@ -175,26 +178,26 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             DispatchQueue.main.async { self?.appearanceChanged() }
         }
         NSApp.activate(ignoringOtherApps: true)
-        if !requiresSession {
-            open(name: "main", route: initialRoute, options: mainOptions)
-            if preparedColorScheme != (CraftMacColor.isDark ? "dark" : "light") { appearanceChanged() }
-            startTestDriver()
-            return
-        }
-        // The agent issues an HttpOnly cookie. It stays in URLSession, shared
-        // by native windows, and is never handed to the JavaScript context.
-        let request = URLRequest(url: network.base.appendingPathComponent("native/session"))
-        network.session.dataTask(with: request) { [weak self] _, response, error in
+        open(name: "main", route: initialRoute, options: mainOptions)
+        if preparedColorScheme != (CraftMacColor.isDark ? "dark" : "light") { appearanceChanged() }
+        startTestDriver()
+        launched = true
+        if let failure = sessionFailure { sessionFailed(failure) }
+    }
+    /// Asks the agent for the session cookie (`CraftMacNetwork.authorize`) as the app starts, before
+    /// AppKit has launched; the screen's requests wait for it. Without one the app says so and quits.
+    func authorize() {
+        network.authorize { failure in
             DispatchQueue.main.async {
-                guard let self else { return }
                 CraftTrace.mark("native session answered")
-                guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    let alert = NSAlert(); alert.messageText = "Could not connect to the app"; alert.informativeText = error?.localizedDescription ?? "The local agent did not issue a native session."; alert.runModal(); NSApp.terminate(nil); return
-                }
-                self.open(name: "main", route: self.initialRoute, options: self.mainOptions)
-                self.startTestDriver()
+                guard let failure else { return }
+                self.sessionFailure = failure
+                if self.launched { self.sessionFailed(failure) }
             }
-        }.resume()
+        }
+    }
+    private func sessionFailed(_ message: String) {
+        let alert = NSAlert(); alert.messageText = "Could not connect to the app"; alert.informativeText = message; alert.runModal(); NSApp.terminate(nil)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { scenes["main"]?.window.makeKeyAndOrderFront(nil); return true }
     /// Links from other apps (this app as the default browser) and files dropped on the Dock icon.
@@ -429,10 +432,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             guard let path = file["path"], chosenFiles.contains(path), let data = try? Data(contentsOf: URL(fileURLWithPath: path)), data.count <= 256 * 1024 * 1024,
                   var request = network.request(["url": endpoint, "method": "POST", "headers": ["x-filename": file["name"] ?? "Attachment", "content-type": file["type"] ?? "application/octet-stream"]]) else { reply(["error": "Could not read a picked attachment"]); return }
             request.httpBody = data
-            network.session.dataTask(with: request) { data, response, error in DispatchQueue.main.async {
+            network.resume(network.session.dataTask(with: request) { data, response, error in DispatchQueue.main.async {
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let value = try? JSONSerialization.jsonObject(with: data) else { reply(["error": error?.localizedDescription ?? "Attachment upload failed"]); return }
                 results.append(value); next(index + 1)
-            } }.resume()
+            } })
         }; next(0)
     }
     private func preview(_ options: [String: Any], scene: CraftMacScene?) {
@@ -446,18 +449,18 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             player.player?.play()
         } else {
             let image = NSImageView(); image.imageScaling = .scaleProportionallyUpOrDown; panel.contentView = image
-            network.session.dataTask(with: request) { data, _, _ in DispatchQueue.main.async { image.image = data.flatMap(NSImage.init(data:)) } }.resume()
+            network.resume(network.session.dataTask(with: request) { data, _, _ in DispatchQueue.main.async { image.image = data.flatMap(NSImage.init(data:)) } })
         }
         panel.center(); panel.makeKeyAndOrderFront(nil)
     }
     private func export(_ options: [String: Any], reply: @escaping (Any) -> Void) {
         let panel = NSSavePanel(); panel.nameFieldStringValue = options["name"] as? String ?? "Attachment"
         guard panel.runModal() == .OK, let destination = panel.url, let request = network.request(["url": options["url"] ?? ""]) else { reply(false); return }
-        network.session.downloadTask(with: request) { location, response, error in
+        network.resume(network.session.downloadTask(with: request) { location, response, error in
             var saved = false
             if error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let location { do { if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }; try FileManager.default.moveItem(at: location, to: destination); saved = true } catch {} }
             DispatchQueue.main.async { reply(saved) }
-        }.resume()
+        })
     }
     func notification(_ method: String, options: [String: Any], reply: @escaping (Any) -> Void) {
         guard method == "schedule" else { reply(false); return }
@@ -652,7 +655,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.network = CraftMacNetwork(base: api)
         let testDirectory = argument("--test-dir")
         if !testDirectory.isEmpty { application.testDirectory = URL(fileURLWithPath: testDirectory, isDirectory: true) }
-        if !application.requiresSession { application.prepareMainScreen() }
+        if application.requiresSession { application.authorize() }
+        application.prepareMainScreen()
         let app = NSApplication.shared
         app.setActivationPolicy(.regular); app.delegate = application; app.run()
     }
