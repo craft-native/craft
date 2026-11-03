@@ -287,6 +287,12 @@ final class DriverTests: XCTestCase {
 
     /// A switch reports "0" or "1". Any other value is not a switch state to
     /// wait on, so the tap stands as it would for any other control.
+    /// The switch answers `/exec` with 200 whatever the hook did, its first
+    /// word the hook's exit code: only `exit 0` is a hook that worked.
+    func hookSucceeded(_ answer: String) -> Bool {
+        answer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("exit 0")
+    }
+
     func switchFlipped(from before: String?, to after: String?) -> Bool {
         let states: Set<String> = ["0", "1"]
         guard let before, let after, states.contains(before), states.contains(after) else { return true }
@@ -390,7 +396,12 @@ final class DriverTests: XCTestCase {
                 check(false, "exec \(arg): hook failed or returned no successful response")
                 return
             }
-            note("exec \(arg): \(out.trimmingCharacters(in: .whitespacesAndNewlines))")
+            let answer = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            note("exec \(arg): \(answer)")
+            // A failed hook (a fresh install that never reinstalled) stops the
+            // journey here with its reason, not three steps later at a screen
+            // that was never reset.
+            check(hookSucceeded(answer), "exec \(arg): hook failed: \(answer)")
         case "openurl":
             if let url = URL(string: arg) {
                 XCUIDevice.shared.system.open(url)
