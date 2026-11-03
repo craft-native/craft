@@ -5654,6 +5654,35 @@ final class NativePedometerUnitTests: XCTestCase {
         return nil
     }
 
+    func testScreenBridgeHonorsOptInAndHeadlessBoundary() async throws {
+        for (enabled, headless, expected) in [(false, false, "CAPABILITY_DISABLED"), (true, true, "NEEDS_ACTIVITY"), (true, false, "")] {
+            var config = CraftConfig()
+            config.enablePedometer = enabled
+            XCTAssertEqual(CraftNativeActions.capabilities(config: config).contains("pedometer"), enabled)
+            let screen = CraftNativeScreenController(config: config, isAppScript: headless)
+            screen.loadViewIfNeeded()
+            defer { screen.viewDidDisappear(false) }
+            screen.evaluateScript("""
+                globalThis.__pedoReply = null;
+                globalThis.__stxNativeCallback = function(json) {
+                    const m = JSON.parse(json);
+                    if (m.type === 'API_RESPONSE' || m.type === 'API_ERROR') __pedoReply = m;
+                };
+                __stxNativeBridge.postMessage(JSON.stringify({type:'API_REQUEST',id:'pedo-test',payload:{version:1,module:'Pedometer',method:'getAvailability',args:[]}}));
+            """)
+            for _ in 0..<100 {
+                if screen.evaluateScript("__pedoReply !== null")?.toBool() == true { break }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            let answer = try XCTUnwrap(screen.evaluateScript("__pedoReply")?.toDictionary())
+            let payload = try XCTUnwrap(answer["payload"] as? [String: Any])
+            if expected.isEmpty {
+                XCTAssertEqual(answer["type"] as? String, "API_RESPONSE")
+                XCTAssertNotNil(payload["data"])
+            } else { XCTAssertEqual(payload["code"] as? String, expected) }
+        }
+    }
+
     func testHistoryPreservesTheRequestedIntervalAndOptionalMeasurements() throws {
         let source = Source()
         let host = CraftNativePedometer(makeSource: { source }, now: { self.now })

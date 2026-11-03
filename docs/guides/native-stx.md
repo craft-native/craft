@@ -1436,6 +1436,35 @@ const available = await craft.biometrics.isAvailable()
 const biometricType = await craft.biometrics.getBiometricType()
 if (available) await craft.biometrics.authenticate('Unlock WildLoop')
 
+#### Pedometer intervals and step counters
+
+`enablePedometer: true` opts iOS native screens into Core Motion, including
+`NSMotionUsageDescription`. The `pedometer` capability exposes the `Pedometer`
+module: `getAvailability`, `getPermissionStatus`, `requestPermission`, `start`,
+`stop`, and `query`. Availability describes hardware support, not a permission
+grant. Permission states are `granted`, `denied`, `restricted`, `notDetermined`,
+or `unavailable`. Denial is an error, never a zero step count.
+
+On iOS, `start` takes optional `[{ startDate, background: false }]`, where
+`startDate` is Unix milliseconds and defaults to now. `query` takes
+`[{ startDate, endDate }]` with `endDate` defaulting to now. The host rejects
+future, reversed, empty and older-than-seven-day query intervals. Queries do
+not depend on the app having been running during the requested interval.
+
+An iOS sample or query result has `{ state: 'sample', kind: 'interval', startDate,
+endDate, steps }`, with optional `distanceMeters`, `cadenceStepsPerSecond`,
+`paceSecondsPerMeter`, `averageActivePaceSecondsPerMeter`, `floorsAscended`, and
+`floorsDescended`. Missing measurements remain absent. In particular, a history
+query does not invent a current cadence or pace. This count is for its stated
+interval; it is not a counter since boot or a HealthKit daily total.
+
+Live updates arrive as `craftPedometerUpdate`. Background streaming is explicitly
+unsupported: app pause ends live updates and emits a `stopped` event with reason
+`background`; restart is explicit. Historical queries are separately tracked,
+and cancellation or route disposal suppresses late results. Requesting motion
+permission uses a short Core Motion query, not HealthKit authorization. Actual
+historical coverage depends on the device, sensor availability and permission.
+
 #### Barometer samples
 
 iOS and Android native hosts support opt-in `enableBarometer: true` and advertise

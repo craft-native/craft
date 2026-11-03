@@ -6260,6 +6260,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// `craft.audio`'s sounds and the streaming responses this screen reads.
     private let sounds = CraftNativeSounds()
     private let barometer = CraftNativeBarometer()
+    private let pedometer = CraftNativePedometer()
     private let streams = CraftNativeEventStreams()
     /// A request a screen-owned module answers, by request token, and how to
     /// call it off when it times out or is cancelled.
@@ -6597,6 +6598,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         audio.close()
         sounds.close()
         barometer.close()
+        pedometer.close()
         streams.close()
         screenRequestCancellers.values.forEach { $0() }
         screenRequestCancellers.removeAll()
@@ -8039,6 +8041,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             guard let name = notification.userInfo?["event"] as? String else { return }
             self?.send(type: "CRAFT_EVENT", payload: ["event": name, "detail": notification.userInfo?["detail"] ?? [:]])
         })
+        pedometer.emit = { [weak self] detail in self?.send(type: "CRAFT_EVENT", payload: ["event": "craftPedometerUpdate", "detail": detail]) }
         barometer.emit = { [weak self] detail in self?.send(type: "CRAFT_EVENT", payload: ["event": "craftBarometerUpdate", "detail": detail]) }
         sounds.emit = { [weak self] payload in self?.send(type: "SOUND_EVENT", payload: payload) }
         streams.emit = { [weak self] payload in self?.send(type: "NETWORK_STREAM", payload: payload) }
@@ -8204,7 +8207,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func sendAppState(_ state: String) {
-        if state != "active" { barometer.stop(reason: "background") }
+        if state != "active" { barometer.stop(reason: "background"); pedometer.stop(reason: "background") }
         // A screen hears it while it is on top of its stack; the app script,
         // which is on no stack, always.
         guard isAppScript || navigationController?.topViewController === self else { return }
@@ -8416,6 +8419,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         let id = args.first as? String ?? ""
         switch (module, method) {
+        case ("Pedometer", _):
+            if !config.enablePedometer {
+                reply(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "Pedometer is disabled")))
+            } else if isAppScript {
+                reply(.failure(CraftNativeActionError(code: "NEEDS_ACTIVITY", message: "Pedometer needs a visible app")))
+            } else if ["start", "requestPermission"].contains(method) && UIApplication.shared.applicationState != .active {
+                reply(.failure(CraftNativeActionError(code: "APP_INACTIVE", message: "Pedometer needs a foreground app")))
+            } else {
+                screenRequestCancellers[requestToken] = { [weak self] in self?.pedometer.cancel(requestToken) }
+                pedometer.perform(method: method, args: args, token: requestToken, completion: reply)
+            }
+            return true
         case ("Barometer", _):
             if !config.enableBarometer {
                 reply(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "Barometer is disabled")))

@@ -64,6 +64,7 @@ enum CraftNativeActions {
         if config.enableLocalNotifications { values.append("notifications") }
         if config.enableHealthKit { values.append("health") }
         if config.enableBarometer { values.append("barometer") }
+        if config.enablePedometer { values.append("pedometer") }
         if config.enableWallet { values.append("wallet") }
         if config.enableLiveActivities { values.append("liveActivities") }
         // The in-app browser and the system's web sign-in sheet (CraftBrowser).
