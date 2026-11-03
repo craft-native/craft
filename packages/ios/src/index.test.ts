@@ -52,6 +52,17 @@ function profileFixture(directory: string, names: string[]): void {
 }
 
 describe('Craft iOS builder', () => {
+  it.each([undefined, false, true])('gates pedometer history and its required motion purpose together (%s)', async (enabled) => {
+    const output = createTempDir('craft-pedometer-config-')
+    await init({ name: 'PedometerConfig', output, runtimeDir: null, config: { enablePedometer: enabled } })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.enablePedometer).toBe(Boolean(enabled))
+    expect(config.enableMotionSensors).toBe(false)
+    expect(config.enableBarometer).toBe(false)
+    expect(iosPermissions(config).includes('motion')).toBe(Boolean(enabled))
+    expect(readFileSync(join(output, 'Info.plist'), 'utf8').includes('NSMotionUsageDescription')).toBe(Boolean(enabled))
+  })
+
   it.each([undefined, false, true])('gates barometer linkage and its required motion purpose together (%s)', async (enabled) => {
     const output = createTempDir('craft-barometer-config-')
     await init({ name: 'BarometerConfig', output, runtimeDir: null, config: { enableBarometer: enabled } })
@@ -2258,7 +2269,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // Sounds and streams belong to the screen and end with it.
     expect(screen).toContain('case ("Network", "stream"):')
     expect(screen).toContain('case ("Audio", "play"):')
-    expect(screen).toContain('sounds.close()\n        streams.close()')
+    for (const cleanup of ['sounds.close()', 'barometer.close()', 'streams.close()'])
+      expect(screen).toContain(cleanup)
     expect(screen).toContain('self?.send(type: "PUSH_TOKEN", payload: ["token": token])')
     expect(services).toContain('try session.setCategory(category, mode: .default, options: [.mixWithOthers])')
     expect(services).toContain('AVPlayerLooper(player: player, templateItem: item)')

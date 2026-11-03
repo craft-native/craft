@@ -22,7 +22,7 @@ export function iosPermissions(config: Partial<CraftConfig>): IOSPermission[] {
     // framework code compiled in. It needs no usage description of its own:
     // NSMotionUsageDescription covers activity and pedometer data, which
     // raw acceleration is not.
-    motion: config.enableMotionSensors || config.enableShakeGesture || config.enableBarometer,
+    motion: config.enableMotionSensors || config.enableShakeGesture || config.enableBarometer || config.enablePedometer,
     biometric: config.enableBiometric,
     music: config.enableAppleMusic,
     health: config.enableHealthKit,

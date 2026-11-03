@@ -163,6 +163,8 @@ export interface CraftConfig {
   enableMotionSensors?: boolean
   /** Core Motion relative altitude and pressure; includes the motion usage description. */
   enableBarometer?: boolean
+  /** Core Motion interval steps, cadence and seven-day device history. */
+  enablePedometer?: boolean
   /** Shaking the phone raises a `shake` event. Arms the accelerometer while the app is in front. */
   enableShakeGesture?: boolean
   enableLocalDatabase?: boolean
@@ -769,6 +771,7 @@ const DEFAULT_CONFIG: Omit<CraftConfig, 'appName' | 'bundleId'> = {
   enableVideoRecording: false,
   enableMotionSensors: false,
   enableBarometer: false,
+  enablePedometer: false,
   enableShakeGesture: false,
   enableLocalDatabase: false,
   enableBluetooth: false,
@@ -849,7 +852,7 @@ export function renderUsageDescriptions(config: CraftConfig): string {
     [config.enableBluetooth || config.enableHeartRate, 'NSBluetoothAlwaysUsageDescription', config.enableHeartRate
       ? `${config.appName} connects to your heart-rate monitor over Bluetooth to show and record your heart rate during a workout.`
       : `${config.appName} uses Bluetooth to connect to nearby devices.`],
-    [config.enableMotionSensors || config.enableBarometer, 'NSMotionUsageDescription', `${config.appName} uses motion data for activity features.`],
+    [config.enableMotionSensors || config.enableBarometer || config.enablePedometer, 'NSMotionUsageDescription', `${config.appName} uses motion data for activity features.`],
     [config.enableNFC, 'NFCReaderUsageDescription', `${config.appName} reads NFC tags when you start a scan.`],
     [config.enableLocalNetwork, 'NSLocalNetworkUsageDescription', `${config.appName} connects to your own devices on this network.`],
     [config.enableHealthKit, 'NSHealthShareUsageDescription', `${config.appName} reads health data you choose to share.`],
