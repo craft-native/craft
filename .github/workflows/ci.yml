@@ -463,8 +463,12 @@ jobs:
 
       - name: Setup the pinned native toolchain
         uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           version: '0.11.120'
+          install: 'false'
+          packages: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
 
       - name: Compile the first-party Windows Job Object owner
         shell: pwsh

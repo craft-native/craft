@@ -20,9 +20,15 @@ Do not run the hook again after it has written the section.
 The tag starts [Releaser](../.github/workflows/release.yml); pushing a tag is
 the publication trigger, not proof that the release finished.
 
-Both release and CI setup pin Pantry CLI 0.11.93 as well as the Pantry action
+Both release and CI setup pin Pantry CLI 0.11.120 as well as the Pantry action
 revision; leaving the CLI at `latest` would add a GitHub API lookup before the
 build can even start.
+The Windows Vulkan acceptance job declares Bun, Zig, and Git explicitly, just
+like the ABI matrix. The workspace manifest does not install managed Git;
+using only the default workspace install leaves `managed-git.ts --verify`
+without a provider. Keep the provider verification before driver provisioning
+and scene tests; the runner's preinstalled Git is not an acceptable substitute.
+
 
 ## Publication gates
 

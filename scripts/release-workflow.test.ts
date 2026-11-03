@@ -140,6 +140,11 @@ test('Win32 Vulkan publication requires native command ownership and displayed s
   const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job & { 'runs-on'?: string, 'continue-on-error'?: boolean }> }
   const job = ci.jobs['windows-native-vulkan']
   expect(job['runs-on']).toBe('windows-2025')
+  const setup = job.steps?.find(step => step.name === 'Setup the pinned native toolchain')
+  expect(setup?.with?.install).toBe('false')
+  expect(setup?.with?.packages).toContain('git-scm.org@2.53.0')
+  expect(setup?.with?.packages).toContain('ziglang.org@0.18.0-dev.146+35accc06e')
+  expect(steps(job)).toContain('bun scripts/managed-git.ts --verify')
   expect(job['continue-on-error']).not.toBe(true)
   expect(steps(job)).toContain('zig cc -target x86_64-windows-gnu -O2 -municode scripts/native/windows-command-owner.c')
   expect(steps(job)).toContain('bun test ./scripts/native/windows-command.test.ts')
