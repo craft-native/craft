@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.445...v0.0.446)
+
+## 🐛 Bug Fixes
+
+- **ios**: reach a button the keyboard leaves in view ([29de719](https://github.com/craft-native/craft/commit/29de719)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.444...v0.0.445)
 
 ## 🐛 Bug Fixes
