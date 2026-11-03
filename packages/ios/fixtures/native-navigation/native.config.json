@@ -5,6 +5,7 @@
     "identity": "Identity.stx",
     "capabilities": "Capabilities.stx",
     "details": "Details.stx",
-    "summary": "Summary.stx"
+    "summary": "Summary.stx",
+    "feedback": "Feedback.stx"
   }
 }

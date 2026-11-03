@@ -1,0 +1,20 @@
+<script>
+const sends = state(0)
+
+function send() {
+  sends.update(value => value + 1)
+}
+</script>
+
+<template>
+  <ScrollView testID="feedback-scroll" style={{"flex":1}}>
+    <View style={{"padding":24,"gap":12}}>
+      <Text testID="feedback-title">How did it feel?</Text>
+      <View style={{"height":300,"backgroundColor":"#e5e7eb"}} />
+      <TextInput testID="feedback-input" multiline placeholder="Training feedback" style={{"minHeight":52}} />
+      <Button testID="feedback-record" style={{"height":52}}>Record voice feedback</Button>
+      <Button testID="feedback-send" style={{"height":52}} @click="send()">Send feedback</Button>
+      <Text testID="feedback-sent" :text="'Sent: ' + sends" />
+    </View>
+  </ScrollView>
+</template>

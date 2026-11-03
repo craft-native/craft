@@ -193,10 +193,15 @@ final class DriverTests: XCTestCase {
               visibleScrollFrame(target.frame, in: app.frame) else { return false }
         // Hittable alone accepts controls clipped by the scroll view's edge.
         // Only an ancestor scroll view clips this target, not its siblings.
+        // One that does not overlap the target is not its ancestor, whatever
+        // the descendants query says: with a keyboard up, the query matched
+        // a form's Send button inside the keyboard's suggestion strip, and
+        // Send, in full view above the keys, could never be scrolled to.
         let identity = NSPredicate(format: "identifier == %@ AND label == %@", target.identifier, target.label)
-        for scroll in app.scrollViews.allElementsBoundByIndex {
+        let frame = target.frame
+        for scroll in app.scrollViews.allElementsBoundByIndex where scroll.frame.intersects(frame) {
             if scroll.descendants(matching: .any).matching(identity).firstMatch.exists,
-               !visibleScrollFrame(target.frame, in: scroll.frame.intersection(app.frame)) { return false }
+               !visibleScrollFrame(frame, in: scroll.frame.intersection(app.frame)) { return false }
         }
         return true
     }

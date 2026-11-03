@@ -1652,4 +1652,73 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(waitForLabel(app.staticTexts["popup-request-status"], "popup requested backdrop"))
         XCTAssertTrue(waitForAbsence(app.otherElements["native-popup"]))
     }
+
+    /// A button the keyboard covers on a tab's screen can be scrolled into
+    /// view while typing.
+    ///
+    /// On a small phone a form's Send sits where the keyboard opens, with
+    /// the tab bar's share of the safe area under it. The scroll view has to
+    /// make room for the keyboard, or no drag reaches Send until the
+    /// keyboard is dismissed. The drag is the journey driver's own: from the
+    /// middle of the screen up, above the keys.
+    func testAButtonUnderTheKeyboardOnATabScreenScrollsIntoView() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20))
+        guard #available(iOS 16.4, *) else { throw XCTSkip("Opening a link from a UI test needs iOS 16.4") }
+        app.open(try XCTUnwrap(URL(string: "craft-native-test:///feedback")))
+        let feedback = app.textViews["feedback-input"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 20))
+        feedback.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        feedback.typeText("Dies ist eine synthetische Testnachricht, bitte kürze meine geplante Einheit am Donnerstag auf insgesamt dreißig Minuten.")
+        let send = app.buttons["feedback-send"]
+        // The journey driver's own check (DriverTests.swift.template's
+        // scrollTargetVisible): hittable, inside the app, and not clipped by
+        // any scroll view it is in.
+        func fits(_ target: CGRect, _ viewport: CGRect) -> Bool {
+            let visible = target.intersection(viewport)
+            return !target.isEmpty && !viewport.isEmpty && !visible.isNull
+                && visible.width >= min(target.width, viewport.width)
+                && visible.height >= min(target.height, viewport.height)
+        }
+        var clips: [String] = []
+        func covered() -> Bool {
+            guard send.exists, send.isHittable, fits(send.frame, app.frame) else { return true }
+            let identity = NSPredicate(format: "identifier == %@ AND label == %@", send.identifier, send.label)
+            for scroll in app.scrollViews.allElementsBoundByIndex where scroll.frame.intersects(send.frame) {
+                if scroll.descendants(matching: .any).matching(identity).firstMatch.exists,
+                   !fits(send.frame, scroll.frame.intersection(app.frame)) {
+                    clips.append("send \(send.frame) clipped by \(scroll.identifier) \(scroll.frame)")
+                    return true
+                }
+            }
+            let keyboard = app.keyboards.firstMatch
+            guard keyboard.exists, !keyboard.frame.isEmpty, keyboard.frame.minY < app.frame.maxY else { return false }
+            return send.frame.maxY > keyboard.frame.minY
+        }
+        var drags = 0
+        while covered() && drags < 12 {
+            let frame = app.frame
+            var lower = frame.minY + frame.height * 0.55
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.exists, !keyboard.frame.isEmpty, keyboard.frame.minY < frame.maxY {
+                lower = min(lower, keyboard.frame.minY - 24)
+            }
+            let upper = max(frame.minY + frame.height * 0.15, lower - frame.height * 0.4)
+            let point = { (y: CGFloat) in app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: y)) }
+            point(lower).press(forDuration: 0.05, thenDragTo: point(upper), withVelocity: .default, thenHoldForDuration: 0.2)
+            drags += 1
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.lifetime = .keepAlways
+        add(tree)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard closed before Send was reached")
+        XCTAssertFalse(covered(), "Send stayed under the keyboard after \(drags) drags: \(clips.suffix(2))")
+        send.tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["feedback-sent"], "Sent: 1"))
+    }
 }

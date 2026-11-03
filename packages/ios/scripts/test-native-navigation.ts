@@ -74,6 +74,7 @@ try {
         '/third': 'summary',
         '/fourth': 'details',
         '/fifth': 'summary',
+        '/feedback': 'feedback',
       },
       tabs: [
         { id: '/', title: 'Home', symbol: 'house' },
