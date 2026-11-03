@@ -5,6 +5,11 @@ changelog, creates a tag, and pushes both. Run it only from a clean `main` that
 matches `origin/main`, after the SDK, package, lint, and type checks are green.
 Run `bun run test:release` too; it exercises the release gates and performs an
 isolated bumpx commit/tag rehearsal without publishing or pushing a tag.
+CI runs the SDK suite on both Linux and macOS for ordinary pushes and pull
+requests to `main`. The dedicated `TypeScript SDK (macOS)` job exercises Darwin-only
+DMG and App Store packaging tests before a version is tagged, independently of
+Mobile E2E's path filters. Both SDK jobs gate commit publication and source
+acceptance; a green Linux run alone does not validate macOS packaging.
 Before tagging, the CI installed-app jobs must be green: they launch real PKG,
 DEB, and MSI installs and exercise child-window event routing from each package.
 They also read addressed native state from the main, child, and adopted windows.

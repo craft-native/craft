@@ -136,6 +136,31 @@ test('release rehearsals include the actual host-neutral native CI contract', ()
   expect(manifest.scripts['test:release'].split(/\s+/)).toContain(invocation![1])
 })
 
+test('ordinary packaging pushes and PRs require the Darwin SDK suite before commit publication', () => {
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as any
+  for (const event of ['push', 'pull_request']) {
+    expect(ci.on[event].branches).toContain('main')
+    expect(ci.on[event].paths).toBeUndefined()
+    expect(ci.on[event]['paths-ignore']).toBeUndefined()
+  }
+  const job = ci.jobs['typescript-sdk-macos']
+  expect(job['runs-on']).toBe('macos-latest')
+  expect(job.if).toBe('${{ inputs.software_cold_provisioning_diagnostic != true }}')
+  expect(job['continue-on-error']).not.toBe(true)
+  const sdk = job.steps.find((step: any) => step.run === 'bun run test:sdk')
+  expect(sdk).toBeDefined()
+  expect(sdk.if).toBeUndefined()
+  expect(sdk['continue-on-error']).not.toBe(true)
+  expect(steps(job)).toContain('bun install --frozen-lockfile')
+  expect(needs(ci.jobs['publish-commit'])).toContain('typescript-sdk-macos')
+  // A package.ts-only change is covered here, without booting mobile devices.
+  const mobile = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as any
+  for (const event of ['push', 'pull_request']) {
+    expect(mobile.on[event].paths).not.toContain('packages/typescript/**')
+    expect(mobile.on[event].paths).not.toContain('packages/typescript/src/package.ts')
+  }
+})
+
 test('Win32 Vulkan publication requires native command ownership and displayed scene acceptance', () => {
   const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job & { 'runs-on'?: string, 'continue-on-error'?: boolean }> }
   const job = ci.jobs['windows-native-vulkan']
