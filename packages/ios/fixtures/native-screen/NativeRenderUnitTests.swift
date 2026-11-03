@@ -5773,3 +5773,174 @@ final class NativePedometerUnitTests: XCTestCase {
         host.perform(method: "start", args: [], token: "unavailable") { XCTAssertEqual(self.code($0), "UNAVAILABLE") }
     }
 }
+
+@MainActor
+final class NativeHealthBackgroundUnitTests: XCTestCase {
+    private final class Storage: CraftHealthBackgroundPersistence {
+        var state = CraftHealthBackgroundState()
+        var failLoad = false
+        var failSave = false
+        func load() throws -> CraftHealthBackgroundState {
+            if failLoad { throw CraftHealthBackgroundError.unavailable }
+            return state
+        }
+        func save(_ value: CraftHealthBackgroundState) throws {
+            if failSave { throw CraftHealthBackgroundError.outboxFull }
+            state = value
+        }
+    }
+    private final class Source: CraftHealthBackgroundSource {
+        var updates: [String: (Error?, @escaping () -> Void) -> Void] = [:]
+        var requests: [(String, Data?, (Result<CraftHealthBackgroundPage, Error>) -> Void)] = []
+        var cancelled = 0
+        var stopped = 0
+        var disabled: [String] = []
+        var enables: [(String, String)] = []
+        func observe(type: String, update: @escaping (Error?, @escaping () -> Void) -> Void) -> () -> Void {
+            updates[type] = update
+            return { self.stopped += 1 }
+        }
+        func disable(type: String) { disabled.append(type) }
+        func enable(type: String, frequency: String, completion: @escaping (Error?) -> Void) {
+            enables.append((type, frequency)); completion(nil)
+        }
+        func read(type: String, anchor: Data?, completion: @escaping (Result<CraftHealthBackgroundPage, Error>) -> Void) -> () -> Void {
+            requests.append((type, anchor, completion))
+            return { self.cancelled += 1 }
+        }
+        func deliver(_ index: Int, anchor: UInt8, sample: Bool = true, deleted: [String] = [], more: Bool = false) {
+            requests[index].2(.success(CraftHealthBackgroundPage(anchor: Data([anchor]),
+                samples: sample ? [CraftHealthBackgroundSample(id: "sample-\(anchor)", startDate: 1000, endDate: 2000, value: 3, unit: "count")] : [], deleted: deleted, more: more)))
+        }
+    }
+
+    func testDeltaAndAnchorSurviveRelaunchUntilExplicitAcknowledgement() throws {
+        let storage = Storage(), source = Source()
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "hourly")
+        source.deliver(0, anchor: 1, deleted: ["removed-id"])
+        XCTAssertEqual(storage.state.anchors["steps"], Data([1]))
+        let batch = try XCTUnwrap(storage.state.batches.first)
+        XCTAssertEqual(batch.deleted, ["removed-id"])
+        XCTAssertEqual(batch.samples.first?.unit, "count")
+        host.stop()
+        let resumed = Source(), next = CraftHealthBackground(source: resumed, persistence: storage)
+        next.configure(types: ["steps"], frequency: "hourly")
+        XCTAssertEqual(resumed.requests.first?.1, Data([1]))
+        resumed.deliver(0, anchor: 2, sample: false)
+        next.perform(method: "pending", args: []) { result in
+            guard case .success(let value) = result else { return XCTFail("pending failed") }
+            XCTAssertEqual((value as? [[String: Any]])?.first?["id"] as? String, batch.id)
+        }
+        next.perform(method: "acknowledge", args: [[batch.id]]) { result in
+            guard case .success = result else { return XCTFail("ack failed") }
+        }
+        XCTAssertTrue(storage.state.batches.isEmpty)
+        XCTAssertEqual(storage.state.anchors["steps"], Data([2]))
+        next.stop()
+    }
+
+    func testPersistenceFailureRetainsAnchorAndAcknowledgesObserverExactlyOnce() {
+        let storage = Storage(), source = Source()
+        storage.state.anchors["steps"] = Data([7])
+        storage.failSave = true
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "daily")
+        var acknowledgements = 0
+        source.updates["steps"]?(nil) { acknowledgements += 1 }
+        source.deliver(0, anchor: 8)
+        XCTAssertEqual(acknowledgements, 1)
+        XCTAssertEqual(storage.state.anchors["steps"], Data([7]))
+        XCTAssertTrue(storage.state.batches.isEmpty)
+        XCTAssertNotNil(host.errors["steps"])
+        source.deliver(0, anchor: 9)
+        XCTAssertEqual(acknowledgements, 1)
+        storage.failSave = false
+        host.refresh()
+        XCTAssertEqual(source.requests.last?.1, Data([7]))
+        host.stop()
+    }
+
+    func testCoalescedWakesPageBeforeAcknowledgingAndKeepDeletions() {
+        let storage = Storage(), source = Source()
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "immediate")
+        var acknowledged = 0
+        source.updates["steps"]?(nil) { acknowledged += 1 }
+        source.updates["steps"]?(nil) { acknowledged += 1 }
+        source.deliver(0, anchor: 1, more: true)
+        XCTAssertEqual(acknowledged, 0)
+        XCTAssertEqual(source.requests[1].1, Data([1]))
+        source.deliver(1, anchor: 2, sample: false, deleted: ["deleted"])
+        XCTAssertEqual(acknowledged, 2)
+        XCTAssertEqual(storage.state.batches.count, 2)
+        XCTAssertEqual(storage.state.batches.last?.deleted, ["deleted"])
+        host.stop()
+    }
+
+    func testStopAcknowledgesAndLateQueriesOrOldObserversCannotAdvanceState() {
+        let storage = Storage(), source = Source()
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "weekly")
+        var acknowledged = 0
+        source.updates["steps"]?(nil) { acknowledged += 1 }
+        let old = source.updates["steps"]
+        host.stop()
+        XCTAssertEqual(acknowledged, 1)
+        XCTAssertEqual(source.cancelled, 1)
+        source.deliver(0, anchor: 1)
+        old?(nil) { acknowledged += 1 }
+        XCTAssertEqual(acknowledged, 2)
+        XCTAssertTrue(storage.state.anchors.isEmpty)
+        XCTAssertEqual(source.stopped, 1)
+    }
+
+    func testCorruptOrLockedStorageNeverStartsFromAnEmptyAnchor() {
+        let storage = Storage(), source = Source()
+        storage.failLoad = true
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "hourly")
+        XCTAssertTrue(source.requests.isEmpty)
+        XCTAssertTrue(source.enables.isEmpty)
+        host.perform(method: "pending", args: []) { result in
+            guard case .failure(let error) = result else { return XCTFail("must not silently reset") }
+            XCTAssertEqual(error.code, "STORAGE_ERROR")
+        }
+        storage.failLoad = false
+        host.refresh()
+        XCTAssertEqual(source.requests.count, 1)
+        host.stop()
+    }
+
+    func testRemovedTypesDisableDeliveryAndFailedAckKeepsTheOutbox() {
+        let storage = Storage(), source = Source()
+        storage.state.anchors["sleep"] = Data([1])
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "hourly")
+        XCTAssertEqual(source.disabled, ["sleep"])
+        source.deliver(0, anchor: 2)
+        storage.failSave = true
+        host.perform(method: "acknowledge", args: [storage.state.batches.map(\.id)]) { result in
+            guard case .failure(let error) = result else { return XCTFail("must retain batch") }
+            XCTAssertEqual(error.code, "STORAGE_ERROR")
+        }
+        XCTAssertEqual(storage.state.batches.count, 1)
+        host.stop()
+    }
+
+    func testAtomicFileRoundTripAndCorruptionDetection() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("health.json")
+        let file = CraftHealthBackgroundFile(url: url)
+        XCTAssertTrue(try file.load().anchors.isEmpty)
+        var state = CraftHealthBackgroundState()
+        state.anchors["steps"] = Data([1, 2, 3])
+        state.batches = [CraftHealthBackgroundBatch(id: "batch", type: "steps", samples: [], deleted: ["id"])]
+        try file.save(state)
+        XCTAssertEqual(try file.load().anchors, state.anchors)
+        XCTAssertEqual(try file.load().batches.first?.deleted, ["id"])
+        try Data("broken".utf8).write(to: url)
+        XCTAssertThrowsError(try file.load())
+    }
+}

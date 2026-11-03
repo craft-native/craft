@@ -1552,6 +1552,7 @@ function writeShell(output: string, config: CraftConfig): void {
   writeSource(join(output, 'Sources', 'CraftNativeFlatList.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftNativeActions.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeActions.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftNativePedometer.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativePedometer.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftHealthBackground.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHealthBackground.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftHealth.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHealth.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftMusic.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftMusic.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftBluetooth.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftBluetooth.swift'), 'utf8'))

@@ -401,7 +401,7 @@ final class CraftHealth {
 
     /// The quantity behind each health data type, its unit, and the one
     /// statistic that type supports.
-    private static func healthQuantity(_ type: String) -> (type: HKQuantityType?, unit: HKUnit, options: HKStatisticsOptions)? {
+    static func healthQuantity(_ type: String) -> (type: HKQuantityType?, unit: HKUnit, options: HKStatisticsOptions)? {
         let bpm = HKUnit.count().unitDivided(by: .minute())
         switch type {
         case "steps": return (HKQuantityType.quantityType(forIdentifier: .stepCount), .count(), .cumulativeSum)
