@@ -1830,6 +1830,7 @@ struct CraftConfig: Codable {
     var enableAudioRecording: Bool = false
     var enableVideoRecording: Bool = false
     var enableMotionSensors: Bool = false
+    var enableBarometer: Bool = false
     /// Shaking the phone raises a `shake` event, for a report-a-problem
     /// gesture. Its own flag rather than a corner of `enableMotionSensors`,
     /// because it arms the accelerometer for as long as the app is in front:

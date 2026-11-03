@@ -52,6 +52,19 @@ function profileFixture(directory: string, names: string[]): void {
 }
 
 describe('Craft iOS builder', () => {
+  it.each([undefined, false, true])('gates barometer linkage and its required motion purpose together (%s)', async (enabled) => {
+    const output = createTempDir('craft-barometer-config-')
+    await init({ name: 'BarometerConfig', output, runtimeDir: null, config: { enableBarometer: enabled } })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.enableBarometer).toBe(Boolean(enabled))
+    expect(config.enableMotionSensors).toBe(false)
+    expect(iosPermissions(config).includes('motion')).toBe(Boolean(enabled))
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    expect(plist.includes('NSMotionUsageDescription')).toBe(Boolean(enabled))
+    const app = readFileSync(join(output, 'Sources/BarometerConfigApp.swift'), 'utf8')
+    expect(app).toContain('var enableBarometer: Bool = false')
+  })
+
   it.each([undefined, false, true])('keeps shake gesture opt-in separate from motion sensor access (%s)', async (enabled) => {
     const output = createTempDir('craft-shake-config-')
     await init({ name: 'ShakeConfig', output, runtimeDir: null, config: { enableMotionSensors: false, enableShakeGesture: enabled } })
