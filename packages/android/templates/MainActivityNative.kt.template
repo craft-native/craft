@@ -4597,6 +4597,7 @@ class MainActivity : AppCompatActivity() {
         val audio = CraftNativeAudio()
         val sounds = CraftNativeSounds(view.context)
         var motion: CraftNativeMotion? = null
+        var barometer: CraftNativeBarometer? = null
         val soundRequestCancellers = mutableMapOf<String, () -> Unit>()
         /** Snapshot writes awaiting the writer thread; close rejects them once. */
         val pendingSyncResults = mutableSetOf<String>()
@@ -4619,6 +4620,7 @@ class MainActivity : AppCompatActivity() {
             soundRequestCancellers.clear()
             sounds.close()
             motion?.close()
+            barometer?.close()
             // Evaluation completion does not mean its outbound messages have
             // reached the host. Close only after the ordered channel barrier,
             // so onDestroy's final writes run before navigation continues.
@@ -4691,6 +4693,7 @@ class MainActivity : AppCompatActivity() {
     private var clipboardEnabled = false
     private var shakeEnabled = false
     private var motionSensorsEnabled = false
+    private var barometerEnabled = false
     private var motionForeground = false
     internal var nativeAppState = "inactive"
         private set
@@ -4766,6 +4769,7 @@ class MainActivity : AppCompatActivity() {
         clipboardEnabled = config.optBoolean("enableClipboard", false)
         shakeEnabled = config.optBoolean("enableShakeGesture", false)
         motionSensorsEnabled = config.optBoolean("enableMotionSensors", false)
+        barometerEnabled = config.optBoolean("enableBarometer", false)
         // Normally started already by its content provider; this covers a
         // process that skipped providers (instrumentation).
         CraftCrashReporter.start(this)
@@ -5166,6 +5170,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        if (barometerEnabled && !headless) {
+            activeScreen.barometer = CraftNativeBarometer(CraftAndroidMotionSource(this)).apply {
+                emit = { detail ->
+                    if (activeScreen.active) send(activeScreen, "CRAFT_EVENT",
+                        JSONObject().put("event", "craftBarometerUpdate").put("detail", detail))
+                }
+            }
+        }
         activeScreen.sounds.emit = { payload ->
             if (activeScreen.active) send(activeScreen, "SOUND_EVENT", payload)
         }
@@ -5548,6 +5560,7 @@ class MainActivity : AppCompatActivity() {
         services.names().forEach { name -> put(name) }
         put("audio")
         if (motionSensorsEnabled) put("rawMotionSensors")
+        if (barometerEnabled) put("barometer")
         put("viewFocus")
         put("viewMeasure")
         put("viewScroll")
@@ -8053,6 +8066,17 @@ class MainActivity : AppCompatActivity() {
         val method = payload.optString("method")
         val perform: ((CraftNativeCapabilityResult) -> Unit) -> Unit = if (module == "View") {
             { completion -> performView(screen, method, args, completion) }
+        } else if (module == "Barometer") {
+            { completion ->
+                val barometer = screen.barometer
+                completion(if (!barometerEnabled) {
+                    CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Barometer is disabled")
+                } else if (barometer == null) {
+                    CraftNativeCapabilityResult(code = "NEEDS_ACTIVITY", message = "Barometer needs a visible app")
+                } else if (method == "start" && !motionForeground) {
+                    CraftNativeCapabilityResult(code = "APP_INACTIVE", message = "Barometer needs a foreground app")
+                } else barometer.perform(method, args))
+            }
         } else if (module == "MotionSensors") {
             { completion ->
                 val motion = screen.motion
@@ -8316,7 +8340,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         motionForeground = false
-        allScreens().forEach { it.motion?.stopAll() }
+        allScreens().forEach { it.motion?.stopAll(); it.barometer?.stop("background") }
         disarmShakeGesture()
         if (::services.isInitialized) services.pauseVoice()
         nativeAppState = "inactive"

@@ -177,6 +177,8 @@ export interface CraftAndroidConfig {
   enableBackgroundLocation?: boolean
   /** Foreground raw Android sensors on native screens; separate from iOS fused motion. */
   enableMotionSensors?: boolean
+  /** Foreground pressure and session-relative altitude; does not enable background recording. */
+  enableBarometer?: boolean
   enableBluetooth?: boolean
   /**
    * A Bluetooth heart-rate strap, or a watch broadcasting its heart rate (the
@@ -458,6 +460,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   enableGeolocation: false,
   enableBackgroundLocation: false,
   enableMotionSensors: false,
+  enableBarometer: false,
   enableBluetooth: false,
   enableHeartRate: false,
   enableHealthConnect: false,

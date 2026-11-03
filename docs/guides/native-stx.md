@@ -1436,6 +1436,32 @@ const available = await craft.biometrics.isAvailable()
 const biometricType = await craft.biometrics.getBiometricType()
 if (available) await craft.biometrics.authenticate('Unlock WildLoop')
 
+#### Barometer samples
+
+Android native hosts support opt-in `enableBarometer: true` and advertise
+`barometer`. The `Barometer` module accepts `getAvailability` with no args,
+`start` with `[{ intervalMs: 100, background: false }]` (options optional), and
+`stop` with no args. Availability reports `relativeAltitude`, `absoluteAltitude`
+and `background` booleans; Android currently supports only relative altitude
+when a pressure sensor exists. A missing sensor rejects `start` with
+`UNAVAILABLE`. The requested period must be an integer from 5 to 60000 ms.
+
+`craftBarometerUpdate` events contain `{ state: 'sample', pressureHpa,
+relativeAltitudeMeters, referencePressureHpa, timestampMs }`. Android uses the
+first pressure sample of each successful start as the reference and calculates
+relative altitude with `SensorManager.getAltitude`. Timestamps are monotonic
+milliseconds since boot. No elevation-gain smoothing, cumulative gain, or
+weather correction is applied; the value is not GPS or calibrated absolute
+altitude. Invalid replacements leave a running session intact.
+
+This foreground stream explicitly rejects `background: true`. App pause stops
+it and emits `{ state: 'stopped', reason: 'background' }`, so consumers can mark
+a recording gap instead of silently undercounting climb. Explicit stop emits
+`requested`; malformed sensor data emits `sensorError`. Restart after resume
+begins a new reference. Route disposal unregisters the listener and discards
+late callbacks. Background route recording remains a separate capability;
+this API must not be represented as continuous screen-off recording.
+
 #### Raw Android motion sensors
 
 Native Android screens can opt in with `enableMotionSensors: true`. The host

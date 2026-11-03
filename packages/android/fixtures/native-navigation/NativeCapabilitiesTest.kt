@@ -161,6 +161,98 @@ class NativeCapabilitiesTest {
         } finally { instrumentation.runOnMainSync { host.close() } }
     }
 
+    @Test fun barometerConvertsPressureToSessionRelativeAltitude() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeBarometer(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            assertNull(host.perform("start", JSONArray()).code)
+            assertEquals(android.hardware.Sensor.TYPE_PRESSURE, source.requests.single().first)
+            source.deliver(0, floatArrayOf(1013.25f))
+            assertEquals(0.0, events.last().getDouble("relativeAltitudeMeters"), 0.001)
+            source.deliver(0, floatArrayOf(1000f))
+            val sample = events.last()
+            assertEquals("sample", sample.getString("state"))
+            assertEquals(1000.0, sample.getDouble("pressureHpa"), 0.0)
+            assertEquals(1013.25, sample.getDouble("referencePressureHpa"), 0.0)
+            assertEquals(android.hardware.SensorManager.getAltitude(1013.25f, 1000f).toDouble(), sample.getDouble("relativeAltitudeMeters"), 0.001)
+            assertTrue(sample.getDouble("relativeAltitudeMeters") > 100)
+            assertEquals(12345.6789, sample.getDouble("timestampMs"), 0.00001)
+        } finally { host.close() }
+    }
+
+    @Test fun barometerRejectsBackgroundAndBadReplacementsWithoutLosingBaseline() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeBarometer(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            val availability = host.perform("getAvailability", JSONArray()).data as JSONObject
+            assertTrue(availability.getBoolean("relativeAltitude"))
+            assertFalse(availability.getBoolean("absoluteAltitude"))
+            assertFalse(availability.getBoolean("background"))
+            host.perform("start", JSONArray())
+            source.deliver(0, floatArrayOf(1000f))
+            assertEquals("UNSUPPORTED", host.perform("start", JSONArray().put(JSONObject().put("background", true))).code)
+            for (args in listOf(JSONArray().put("bad"), JSONArray().put(JSONObject().put("background", "false")),
+                JSONArray().put(JSONObject().put("intervalMs", 0)), JSONArray().put(JSONObject().put("intervalMs", 0.5)))) {
+                assertEquals("INVALID_ARGUMENT", host.perform("start", args).code)
+            }
+            source.reject = true
+            assertEquals("UNAVAILABLE", host.perform("start", JSONArray()).code)
+            assertTrue(source.stopped.isEmpty())
+            source.deliver(0, floatArrayOf(995f))
+            assertEquals(1000.0, events.last().getDouble("referencePressureHpa"), 0.0)
+        } finally { host.close() }
+    }
+
+    @Test fun barometerAnnouncesBackgroundGapsAndResetsBaselineOnRestart() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeBarometer(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        host.perform("start", JSONArray())
+        source.deliver(0, floatArrayOf(1000f))
+        host.stop("background")
+        assertEquals("stopped", events.last().getString("state"))
+        assertEquals("background", events.last().getString("reason"))
+        source.deliver(0, floatArrayOf(900f))
+        assertEquals(2, events.size)
+        host.perform("start", JSONArray())
+        source.deliver(1, floatArrayOf(900f))
+        assertEquals(0.0, events.last().getDouble("relativeAltitudeMeters"), 0.001)
+        host.perform("start", JSONArray())
+        source.deliver(1, floatArrayOf(850f))
+        assertEquals(3, events.size)
+        source.deliver(2, floatArrayOf(850f))
+        assertEquals(0.0, events.last().getDouble("relativeAltitudeMeters"), 0.001)
+        host.close()
+        source.deliver(2, floatArrayOf(800f))
+        assertEquals("disposed", events.last().getString("reason"))
+        assertEquals(listOf(0, 1, 2), source.stopped)
+        assertEquals("HOST_CLOSED", host.perform("start", JSONArray()).code)
+    }
+
+    @Test fun barometerHandlesMissingHardwareAndInvalidPressureWithoutFakeAltitude() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeBarometer(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            source.present = false
+            assertFalse((host.perform("getAvailability", JSONArray()).data as JSONObject).getBoolean("relativeAltitude"))
+            assertEquals("UNAVAILABLE", host.perform("start", JSONArray()).code)
+            source.present = true
+            for (pressure in listOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) {
+                host.perform("start", JSONArray())
+                source.deliver(source.requests.lastIndex, floatArrayOf(pressure))
+                assertEquals("sensorError", events.last().getString("reason"))
+                assertFalse(events.last().has("relativeAltitudeMeters"))
+            }
+        } finally { host.close() }
+    }
+
     private class PickerHostProbe : CraftNativePickerHost {
         val launched = mutableListOf<Int>()
         val dismissed = mutableListOf<Int>()

@@ -119,3 +119,74 @@ internal class CraftNativeMotion(private val source: CraftMotionSource) {
     fun stopAll() { streams.keys.toList().forEach(::stop) }
     fun close() { closed = true; stopAll(); emit = {} }
 }
+
+/** A pressure-only stream with a new reference on each successful start. */
+internal class CraftNativeBarometer(private val source: CraftMotionSource) {
+    private class Stream {
+        var registration: CraftMotionRegistration? = null
+        var reference: Float? = null
+    }
+    private var stream: Stream? = null
+    private var closed = false
+    var emit: (JSONObject) -> Unit = {}
+
+    fun perform(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        if (closed) return failure("HOST_CLOSED", "Barometer host is closed")
+        return when (method) {
+            "getAvailability" -> CraftNativeCapabilityResult(data = JSONObject()
+                .put("relativeAltitude", source.available(Sensor.TYPE_PRESSURE))
+                .put("absoluteAltitude", false).put("background", false))
+            "start" -> start(args.optJSONObject(0), args.length() != 0)
+            "stop" -> CraftNativeCapabilityResult(data = stop("requested"))
+            else -> failure("UNKNOWN_ACTION", "Unsupported Barometer method")
+        }
+    }
+
+    private fun start(options: JSONObject?, supplied: Boolean): CraftNativeCapabilityResult {
+        if (supplied && options == null) return failure("INVALID_ARGUMENT", "Barometer.start needs an options object")
+        if (options?.has("background") == true && options.opt("background") !is Boolean)
+            return failure("INVALID_ARGUMENT", "background must be boolean")
+        if (options?.optBoolean("background", false) == true)
+            return failure("UNSUPPORTED", "Background barometer recording is not supported")
+        val raw = if (options?.has("intervalMs") == true) options.opt("intervalMs") else 100
+        val interval = (raw as? Number)?.toDouble() ?: Double.NaN
+        if (!interval.isFinite() || interval < 5 || interval > 60_000 || interval % 1 != 0.0)
+            return failure("INVALID_ARGUMENT", "intervalMs must be an integer from 5 through 60000")
+        if (!source.available(Sensor.TYPE_PRESSURE)) return failure("UNAVAILABLE", "Barometer is not present")
+        val next = Stream()
+        val registration = try {
+            source.register(Sensor.TYPE_PRESSURE, (interval * 1000).toInt()) { values, timestamp, _ ->
+                if (!closed && stream === next) {
+                    val pressure = values.firstOrNull()
+                    if (pressure == null || !pressure.isFinite() || pressure <= 0) {
+                        stop("sensorError")
+                    } else {
+                        val reference = next.reference ?: pressure.also { next.reference = it }
+                        val altitude = SensorManager.getAltitude(reference, pressure)
+                        if (!altitude.isFinite()) stop("sensorError")
+                        else emit(JSONObject().put("state", "sample").put("pressureHpa", pressure)
+                            .put("relativeAltitudeMeters", altitude).put("referencePressureHpa", reference)
+                            .put("timestampMs", timestamp / 1_000_000.0))
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            return failure("SENSOR_ERROR", error.message ?: "Barometer registration failed")
+        } ?: return failure("UNAVAILABLE", "Barometer registration was rejected")
+        next.registration = registration
+        val previous = stream
+        stream = next
+        previous?.registration?.close()
+        return CraftNativeCapabilityResult(data = true)
+    }
+
+    fun stop(reason: String): Boolean {
+        val previous = stream ?: return false
+        stream = null
+        previous.registration?.close()
+        emit(JSONObject().put("state", "stopped").put("reason", reason))
+        return true
+    }
+    fun close() { closed = true; stop("disposed"); emit = {} }
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+}
