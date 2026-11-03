@@ -52,6 +52,26 @@ function profileFixture(directory: string, names: string[]): void {
 }
 
 describe('Craft iOS builder', () => {
+  it('requires declared health types and signs background delivery only when enabled', async () => {
+    const output = createTempDir('craft-health-background-')
+    await init({ name: 'HealthBackground', output, runtimeDir: null, config: { enableHealthKit: true } })
+    expect(readFileSync(join(output, 'Craft.entitlements'), 'utf8')).not.toContain('healthkit.background-delivery')
+    for (const config of [
+      { enableHealthKitBackground: true },
+      { enableHealthKit: true, enableHealthKitBackground: true },
+      { enableHealthKit: true, enableHealthKitBackground: true, healthKitBackgroundTypes: ['unknown'] },
+      { enableHealthKit: true, enableHealthKitBackground: true, healthKitBackgroundTypes: ['steps'], healthKitBackgroundFrequency: 'always' },
+    ]) await expect(init({ name: 'HealthBackground', output, runtimeDir: null, config: config as any })).rejects.toThrow()
+    await init({ name: 'HealthBackground', output, runtimeDir: null, config: {
+      enableHealthKit: true, enableHealthKitBackground: true, healthKitBackgroundTypes: ['steps', 'sleep', 'workouts'],
+    } })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.healthKitBackgroundFrequency).toBe('hourly')
+    expect(iosPermissions(config)).toContain('health')
+    expect(readFileSync(join(output, 'Craft.entitlements'), 'utf8')).toContain('com.apple.developer.healthkit.background-delivery')
+    expect(readFileSync(join(output, 'Info.plist'), 'utf8')).toContain('NSHealthShareUsageDescription')
+  })
+
   it.each([undefined, false, true])('gates pedometer history and its required motion purpose together (%s)', async (enabled) => {
     const output = createTempDir('craft-pedometer-config-')
     await init({ name: 'PedometerConfig', output, runtimeDir: null, config: { enablePedometer: enabled } })

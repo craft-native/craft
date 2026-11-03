@@ -171,6 +171,10 @@ export interface CraftConfig {
   enableBluetooth?: boolean
   enableNFC?: boolean
   enableHealthKit?: boolean
+  /** Observe declared HealthKit types on background wakes; requires enableHealthKit. */
+  enableHealthKitBackground?: boolean
+  healthKitBackgroundTypes?: Array<'steps' | 'heartRate' | 'restingHeartRate' | 'heartRateVariability' | 'activeEnergy' | 'distance' | 'bodyMass' | 'sleep' | 'workouts'>
+  healthKitBackgroundFrequency?: 'immediate' | 'hourly' | 'daily' | 'weekly'
   /** Native Apple Wallet pass presentation and lookup for native screens. */
   enableWallet?: boolean
   enableLiveActivities?: boolean
@@ -777,6 +781,9 @@ const DEFAULT_CONFIG: Omit<CraftConfig, 'appName' | 'bundleId'> = {
   enableBluetooth: false,
   enableNFC: false,
   enableHealthKit: false,
+  enableHealthKitBackground: false,
+  healthKitBackgroundTypes: [],
+  healthKitBackgroundFrequency: 'hourly',
   enableWallet: false,
   enableLiveActivities: false,
   enableWatchApp: false,
@@ -960,8 +967,21 @@ export function associatedDomainEntries(domains: string[] | undefined): string[]
     .map(value => /^[a-z]+:/i.test(value) ? value : `applinks:${value}`))]
 }
 
+function validateHealthKitBackground(config: CraftConfig): void {
+  if (!config.enableHealthKitBackground) return
+  if (!config.enableHealthKit) throw new Error('enableHealthKitBackground requires enableHealthKit')
+  const types = config.healthKitBackgroundTypes
+  const supported = ['steps', 'heartRate', 'restingHeartRate', 'heartRateVariability', 'activeEnergy', 'distance', 'bodyMass', 'sleep', 'workouts']
+  if (!Array.isArray(types) || !types.length || types.some(type => !supported.includes(type)))
+    throw new Error('healthKitBackgroundTypes must declare supported HealthKit sample types')
+  if (!['immediate', 'hourly', 'daily', 'weekly'].includes(config.healthKitBackgroundFrequency ?? 'hourly'))
+    throw new Error('healthKitBackgroundFrequency must be immediate, hourly, daily or weekly')
+}
+
 export function renderEntitlements(config: CraftConfig): string {
+  validateHealthKitBackground(config)
   const entries: string[] = []
+  if (config.enableHealthKitBackground) entries.push('    <key>com.apple.developer.healthkit.background-delivery</key>\n    <true/>')
   const associatedDomains = associatedDomainEntries(config.associatedDomains)
   if (associatedDomains.length) {
     entries.push(`    <key>com.apple.developer.associated-domains</key>\n    <array>\n${plistArray(associatedDomains)}\n    </array>`)
@@ -1611,6 +1631,7 @@ export async function init(options: InitOptions): Promise<void> {
     teamId: teamId || '',
     ...given,
   }
+  validateHealthKitBackground(config)
   if (config.renderer !== 'web' && config.renderer !== 'native') {
     throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
   }
