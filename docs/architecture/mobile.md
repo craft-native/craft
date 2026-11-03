@@ -561,3 +561,12 @@ host with `swiftc` on macOS. Its `validate(messages)` returns `exitCode`, `stdou
 and `stderr`; call `dispose()` when finished. This checks native update batches,
 not UIKit layout or device capability behavior. These build/test APIs are Bun-only;
 browser code continues to import `craft-native/mobile`.
+
+The notification cold-start probe resolves a hittable permission button, then
+sends input through a SpringBoard coordinate so a disappearing alert does not
+cause a stale-element tap failure. Every unresolved iteration waits for the
+page's reply, including after input. The original 90-second permission budget
+still applies, and only the page reporting `granted` passes; disappearance alone
+does not. Permission race regressions run with `NotificationTapColdStartTests`
+in both iOS runtime legs. Banner delivery and cold-start launch assertions are
+separate and remain required.

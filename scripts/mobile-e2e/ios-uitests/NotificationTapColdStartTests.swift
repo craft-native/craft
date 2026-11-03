@@ -16,6 +16,7 @@ import XCTest
 ///
 /// As with the deep-link test, no assertions about the answer live here. The
 /// page's report is printed and `scripts/mobile-e2e/protocol.ts` judges it.
+@MainActor
 final class NotificationTapColdStartTests: XCTestCase {
     private let environment = ProcessInfo.processInfo.environment
     private var bundleId: String { environment["PROBE_BUNDLE_ID"] ?? "" }
@@ -28,6 +29,109 @@ final class NotificationTapColdStartTests: XCTestCase {
         // Each step stands on the one before it; carrying on past a failure
         // would only bury it under the ones it causes.
         continueAfterFailure = false
+    }
+
+    /// Resolve the short-lived button before synthesizing input. The resulting
+    /// coordinate belongs to SpringBoard, not to the alert: if the alert goes
+    /// away during input dispatch there is no stale Allow element to resolve.
+    /// The page's reply below, never the tap itself, proves permission succeeded.
+    private func permissionCoordinate(_ allow: XCUIElement, in springboard: XCUIApplication,
+                                      timeout: TimeInterval) -> XCUICoordinate? {
+        guard allow.wait(for: \.isHittable, toEqual: true, timeout: timeout),
+              let snapshot = try? allow.snapshot(), snapshot.isEnabled else { return nil }
+        let frame = snapshot.frame
+        guard !frame.isEmpty, !frame.isNull, frame.midX.isFinite, frame.midY.isFinite else { return nil }
+        let origin = springboard.coordinate(withNormalizedOffset: .zero)
+        let point = origin.screenPoint
+        return origin.withOffset(CGVector(dx: frame.midX - point.x, dy: frame.midY - point.y))
+    }
+
+    /// The same deadline covers both waits; every unresolved iteration yields,
+    /// including one that dispatched input. A vanished prompt is not a grant.
+    private func waitForPermission<Target>(timeout: TimeInterval, now: () -> TimeInterval,
+                                          hasReply: () -> Bool, resolveAllow: (TimeInterval) -> Target?,
+                                          tap: (Target) -> Void, waitForReply: (TimeInterval) -> Bool) -> Bool {
+        let deadline = now() + timeout
+        while !hasReply() {
+            let remaining = deadline - now()
+            guard remaining > 0 else { return false }
+            if let target = resolveAllow(min(1, remaining)), !hasReply(), now() < deadline {
+                tap(target)
+            }
+            let replyBudget = min(1, deadline - now())
+            if replyBudget > 0, waitForReply(replyBudget) { return true }
+        }
+        return true
+    }
+
+    func testRememberedPermissionNeedsNoPromptOrTap() {
+        let result: Bool = waitForPermission(timeout: 90, now: { 0 }, hasReply: { true },
+            resolveAllow: { _ -> Int? in XCTFail("already answered"); return nil },
+            tap: { _ in XCTFail("already answered") },
+            waitForReply: { _ in XCTFail("already answered"); return false })
+        XCTAssertTrue(result)
+    }
+
+    func testPermissionAnswerArrivingDuringResolutionAvoidsAnotherTap() {
+        var answered = false
+        XCTAssertTrue(waitForPermission(timeout: 90, now: { 0 }, hasReply: { answered },
+            resolveAllow: { _ -> Int? in answered = true; return 1 },
+            tap: { _ in XCTFail("the request has already completed") },
+            waitForReply: { _ in answered }))
+    }
+
+    func testDisappearingPermissionPromptStillWaitsForThePage() {
+        for resolved in [false, true] {
+            var clock: TimeInterval = 0
+            var taps = 0
+            var yields = 0
+            var answered = false
+            XCTAssertTrue(waitForPermission(timeout: 90, now: { clock }, hasReply: { answered },
+                resolveAllow: { _ -> Int? in clock += 0.1; return resolved ? 1 : nil },
+                tap: { _ in taps += 1 },
+                waitForReply: { budget in
+                    XCTAssertGreaterThan(budget, 0)
+                    clock += budget
+                    yields += 1
+                    answered = true
+                    return answered
+                }))
+            XCTAssertEqual(taps, resolved ? 1 : 0)
+            XCTAssertEqual(yields, 1, "the tap branch must yield too")
+        }
+    }
+
+    func testUnansweredPermissionKeepsTheOriginalDeadlineAndYieldsAfterEveryTap() {
+        for resolved in [false, true] {
+            var clock: TimeInterval = 0
+            var attempts = 0
+            var taps = 0
+            var yields = 0
+            XCTAssertFalse(waitForPermission(timeout: 90, now: { clock }, hasReply: { false },
+                resolveAllow: { budget -> Int? in
+                    XCTAssertLessThanOrEqual(budget, 1)
+                    clock += 0.25
+                    attempts += 1
+                    return resolved ? attempts : nil
+                },
+                tap: { _ in taps += 1 },
+                waitForReply: { budget in
+                    XCTAssertGreaterThan(budget, 0)
+                    XCTAssertLessThanOrEqual(budget, 1)
+                    clock += budget
+                    yields += 1
+                    return false
+                }))
+            XCTAssertEqual(clock, 90)
+            XCTAssertEqual(yields, attempts)
+            XCTAssertEqual(taps, resolved ? attempts : 0)
+        }
+    }
+
+    func testMissingPermissionSnapshotIsRecoverable() {
+        let missing = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .buttons["craft-permission-missing-\(UUID().uuidString)"]
+        XCTAssertNil(try? missing.snapshot(), "disappearance must be a thrown resolution error, not a test failure")
     }
 
     func testNotificationsReachThePage() throws {
@@ -55,11 +159,15 @@ final class NotificationTapColdStartTests: XCTestCase {
         let permission = app.staticTexts
             .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-NOTIFY-PERMISSION '"))
             .firstMatch
-        let deadline = Date().addingTimeInterval(90)
-        while !permission.exists && Date() < deadline {
-            if allow.exists { allow.tap() } else { _ = permission.waitForExistence(timeout: 1) }
-        }
-        XCTAssertTrue(permission.exists, "the page never said how the notification permission request ended")
+        let answered = waitForPermission(
+            timeout: 90,
+            now: { ProcessInfo.processInfo.systemUptime },
+            hasReply: { permission.exists },
+            resolveAllow: { timeout in self.permissionCoordinate(allow, in: springboard, timeout: timeout) },
+            tap: { $0.tap() },
+            waitForReply: { permission.waitForExistence(timeout: $0) }
+        )
+        XCTAssertTrue(answered, "the page never said how the notification permission request ended")
         XCTAssertEqual(permission.label, "CRAFT-E2E-NOTIFY-PERMISSION granted")
 
         // Killed, so the tap below is what starts it. A running app would be

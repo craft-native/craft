@@ -760,3 +760,19 @@ describe('external simulator pasteboard evidence', () => {
     expect(simulatorPasteboardProblems({ exitCode: 0, stdout: '', stderr: '' }, '')).toEqual(['the simulator pasteboard check has no expected run nonce'])
   })
 })
+
+
+describe('notification permission UI recovery', () => {
+  it('runs permission race regressions with the real cold-start class without changing banner acceptance', () => {
+    const host = readFileSync(join(import.meta.dir, 'ios.ts'), 'utf8')
+    const ui = readFileSync(join(import.meta.dir, 'ios-uitests/NotificationTapColdStartTests.swift'), 'utf8')
+    expect(host).toContain('`-only-testing:${UI_TESTS}/${testClass}`')
+    expect(ui).toContain('func testDisappearingPermissionPromptStillWaitsForThePage()')
+    expect(ui).toContain('func testUnansweredPermissionKeepsTheOriginalDeadlineAndYieldsAfterEveryTap()')
+    expect(ui).toContain('timeout: 90,')
+    expect(ui).not.toContain('if allow.exists { allow.tap() }')
+    expect(ui).toContain('XCTAssertEqual(permission.label, "CRAFT-E2E-NOTIFY-PERMISSION granted")')
+    expect(ui).toContain('banner.tap()')
+    expect(ui).toContain('app.wait(for: .runningForeground, timeout: 50)')
+  })
+})
