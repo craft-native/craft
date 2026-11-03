@@ -70,12 +70,27 @@ export function summarizeBunAudit(report: unknown): { Critical: number, High: nu
   return counts
 }
 
+/**
+ * The throwaway consumer that installs the packed archives for scanning.
+ *
+ * Every archive is listed twice on purpose. `dependencies` installs it, and
+ * `overrides` is what a *nested* requirement resolves through: the packed UI
+ * bindings depend on `craft-native` at the version being released, and a
+ * top-level `file:` entry does not reach that. Without the override the
+ * install asks the registry for a version that cannot be there yet, because
+ * this scan is the gate that lets it be published — so the scan of the exact
+ * artifacts would fail on the artifacts being exact.
+ */
+export function npmConsumerManifest(archives: Archive[], directory: string): { private: true, dependencies: Record<string, string>, overrides: Record<string, string> } {
+  const local = Object.fromEntries(archives.map(({ name, file }) => [name, `file:${join(resolve(directory), file)}`]))
+  return { private: true, dependencies: local, overrides: { ...local } }
+}
+
 function scanNpm(directory: string, output: string, syft: string, grype: string) {
   const archives = readArchiveManifest(directory)
   const consumer = createTempDir('craft-release-consumer-')
   try {
-    const dependencies = Object.fromEntries(archives.map(({ name, file }) => [name, `file:${join(resolve(directory), file)}`]))
-    writeFileSync(join(consumer, 'package.json'), `${JSON.stringify({ private: true, dependencies }, null, 2)}\n`)
+    writeFileSync(join(consumer, 'package.json'), `${JSON.stringify(npmConsumerManifest(archives, directory), null, 2)}\n`)
     run([process.execPath, 'install', '--ignore-scripts', '--save', '--save-text-lockfile'], consumer)
     const audit = Bun.spawnSync([process.execPath, 'audit', '--production', '--json'], { cwd: consumer, stdout: 'pipe', stderr: 'pipe' })
     const auditText = audit.stdout.toString()

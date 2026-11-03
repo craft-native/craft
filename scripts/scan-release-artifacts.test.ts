@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { publishNpmArchives } from './publish-npm-archives'
-import { expectedNpmPackages, nativeInventory, readArchiveManifest, summarizeBunAudit } from './scan-release-artifacts'
+import { expectedNpmPackages, npmConsumerManifest, nativeInventory, readArchiveManifest, summarizeBunAudit } from './scan-release-artifacts'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -128,4 +128,26 @@ test('publisher rechecks transferred npm archives before any registry call', () 
   writeFileSync(join(downloaded, packages[0]!.file), 'changed after upload')
   expect(() => publishNpmArchives(downloaded, command)).toThrow('hash mismatch')
   expect(calls).toHaveLength(0)
+})
+
+// The scan exists to inspect the exact archives about to be published, so it
+// must not ask the registry about a sibling it is already holding. The packed
+// UI bindings declare `craft-native` at the version being released, and that
+// version cannot exist upstream yet -- this scan is what gates publishing it.
+// A top-level `file:` entry does not reach that nested requirement; only an
+// override does. Without one, every release after the bindings gained a core
+// dependency fails with `No version matching "<version>" found`.
+test('the release consumer resolves sibling packages from the packed archives', () => {
+  const archives = [
+    { name: 'craft-native', version: '0.0.442', file: 'craft-native-0.0.442.tgz', sha256: 'a' },
+    { name: '@craft-native/react', version: '0.0.442', file: 'craft-native-react-0.0.442.tgz', sha256: 'b' },
+  ]
+  const manifest = npmConsumerManifest(archives, '/tmp/archives')
+  for (const archive of archives) {
+    const local = `file:/tmp/archives/${archive.file}`
+    expect(manifest.dependencies[archive.name]).toBe(local)
+    // The override is what a nested `craft-native@0.0.442` resolves through.
+    expect(manifest.overrides[archive.name]).toBe(local)
+  }
+  expect(manifest.private).toBe(true)
 })
