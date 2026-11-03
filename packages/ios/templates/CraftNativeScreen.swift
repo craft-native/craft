@@ -5524,6 +5524,22 @@ final class CraftNativeSolidSwitch: UIControl {
     private let naturalSize = UISwitch().intrinsicContentSize
     private var touchOrigin: CGPoint?
     private var dragPosition: CGFloat?
+    /// Where the thumb is *drawn*, which is where it rests except while a
+    /// change travels there. `thumbRect` keeps reporting the resting position,
+    /// so hit-testing, the drag maths and tests all read one instant,
+    /// authoritative value and only the drawing lags behind it.
+    private var drawnPosition: CGFloat = 0
+    private var travel: CADisplayLink?
+    private var travelFrom: CGFloat = 0
+    private var travelStart: CFTimeInterval = 0
+    /// Drawing can settle independently of immediate value changes and taps.
+    private static let travelDuration: CFTimeInterval = 0.38
+    /// Thumb stretch while held, from 0 (released) to 1 (pressed).
+    private var pressAmount: CGFloat = 0
+    private var pressTarget: CGFloat = 0
+    private var pressFrom: CGFloat = 0
+    private var pressStart: CFTimeInterval = 0
+    private static let pressDuration: CFTimeInterval = 0.14
     override var intrinsicContentSize: CGSize { naturalSize }
     override var isEnabled: Bool {
         didSet {
@@ -5533,6 +5549,14 @@ final class CraftNativeSolidSwitch: UIControl {
         }
     }
     override var canBecomeFirstResponder: Bool { isEnabled }
+    override var isHidden: Bool {
+        didSet { if isHidden { settleMotion(cancelTracking: true) } }
+    }
+    override var semanticContentAttribute: UISemanticContentAttribute {
+        didSet {
+            if oldValue != semanticContentAttribute { settleMotion(cancelTracking: true) }
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -5544,10 +5568,110 @@ final class CraftNativeSolidSwitch: UIControl {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func setOn(_ value: Bool) {
+        let previous = visualPosition
+        let changed = isOn != value
         isOn = value
         refreshAccessibility()
+        guard changed else { setNeedsDisplay(); return }
+        drawnPosition = previous
+        moveThumb()
+    }
+
+    private var canAnimate: Bool {
+        guard isEnabled, !UIAccessibility.isReduceMotionEnabled, let window,
+              convert(bounds, to: window).intersects(window.bounds) else { return false }
+        var ancestor: UIView? = self
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0 { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+
+    private func settleMotion(cancelTracking: Bool = false) {
+        travel?.invalidate()
+        travel = nil
+        drawnPosition = restingPosition
+        pressAmount = 0
+        pressTarget = 0
+        if cancelTracking {
+            touchOrigin = nil
+            dragPosition = nil
+        }
         setNeedsDisplay()
     }
+
+    /// Only drawing travels; value, accessibility and hit geometry change at once.
+    private func moveThumb() {
+        travel?.invalidate()
+        travel = nil
+        let target = restingPosition
+        travelFrom = dragPosition ?? drawnPosition
+        guard canAnimate else { settleMotion(); return }
+        travelStart = CACurrentMediaTime()
+        guard travelFrom != target || pressAmount != pressTarget else {
+            drawnPosition = target
+            setNeedsDisplay()
+            return
+        }
+        startLink()
+    }
+
+    /// Stretch the thumb toward where it is going, or let it relax back.
+    private func press(_ amount: CGFloat) {
+        guard pressTarget != amount else { return }
+        pressFrom = pressAmount
+        pressTarget = amount
+        pressStart = CACurrentMediaTime()
+        guard canAnimate else { settleMotion(); return }
+        if travel == nil {
+            drawnPosition = restingPosition
+            travelFrom = restingPosition
+            travelStart = CACurrentMediaTime()
+        }
+        startLink()
+    }
+
+    private func startLink() {
+        guard travel == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(stepThumb))
+        link.add(to: .main, forMode: .common)
+        travel = link
+    }
+
+    @objc private func stepThumb() {
+        guard canAnimate else { settleMotion(); return }
+        let now = CACurrentMediaTime()
+        let target = restingPosition
+        let position = min(1, max(0, (now - travelStart) / Self.travelDuration))
+        drawnPosition = travelFrom + (target - travelFrom) * CGFloat(Self.spring(position))
+        let pressed = min(1, max(0, (now - pressStart) / Self.pressDuration))
+        pressAmount = pressFrom + (pressTarget - pressFrom) * CGFloat(pressed * pressed * (3 - 2 * pressed))
+        setNeedsDisplay()
+        guard position >= 1, pressed >= 1 else { return }
+        drawnPosition = target
+        pressAmount = pressTarget
+        travel?.invalidate()
+        travel = nil
+    }
+
+    /// A small spring overshoot, applied only to opaque drawing geometry.
+    private static func spring(_ fraction: Double) -> Double {
+        guard fraction < 1 else { return 1 }
+        let damping = 0.68, frequency = 15.0
+        let damped = frequency * (1 - damping * damping).squareRoot()
+        let decay = exp(-damping * frequency * fraction)
+        return 1 - decay * (cos(damped * fraction) + (damping * frequency / damped) * sin(damped * fraction))
+    }
+
+    /// A display link retains this control, so a switch that leaves the screen
+    /// mid-travel would hold itself alive and keep drawing frames nobody sees.
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        guard newWindow == nil else { return }
+        settleMotion(cancelTracking: true)
+    }
+    deinit { travel?.invalidate() }
 
     func refreshAccessibility() {
         accessibilityTraits = .button
@@ -5561,21 +5685,99 @@ final class CraftNativeSolidSwitch: UIControl {
         let size = CGSize(width: min(bounds.width, naturalSize.width), height: min(bounds.height, naturalSize.height))
         return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
     }
-    var thumbRect: CGRect {
+    private var restingPosition: CGFloat {
+        (isOn == (effectiveUserInterfaceLayoutDirection != .rightToLeft)) ? 1 : 0
+    }
+    private var visualPosition: CGFloat {
+        dragPosition ?? (travel == nil ? restingPosition : drawnPosition)
+    }
+    /// Where the thumb belongs now. A finger on it wins, then the state.
+    var thumbRect: CGRect { thumbRect(at: dragPosition ?? restingPosition) }
+    /// Where this frame draws it: the same, except part-way through a travel,
+    /// and stretched toward its destination while a finger holds it down.
+    private var drawnThumbRect: CGRect {
+        let position = visualPosition
+        let rect = thumbRect(at: position)
+        guard pressAmount > 0 else { return rect }
         let track = trackRect.insetBy(dx: 2, dy: 2)
-        let onRight = effectiveUserInterfaceLayoutDirection != .rightToLeft
-        let position = dragPosition ?? ((isOn == onRight) ? 1 : 0)
+        let stretch = rect.width * 0.18 * pressAmount
+        // It grows toward the end it is heading for, so the edge nearest the
+        // finger stays put and the far edge reaches.
+        let x = position < 0.5 ? rect.minX : rect.minX - stretch
+        return CGRect(x: min(max(x, track.minX), track.maxX - rect.width - stretch),
+                      y: rect.minY, width: rect.width + stretch, height: rect.height)
+    }
+    private func thumbRect(at position: CGFloat) -> CGRect {
+        let track = trackRect.insetBy(dx: 2, dy: 2)
         return CGRect(x: track.minX + (track.width - track.height) * position, y: track.minY, width: track.height, height: track.height)
     }
     override func draw(_ rect: CGRect) {
         let track = trackRect
-        guard track.width > 4, track.height > 4 else { return }
-        (isEnabled ? (isOn ? onColor ?? .systemGreen : offColor ?? .systemGray4) : UIColor.systemGray4).setFill()
-        UIBezierPath(roundedRect: track, cornerRadius: track.height / 2).fill()
+        guard track.width > 4, track.height > 4, let context = UIGraphicsGetCurrentContext() else { return }
+        let position = visualPosition
+        // The track's colour arrives *with* the thumb. Filling it from `isOn`
+        // turns the whole track the instant the value changes, so the colour
+        // overtakes the thumb and the two read as two separate things moving.
+        let dim = isEnabled ? (offColor ?? .systemGray4) : UIColor.systemGray4
+        let lit = isEnabled ? (onColor ?? .systemGreen) : UIColor.systemGray4
+        let onness = effectiveUserInterfaceLayoutDirection != .rightToLeft ? position : 1 - position
+        Self.blend(dim, lit, onness).setFill()
+        let trackPath = UIBezierPath(roundedRect: track, cornerRadius: track.height / 2)
+        trackPath.fill()
+        // The well the thumb sits in: shaded under its own top rim.
+        context.saveGState()
+        trackPath.addClip()
+        if let shade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                  colors: [UIColor.black.withAlphaComponent(0.10).cgColor, UIColor.clear.cgColor] as CFArray,
+                                  locations: [0, 1]) {
+            context.drawLinearGradient(shade, start: CGPoint(x: track.midX, y: track.minY),
+                                       end: CGPoint(x: track.midX, y: track.minY + track.height * 0.55), options: [])
+        }
+        context.restoreGState()
+
+        let thumb = drawnThumbRect
+        let thumbPath = UIBezierPath(roundedRect: thumb, cornerRadius: thumb.height / 2)
+        // Draw the shadow in the same frame, without layer animations or fades.
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: 1.5), blur: 3,
+                          color: UIColor.black.withAlphaComponent(isEnabled ? 0.28 : 0.16).cgColor)
         // The solid variant deliberately ignores thumb alpha. No transient
         // glass, scaling, fade, implicit layer animation or delayed redraw.
         (thumbColor ?? .white).withAlphaComponent(1).setFill()
-        UIBezierPath(ovalIn: thumbRect).fill()
+        thumbPath.fill()
+        context.restoreGState()
+        // Shading stays above the opaque fill and away from its centre.
+        context.saveGState()
+        thumbPath.addClip()
+        if let gloss = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                  colors: [UIColor.white.withAlphaComponent(0.55).cgColor, UIColor.clear.cgColor] as CFArray,
+                                  locations: [0, 1]) {
+            context.drawLinearGradient(gloss, start: CGPoint(x: thumb.midX, y: thumb.minY),
+                                       end: CGPoint(x: thumb.midX, y: thumb.minY + thumb.height * 0.40), options: [])
+        }
+        if let sheen = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                  colors: [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.07).cgColor] as CFArray,
+                                  locations: [0, 1]) {
+            context.drawLinearGradient(sheen, start: CGPoint(x: thumb.midX, y: thumb.maxY - thumb.height * 0.20),
+                                       end: CGPoint(x: thumb.midX, y: thumb.maxY), options: [])
+        }
+        context.restoreGState()
+        // A hairline rim, so it still separates from a pale track.
+        UIColor.black.withAlphaComponent(0.06).setStroke()
+        thumbPath.lineWidth = 0.5
+        thumbPath.stroke()
+    }
+
+    /// Mix two colours, for a track that changes with the thumb rather than
+    /// ahead of it.
+    private static func blend(_ from: UIColor, _ to: UIColor, _ amount: CGFloat) -> UIColor {
+        let mix = min(1, max(0, amount))
+        var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0, fa: CGFloat = 0
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        guard from.getRed(&fr, green: &fg, blue: &fb, alpha: &fa),
+              to.getRed(&tr, green: &tg, blue: &tb, alpha: &ta) else { return mix < 0.5 ? from : to }
+        return UIColor(red: fr + (tr - fr) * mix, green: fg + (tg - fg) * mix,
+                       blue: fb + (tb - fb) * mix, alpha: fa + (ta - fa) * mix)
     }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
@@ -5585,6 +5787,7 @@ final class CraftNativeSolidSwitch: UIControl {
         guard isEnabled else { return false }
         touchOrigin = touch.location(in: self)
         dragPosition = nil
+        press(1)
         return true
     }
     func updateDrag(to point: CGPoint) {
@@ -5599,7 +5802,15 @@ final class CraftNativeSolidSwitch: UIControl {
         return true
     }
     override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-        defer { touchOrigin = nil; dragPosition = nil; setNeedsDisplay() }
+        // The thumb carries on from wherever the finger left it, rather than
+        // jumping to the end of the track the moment it lifts.
+        defer {
+            touchOrigin = nil
+            if let released = dragPosition { drawnPosition = released }
+            dragPosition = nil
+            press(0)
+            moveThumb()
+        }
         guard isEnabled, let touch, touchOrigin != nil,
               bounds.insetBy(dx: -10, dy: -10).contains(touch.location(in: self)) else { return }
         let next = dragPosition.map { ($0 >= 0.5) == (effectiveUserInterfaceLayoutDirection != .rightToLeft) } ?? !isOn
@@ -5607,8 +5818,10 @@ final class CraftNativeSolidSwitch: UIControl {
     }
     override func cancelTracking(with event: UIEvent?) {
         touchOrigin = nil
+        if let released = dragPosition { drawnPosition = released }
         dragPosition = nil
-        setNeedsDisplay()
+        press(0)
+        moveThumb()
     }
     override func accessibilityActivate() -> Bool {
         guard isEnabled else { return false }

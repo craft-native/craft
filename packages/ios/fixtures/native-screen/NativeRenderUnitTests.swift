@@ -212,6 +212,127 @@ final class NativeSolidSwitchUnitTests: XCTestCase {
             }
         }
     }
+
+    /// Logical state changes immediately while drawing remains opaque and travels.
+    func testThumbTravelsToTheNewPositionRatherThanJumping() throws {
+        try XCTSkipIf(UIAccessibility.isReduceMotionEnabled, "asked for less motion")
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let solid = CraftNativeSolidSwitch()
+        solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+        window.addSubview(solid)
+        window.makeKeyAndVisible()
+        defer { solid.removeFromSuperview(); window.isHidden = true }
+        solid.setOn(false)
+        let off = solid.thumbRect
+        solid.setOn(true)
+        XCTAssertGreaterThan(solid.thumbRect.minX, off.minX, "the reported position is the destination, at once")
+        XCTAssertFalse(try thumbCovers(solid.thumbRect, of: solid), "the thumb arrived without travelling")
+        // A display link draws the travel, so the run loop has to turn for it.
+        // Comfortably past the spring's settling time, not exactly on it.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.7))
+        XCTAssertTrue(try thumbCovers(solid.thumbRect, of: solid), "the thumb never arrived")
+        XCTAssertTrue(solid.layer.animationKeys()?.isEmpty ?? true, "no implicit layer animation (#416)")
+    }
+
+    func testIdleThumbFollowsInitialAndChangedLayoutDirection() throws {
+        let solid = CraftNativeSolidSwitch()
+        solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+        for direction: UISemanticContentAttribute in [.forceRightToLeft, .forceLeftToRight, .forceRightToLeft] {
+            solid.semanticContentAttribute = direction
+            solid.setNeedsDisplay()
+            XCTAssertTrue(try thumbCovers(solid.thumbRect, of: solid), "idle drawing must follow the logical RTL position")
+        }
+    }
+
+    func testIneligibleControlsSettleWithoutAnimation() throws {
+        for condition in ["hidden", "disabled", "outsideWindow", "detached"] {
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+            let solid = CraftNativeSolidSwitch()
+            solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+            window.addSubview(solid)
+            window.makeKeyAndVisible()
+            defer { solid.removeFromSuperview(); window.isHidden = true }
+            if condition == "hidden" { solid.isHidden = true }
+            if condition == "disabled" { solid.isEnabled = false }
+            if condition == "outsideWindow" { solid.frame.origin.x = 400 }
+            if condition == "detached" { solid.removeFromSuperview() }
+            solid.setOn(true)
+            // Make the layer renderable again without starting another value update.
+            solid.isHidden = false
+            solid.frame.origin = .zero
+            XCTAssertTrue(try thumbCovers(solid.thumbRect, of: solid), "\(condition) controls must settle immediately")
+        }
+    }
+
+    func testDisablingOrDetachingDuringTravelSettlesCommittedState() throws {
+        for detach in [false, true] {
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+            let solid = CraftNativeSolidSwitch()
+            solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+            window.addSubview(solid)
+            window.makeKeyAndVisible()
+            defer { solid.removeFromSuperview(); window.isHidden = true }
+            solid.setOn(true)
+            if detach { solid.removeFromSuperview() } else { solid.isEnabled = false }
+            XCTAssertTrue(solid.isOn)
+            XCTAssertEqual(solid.accessibilityValue, "1")
+            XCTAssertTrue(try thumbCovers(solid.thumbRect, of: solid), "teardown must finish the drawing without changing the value")
+        }
+    }
+
+    func testControlledUpdatesAndRapidReversalKeepDrawingAndEventsContinuous() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let solid = CraftNativeSolidSwitch()
+        solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+        window.addSubview(solid)
+        window.makeKeyAndVisible()
+        defer { solid.removeFromSuperview(); window.isHidden = true }
+        var changes = 0
+        solid.addAction(UIAction { _ in changes += 1 }, for: .valueChanged)
+        XCTAssertTrue(solid.accessibilityActivate())
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(solid.accessibilityValue, "1")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        func drawing() -> Data? {
+            solid.layer.displayIfNeeded()
+            return UIGraphicsImageRenderer(size: solid.bounds.size).image {
+                solid.layer.render(in: $0.cgContext)
+            }.pngData()
+        }
+        let before = drawing()
+        solid.setOn(true)
+        solid.semanticContentAttribute = .unspecified
+        XCTAssertEqual(drawing(), before, "controlled acknowledgement must not move the thumb")
+        XCTAssertEqual(changes, 1, "controlled acknowledgement must not emit another event")
+        XCTAssertTrue(solid.accessibilityActivate())
+        XCTAssertFalse(solid.isOn)
+        XCTAssertEqual(solid.accessibilityValue, "0")
+        if !UIAccessibility.isReduceMotionEnabled {
+            XCTAssertEqual(drawing(), before, "reversal must start from the current drawing")
+        }
+        XCTAssertEqual(changes, 2)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.7))
+        XCTAssertTrue(try thumbCovers(solid.thumbRect, of: solid))
+        XCTAssertEqual(changes, 2, "animation completion must not emit another event")
+    }
+
+    /// Whether the opaque thumb is drawn over the centre of `rect`.
+    private func thumbCovers(_ rect: CGRect, of solid: CraftNativeSolidSwitch) throws -> Bool {
+        solid.layer.displayIfNeeded()
+        let image = UIGraphicsImageRenderer(size: solid.bounds.size).image { context in
+            solid.layer.render(in: context.cgContext)
+        }
+        let cg = try XCTUnwrap(image.cgImage)
+        var pixel = [UInt8](repeating: 0, count: 4)
+        try pixel.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(cg, in: CGRect(x: -rect.midX * image.scale, y: -rect.midY * image.scale,
+                width: CGFloat(cg.width), height: CGFloat(cg.height)))
+        }
+        return pixel == [255, 255, 255, 255]
+    }
 }
 
 @MainActor

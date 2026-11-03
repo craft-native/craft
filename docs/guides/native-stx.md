@@ -211,8 +211,11 @@ Use `value` for the controlled state. `checked` is a compatibility alias when
 `value` is null, and `value` takes precedence when both are provided.
 On iOS, opt in with `<Switch :ios_solid="true" :value="enabled" @value-change="changed($event)" />`
 to use a solid native `UIControl` instead of UIKit's translucent switch animation.
-The thumb stays opaque during taps and drags; taps settle immediately without
-animation. Colors, disabled state, accessibility activation, keyboard activation,
+The thumb stays opaque during taps and drags. Its position and track color animate
+with a short spring, while the value, accessibility state and change event update
+immediately. Repeated controlled values do not restart the motion. Reduce Motion,
+disabled, hidden, detached and offscreen controls settle without animation.
+Colors, disabled state, accessibility activation, keyboard activation,
 RTL layout, and controlled/uncontrolled values remain supported. `thumbColor`
 keeps its RGB color but its alpha is forced to 1. The default is still `UISwitch`;
 Android ignores this iOS-only option. Choose the style when mounting: changing
