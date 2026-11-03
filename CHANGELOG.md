@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.444...v0.0.445)
+
+## 🐛 Bug Fixes
+
+- **ios**: fail a driver exec whose hook exited non-zero ([b33ba80](https://github.com/craft-native/craft/commit/b33ba80)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.443...v0.0.444)
 
 ## 🐛 Bug Fixes
