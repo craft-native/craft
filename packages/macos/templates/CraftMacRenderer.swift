@@ -402,10 +402,15 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         } else { layer?.shadowOpacity = 0; layer?.shadowPath = nil; control?.layer?.cornerRadius = 0 }
         layer?.cornerCurve = .continuous
         for edge in ["Top", "Right", "Bottom", "Left"] {
+            let hidden = (number(style["border\(edge)Width"]) ?? 0) <= 0
+            // An edge's layer is made the first time it shows: most boxes never draw one, and four hidden
+            // layers on every box still cost Core Animation a commit each. An input makes its four at once,
+            // as it always did, since swapping its control later puts the new one above layers made before.
+            if edgeBorders[edge] == nil, hidden, kind != "TextInput" { continue }
             let border = edgeBorders[edge] ?? CALayer()
             if edgeBorders[edge] == nil { edgeBorders[edge] = border; layer?.addSublayer(border) }
             border.backgroundColor = CraftMacColor.parse(style["borderColor"], fallback: .separatorColor).cgColor
-            border.isHidden = (number(style["border\(edge)Width"]) ?? 0) <= 0
+            border.isHidden = hidden
         }
         if let name = props["material"] as? String {
             if material == nil { let effect = NSVisualEffectView(); effect.state = .followsWindowActiveState; addSubview(effect, positioned: .below, relativeTo: control); material = effect }

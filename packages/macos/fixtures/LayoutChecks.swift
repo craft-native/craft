@@ -261,7 +261,19 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1], [node("outer", "View", [:], [node("moving", "View", ["height": 10]), node("holder", "View", [:])])]))
         require(renderer.boxes["moving"]!.superview === renderer.boxes["outer"]!.flow, "A box moved out to its grandparent was dropped")
 
+        // An edge border's layer is made when it first shows, above the box's content, and hidden when it goes.
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("plainEdge", "View", ["height": 20]), node("ruledEdge", "View", ["height": 20, "borderBottomWidth": 1])]))
+        require(renderer.boxes["plainEdge"]!.edgeBorders.isEmpty, "A box without edge borders made layers for them")
+        require(renderer.boxes["ruledEdge"]!.edgeBorders.count == 1 && renderer.boxes["ruledEdge"]!.edgeBorders["Bottom"]?.isHidden == false, "An edge border was not drawn")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("plainEdge", "View", ["height": 20, "borderTopWidth": 2])]))
+        renderer.root.layoutSubtreeIfNeeded()
+        let lateEdge = renderer.boxes["plainEdge"]!
+        require(lateEdge.layer?.sublayers?.last === lateEdge.edgeBorders["Top"] && lateEdge.edgeBorders["Top"]?.isHidden == false, "A border that appeared later was not drawn above the box's content")
+        require(lateEdge.edgeBorders["Top"]!.frame.height == 2, "A border that appeared later was not laid out")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("plainEdge", "View", ["height": 20])]))
+        require(lateEdge.edgeBorders["Top"]?.isHidden == true, "An edge border stayed after its width went")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons, shared symbols, control sizes and top-down attachment")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons, shared symbols, control sizes, top-down attachment and edge borders")
     }
 }
