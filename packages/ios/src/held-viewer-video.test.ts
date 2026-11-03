@@ -61,14 +61,48 @@ test.skipIf(process.platform !== 'darwin')('public AVFoundation extractor verifi
 import CoreVideo
 import Foundation
 import VideoToolbox
+let mode = CommandLine.arguments[2]
+// Keep progress on a separate queue: a stalled media callback must not also
+// silence the diagnostic heartbeat. These are synthetic fixture counters only.
+final class EncodingProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started = DispatchTime.now().uptimeNanoseconds
+    private var appended = 0, callbacks = 0
+    private var phase = "configuring"
+    private var terminal = false
+    func update(appended: Int? = nil, callback: Bool = false, phase: String? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        if let appended { self.appended = appended }
+        if callback { callbacks += 1 }
+        if let phase { self.phase = phase }
+    }
+    func emit(_ event: String, writer: AVAssetWriter, input: AVAssetWriterInput) {
+        lock.lock(); defer { lock.unlock() }
+        if terminal { return }
+        if event == "completed" || event == "failed" || event == "append-failed" { terminal = true }
+        let record: [String: Any] = ["event": event, "mode": mode, "phase": phase,
+            "elapsedMs": Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000,
+            "appended": appended, "callbacks": callbacks, "status": writer.status.rawValue,
+            "ready": input.isReadyForMoreMediaData, "error": writer.error?.localizedDescription ?? ""]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+            FileHandle.standardError.write(data + Data([10]))
+        }
+    }
+}
+let progress = EncodingProgress()
 let writer = try AVAssetWriter(outputURL: URL(fileURLWithPath: CommandLine.arguments[1]), fileType: .mov)
 let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64, AVVideoEncoderSpecificationKey: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false]])
 // Supply the encoder's native NV12 planes directly, without a GPU colour conversion.
 let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
 writer.add(input)
+progress.emit("configured", writer: writer, input: input)
 guard writer.startWriting() else { fatalError("Cannot write synthetic media") }
 writer.startSession(atSourceTime: .zero)
-let mode = CommandLine.arguments[2]
+let heartbeat = DispatchSource.makeTimerSource(queue: .global())
+heartbeat.schedule(deadline: .now() + 1, repeating: 1)
+heartbeat.setEventHandler { progress.emit("progress", writer: writer, input: input) }
+heartbeat.resume()
+defer { heartbeat.cancel() }
 let originalSamples = mode == "static" ? [0] : mode == "dense-late" ? Array(0..<15013) : mode == "late" ? [0, 1104, 1106] : mode == "sparse" ? [0, 4, 6] : Array(0..<7)
 let timescale: CMTimeScale = mode == "dense-late" ? 12 : 1
 guard let pool = adaptor.pixelBufferPool else { fatalError("No pixel buffer pool") }
@@ -88,21 +122,30 @@ await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>)
     var next = 0, finished = false
     input.requestMediaDataWhenReady(on: queue) {
         if finished { return }
+        progress.update(callback: true, phase: "appending")
         while input.isReadyForMoreMediaData {
             if next == originalSamples.count {
                 finished = true
                 writer.endSession(atSourceTime: CMTime(value: mode == "dense-late" ? 15013 : mode == "late" ? 1107 : 7, timescale: timescale))
                 input.markAsFinished()
+                progress.update(phase: "finishing")
+                progress.emit("input-finished", writer: writer, input: input)
                 continuation.resume()
                 return
             }
             let index = originalSamples[next]
-            guard adaptor.append(pictures[index % 7], withPresentationTime: CMTime(value: Int64(index), timescale: timescale)) else { fatalError("Cannot append synthetic frame") }
+            guard adaptor.append(pictures[index % 7], withPresentationTime: CMTime(value: Int64(index), timescale: timescale)) else {
+                progress.emit("append-failed", writer: writer, input: input)
+                fatalError("Cannot append synthetic frame")
+            }
             next += 1
+            progress.update(appended: next)
         }
     }
 }
 await writer.finishWriting()
+heartbeat.cancel()
+progress.emit(writer.status == .completed ? "completed" : "failed", writer: writer, input: input)
 guard writer.status == .completed else { fatalError("Synthetic movie incomplete") }
 `)
     for (const args of [['xcrun', '--sdk', 'macosx', 'swiftc', generator, '-o', movieTool], ['xcrun', '--sdk', 'macosx', 'swiftc', join(import.meta.dir, '../scripts/held-viewer-frame.swift'), '-o', extractor]]) {
@@ -115,6 +158,9 @@ guard writer.status == .completed else { fatalError("Synthetic movie incomplete"
       const media = run([movieTool, movie, mode])
       console.log(`Generated ${mode} native H.264 fixture in ${(performance.now() - generatedAt).toFixed(0)}ms`)
       expect(media.exitCode, `${mode} generation (${media.signalCode || 'normal exit'}): ${media.stderr.toString()}`).toBe(0)
+      const progress = media.stderr.toString().trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+      expect(progress.at(-1)).toMatchObject({ event: 'completed', mode, status: 2, appended: mode === 'dense-late' ? 15013 : mode === 'static' ? 1 : mode === 'sparse' || mode === 'late' ? 3 : 7 })
+      expect(progress.at(-1).callbacks).toBeGreaterThan(0)
       const dense = mode === 'dense-late', late = mode === 'late' || dense
       const result = run([extractor, movie, png, receipt, '100', '100.25', dense ? '1201.125' : late ? '1201' : '101', dense ? '1207.125' : late ? '1207' : '107'])
       const evidence = JSON.parse(readFileSync(receipt, 'utf8'))
