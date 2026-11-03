@@ -1,6 +1,20 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    /// How long to wait for the system document or photo picker to present.
+    ///
+    /// How quickly that sheet appears is not ours to control, and on a loaded
+    /// runner it has taken longer than the waits here allowed: fifteen seconds
+    /// was not enough for the Cancel button in
+    /// testDocumentPickerUserCancelSettlesOnceAndCanRetryFileAndVideo, on a
+    /// commit with nothing wrong with it.
+    ///
+    /// One constant because the same condition had two different patiences —
+    /// some sites allowed fifteen seconds and others ten, for the identical
+    /// "has the picker shown its Cancel button yet". Nothing asserted changes:
+    /// the sheet must still present, and must still be cancellable.
+    private let systemSheetTimeout: TimeInterval = 30
+
     private func backgroundAfterObservingPicker(_ app: XCUIApplication) {
         // The fixture arms API_CANCEL or NAVIGATE_REPLACE for APP_STATE.
         // The caller must first establish that the real system picker exists.
@@ -18,7 +32,7 @@ final class NativeRenderUITests: XCTestCase {
         for (index, mode) in ["photo", "library-video", "photo"].enumerated() {
             app.buttons["picker-\(mode)"].tap()
             let cancel = app.buttons["Cancel"].firstMatch
-            XCTAssertTrue(cancel.waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
             XCTAssertEqual(app.webViews.count, 0)
             cancel.tap()
             waitForLabel(app.staticTexts["picker-status"], "Answer \(index + 1): null")
@@ -35,10 +49,10 @@ final class NativeRenderUITests: XCTestCase {
             app.buttons["picker-\(mode)"].tap()
             let cancel = app.buttons["Cancel"].firstMatch
             // The system picker runs out of process: on a loaded CI simulator
-            // it has taken about five seconds to show its Cancel button (the
-            // same wait failed on main CI at 5 s). The other picker waits in
-            // this file allow 15 s for the same appearance.
-            XCTAssertTrue(cancel.waitForExistence(timeout: 15), app.debugDescription)
+            // it has taken about five seconds to show its Cancel button, and
+            // this wait failed on main CI when it allowed only 5 s. Every
+            // picker appearance in this file now shares systemSheetTimeout.
+            XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "System media picker before \(mode)"
             screenshot.lifetime = .keepAlways
@@ -48,7 +62,7 @@ final class NativeRenderUITests: XCTestCase {
             waitForLabel(app.staticTexts["picker-status"], mode == "photo-abort" ? "Aborted; answers 0" : "Picker ready")
             if mode == "library-video-replace" { XCTAssertNotEqual(app.staticTexts["picker-session"].label, session) }
             app.buttons["picker-photo"].tap()
-            XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+            XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
             cancel.tap()
             waitForLabel(app.staticTexts["picker-status"], "Answer 1: null")
             app.terminate()
@@ -65,7 +79,7 @@ final class NativeRenderUITests: XCTestCase {
         for (index, mode) in ["file", "video", "file"].enumerated() {
             app.buttons["picker-\(mode)"].tap()
             let cancel = app.buttons["Cancel"].firstMatch
-            XCTAssertTrue(cancel.waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
             XCTAssertEqual(app.webViews.count, 0)
             cancel.tap()
             waitForLabel(status, "Answer \(index + 1): \(mode == "video" ? "null" : "[]")")
@@ -82,13 +96,13 @@ final class NativeRenderUITests: XCTestCase {
         // than an accessible button. Programmatic cancellation needs the real
         // presented controller, not that unrelated action's loading state.
         let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(picker.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
         backgroundAfterObservingPicker(app)
         XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Aborted; answers 0")
         app.buttons["picker-file"].tap()
         let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
         cancel.tap()
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
     }
@@ -101,14 +115,14 @@ final class NativeRenderUITests: XCTestCase {
         let session = app.staticTexts["picker-session"].label
         app.buttons["picker-replace"].tap()
         let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(picker.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
         backgroundAfterObservingPicker(app)
         XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Picker ready")
         XCTAssertNotEqual(app.staticTexts["picker-session"].label, session)
         app.buttons["picker-file"].tap()
         let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
         cancel.tap()
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -254,7 +268,14 @@ final class NativeRenderUITests: XCTestCase {
     /// derived label settle separately. Await the complete native value as
     /// well as its echo: a partial value must never satisfy either check.
     @discardableResult
-    private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 3, file: StaticString = #filePath, line: UInt = #line) -> Bool {
+    // Ten seconds, the same patience `waitForLabel` already allows. Both ask
+    // the same question -- has the interface settled after input -- and three
+    // seconds was the odd one out. A loaded CI simulator spent longer than that
+    // delivering a switch's new value, which failed
+    // testUnmodifiedUIKitSwitchRespondsToTheSameTap on an otherwise sound
+    // commit. What is asserted is unchanged: the value must still become
+    // exactly `expected`, and a control that never responds still fails.
+    private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let matched = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)], timeout: timeout) == .completed
         XCTAssertTrue(matched, "\(element.identifier) reads \"\(String(describing: element.value))\", not \"\(expected)\", \(timeout)s after input", file: file, line: line)
         return matched
