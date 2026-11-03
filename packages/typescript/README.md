@@ -764,3 +764,14 @@ before attaching its ZIP archive. Craft's updater accepts both app ZIPs and ZIPs
 containing a single DMG, and verifies the extracted app before installation.
 
 The shipped LICENSE file includes the installer layout's third-party notices.
+
+## Framework bridge types
+
+Core owns the optional `Window.craft` declaration. React, Svelte and Vue bindings
+depend on core for types, so importing a binding alongside `craft-native` does
+not redeclare that global with an incompatible shape.
+
+`CraftBindingsAPI` describes the bindings' existing flat host API (`getPlatform`,
+`invoke`, and related methods). Their hooks and stores retain that view and their
+runtime behavior. This type does not install a bridge, add flat methods to a
+desktop host, or replace the structured `CraftBridgeAPI` and typed event APIs.

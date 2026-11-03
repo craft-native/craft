@@ -1362,6 +1362,23 @@ export interface CraftSidebar {
   destroy: () => void
 }
 
+/**
+ * The legacy flat bridge consumed by the React, Svelte and Vue bindings.
+ * This is their existing host-specific view, not a second Window.craft global
+ * or a claim that every desktop host implements the flat mobile methods.
+ */
+export interface CraftBindingsAPI {
+  getPlatform(): Promise<{ platform: string, version: string }>
+  getDeviceInfo(): Promise<{ platform: string, model: string, os_version: string }>
+  showToast(message: string, duration: 'short' | 'long'): Promise<void>
+  haptic(type: string): Promise<void>
+  requestPermission(permission: string): Promise<{ granted: boolean, message: string }>
+  on(event: string, callback: (...args: any[]) => void): void
+  off(event: string, callback: (...args: any[]) => void): void
+  emit(event: string, data?: any): void
+  invoke(method: string, params?: any): Promise<any>
+}
+
 export interface CraftBridgeAPI {
   /**
    * Where the platform drew this window's close/minimise/zoom buttons.

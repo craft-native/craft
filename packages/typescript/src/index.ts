@@ -702,6 +702,7 @@ export type {
   CraftWindowAPI,
   CraftAppAPI,
   CraftBridgeAPI,
+  CraftBindingsAPI,
   MenubarState,
   MenubarInitOptions,
   CraftTimersAPI,
