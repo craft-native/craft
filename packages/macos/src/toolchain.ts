@@ -12,7 +12,7 @@ import process from 'node:process'
 export const macosToolchain = {
   zig: '0.18.0-dev.252+86dc5ce25',
   sources: {
-    'zig-js': { repository: 'zig-utils/zig-js', revision: '44a0a2ba814a911ac701c44073bd8d7d8ff6a22d', paths: ['src', 'include', 'tests', 'tools', 'docs', 'bench', 'conformance'] },
+    'zig-js': { repository: 'zig-utils/zig-js', revision: '95d835edcbad55a7456cff76a9bb7ef6cdf265fc', paths: ['src', 'include', 'tests', 'tools', 'docs', 'bench', 'conformance'] },
     'zig-regex': { repository: 'zig-utils/zig-regex', revision: 'fdd9c2e333ea6ac2fd06d080d939ef7f11d61b1b', paths: ['src'] },
     'zig-gc': { repository: 'zig-utils/zig-gc', revision: '73c802e05768a729614e9c4296abb118aa06faf9', paths: ['src'] },
   },
