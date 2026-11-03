@@ -4738,6 +4738,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The activity starts in the launch theme (the splash); its own theme
+        // takes over before the first frame, on the same background colour.
+        setTheme(R.style.Theme_CraftApp)
         applyConfiguredAppearance()
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
-import { nativeSensorCapabilities, compressNativeSources, ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
+import { androidSplashFiles, nativeSensorCapabilities, compressNativeSources, ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -938,6 +938,46 @@ describe('Craft Android builder', () => {
       .toContain('<color name="background">#020617</color>')
     expect(JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8')).backgroundColorDark)
       .toBe('#020617')
+  })
+
+  it('draws the launch splash from splash resources, on the background colour', async () => {
+    const dir = createTempDir('craft-android-splash-')
+    const resources = join(dir, 'res')
+    for (const folder of ['drawable-xxhdpi', 'drawable-night-xxhdpi']) {
+      mkdirSync(join(resources, folder), { recursive: true })
+      for (const name of ['splash_icon.png', 'splash_logo.png']) writeFileSync(join(resources, folder, name), folder + name)
+    }
+    mkdirSync(join(resources, 'values'), { recursive: true })
+    writeFileSync(join(resources, 'values', 'splash_icon.png'), 'not a drawable folder')
+    const output = join(dir, 'app')
+    await init({ name: 'SplashApp', output, runtimeDir: null, config: { backgroundColor: '#ffffff', backgroundColorDark: '#000000', splashResources: resources } })
+
+    const res = join(output, 'app/src/main/res')
+    expect(readFileSync(join(res, 'drawable-night-xxhdpi/splash_icon.png'), 'utf8')).toBe('drawable-night-xxhdpisplash_icon.png')
+    expect(existsSync(join(res, 'values/splash_icon.png'))).toBe(false)
+    const v31 = readFileSync(join(res, 'values-v31/themes.xml'), 'utf8')
+    expect(v31).toContain('<item name="android:windowSplashScreenBackground">@color/background</item>')
+    expect(v31).toContain('<item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>')
+    expect(readFileSync(join(res, 'values/themes.xml'), 'utf8')).toContain('<item name="android:windowBackground">@drawable/craft_launch_background</item>')
+    const launch = readFileSync(join(res, 'drawable/craft_launch_background.xml'), 'utf8')
+    expect(launch).toContain('<item android:drawable="@color/background" />')
+    expect(launch).toContain('<bitmap android:gravity="center" android:src="@drawable/splash_logo" />')
+    // The activity starts in the launch theme and swaps to its own before its first frame.
+    expect(readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')).toContain('android:theme="@style/Theme.CraftApp.Launch"')
+    const activity = readdirSync(join(output, 'app/src/main/java'), { recursive: true }).map(String).find(path => path.endsWith('MainActivity.kt'))!
+    expect(readFileSync(join(output, 'app/src/main/java', activity), 'utf8')).toMatch(/setTheme\(R\.style\.Theme_CraftApp\)\s+applyConfiguredAppearance\(\)\s+super\.onCreate/)
+    // A build path, not something the app ships.
+    expect(JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8')).splashResources).toBeUndefined()
+
+    // Without splash resources the launch theme is the plain one and nothing stale stays.
+    await init({ name: 'SplashApp', output, runtimeDir: null, config: { backgroundColor: '#ffffff' } })
+    expect(existsSync(join(res, 'drawable-xxhdpi/splash_icon.png'))).toBe(false)
+    expect(existsSync(join(res, 'drawable/craft_launch_background.xml'))).toBe(false)
+    expect(readFileSync(join(res, 'values/themes.xml'), 'utf8')).toContain('<style name="Theme.CraftApp.Launch" parent="Theme.CraftApp" />')
+    expect(readFileSync(join(res, 'values-v31/themes.xml'), 'utf8')).not.toContain('windowSplashScreenAnimatedIcon')
+
+    expect(() => androidSplashFiles(join(dir, 'missing'))).toThrow('must be a directory')
+    expect(() => androidSplashFiles(join(resources, 'values'))).toThrow('hold no')
   })
 
   it('pins Android appearance like the iOS host while keeping the system mode dynamic', async () => {

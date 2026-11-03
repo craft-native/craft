@@ -12,6 +12,7 @@ import {
   associatedDomainEntries,
   build,
   init,
+  splashScales,
   installRuntime,
   nativeMessages,
   nativeSensorCapabilities,
@@ -1052,6 +1053,43 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     await init({ runtimeDir: null, name: 'SplashApp', bundleId: 'org.example.splash', output, config: {} })
     expect(readFileSync(join(output, 'Info.plist'), 'utf8')).not.toContain('UIImageName')
     expect(existsSync(join(output, 'Assets.xcassets', 'LaunchLogo.imageset'))).toBe(false)
+  })
+
+  it('takes a bitmap splash with its @2x and @3x files, light and dark', async () => {
+    const dir = createTempDir('craft-ios-splash-scales-')
+    const png = (name: string) => {
+      writeFileSync(join(dir, name), new Uint8Array([0x89, 0x50, 0x4E, 0x47]))
+      return join(dir, name)
+    }
+    const light = png('LaunchLogo.png')
+    png('LaunchLogo@2x.png')
+    png('LaunchLogo@3x.png')
+    const dark = png('LaunchLogo-dark.png')
+    png('LaunchLogo-dark@2x.png')
+    png('LaunchLogo-dark@3x.png')
+    expect(splashScales(light).map(item => item.scale)).toEqual([1, 2, 3])
+
+    const output = join(dir, 'app')
+    await init({ runtimeDir: null, name: 'SplashApp', bundleId: 'org.example.splash', output, config: { splashImagePath: light, splashImagePathDark: dark } })
+    const imageset = join(output, 'Assets.xcassets', 'LaunchLogo.imageset')
+    const contents = JSON.parse(readFileSync(join(imageset, 'Contents.json'), 'utf8'))
+    expect(contents.images.map((image: any) => `${image.filename} ${image.scale}`)).toEqual([
+      'LaunchLogo.png 1x',
+      'LaunchLogo@2x.png 2x',
+      'LaunchLogo@3x.png 3x',
+      'LaunchLogo-dark.png 1x',
+      'LaunchLogo-dark@2x.png 2x',
+      'LaunchLogo-dark@3x.png 3x',
+    ])
+    expect(contents.images[3].appearances).toEqual([{ appearance: 'luminosity', value: 'dark' }])
+    expect(contents.properties).toBeUndefined()
+    expect(existsSync(join(imageset, 'LaunchLogo-dark@3x.png'))).toBe(true)
+
+    // A lone bitmap stays one single-scale image, as before.
+    const lone = png('mark.png')
+    expect(splashScales(lone)).toEqual([{ scale: 1, path: lone }])
+    await init({ runtimeDir: null, name: 'SplashApp', bundleId: 'org.example.splash', output, config: { splashImagePath: lone } })
+    expect(JSON.parse(readFileSync(join(imageset, 'Contents.json'), 'utf8')).images).toEqual([{ filename: 'LaunchLogo.png', idiom: 'universal' }])
   })
 
   it('shares a scheme that builds and archives the app, for CI such as Xcode Cloud', async () => {

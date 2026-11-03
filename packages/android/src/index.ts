@@ -228,6 +228,18 @@ export interface CraftAndroidConfig {
   trustedOrigins?: string[]
   appIconPath?: string
   /**
+   * The launch splash: a directory laid out as Android resources, holding
+   * `drawable-<density>/splash_icon.png` (Android 12's splash icon, 288dp
+   * with its content inside the 192dp circle) and `splash_logo.png` (the
+   * logo the window background centres before Android 12), with Dark Mode
+   * ones in `drawable-night-<density>`. ts-images' `generateSplashScreens`
+   * writes exactly this (`android.resources`). Both sit on `backgroundColor`
+   * (`backgroundColorDark` at night), the colour the first frame continues.
+   * Without it, Android 12 shows the launcher icon and older versions the
+   * background colour.
+   */
+  splashResources?: string
+  /**
    * The small icon in the status bar and on every notification the app
    * shows, push or local: an Android vector drawable (`.xml`) or a `.png`,
    * white on transparent, since Android draws only its shape. Without one,
@@ -520,6 +532,65 @@ function requireRegularFile(path: string, label: string): void {
   if (!statSync(path).isFile()) throw new Error(`${label} must be a file: ${path}`)
 }
 
+/** A splash file, by its place under `res/` (`drawable-night-xxhdpi/splash_icon.png`). */
+export interface AndroidSplashFile {
+  folder: string
+  name: 'splash_icon.png' | 'splash_logo.png'
+  path: string
+}
+
+/**
+ * The splash files in a resources directory: `splash_icon.png` and
+ * `splash_logo.png` in each `drawable[-night][-<density>]` folder. A directory
+ * with neither is a mistake, not an app without a splash.
+ */
+export function androidSplashFiles(resources: string): AndroidSplashFile[] {
+  if (!existsSync(resources) || !statSync(resources).isDirectory()) throw new Error(`Splash resources must be a directory: ${resources}`)
+  const files: AndroidSplashFile[] = []
+  for (const folder of readdirSync(resources).sort()) {
+    if (!/^drawable(?:-night)?(?:-(?:l|m|tv|h|xh|xxh|xxxh)dpi)?$/.test(folder)) continue
+    for (const name of ['splash_icon.png', 'splash_logo.png'] as const) {
+      const path = join(resources, folder, name)
+      if (existsSync(path) && statSync(path).isFile()) files.push({ folder, name, path })
+    }
+  }
+  if (!files.length) throw new Error(`Splash resources hold no drawable*/splash_icon.png or splash_logo.png: ${resources}`)
+  return files
+}
+
+/**
+ * The launch theme the activity starts in, and the theme it swaps to before
+ * its first frame. Android 12 and later draw their splash from
+ * `windowSplashScreen*`; earlier versions draw the window background, here
+ * the logo centred on the background colour. Either way the colour is the
+ * app's own `background`, so nothing flashes when the first frame replaces it.
+ */
+export function androidLaunchThemes(splash: Pick<AndroidSplashFile, 'name'>[]): { base: string, v31: string, background?: string } {
+  const icon = splash.some(file => file.name === 'splash_icon.png')
+  const logo = splash.some(file => file.name === 'splash_logo.png')
+  const base = logo
+    ? `    <style name="Theme.CraftApp.Launch" parent="Theme.CraftApp">\n        <item name="android:windowBackground">@drawable/craft_launch_background</item>\n    </style>\n`
+    : `    <style name="Theme.CraftApp.Launch" parent="Theme.CraftApp" />\n`
+  const v31 = `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CraftApp.Launch" parent="Theme.CraftApp">
+        <item name="android:windowSplashScreenBackground">@color/background</item>${icon ? '\n        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>' : ''}
+    </style>
+</resources>
+`
+  const background = logo
+    ? `<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android" android:opacity="opaque">
+    <item android:drawable="@color/background" />
+    <item>
+        <bitmap android:gravity="center" android:src="@drawable/splash_logo" />
+    </item>
+</layer-list>
+`
+    : undefined
+  return { base, v31, background }
+}
+
 function containsPath(parent: string, candidate: string): boolean {
   const relativePath = relative(parent, candidate)
   return relativePath === ''
@@ -750,6 +821,7 @@ function writeAndroidConfig(output: string, config: CraftAndroidConfig): void {
   // but never package them into the APK's assets.
   const runtimeConfig = { ...config }
   delete runtimeConfig.appIconPath
+  delete runtimeConfig.splashResources
   delete runtimeConfig.notificationIconPath
   delete runtimeConfig.googleServicesFile
   writeFileSync(
@@ -1129,6 +1201,7 @@ export async function init(options: InitOptions): Promise<void> {
   if (config.appIconPath && !['.gif', '.jpg', '.png', '.webp'].includes(appIconExtension ?? '')) {
     throw new Error(`Unsupported Android app icon format: ${appIconExtension || '(none)'}`)
   }
+  const splash = config.splashResources ? androidSplashFiles(config.splashResources) : []
   if (config.notificationIconPath) requireRegularFile(config.notificationIconPath, 'Notification icon')
   const notificationIconExtension = config.notificationIconPath ? extname(config.notificationIconPath).toLowerCase() : undefined
   if (config.notificationIconPath && !['.png', '.xml'].includes(notificationIconExtension ?? '')) {
@@ -1505,6 +1578,17 @@ zipStorePath=wrapper/dists
 `)
   }
 
+  // The splash files, fresh each time, so a removed or renamed one is not left behind.
+  const resDir = join(output, 'app/src/main/res')
+  for (const folder of existsSync(resDir) ? readdirSync(resDir) : []) {
+    if (folder.startsWith('drawable')) for (const name of ['splash_icon.png', 'splash_logo.png']) rmSync(join(resDir, folder, name), { force: true })
+  }
+  for (const file of splash) {
+    mkdirSync(join(resDir, file.folder), { recursive: true })
+    cpSync(file.path, join(resDir, file.folder, file.name))
+  }
+  const launch = androidLaunchThemes(splash)
+
   const themesXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.CraftApp" parent="Theme.Material3.DayNight.NoActionBar">
@@ -1512,9 +1596,13 @@ zipStorePath=wrapper/dists
         <item name="android:navigationBarColor">@color/primary</item>
         <item name="android:windowBackground">@color/background</item>
     </style>
-</resources>
+${launch.base}</resources>
 `
   writeFileSync(join(output, 'app/src/main/res/values/themes.xml'), themesXml)
+  mkdirSync(join(output, 'app/src/main/res/values-v31'), { recursive: true })
+  writeFileSync(join(output, 'app/src/main/res/values-v31/themes.xml'), launch.v31)
+  if (launch.background) writeFileSync(join(output, 'app/src/main/res/drawable/craft_launch_background.xml'), launch.background)
+  else rmSync(join(output, 'app/src/main/res/drawable/craft_launch_background.xml'), { force: true })
 
   // Create activity_main.xml
   const activityMainXml = config.renderer === 'native'

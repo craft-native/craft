@@ -285,7 +285,9 @@ export interface CraftConfig {
    * screen until the page says it is ready (`splash.hide()`), so the app goes
    * from launch to content without a blank web view in between. PNG, PDF or
    * SVG, drawn at its own size in points: give an SVG the width and height it
-   * should have on screen.
+   * should have on screen. A PNG with `@2x` and `@3x` files beside it
+   * (`LaunchLogo.png`, `LaunchLogo@2x.png`, `LaunchLogo@3x.png`, as ts-images'
+   * `generateSplashScreens` writes them) is sharp on every screen.
    */
   splashImagePath?: string
   /** The splash logo in Dark Mode, on `backgroundColorDark`. The light one if unset. */
@@ -1168,6 +1170,20 @@ function renderAssetCatalog(output: string, config: CraftConfig): void {
 /** The asset the launch screen and the splash both draw, so one hands over to the other unseen. */
 export const LAUNCH_LOGO = 'LaunchLogo'
 
+/**
+ * A bitmap splash's `@2x` and `@3x` files beside it (`LaunchLogo.png`,
+ * `LaunchLogo@2x.png`, `LaunchLogo@3x.png`, as ts-images'
+ * `generateSplashScreens` writes them), by scale. A bitmap without them is
+ * one image, drawn at its pixel size in points.
+ */
+export function splashScales(source: string): Array<{ scale: 1 | 2 | 3, path: string }> {
+  const extension = extname(source)
+  if (!/^\.(?:png|jpe?g)$/i.test(extension)) return [{ scale: 1, path: source }]
+  const stem = source.slice(0, -extension.length)
+  const scales = ([2, 3] as const).map(scale => ({ scale, path: `${stem}@${scale}x${extension}` })).filter(item => existsSync(item.path))
+  return scales.length ? [{ scale: 1, path: source }, ...scales] : [{ scale: 1, path: source }]
+}
+
 function renderLaunchLogo(catalog: string, config: CraftConfig): void {
   const imageset = join(catalog, `${LAUNCH_LOGO}.imageset`)
   rmSync(imageset, { recursive: true, force: true })
@@ -1180,13 +1196,20 @@ function renderLaunchLogo(catalog: string, config: CraftConfig): void {
     if (!existsSync(source)) throw new Error(`Splash image not found: ${source}`)
     const extension = source.split('.').pop()!.toLowerCase()
     if (extension === 'svg' || extension === 'pdf') vector = true
-    const filename = `${LAUNCH_LOGO}${dark ? '-dark' : ''}.${extension}`
-    cpSync(source, join(imageset, filename))
-    images.push({
-      ...(dark ? { appearances: [{ appearance: 'luminosity', value: 'dark' }] } : {}),
-      filename,
-      idiom: 'universal',
-    })
+    const files = splashScales(source)
+    // A bitmap with its @2x and @3x is sharp on every screen; on its own it
+    // stays the single image it always was.
+    const scaled = files.length > 1
+    for (const { scale, path } of files) {
+      const filename = `${LAUNCH_LOGO}${dark ? '-dark' : ''}${scale === 1 ? '' : `@${scale}x`}.${extension}`
+      cpSync(path, join(imageset, filename))
+      images.push({
+        ...(dark ? { appearances: [{ appearance: 'luminosity', value: 'dark' }] } : {}),
+        filename,
+        idiom: 'universal',
+        ...(scaled ? { scale: `${scale}x` } : {}),
+      })
+    }
   }
   writeFileSync(join(imageset, 'Contents.json'), `${JSON.stringify({
     images,
