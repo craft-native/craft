@@ -24,7 +24,7 @@
  */
 
 import { execFile, execFileSync } from 'child_process'
-import { accessSync, constants, existsSync, renameSync, rmSync, statSync } from 'fs'
+import { accessSync, constants, existsSync, renameSync, readdirSync, rmSync, statSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { promisify } from 'util'
 import { createTempDir, removeTempDir } from '../temp-dir.js'
@@ -322,10 +322,11 @@ export async function extractBundleFromZip(zipPath: string, stagingDir?: string)
     await execFileAsync('ditto', ['-x', '-k', zipPath, unpacked])
 
     const source = findTopLevelApp(unpacked)
-    if (!source)
-      throw new Error(`No .app found in archive: ${zipPath}`)
-
-    return { appPath: source, stagingDir: staging }
+    if (source) return { appPath: source, stagingDir: staging }
+    // Release ZIPs may wrap the notarized installer instead of an unpacked app.
+    const images = readdirSync(unpacked, { withFileTypes: true }).filter(entry => entry.isFile() && entry.name.endsWith('.dmg'))
+    if (images.length !== 1) throw new Error(`Archive must contain one .app or one disk image: ${zipPath}`)
+    return await extractBundleFromDmg(join(unpacked, images[0]!.name), staging)
   }
   catch (error) {
     if (!stagingDir) removeTempDir(staging)

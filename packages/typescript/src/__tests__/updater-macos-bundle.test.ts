@@ -19,6 +19,7 @@ import {
   swapBundle,
   verifyBundleTrust,
 } from '../updater/macos-bundle'
+import { createDiskImage } from '../package'
 import { createTempDir, removeAllTempDirs } from '../temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -197,6 +198,20 @@ describe('extractBundleFromZip', () => {
     expect(existsSync(staged.appPath)).toBe(true)
     expect(readFileSync(join(staged.appPath, 'Contents/MacOS/App'), 'utf8')).toBe('payload')
   })
+})
+
+describe('zipped installer images', () => {
+  it.if(darwin)('lays out a drag installer and extracts its app from a ZIP', async () => {
+    const app = makeBundle(join(work, 'Installer.app'), 'zipped-dmg-payload')
+    const image = join(work, 'Installer.dmg')
+    const result = await createDiskImage({ appBundlePath: app, outputPath: image, volumeName: 'Craft Installer' })
+    expect(result.success).toBe(true)
+    const archive = `${image}.zip`
+    execFileSync('ditto', ['-c', '-k', image, archive])
+    const staged = await extractBundleFromZip(archive, join(work, 'zip-out'))
+    expect(readFileSync(join(staged.appPath, 'Contents/MacOS/App'), 'utf8')).toBe('zipped-dmg-payload')
+    expect(existsSync(join(staged.stagingDir, 'payload', 'Installer.dmg'))).toBe(true)
+  }, 30000)
 })
 
 describe('DeltaGenerator.isSupported', () => {

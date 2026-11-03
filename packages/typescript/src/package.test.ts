@@ -220,6 +220,7 @@ describe('macOS packaging diagnostics', () => {
       'create',
       '-volname', 'Craft',
       '-srcfolder', '/tmp/Craft.app',
+      '-fs', 'HFS+',
       '-size', '157m',
       '-ov',
       '-format', 'ULMO',
