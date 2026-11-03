@@ -253,6 +253,77 @@ class NativeCapabilitiesTest {
         } finally { host.close() }
     }
 
+    @Test fun pedometerKeepsSinceBootCountsSeparateFromDetectorEvents() {
+        val source = MotionSourceProbe()
+        val host = CraftNativePedometer(source) { true }
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            assertNull(host.perform("start", JSONArray()).code)
+            assertEquals(android.hardware.Sensor.TYPE_STEP_COUNTER, source.requests.last().first)
+            source.deliver(0, floatArrayOf(1234f))
+            assertEquals("counter", events.last().getString("kind"))
+            assertEquals(1234.0, events.last().getDouble("stepsSinceBoot"), 0.0)
+            assertFalse(events.last().has("steps"))
+            assertFalse(events.last().has("startDate"))
+            host.perform("start", JSONArray().put(JSONObject().put("sensor", "detector")))
+            assertEquals(android.hardware.Sensor.TYPE_STEP_DETECTOR, source.requests.last().first)
+            source.deliver(1, floatArrayOf(1f))
+            assertEquals("step", events.last().getString("kind"))
+            assertEquals(1, events.last().getInt("count"))
+            assertFalse(events.last().has("stepsSinceBoot"))
+            assertEquals(12345.6789, events.last().getDouble("timestampMs"), 0.00001)
+            source.deliver(0, floatArrayOf(9999f))
+            assertEquals(2, events.size)
+        } finally { host.close() }
+    }
+
+    @Test fun pedometerRejectsMissingPermissionAndUnsupportedIntervalHistory() {
+        val source = MotionSourceProbe()
+        var granted = false
+        val host = CraftNativePedometer(source) { granted }
+        try {
+            assertEquals("denied", host.perform("getPermissionStatus", JSONArray()).data)
+            assertEquals("PERMISSION_DENIED", host.perform("start", JSONArray()).code)
+            assertTrue(source.requests.isEmpty())
+            granted = true
+            assertEquals("granted", host.perform("getPermissionStatus", JSONArray()).data)
+            assertEquals("UNSUPPORTED", host.perform("query", JSONArray()).code)
+            assertEquals("UNSUPPORTED", host.perform("start", JSONArray().put(JSONObject().put("startDate", 0))).code)
+            assertEquals("UNSUPPORTED", host.perform("start", JSONArray().put(JSONObject().put("background", true))).code)
+            val availability = host.perform("getAvailability", JSONArray()).data as JSONObject
+            assertFalse(availability.getBoolean("history"))
+            assertFalse(availability.getBoolean("background"))
+            assertFalse(availability.getBoolean("floors"))
+            source.present = false
+            assertEquals("UNAVAILABLE", host.perform("start", JSONArray()).code)
+        } finally { host.close() }
+    }
+
+    @Test fun pedometerBackgroundAndRevocationStopDeliveryWithoutSyntheticCounts() {
+        val source = MotionSourceProbe()
+        var granted = true
+        val host = CraftNativePedometer(source) { granted }
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        host.perform("start", JSONArray())
+        source.deliver(0, floatArrayOf(100f))
+        assertEquals("INVALID_ARGUMENT", host.perform("start", JSONArray().put(JSONObject().put("sensor", "invalid"))).code)
+        assertTrue(source.stopped.isEmpty())
+        granted = false
+        source.deliver(0, floatArrayOf(101f))
+        assertEquals("permissionDenied", events.last().getString("reason"))
+        granted = true
+        host.perform("start", JSONArray())
+        host.stop("background")
+        assertEquals("background", events.last().getString("reason"))
+        source.deliver(1, floatArrayOf(102f))
+        assertEquals(3, events.size)
+        host.close()
+        assertEquals(listOf(0, 1), source.stopped)
+        assertEquals("HOST_CLOSED", host.perform("start", JSONArray()).code)
+    }
+
     private class PickerHostProbe : CraftNativePickerHost {
         val launched = mutableListOf<Int>()
         val dismissed = mutableListOf<Int>()

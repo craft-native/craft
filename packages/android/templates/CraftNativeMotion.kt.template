@@ -190,3 +190,80 @@ internal class CraftNativeBarometer(private val source: CraftMotionSource) {
     fun close() { closed = true; stop("disposed"); emit = {} }
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
 }
+
+/** Android counter and detector semantics stay distinct from interval totals. */
+internal class CraftNativePedometer(private val source: CraftMotionSource, private val hasPermission: () -> Boolean) {
+    private class Stream { var registration: CraftMotionRegistration? = null }
+    private var stream: Stream? = null
+    private var closed = false
+    var emit: (JSONObject) -> Unit = {}
+
+    fun perform(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        if (closed) return failure("HOST_CLOSED", "Pedometer host is closed")
+        return when (method) {
+            "getAvailability" -> CraftNativeCapabilityResult(data = JSONObject()
+                .put("counter", source.available(Sensor.TYPE_STEP_COUNTER))
+                .put("detector", source.available(Sensor.TYPE_STEP_DETECTOR))
+                .put("history", false).put("background", false).put("cadence", false).put("floors", false))
+            "getPermissionStatus" -> CraftNativeCapabilityResult(data = if (hasPermission()) "granted" else "denied")
+            "start" -> start(args.optJSONObject(0), args.length() != 0)
+            "stop" -> CraftNativeCapabilityResult(data = stop("requested"))
+            "query" -> failure("UNSUPPORTED", "Android's step sensor does not provide interval history")
+            else -> failure("UNKNOWN_ACTION", "Unsupported Pedometer method")
+        }
+    }
+
+    private fun start(options: JSONObject?, supplied: Boolean): CraftNativeCapabilityResult {
+        if (supplied && options == null) return failure("INVALID_ARGUMENT", "Pedometer.start needs an options object")
+        if (options?.has("background") == true && options.opt("background") !is Boolean)
+            return failure("INVALID_ARGUMENT", "background must be boolean")
+        if (options?.optBoolean("background", false) == true)
+            return failure("UNSUPPORTED", "Background step streaming is not supported by this sensor adapter")
+        val name = if (options?.has("sensor") == true) options.opt("sensor") as? String else "counter"
+        val type = when (name) {
+            "counter" -> Sensor.TYPE_STEP_COUNTER
+            "detector" -> Sensor.TYPE_STEP_DETECTOR
+            else -> return failure("INVALID_ARGUMENT", "sensor must be counter or detector")
+        }
+        if (options?.has("startDate") == true || options?.has("endDate") == true)
+            return failure("UNSUPPORTED", "Android steps are not counts for a requested interval")
+        if (!source.available(type)) return failure("UNAVAILABLE", "Requested step sensor is not present")
+        if (!hasPermission()) return failure("PERMISSION_DENIED", "Activity recognition permission is required")
+        val next = Stream()
+        val registration = try {
+            source.register(type, 200_000) { values, timestamp, _ ->
+                if (!closed && stream === next) {
+                    val value = values.firstOrNull()
+                    if (!hasPermission()) stop("permissionDenied")
+                    else if (value == null || !value.isFinite() || value < 0 || value % 1f != 0f || (name == "detector" && value != 1f)) stop("sensorError")
+                    else {
+                        val payload = JSONObject().put("state", "sample").put("kind", if (name == "counter") "counter" else "step")
+                            .put("timestampMs", timestamp / 1_000_000.0)
+                        if (name == "counter") payload.put("stepsSinceBoot", value.toDouble())
+                        else payload.put("count", 1)
+                        emit(payload)
+                    }
+                }
+            }
+        } catch (error: SecurityException) {
+            return failure("PERMISSION_DENIED", "Activity recognition permission is required")
+        } catch (error: Exception) {
+            return failure("SENSOR_ERROR", error.message ?: "Step sensor registration failed")
+        } ?: return failure("UNAVAILABLE", "Step sensor registration was rejected")
+        next.registration = registration
+        val previous = stream
+        stream = next
+        previous?.registration?.close()
+        return CraftNativeCapabilityResult(data = true)
+    }
+
+    fun stop(reason: String): Boolean {
+        val previous = stream ?: return false
+        stream = null
+        previous.registration?.close()
+        emit(JSONObject().put("state", "stopped").put("reason", reason))
+        return true
+    }
+    fun close() { closed = true; stop("disposed"); emit = {} }
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+}

@@ -179,6 +179,8 @@ export interface CraftAndroidConfig {
   enableMotionSensors?: boolean
   /** Foreground pressure and session-relative altitude; does not enable background recording. */
   enableBarometer?: boolean
+  /** Foreground hardware step counters/detectors; requires activity recognition on Android 10+. */
+  enablePedometer?: boolean
   enableBluetooth?: boolean
   /**
    * A Bluetooth heart-rate strap, or a watch broadcasting its heart rate (the
@@ -461,6 +463,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   enableBackgroundLocation: false,
   enableMotionSensors: false,
   enableBarometer: false,
+  enablePedometer: false,
   enableBluetooth: false,
   enableHeartRate: false,
   enableHealthConnect: false,
@@ -796,6 +799,7 @@ export function renderAndroidPermissions(config: CraftAndroidConfig): string {
   if (config.enablePushNotifications) permissions.add('android.permission.POST_NOTIFICATIONS')
   if (config.enableKeepAwake) permissions.add('android.permission.WAKE_LOCK')
   if (config.enableHealthConnect) healthConnectPermissions(config).forEach(permission => permissions.add(permission))
+  if (config.enablePedometer) permissions.add('android.permission.ACTIVITY_RECOGNITION')
   // A background refresh (WorkManager) after a restart.
   if (config.renderer === 'native' && config.backgroundRefresh?.enabled) permissions.add('android.permission.RECEIVE_BOOT_COMPLETED')
   // A heart-rate recording keeps the process in the foreground while it
