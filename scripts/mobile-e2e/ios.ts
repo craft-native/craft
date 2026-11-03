@@ -1,5 +1,6 @@
 import type { PushStage } from './protocol'
 import type { LegOutcome, RunnerOptions } from './types'
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
@@ -301,6 +302,9 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     '-scheme', APP_NAME,
     '-destination', `id=${device.udid}`,
     '-derivedDataPath', derived,
+    // Keep raw UI evidence outside work/, which CI deliberately excludes.
+    // A new path preserves earlier results when this leg is run again.
+    '-resultBundlePath', join(evidence, `${testClass}-${randomUUID()}.xcresult`),
     `-only-testing:${UI_TESTS}/${testClass}`,
     'CODE_SIGNING_ALLOWED=NO',
     'test-without-building',
