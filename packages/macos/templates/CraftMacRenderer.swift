@@ -312,8 +312,13 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             text.isSelectable = true; text.maximumNumberOfLines = 0
             control = text
         case "Button", "Link":
-            let button = NSButton(title: "", target: self, action: #selector(pressed))
-            button.bezelStyle = .rounded; control = button
+            // What `NSButton(title:target:action:)` sets up, without the `sizeToFit` it ends with: a button's
+            // size goes through SwiftUI's layout on current macOS, and the box sets its frame anyway.
+            let button = NSButton(frame: .zero)
+            button.setButtonType(.momentaryPushIn); button.bezelStyle = .rounded
+            button.lineBreakMode = .byTruncatingTail; button.imageScaling = .scaleProportionallyDown
+            button.title = ""; button.target = self; button.action = #selector(pressed)
+            control = button
         case "TextInput":
             let input = NSTextField(); input.delegate = self; control = input
         case "Picker":

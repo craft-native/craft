@@ -218,7 +218,20 @@ final class CraftMacRuntime {
         require(renderer.boxes["deep"]!.frame.size == CGSize(width: 380, height: 180), "A resize left a nested flow at its old size")
         renderer.root.frame = CGRect(x: 0, y: 0, width: 320, height: 300); renderer.root.layoutSubtreeIfNeeded()
 
+        // A button is set up as NSButton(title:target:action:) sets one up, without the sizeToFit it ends with.
+        func archived(_ view: NSView) -> String {
+            let coder = NSKeyedArchiver(requiringSecureCoding: false); view.encode(with: coder); coder.finishEncoding()
+            let plist = try! PropertyListSerialization.propertyList(from: coder.encodedData, format: nil)
+            return "\(plist)".replacingOccurrences(of: "0x[0-9a-f]+", with: "0x", options: .regularExpression)
+        }
+        let freshButton = CraftMacBox(id: "fresh", kind: "Button", renderer: renderer)
+        let madeButton = freshButton.control as! NSButton; madeButton.removeFromSuperview()
+        let referenceButton = NSButton(title: "", target: freshButton, action: #selector(CraftMacBox.pressed)); referenceButton.bezelStyle = .rounded
+        referenceButton.clipsToBounds = true // as the box sets every control
+        referenceButton.frame = madeButton.frame
+        require(archived(madeButton) == archived(referenceButton), "A button was not set up as NSButton(title:target:action:) sets one up")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates and one-pass nested layout")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout and buttons")
     }
 }
