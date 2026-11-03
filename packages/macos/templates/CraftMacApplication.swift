@@ -293,7 +293,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         if parts.contains("alt") { item.keyEquivalentModifierMask.insert(.option) }
         item.isEnabled = raw["disabled"] as? Bool != true
         item.state = raw["checked"] as? Bool == true ? .on : .off
-        if let symbol = raw["icon"] as? String { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+        if let symbol = raw["icon"] as? String { item.image = CraftMacSymbols.image(symbol) }
         return item
     }
     func perform(_ method: String, args: [Any], scene: CraftMacScene?, reply: @escaping (Any) -> Void) {

@@ -21,6 +21,22 @@ enum CraftMacColor {
     }
 }
 
+/// SF Symbols, one image per name and description. An image keeps what it rasterized, so views that
+/// share one draw it once rather than each looking the glyph up in the catalog and rendering it again.
+enum CraftMacSymbols {
+    private struct Key: Hashable { let name: String, description: String? }
+    private static var images: [Key: NSImage?] = [:]
+    static func image(_ name: String, description: String? = nil) -> NSImage? {
+        let key = Key(name: name, description: description)
+        if let image = images[key] { return image }
+        // Descriptions can carry changing text (a button's title), so the cache starts over rather than grow without end.
+        if images.count >= 512 { images.removeAll(keepingCapacity: true) }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: description)
+        images[key] = image
+        return image
+    }
+}
+
 /// The same C ABI used by Craft's mobile hosts. AppKit supplies text metrics;
 /// Zig supplies flex sizing and justification, without a second layout rule.
 enum CraftMacFlex {
@@ -432,7 +448,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             button.bezelStyle = props["variant"] as? String == "toolbar" ? .texturedRounded : .rounded
             button.isBordered = !["toolbar", "ghost"].contains(props["variant"] as? String ?? "")
             button.contentTintColor = CraftMacColor.parse(style["color"], fallback: .controlAccentColor)
-            if let symbol = props["symbol"] as? String { button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: button.title); button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading }
+            if let symbol = props["symbol"] as? String { button.image = CraftMacSymbols.image(symbol, description: button.title); button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading }
             if button.image != nil { button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: number(style["fontSize"]) ?? 16, weight: .regular) }
             if props["variant"] as? String == "primary" { button.bezelColor = .controlAccentColor }
             if props["variant"] as? String == "danger" { button.contentTintColor = .systemRed }
@@ -461,7 +477,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             picker.isEnabled = props["disabled"] as? Bool != true
         }
         if let image = control as? NSImageView {
-            if kind == "Icon" { image.image = NSImage(systemSymbolName: props["symbol"] as? String ?? props["name"] as? String ?? "questionmark", accessibilityDescription: label); image.contentTintColor = CraftMacColor.parse(style["color"]) }
+            if kind == "Icon" { image.image = CraftMacSymbols.image(props["symbol"] as? String ?? props["name"] as? String ?? "questionmark", description: label); image.contentTintColor = CraftMacColor.parse(style["color"]) }
             else { configureImage(image) }
         }
         if let video = control as? AVPlayerView, let source = (props["source"] as? String ?? props["src"] as? String), source != imageSource {
@@ -954,7 +970,7 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
         let badge = NSTextField(labelWithString: item.badge); badge.font = NSFont.systemFont(ofSize: 11); badge.textColor = .secondaryLabelColor
         badge.translatesAutoresizingMaskIntoConstraints = false; badge.setContentHuggingPriority(.required, for: .horizontal); cell.addSubview(badge)
         NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: item.icon.isEmpty ? 16 : 39), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -16), badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-        if !item.icon.isEmpty { let image = NSImageView(image: NSImage(systemSymbolName: item.icon, accessibilityDescription: nil) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: (rowHeight - 16) / 2, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
+        if !item.icon.isEmpty { let image = NSImageView(image: CraftMacSymbols.image(item.icon) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: (rowHeight - 16) / 2, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
         cell.setAccessibilityIdentifier(item.id); cell.setAccessibilityLabel(item.label)
         return cell
     }

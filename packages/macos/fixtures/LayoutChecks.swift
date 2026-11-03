@@ -231,7 +231,18 @@ final class CraftMacRuntime {
         referenceButton.frame = madeButton.frame
         require(archived(madeButton) == archived(referenceButton), "A button was not set up as NSButton(title:target:action:) sets one up")
 
+        // Icons of one symbol share an image, so it is rasterized once; a different description is its own image.
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("star1", "Icon", [:], props: ["symbol": "star"]), node("star2", "Icon", [:], props: ["symbol": "star"]),
+            node("star3", "Icon", [:], props: ["symbol": "star", "accessibilityLabel": "Favorite"]),
+            node("starButton1", "Button", [:], props: ["symbol": "star", "iconOnly": true]), node("starButton2", "Button", [:], props: ["symbol": "star", "iconOnly": true])]))
+        let starImage = (renderer.boxes["star1"]!.control as! NSImageView).image
+        require(starImage != nil && starImage === (renderer.boxes["star2"]!.control as! NSImageView).image, "Two icons of one symbol drew separate images")
+        let labelled = (renderer.boxes["star3"]!.control as! NSImageView).image
+        require(labelled !== starImage && labelled?.accessibilityDescription == "Favorite", "An icon's description reached another icon's image")
+        let buttonStar = (renderer.boxes["starButton1"]!.control as! NSButton).image
+        require(buttonStar != nil && buttonStar === (renderer.boxes["starButton2"]!.control as! NSButton).image, "Two icon-only buttons of one symbol drew separate images")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout and buttons")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons and shared symbols")
     }
 }
