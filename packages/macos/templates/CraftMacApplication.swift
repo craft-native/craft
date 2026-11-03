@@ -24,6 +24,7 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     /// The content width the screen last heard, so a resize that changes nothing sends nothing.
     var reportedViewportWidth: CGFloat = -1
     init(name: String, route: String, options: [String: Any], application: CraftMacApplication) {
+        CraftTrace.mark("scene \(name)")
         self.name = name
         runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
         renderer = CraftMacRenderer(runtime: runtime)
@@ -34,6 +35,7 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         panel.runtime = runtime
         window = panel
+        CraftTrace.mark("window created")
         super.init()
         runtime.scene = self; renderer.window = window
         window.title = options["title"] as? String ?? application.appName
@@ -49,7 +51,7 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         window.contentView = renderer.root
         window.delegate = self; window.center()
         if name == "main" && application.testDirectory == nil { window.setFrameAutosaveName("\(application.appName)NativeMain") }
-        window.makeKeyAndOrderFront(nil)
+        CraftTrace.span("window ordered front") { window.makeKeyAndOrderFront(nil) }
         placeTrafficLights()
         // The screen starts knowing its width, so `md:`/`lg:` classes and `matchMedia` are right on the first frame.
         let size = window.contentLayoutRect.size
@@ -132,8 +134,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
     static let quitGrace: TimeInterval = 3
 
+    func applicationWillFinishLaunching(_ notification: Notification) { CraftTrace.mark("will finish launching") }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        installMenus()
+        CraftTrace.mark("did finish launching")
+        CraftTrace.span("menus installed") { installMenus() }
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.appearanceChanged() }
         }
@@ -149,6 +153,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         network.session.dataTask(with: request) { [weak self] _, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
+                CraftTrace.mark("native session answered")
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
                     let alert = NSAlert(); alert.messageText = "Could not connect to the app"; alert.informativeText = error?.localizedDescription ?? "The local agent did not issue a native session."; alert.runModal(); NSApp.terminate(nil); return
                 }
@@ -563,6 +568,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
 
 @main struct CraftMacMain {
     static func main() throws {
+        CraftTrace.mark("main")
         // A bundled app is launched by Finder with no arguments: its settings are
         // `Contents/Resources/craft-app.json`, written by the build. A flag on the
         // command line still wins, so a development run can point elsewhere.

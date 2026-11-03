@@ -3,6 +3,34 @@ import ZigJS
 import Foundation
 import Security
 
+/// `CRAFT_TRACE=1`: launch and render phases on stderr, as `[craft trace] <ms since the process
+/// started> <phase>`, with a span's own duration after it. Off, every call is one boolean test.
+enum CraftTrace {
+    static let enabled = ProcessInfo.processInfo.environment["CRAFT_TRACE"].map { !$0.isEmpty && $0 != "0" } ?? false
+    /// When the kernel started this process, so the first mark already counts dyld and Swift start-up.
+    private static let processStart: Double = {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&name, 4, &info, &size, nil, 0) == 0 else { return Date().timeIntervalSince1970 }
+        return Double(info.kp_proc.p_starttime.tv_sec) + Double(info.kp_proc.p_starttime.tv_usec) / 1_000_000
+    }()
+    private static func since() -> Double { (Date().timeIntervalSince1970 - processStart) * 1000 }
+    static func mark(_ phase: @autoclosure () -> String) {
+        guard enabled else { return }
+        fputs(String(format: "[craft trace] %8.1f %@\n", since(), phase()), stderr)
+    }
+    /// Times `work`; spans under `atLeast` milliseconds are left out, so per-message spans stay readable.
+    static func span<T>(_ phase: @autoclosure () -> String, atLeast: Double = 0, _ work: () throws -> T) rethrows -> T {
+        guard enabled else { return try work() }
+        let start = since()
+        defer {
+            let end = since()
+            if end - start >= atLeast { fputs(String(format: "[craft trace] %8.1f %@ (%.1f ms)\n", end, phase(), end - start), stderr) }
+        }
+        return try work()
+    }
+}
+
 /// The macOS Keychain behind `craft.secureStorage`: one generic password per
 /// key, under a service named for the app. The data-protection keychain is
 /// used when the app is signed for it (a Mac App Store build, which carries
@@ -98,8 +126,10 @@ final class CraftMacRuntime {
             guard let self, !self.disposed else { return }
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.timers.removeValue(forKey: id) != nil, !self.disposed else { return }
-                self.context.objectForKeyedSubscript("__craftNativeFireTimer")?.call(withArguments: [id])
-                ZJSContextRunMicrotasks(self.context)
+                CraftTrace.span("js timer", atLeast: 1) {
+                    self.context.objectForKeyedSubscript("__craftNativeFireTimer")?.call(withArguments: [id])
+                    ZJSContextRunMicrotasks(self.context)
+                }
             }
             self.timers[id] = work
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0, min(delay.isFinite ? delay : 0, 2_147_483_647)) / 1000, execute: work)
@@ -175,7 +205,7 @@ final class CraftMacRuntime {
 
     func load(_ bundle: String) {
         startProfileIfAsked()
-        context.evaluateScript(bundle); ZJSContextRunMicrotasks(context)
+        CraftTrace.span("bundle evaluated") { context.evaluateScript(bundle); ZJSContextRunMicrotasks(context) }
     }
 
     /// `CRAFT_JS_PROFILE=<file>`: sample this screen's JavaScript from the moment its bundle loads,
@@ -224,8 +254,10 @@ final class CraftMacRuntime {
         guard let bytes = try? JSONSerialization.data(withJSONObject: message), let text = String(data: bytes, encoding: .utf8) else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.disposed else { return }
-            self.context.objectForKeyedSubscript("__stxNativeCallback")?.call(withArguments: [text])
-            ZJSContextRunMicrotasks(self.context)
+            CraftTrace.span("js \(type)", atLeast: 1) {
+                self.context.objectForKeyedSubscript("__stxNativeCallback")?.call(withArguments: [text])
+                ZJSContextRunMicrotasks(self.context)
+            }
         }
     }
 
@@ -240,16 +272,18 @@ final class CraftMacRuntime {
         switch message["type"] as? String {
         case "RENDER":
             guard let tree = payload["document"] as? [String: Any] else { return }
-            document.replace(with: tree)
-            scene?.renderer.render(tree)
+            CraftTrace.span("  native RENDER") {
+                document.replace(with: tree)
+                scene?.renderer.render(tree)
+            }
         case "MUTATE":
-            do {
+            do { try CraftTrace.span("  native MUTATE \((payload["mutations"] as? [Any])?.count ?? 0)", atLeast: 1) {
                 let result = try document.apply(payload)
                 // Drawn where it changed; the whole tree only when the batch reshaped it.
                 if result.requiresFullRender || scene?.renderer.update(result.affectedNodeIds, parentOf: document.parentId(of:), node: document.node) != true,
                    let tree = result.document { scene?.renderer.render(tree) }
                 send("MUTATION_ACK", ["version": 1, "batchId": result.batchId, "revision": result.revision])
-            } catch let error as CraftNativeMutationFailure {
+            } } catch let error as CraftNativeMutationFailure {
                 send("MUTATION_ERROR", ["version": 1, "batchId": payload["batchId"] ?? "", "code": error.code, "message": error.message])
             } catch { errors.append(error.localizedDescription) }
         case "API_REQUEST":

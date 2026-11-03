@@ -186,6 +186,29 @@ desktop command `escape` (`craft.desktop.onCommand`), unless a ghost completion 
 showing. With `--titlebar-style transparent` the content runs under the title bar
 (full-size content view): leave room for the traffic lights.
 
+## Timing a launch
+
+Set `CRAFT_TRACE=1` and the host writes its launch and render phases to
+stderr, each with the milliseconds since the process started:
+
+```bash
+CRAFT_TRACE=1 ./MyApp.app/Contents/MacOS/craft-runtime 2>&1 | grep 'craft trace'
+```
+
+```text
+[craft trace]      8.2 main
+[craft trace]    331.0 did finish launching
+[craft trace]    557.4 window ordered front (65.1 ms)
+[craft trace]    840.3 bundle evaluated (282.3 ms)
+[craft trace]   1484.0 js API_RESPONSE (597.1 ms)
+```
+
+A span shows its own duration: `bundle evaluated` runs the bundle and its
+microtasks, `js <TYPE>` delivers one message to the screen, `js timer` fires a
+timer, and `native RENDER` / `native MUTATE <n>` apply the screen's tree (they
+run inside the JavaScript span that sent them). Message, timer and mutation
+spans under 1 ms are left out.
+
 ## Profiling a screen's JavaScript
 
 Set `CRAFT_JS_PROFILE` to a file path and the host samples the screen's
