@@ -5,6 +5,8 @@
  * across all platforms (macOS, Windows, Linux)
  */
 
+import { writeInstallerLayout } from './installer-layout.js'
+import { installerBackground } from './installer-background.js'
 import type { WindowOptions } from './types.js'
 import { spawn, spawnSync } from 'child_process'
 import { createHash } from 'crypto'
@@ -21,6 +23,7 @@ import {
   readSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'fs'
 import { homedir } from 'os'
@@ -534,7 +537,7 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
   // Create DMG
   if (opts.dmg !== false) {
     const outputPath = join(outDir, `${name}-${version}.dmg`)
-    let dmgResult = await createDMG({ appBundlePath, outputPath, volumeName: name })
+    let dmgResult = await createDiskImage({ appBundlePath, outputPath, volumeName: name })
     // The disk image is its own distribution artifact. Its signature must be
     // present before notarization so Gatekeeper can assess the downloaded
     // container independently of the signed application inside it.
@@ -1170,6 +1173,7 @@ export function dmgCreateArguments(opts: {
     'create',
     '-volname', opts.volumeName,
     '-srcfolder', opts.appBundlePath,
+    '-fs', 'HFS+',
     '-size', `${dmgCapacityMegabytes(contentBytes)}m`,
     '-ov',
     // LZMA rather than the older zlib: for an app whose bulk is a compiled
@@ -1209,30 +1213,53 @@ const runHdiutil = (args: string[]) => runTool('hdiutil', args)
 /**
  * Helper: Create DMG from app bundle
  */
-async function createDMG(opts: {
+export async function createDiskImage(opts: {
   appBundlePath: string
   outputPath: string
   volumeName: string
 }): Promise<{ success: boolean; outputPath?: string; error?: string }> {
-  // hdiutil rejects volume names containing `/`, `:`, or newlines and
-  // truncates anything past 27 chars. Surfacing the error early gives a
-  // clearer message than the cryptic exit-code-1 hdiutil returns.
   if (!/^[^/:\n]{1,27}$/.test(opts.volumeName))
     return { success: false, error: `Invalid DMG volume name "${opts.volumeName}"; must be 1..27 chars without /, :, or newline` }
-
-  const args = dmgCreateArguments(opts, pathContentBytes(opts.appBundlePath))
-  const failures: string[] = []
-  for (let attempt = 1; attempt <= HDIUTIL_MAX_ATTEMPTS; attempt++) {
-    const result = await runHdiutil(args)
-    if (result.success) return { success: true, outputPath: opts.outputPath }
-    failures.push(`attempt ${attempt}: ${result.error}`)
-    if (!shouldRetryHdiutil(result.error, attempt))
-      return { success: false, error: failures.join('\n') }
-
-    rmSync(opts.outputPath, { force: true })
-    await new Promise(resolve => setTimeout(resolve, attempt * 2000))
+  const scratch = createTempDir('craft-installer-')
+  const payload = join(scratch, 'payload')
+  const mount = join(scratch, 'mount')
+  const writable = join(scratch, 'installer.dmg')
+  let mounted = false
+  const run = async (tool: string, args: string[]) => {
+    const result = await runTool(tool, args)
+    if (!result.success) throw new Error(result.error)
+    return result
   }
-  return { success: false, error: failures.join('\n') }
+  try {
+    mkdirSync(payload)
+    mkdirSync(mount)
+    const bundleName = basename(opts.appBundlePath)
+    await run('ditto', [opts.appBundlePath, join(payload, bundleName)])
+    symlinkSync('/Applications', join(payload, 'Applications'))
+    mkdirSync(join(payload, '.background'))
+    writeFileSync(join(payload, '.background', 'installer.png'), installerBackground)
+    const args = dmgCreateArguments({ ...opts, appBundlePath: payload, outputPath: writable }, pathContentBytes(payload))
+    args[args.indexOf('ULMO')] = 'UDRW'
+    for (let attempt = 1; ; attempt++) {
+      const result = await runHdiutil(args)
+      if (result.success) break
+      if (!shouldRetryHdiutil(result.error, attempt)) throw new Error(result.error)
+      rmSync(writable, { force: true })
+      await new Promise(resolve => setTimeout(resolve, attempt * 2000))
+    }
+    await run('hdiutil', ['attach', writable, '-nobrowse', '-mountpoint', mount])
+    mounted = true
+    writeInstallerLayout(mount, opts.volumeName, bundleName)
+    await run('hdiutil', ['detach', mount])
+    mounted = false
+    await run('hdiutil', ['convert', writable, '-format', 'ULMO', '-ov', '-o', opts.outputPath])
+    return { success: true, outputPath: opts.outputPath }
+  }
+  catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) } }
+  finally {
+    if (mounted) await runTool('hdiutil', ['detach', mount, '-force'])
+    removeTempDir(scratch)
+  }
 }
 
 /**

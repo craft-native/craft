@@ -89,7 +89,7 @@ export function craftProcessFailedMessage(code: number | null, stderr: string, q
 }
 
 // Export packaging API
-export { packageApp, pack, macOSRuntimeExecutablePath, type PackageConfig, type PackageResult } from './package.js'
+export { createDiskImage, packageApp, pack, macOSRuntimeExecutablePath, type PackageConfig, type PackageResult } from './package.js'
 
 // Export binary resolution. Craft ships through the pantry registry, and this is
 // the single source of truth for finding the native binary (PATH, or CRAFT_BIN
