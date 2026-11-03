@@ -5633,3 +5633,114 @@ final class NativeBarometerUnitTests: XCTestCase {
         XCTAssertEqual(source.stops, 1)
     }
 }
+
+@MainActor
+final class NativePedometerUnitTests: XCTestCase {
+    private final class Source: CraftPedometerSource {
+        var availability = ["steps": true, "history": true, "background": false]
+        var permission = "granted"
+        var starts = [Date]()
+        var ranges = [(Date, Date)]()
+        var updates: ((Result<CraftPedometerSample, Error>) -> Void)?
+        var queries = [(Result<CraftPedometerSample, Error>) -> Void]()
+        var stops = 0
+        func start(from: Date, receive: @escaping (Result<CraftPedometerSample, Error>) -> Void) { starts.append(from); updates = receive }
+        func query(from: Date, to: Date, receive: @escaping (Result<CraftPedometerSample, Error>) -> Void) { ranges.append((from, to)); queries.append(receive) }
+        func stop() { stops += 1 }
+    }
+    private let now = Date(timeIntervalSince1970: 2_000_000)
+    private func code(_ answer: Result<Any, CraftNativeActionError>?) -> String? {
+        if case .failure(let error) = answer { return error.code }
+        return nil
+    }
+
+    func testHistoryPreservesTheRequestedIntervalAndOptionalMeasurements() throws {
+        let source = Source()
+        let host = CraftNativePedometer(makeSource: { source }, now: { self.now })
+        defer { host.close() }
+        var answer: Result<Any, CraftNativeActionError>?
+        host.perform(method: "query", args: [["startDate": 1_999_000_000.0, "endDate": 1_999_500_000.0]], token: "history") { answer = $0 }
+        XCTAssertNil(answer)
+        XCTAssertEqual(source.ranges.first?.0.timeIntervalSince1970, 1_999_000)
+        XCTAssertEqual(source.ranges.first?.1.timeIntervalSince1970, 1_999_500)
+        source.queries[0](.success(CraftPedometerSample(startDate: 1_999_000_000, endDate: 1_999_500_000, steps: 42, distanceMeters: 25, floorsAscended: 2)))
+        let value = try XCTUnwrap(try answer?.get() as? [String: Any])
+        XCTAssertEqual(value["kind"] as? String, "interval")
+        XCTAssertEqual(value["steps"] as? Int, 42)
+        XCTAssertEqual(value["distanceMeters"] as? Double, 25)
+        XCTAssertEqual(value["floorsAscended"] as? Int, 2)
+        XCTAssertNil(value["cadenceStepsPerSecond"])
+        XCTAssertNil(value["stepsSinceBoot"])
+    }
+
+    func testHistoryRejectsExpiredFutureReversedAndBooleanDatesBeforeQuerying() {
+        let source = Source()
+        let host = CraftNativePedometer(makeSource: { source }, now: { self.now })
+        defer { host.close() }
+        let invalid: [[String: Any]] = [[:], ["startDate": true], ["startDate": "1999000000"],
+            ["startDate": 0], ["startDate": 2_000_000_001.0], ["startDate": 1_999_000_000.0, "endDate": 2_000_000_001.0],
+            ["startDate": 1_999_000_000.0, "endDate": 1_998_000_000.0]]
+        for options in invalid {
+            var answer: Result<Any, CraftNativeActionError>?
+            host.perform(method: "query", args: [options], token: UUID().uuidString) { answer = $0 }
+            XCTAssertEqual(code(answer), "INVALID_ARGUMENT")
+        }
+        XCTAssertTrue(source.ranges.isEmpty)
+    }
+
+    func testLiveCadenceUsesStepsPerSecondAndReplacementIgnoresLateReadings() {
+        let first = Source(), second = Source()
+        var next = first
+        let host = CraftNativePedometer(makeSource: { next }, now: { self.now })
+        var events = [[String: Any]]()
+        host.emit = { events.append($0) }
+        defer { host.close() }
+        host.perform(method: "start", args: [], token: "start") { XCTAssertNil(self.code($0)) }
+        first.updates?(.success(CraftPedometerSample(startDate: 2_000_000_000, endDate: 2_000_001_000, steps: 3, cadenceStepsPerSecond: 3, paceSecondsPerMeter: 0.4)))
+        XCTAssertEqual(events.last?["cadenceStepsPerSecond"] as? Double, 3)
+        XCTAssertEqual(events.last?["paceSecondsPerMeter"] as? Double, 0.4)
+        host.perform(method: "start", args: [["background": true]], token: "invalid") { XCTAssertEqual(self.code($0), "UNSUPPORTED") }
+        XCTAssertEqual(first.stops, 0)
+        next = second
+        host.perform(method: "start", args: [], token: "second") { XCTAssertNil(self.code($0)) }
+        XCTAssertEqual(first.stops, 1)
+        first.updates?(.success(CraftPedometerSample(startDate: 0, endDate: 1, steps: 99)))
+        XCTAssertEqual(events.count, 1)
+        host.stop(reason: "background")
+        XCTAssertEqual(events.last?["reason"] as? String, "background")
+        second.updates?(.success(CraftPedometerSample(startDate: 0, endDate: 1, steps: 99)))
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(second.stops, 1)
+    }
+
+    func testQueryCancellationAndDisposalIgnoreLateAnswers() {
+        let source = Source()
+        let host = CraftNativePedometer(makeSource: { source }, now: { self.now })
+        var answers = 0
+        let options: [String: Any] = ["startDate": 1_999_000_000.0]
+        host.perform(method: "query", args: [options], token: "cancel") { _ in answers += 1 }
+        host.cancel("cancel")
+        source.queries[0](.success(CraftPedometerSample(startDate: 0, endDate: 1, steps: 1)))
+        host.perform(method: "query", args: [options], token: "close") { _ in answers += 1 }
+        host.close()
+        source.queries[1](.success(CraftPedometerSample(startDate: 0, endDate: 1, steps: 1)))
+        XCTAssertEqual(answers, 0)
+        host.perform(method: "query", args: [options], token: "closed") { XCTAssertEqual(self.code($0), "HOST_CLOSED") }
+    }
+
+    func testPermissionRequestAndUnavailableHardwareHaveExplicitAnswers() throws {
+        let source = Source()
+        source.permission = "notDetermined"
+        let host = CraftNativePedometer(makeSource: { source }, now: { self.now })
+        defer { host.close() }
+        var answer: Result<Any, CraftNativeActionError>?
+        host.perform(method: "requestPermission", args: [], token: "permission") { answer = $0 }
+        XCTAssertNil(answer)
+        source.permission = "denied"
+        source.queries[0](.failure(NSError(domain: "motion", code: 1)))
+        XCTAssertEqual(try answer?.get() as? String, "denied")
+        host.perform(method: "start", args: [], token: "denied") { XCTAssertEqual(self.code($0), "PERMISSION_DENIED") }
+        source.availability["steps"] = false
+        host.perform(method: "start", args: [], token: "unavailable") { XCTAssertEqual(self.code($0), "UNAVAILABLE") }
+    }
+}
