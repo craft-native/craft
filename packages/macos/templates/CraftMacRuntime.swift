@@ -86,7 +86,43 @@ enum CraftMacKeychain {
     }
 }
 
-/// One zig-js context per STX window. No DOM and no browser view.
+/// The thread a window's JavaScript runs on, with a run loop for its timers and messages. A zig-js
+/// context belongs to the thread that made it, so the context is made here and every call into it
+/// runs here. AppKit keeps the main thread: a screen evaluates its bundle while the app is still
+/// connecting to the window server, and a long render in JavaScript no longer stalls scrolling.
+final class CraftMacScriptThread: Thread {
+    private var loop: CFRunLoop!
+    private let started = DispatchSemaphore(value: 0)
+    override init() {
+        super.init()
+        name = "craft.script"; qualityOfService = .userInteractive
+        // The main thread's size: a parser or a deep render recurses as far on this one.
+        stackSize = 16 << 20
+    }
+    override func main() {
+        loop = CFRunLoopGetCurrent()
+        // A run loop with nothing to wait on returns at once; this source keeps it running until `stop`.
+        var context = CFRunLoopSourceContext()
+        CFRunLoopAddSource(loop, CFRunLoopSourceCreate(nil, 0, &context), .defaultMode)
+        started.signal()
+        CFRunLoopRun()
+    }
+    /// Starts the thread and returns once its run loop can take work.
+    func begin() { start(); started.wait() }
+    /// Runs `work` on this thread, after the work already asked for.
+    func run(_ work: @escaping () -> Void) {
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) { autoreleasepool(invoking: work) }
+        CFRunLoopWakeUp(loop)
+    }
+    /// Runs `work` on this thread `seconds` from now, unless the returned timer is invalidated first.
+    func after(_ seconds: Double, _ work: @escaping () -> Void) -> CFRunLoopTimer {
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + seconds, 0, 0, 0) { _ in autoreleasepool(invoking: work) }!
+        CFRunLoopAddTimer(loop, timer, .defaultMode)
+        return timer
+    }
+}
+
+/// One zig-js context per STX window, on its own thread. No DOM and no browser view.
 final class CraftMacRuntime {
     /// What this host offers a screen. `web` (tabs in a `<WebView>`) only in a build made with `webkit: true`.
     static var capabilities: [String] {
@@ -96,51 +132,63 @@ final class CraftMacRuntime {
         #endif
         return list
     }
-    /// zig-js's precise collector, not the default arena: an arena frees nothing until the
-    /// context goes, so a window open all day kept every object its screen ever made.
-    let context: ZigJSContext = {
-        let created = ZJSGlobalContextCreateGarbageCollected(true)!
-        defer { JSGlobalContextRelease(created) }
-        return ZigJSContext(jsGlobalContextRef: created)!
-    }()
     let route: String
     let network: CraftMacNetwork
-    weak var scene: CraftMacScene?
-    private var timers: [Int: DispatchWorkItem] = [:]
+    private let thread = CraftMacScriptThread()
+    // Script thread only: the context and what the screen asked of it.
+    private var context: ZigJSContext?
+    private var timers: [Int: CFRunLoopTimer] = [:]
     private var tasks: [String: URLSessionTask] = [:]
+    private var stopped = false
+    // Main thread only.
+    private(set) weak var scene: CraftMacScene?
+    /// What the screen drew or asked of AppKit before its window existed, done when it attaches.
+    private var held: [() -> Void] = []
     private var disposed = false
     var errors: [String] = []
     let document = CraftNativeMutationDocument()
 
-    init(route: String, params: [String: Any], network: CraftMacNetwork) {
+    /// Starts the screen's thread and makes its context there. `colorScheme` is the appearance the screen
+    /// starts with, read by the caller: AppKit's appearance can only be asked on the main thread.
+    init(route: String, params: [String: Any], network: CraftMacNetwork, colorScheme: String) {
         self.route = route
         self.network = network
+        thread.begin()
+        thread.run { self.setUp(params: params, colorScheme: colorScheme) }
+    }
+
+    private func setUp(params: [String: Any], colorScheme: String) {
+        // zig-js's precise collector, not the default arena: an arena frees nothing until the
+        // context goes, so a window open all day kept every object its screen ever made.
+        let created = ZJSGlobalContextCreateGarbageCollected(true)!
+        defer { JSGlobalContextRelease(created) }
+        let context = ZigJSContext(jsGlobalContextRef: created)!
+        self.context = context
         context.exceptionHandler = { [weak self] _, value in
             let message = value?.objectForKeyedSubscript("message")?.toString() ?? "Native script failed"
             let stack = value?.objectForKeyedSubscript("stack")?.toString() ?? ""
-            self?.errors.append(message)
+            self?.report(message)
             fputs("[craft native] \(message)\n\(stack)\n", stderr)
         }
         let post: @convention(block) (String) -> Void = { [weak self] text in self?.receive(text) }
         let schedule: @convention(block) (Int, Double) -> Void = { [weak self] id, delay in
-            guard let self, !self.disposed else { return }
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, self.timers.removeValue(forKey: id) != nil, !self.disposed else { return }
+            guard let self, !self.stopped else { return }
+            self.timers[id] = self.thread.after(max(0, min(delay.isFinite ? delay : 0, 2_147_483_647)) / 1000) { [weak self] in
+                guard let self, self.timers.removeValue(forKey: id) != nil, !self.stopped else { return }
                 CraftTrace.span("js timer", atLeast: 1) {
-                    self.context.objectForKeyedSubscript("__craftNativeFireTimer")?.call(withArguments: [id])
-                    ZJSContextRunMicrotasks(self.context)
+                    self.context?.objectForKeyedSubscript("__craftNativeFireTimer")?.call(withArguments: [id])
+                    self.context.map { ZJSContextRunMicrotasks($0) }
                 }
             }
-            self.timers[id] = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, min(delay.isFinite ? delay : 0, 2_147_483_647)) / 1000, execute: work)
         }
-        let cancel: @convention(block) (Int) -> Void = { [weak self] id in self?.timers.removeValue(forKey: id)?.cancel() }
+        let cancel: @convention(block) (Int) -> Void = { [weak self] id in self?.timers.removeValue(forKey: id).map(CFRunLoopTimerInvalidate) }
         let log: @convention(block) (String, String) -> Void = { [weak self] level, text in
-            if level == "error" { self?.errors.append(text) }
+            if level == "error" { self?.report(text) }
             fputs("[stx \(level)] \(text)\n", stderr)
         }
         // The synchronous halves of craft.storage and craft.secureStorage
         // (getSync/setSync), which the stx runtime keeps when the host has them.
+        // UserDefaults and the Keychain answer on any thread.
         let storageGet: @convention(block) (String) -> String? = { key in
             guard let value = UserDefaults.standard.object(forKey: "craft.native." + key) else { return nil }
             if let text = value as? String { return text }
@@ -162,7 +210,7 @@ final class CraftMacRuntime {
             "platform": "macos", "mutationProtocolVersion": 1, "capabilityProtocolVersion": 1,
             "capabilityTimeoutMs": 30_000, "capabilities": Self.capabilities,
             "sessionTokenKey": "auth.token",
-            "initialAppState": "active", "colorScheme": CraftMacColor.isDark ? "dark" : "light",
+            "initialAppState": "active", "colorScheme": colorScheme,
             "appURL": network.base.absoluteString, "appVersion": info["CFBundleShortVersionString"] as? String ?? "", "appBuild": info["CFBundleVersion"] as? String ?? ""
         ]
         let bridgeJSON = String(data: try! JSONSerialization.data(withJSONObject: bridge), encoding: .utf8)!
@@ -203,9 +251,33 @@ final class CraftMacRuntime {
         """)
     }
 
-    func load(_ bundle: String) {
-        startProfileIfAsked()
-        CraftTrace.span("bundle evaluated") { context.evaluateScript(bundle); ZJSContextRunMicrotasks(context) }
+    /// Evaluates the screen's bundle on its thread, knowing the window's content size first: `md:`/`lg:`
+    /// classes and `matchMedia` are right on the first frame, before the window exists.
+    func load(_ bundle: String, viewport: CGSize) {
+        thread.run {
+            guard let context = self.context else { return }
+            context.evaluateScript("__stxNativeBridge.viewportWidth = \(Double(viewport.width)); __stxNativeBridge.viewportHeight = \(Double(viewport.height));")
+            self.startProfileIfAsked()
+            CraftTrace.span("bundle evaluated") { context.evaluateScript(bundle); ZJSContextRunMicrotasks(context) }
+        }
+    }
+
+    /// Evaluates `script` in the screen's context, after the messages already sent to it.
+    func evaluate(_ script: String) { thread.run { _ = self.context?.evaluateScript(script) } }
+
+    /// A script error, kept for the test driver's snapshot, which reads it on the main thread.
+    private func report(_ message: String) { DispatchQueue.main.async { self.errors.append(message) } }
+
+    /// The screen's window exists: what the screen drew before it is drawn now, into its views.
+    func attach(_ scene: CraftMacScene) {
+        self.scene = scene
+        let waiting = held; held.removeAll()
+        waiting.forEach { $0() }
+    }
+    /// On the main thread: `work` now if the window exists, else when it attaches.
+    private func whenAttached(_ work: @escaping () -> Void) {
+        guard !disposed else { return }
+        if scene != nil { work() } else { held.append(work) }
     }
 
     /// `CRAFT_JS_PROFILE=<file>`: sample this screen's JavaScript from the moment its bundle loads,
@@ -214,14 +286,14 @@ final class CraftMacRuntime {
     /// than Main writes beside it, its route in the name.
     private func startProfileIfAsked() {
         let env = ProcessInfo.processInfo.environment
-        guard let path = env["CRAFT_JS_PROFILE"], !path.isEmpty, let ref = context.jsGlobalContextRef else { return }
+        guard let path = env["CRAFT_JS_PROFILE"], !path.isEmpty, let ref = context?.jsGlobalContextRef else { return }
         guard ZJSContextStartCPUProfile(ref, UInt32(env["CRAFT_JS_PROFILE_INTERVAL_US"] ?? "") ?? 0) else { return }
         let seconds = (Double(env["CRAFT_JS_PROFILE_MS"] ?? "") ?? 5000) / 1000
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in self?.writeProfile(to: path) }
+        _ = thread.after(seconds) { [weak self] in self?.writeProfile(to: path) }
     }
 
     private func writeProfile(to path: String) {
-        guard !disposed, let ref = context.jsGlobalContextRef, let json = ZJSContextStopCPUProfile(ref) else { return }
+        guard !stopped, let ref = context?.jsGlobalContextRef, let json = ZJSContextStopCPUProfile(ref) else { return }
         defer { JSStringRelease(json) }
         let size = JSStringGetMaximumUTF8CStringSize(json)
         var bytes = [CChar](repeating: 0, count: size)
@@ -235,28 +307,38 @@ final class CraftMacRuntime {
         catch { fputs("[craft] could not write the JavaScript profile to \(target.path): \(error)\n", stderr) }
     }
 
+    /// Unmounts the screen and stops its thread. Waits (a little) for the unmount, as a quit would.
     func dispose() {
         guard !disposed else { return }
+        disposed = true
         #if CRAFT_WEBKIT
         CraftMacWebTabs.shared.closeAll(owner: self)
         #endif
-        context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])
-        disposed = true
-        timers.values.forEach { $0.cancel() }; timers.removeAll()
-        tasks.values.forEach { $0.cancel() }; tasks.removeAll()
         network.cancelStreams(owner: self)
+        let done = DispatchSemaphore(value: 0)
+        thread.run {
+            self.context?.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])
+            self.stopped = true
+            self.timers.values.forEach(CFRunLoopTimerInvalidate); self.timers.removeAll()
+            self.tasks.values.forEach { $0.cancel() }; self.tasks.removeAll()
+            // Released on the thread that made it.
+            self.context = nil
+            done.signal()
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
+        _ = done.wait(timeout: .now() + 2)
     }
 
+    /// A message for the screen, from any thread: delivered on its thread, in the order sent.
     func send(_ type: String, _ payload: [String: Any], correlation: String? = nil) {
-        guard !disposed else { return }
         var message: [String: Any] = ["id": UUID().uuidString, "type": type, "timestamp": Date().timeIntervalSince1970 * 1000, "source": "native", "payload": payload]
         if let correlation { message["correlationId"] = correlation }
         guard let bytes = try? JSONSerialization.data(withJSONObject: message), let text = String(data: bytes, encoding: .utf8) else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, !self.disposed else { return }
+        thread.run { [weak self] in
+            guard let self, !self.stopped, let context = self.context else { return }
             CraftTrace.span("js \(type)", atLeast: 1) {
-                self.context.objectForKeyedSubscript("__stxNativeCallback")?.call(withArguments: [text])
-                ZJSContextRunMicrotasks(self.context)
+                context.objectForKeyedSubscript("__stxNativeCallback")?.call(withArguments: [text])
+                ZJSContextRunMicrotasks(context)
             }
         }
     }
@@ -266,8 +348,30 @@ final class CraftMacRuntime {
         send("EVENT", ["handlerId": id, "nativeEvent": payload])
     }
 
+    /// A message from the screen, on its thread. Network requests start here, so a screen's first fetch
+    /// leaves while AppKit is still launching; whatever draws or needs AppKit goes to the main thread.
     private func receive(_ text: String) {
         guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let payload = message["payload"] as? [String: Any] ?? [:]
+        switch message["type"] as? String {
+        case "RENDER", "MUTATE": DispatchQueue.main.async { self.whenAttached { self.handle(message) } }
+        case "API_REQUEST":
+            guard let id = message["id"] as? String else { return }
+            guard payload["version"] as? Int == 1 else { fail(id, "UNSUPPORTED_VERSION", "Native capability version must be 1"); return }
+            let module = payload["module"] as? String ?? "", method = payload["method"] as? String ?? "", args = payload["args"] as? [Any] ?? []
+            switch module {
+            case "Network": fetch(id, method, args)
+            case "Storage", "SecureStorage": store(id, module, method, args)
+            default: DispatchQueue.main.async { self.whenAttached { self.perform(id, module, method, args) } }
+            }
+        case "API_CANCEL":
+            if let id = payload["requestId"] as? String { tasks.removeValue(forKey: id)?.cancel() }
+        default: break
+        }
+    }
+
+    /// A tree or a batch, on the main thread.
+    private func handle(_ message: [String: Any]) {
         let payload = message["payload"] as? [String: Any] ?? [:]
         switch message["type"] as? String {
         case "RENDER":
@@ -286,12 +390,6 @@ final class CraftMacRuntime {
             } } catch let error as CraftNativeMutationFailure {
                 send("MUTATION_ERROR", ["version": 1, "batchId": payload["batchId"] ?? "", "code": error.code, "message": error.message])
             } catch { errors.append(error.localizedDescription) }
-        case "API_REQUEST":
-            guard let id = message["id"] as? String else { return }
-            guard payload["version"] as? Int == 1 else { fail(id, "UNSUPPORTED_VERSION", "Native capability version must be 1"); return }
-            perform(id, payload["module"] as? String ?? "", payload["method"] as? String ?? "", payload["args"] as? [Any] ?? [])
-        case "API_CANCEL":
-            if let id = payload["requestId"] as? String { tasks.removeValue(forKey: id)?.cancel() }
         default: break
         }
     }
@@ -299,41 +397,46 @@ final class CraftMacRuntime {
     /// `craft.session.onChange`: the sign-in token moved, in any window.
     private func sessionChanged(_ key: String, token: String?, previous: String?) {
         guard key == "auth.token", token != previous else { return }
-        for scene in CraftMacApplication.shared.scenes.values {
-            scene.runtime.send("SESSION_CHANGED", ["key": key, "token": token ?? NSNull(), "previous": previous ?? NSNull()])
+        DispatchQueue.main.async {
+            for scene in CraftMacApplication.shared.scenes.values {
+                scene.runtime.send("SESSION_CHANGED", ["key": key, "token": token ?? NSNull(), "previous": previous ?? NSNull()])
+            }
         }
     }
 
+    /// An answer to the screen's request `id`, from any thread.
     func answer(_ id: String, _ value: Any = NSNull()) {
-        tasks.removeValue(forKey: id)
+        thread.run { self.tasks.removeValue(forKey: id) }
         send("API_RESPONSE", ["version": 1, "requestId": id, "data": value], correlation: id)
     }
     func fail(_ id: String, _ code: String, _ message: String) {
-        tasks.removeValue(forKey: id)
+        thread.run { self.tasks.removeValue(forKey: id) }
         send("API_ERROR", ["version": 1, "requestId": id, "code": code, "message": message], correlation: id)
     }
 
-    private func perform(_ id: String, _ module: String, _ method: String, _ args: [Any]) {
+    /// `Network` requests, on the script thread. Their answers come back on the network's own queue.
+    private func fetch(_ id: String, _ method: String, _ args: [Any]) {
         let options = args.first as? [String: Any] ?? [:]
+        if method == "cancelStream" { network.cancelStream(args.first as? String ?? "", owner: self); answer(id); return }
+        guard let request = network.request(options) else { fail(id, "INVALID_ARGUMENT", "Network.fetch requires an HTTP URL"); return }
+        if method == "stream" {
+            network.stream(request, id: options["id"] as? String ?? id, owner: self, requestId: id)
+            return
+        }
+        guard method == "fetch" else { fail(id, "UNSUPPORTED_METHOD", method); return }
+        let task = network.session.dataTask(with: request) { [weak self] data, response, error in
+            guard let self else { return }
+            if let error { self.fail(id, "NETWORK_ERROR", error.localizedDescription); return }
+            guard let http = response as? HTTPURLResponse else { self.fail(id, "NETWORK_ERROR", "Invalid HTTP response"); return }
+            if (data?.count ?? 0) > 32 * 1024 * 1024 { self.fail(id, "RESPONSE_TOO_LARGE", "Response exceeds 32 MB"); return }
+            self.answer(id, CraftMacNetwork.response(http, original: request.url, body: String(decoding: data ?? Data(), as: UTF8.self)))
+        }
+        tasks[id] = task; task.resume()
+    }
+
+    /// `Storage` and `SecureStorage`, on the script thread: UserDefaults and the Keychain answer on any.
+    private func store(_ id: String, _ module: String, _ method: String, _ args: [Any]) {
         switch module {
-        case "Network":
-            if method == "cancelStream" { network.cancelStream(args.first as? String ?? "", owner: self); answer(id); return }
-            guard let request = network.request(options) else { fail(id, "INVALID_ARGUMENT", "Network.fetch requires an HTTP URL"); return }
-            if method == "stream" {
-                network.stream(request, id: options["id"] as? String ?? id, owner: self, requestId: id)
-                return
-            }
-            guard method == "fetch" else { fail(id, "UNSUPPORTED_METHOD", method); return }
-            let task = network.session.dataTask(with: request) { [weak self] data, response, error in
-                DispatchQueue.main.async {
-                    guard let self, !self.disposed else { return }
-                    if let error { self.fail(id, "NETWORK_ERROR", error.localizedDescription); return }
-                    guard let http = response as? HTTPURLResponse else { self.fail(id, "NETWORK_ERROR", "Invalid HTTP response"); return }
-                    if (data?.count ?? 0) > 32 * 1024 * 1024 { self.fail(id, "RESPONSE_TOO_LARGE", "Response exceeds 32 MB"); return }
-                    self.answer(id, CraftMacNetwork.response(http, original: request.url, body: String(decoding: data ?? Data(), as: UTF8.self)))
-                }
-            }
-            tasks[id] = task; task.resume()
         case "SecureStorage":
             if method == "clear" { CraftMacKeychain.remove(nil); answer(id, true); return }
             guard let key = args.first as? String, !key.isEmpty else { fail(id, "INVALID_ARGUMENT", "Secure storage needs a non-empty key"); return }
@@ -360,6 +463,15 @@ final class CraftMacRuntime {
             case "keys": answer(id, UserDefaults.standard.dictionaryRepresentation().keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
             default: fail(id, "UNSUPPORTED_METHOD", method)
             }
+        default: break
+        }
+    }
+
+    /// Every other capability, on the main thread.
+    private func perform(_ id: String, _ module: String, _ method: String, _ args: [Any]) {
+        guard !disposed else { return }
+        let options = args.first as? [String: Any] ?? [:]
+        switch module {
         case "Clipboard":
             if method == "read" { answer(id, NSPasteboard.general.string(forType: .string) ?? "") }
             else { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(args.first as? String ?? "", forType: .string); answer(id) }
@@ -386,15 +498,23 @@ final class CraftMacRuntime {
 /// A session shared by native windows, with an isolated, HttpOnly cookie store.
 final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
     let base: URL
-    lazy var session: URLSession = {
+    /// Where the session answers: a queue of its own rather than the main one, so a screen hears a
+    /// response while AppKit is busy (or still launching). Stream bookkeeping happens on it too.
+    private let queue: OperationQueue = {
+        let queue = OperationQueue(); queue.name = "craft.network"; queue.maxConcurrentOperationCount = 1; queue.qualityOfService = .userInitiated
+        return queue
+    }()
+    private(set) var session: URLSession!
+    private struct Stream { let id: String; weak var owner: CraftMacRuntime?; let requestId: String; var opened: Bool = false; var carry = Data() }
+    private var streams: [Int: Stream] = [:]
+    init(base: URL) {
+        self.base = base
+        super.init()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 300
         configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
-        return URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
-    }()
-    private struct Stream { let id: String; weak var owner: CraftMacRuntime?; let requestId: String; var opened: Bool = false; var carry = Data() }
-    private var streams: [Int: Stream] = [:]
-    init(base: URL) { self.base = base }
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+    }
     func request(_ options: [String: Any]) -> URLRequest? {
         guard let address = options["url"] as? String, let url = URL(string: address, relativeTo: base)?.absoluteURL,
               ["http", "https"].contains(url.scheme ?? ""), url.host != nil else { return nil }
@@ -412,14 +532,15 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
     }
     func stream(_ request: URLRequest, id: String, owner: CraftMacRuntime, requestId: String) {
         let task = session.dataTask(with: request)
-        streams[task.taskIdentifier] = Stream(id: id, owner: owner, requestId: requestId)
-        task.resume()
+        queue.addOperation { self.streams[task.taskIdentifier] = Stream(id: id, owner: owner, requestId: requestId); task.resume() }
     }
     func cancelStream(_ id: String, owner: CraftMacRuntime) {
-        let identifiers = streams.filter { $0.value.id == id && $0.value.owner === owner }.map(\.key)
-        session.getAllTasks { tasks in DispatchQueue.main.async { for task in tasks where identifiers.contains(task.taskIdentifier) { self.streams.removeValue(forKey: task.taskIdentifier); task.cancel() } } }
+        queue.addOperation {
+            let identifiers = self.streams.filter { $0.value.id == id && $0.value.owner === owner }.map(\.key)
+            self.session.getAllTasks { tasks in self.queue.addOperation { for task in tasks where identifiers.contains(task.taskIdentifier) { self.streams.removeValue(forKey: task.taskIdentifier); task.cancel() } } }
+        }
     }
-    func cancelStreams(owner: CraftMacRuntime) { for stream in streams.values where stream.owner === owner { cancelStream(stream.id, owner: owner) } }
+    func cancelStreams(owner: CraftMacRuntime) { queue.addOperation { for stream in self.streams.values where stream.owner === owner { self.cancelStream(stream.id, owner: owner) } } }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
         guard var stream = streams[dataTask.taskIdentifier] else { completionHandler(.allow); return }
         guard let http = response as? HTTPURLResponse else { completionHandler(.cancel); stream.owner?.fail(stream.requestId, "NETWORK_ERROR", "Invalid stream response"); return }

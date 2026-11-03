@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import ZigJS
 import CoreImage
 import UserNotifications
 import UniformTypeIdentifiers
@@ -23,13 +24,17 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     var holdsQuit = false
     /// The content width the screen last heard, so a resize that changes nothing sends nothing.
     var reportedViewportWidth: CGFloat = -1
-    init(name: String, route: String, options: [String: Any], application: CraftMacApplication) {
+    /// `runtime` is the screen already started for this window (the main one starts before AppKit has
+    /// launched); without one the screen starts here, and evaluates its bundle while the window is made.
+    init(name: String, route: String, options: [String: Any], application: CraftMacApplication, runtime prepared: CraftMacRuntime? = nil) {
         CraftTrace.mark("scene \(name)")
         self.name = name
-        runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: application.network)
-        renderer = CraftMacRenderer(runtime: runtime)
         let width = number(options["width"]) ?? 1120, height = number(options["height"]) ?? 740
         let transparent = (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent"
+        let viewport = Self.contentSize(options: options, application: application, name: name)
+        runtime = prepared ?? application.startScreen(route: route, options: options, viewport: viewport, colorScheme: CraftMacColor.isDark ? "dark" : "light")
+        reportedViewportWidth = viewport.width
+        renderer = CraftMacRenderer(runtime: runtime)
         let lights = options["trafficLights"] as? [Any] ?? (name == "main" ? application.trafficLights : nil)
         trafficLights = lights.flatMap { values in values.count == 2 ? number(values[0]).flatMap { x in number(values[1]).map { CGPoint(x: x, y: $0) } } : nil }
         let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
@@ -37,7 +42,7 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         window = panel
         CraftTrace.mark("window created")
         super.init()
-        runtime.scene = self; renderer.window = window
+        renderer.window = window
         window.title = options["title"] as? String ?? application.appName
         if (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent" {
             window.titlebarAppearsTransparent = true
@@ -50,14 +55,37 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         renderer.root.autoresizingMask = [.width, .height]
         window.contentView = renderer.root
         window.delegate = self; window.center()
-        if name == "main" && application.testDirectory == nil { window.setFrameAutosaveName("\(application.appName)NativeMain") }
+        if let autosave = Self.autosaveName(name: name, application: application) { window.setFrameAutosaveName(autosave) }
+        // Whatever the screen drew while the window was made is in it before it shows.
+        runtime.attach(self)
         CraftTrace.span("window ordered front") { window.makeKeyAndOrderFront(nil) }
         placeTrafficLights()
-        // The screen starts knowing its width, so `md:`/`lg:` classes and `matchMedia` are right on the first frame.
+        // The screen started with the size this window was expected to open at; a saved frame the
+        // screen cannot fit, or a smaller display, makes it another, which the screen now hears.
         let size = window.contentLayoutRect.size
-        reportedViewportWidth = size.width
-        runtime.context.evaluateScript("__stxNativeBridge.viewportWidth = \(Double(size.width)); __stxNativeBridge.viewportHeight = \(Double(size.height));")
-        runtime.load(application.bundle)
+        if abs(size.width - viewport.width) >= 0.5 || abs(size.height - viewport.height) >= 0.5 {
+            reportedViewportWidth = size.width
+            runtime.send("VIEWPORT", ["width": Double(size.width), "height": Double(size.height)])
+        }
+    }
+
+    static func autosaveName(name: String, application: CraftMacApplication) -> String? {
+        name == "main" && application.testDirectory == nil ? "\(application.appName)NativeMain" : nil
+    }
+
+    /// The content size (below the title bar) the window will open at, known before it exists: the size
+    /// asked for, or the frame AppKit saved for it last time. Its screen starts with it.
+    static func contentSize(options: [String: Any], application: CraftMacApplication, name: String) -> CGSize {
+        let transparent = (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent"
+        let titlebar = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled]).height - 100
+        let width = number(options["width"]) ?? 1120, height = number(options["height"]) ?? 740
+        // `x y width height` of the frame, then the screen's.
+        if let autosave = autosaveName(name: name, application: application),
+           let saved = UserDefaults.standard.string(forKey: "NSWindow Frame \(autosave)")?.split(separator: " ").compactMap({ Double($0) }), saved.count >= 4 {
+            return CGSize(width: saved[2], height: max(0, saved[3] - titlebar))
+        }
+        // A full-size content view runs under the title bar, which its layout rect leaves out.
+        return CGSize(width: width, height: transparent ? max(0, height - titlebar) : height)
     }
 
     /// Tells the screen its new width (VIEWPORT, as a phone does on rotation): only when the width changed,
@@ -130,6 +158,11 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var testMenu: [[String: Any]] = []
     var testMenuChoice: String?
     var appearanceObservation: NSKeyValueObservation?
+    /// The main window's screen, started before AppKit launched, waiting for its window.
+    var preparedMain: CraftMacRuntime?
+    /// The appearance it started with, which AppKit could not be asked yet.
+    var preparedColorScheme = ""
+    var mainOptions: [String: Any] { mainWindowOptions.merging(["title": appName]) { _, new in new } }
     /// A quit waiting for screens to finish (`craft.desktop.onQuit`), for at most `quitGrace` seconds.
     private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
     static let quitGrace: TimeInterval = 3
@@ -143,7 +176,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         }
         NSApp.activate(ignoringOtherApps: true)
         if !requiresSession {
-            open(name: "main", route: initialRoute, options: mainWindowOptions.merging(["title": appName]) { _, new in new })
+            open(name: "main", route: initialRoute, options: mainOptions)
+            if preparedColorScheme != (CraftMacColor.isDark ? "dark" : "light") { appearanceChanged() }
             startTestDriver()
             return
         }
@@ -157,7 +191,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
                     let alert = NSAlert(); alert.messageText = "Could not connect to the app"; alert.informativeText = error?.localizedDescription ?? "The local agent did not issue a native session."; alert.runModal(); NSApp.terminate(nil); return
                 }
-                self.open(name: "main", route: self.initialRoute, options: self.mainWindowOptions.merging(["title": self.appName]) { _, new in new })
+                self.open(name: "main", route: self.initialRoute, options: self.mainOptions)
                 self.startTestDriver()
             }
         }.resume()
@@ -217,7 +251,24 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     }
     func open(name: String, route: String, options: [String: Any]) {
         if let scene = scenes[name] { scene.window.makeKeyAndOrderFront(nil); return }
-        scenes[name] = CraftMacScene(name: name, route: route, options: options, application: self)
+        let prepared = name == "main" ? preparedMain : nil
+        if prepared != nil { preparedMain = nil }
+        scenes[name] = CraftMacScene(name: name, route: route, options: options, application: self, runtime: prepared)
+    }
+    /// A screen's thread and context, its bundle evaluated as soon as the thread can.
+    func startScreen(route: String, options: [String: Any], viewport: CGSize, colorScheme: String) -> CraftMacRuntime {
+        let runtime = CraftMacRuntime(route: route, params: options["params"] as? [String: Any] ?? [:], network: network, colorScheme: colorScheme)
+        runtime.load(bundle, viewport: viewport)
+        return runtime
+    }
+    /// Starts the main window's screen before AppKit launches: connecting to the window server and
+    /// launching take a few hundred milliseconds, most of them waiting, and the screen evaluates its
+    /// bundle, mounts and sends its first requests meanwhile. Its tree is drawn when the window opens.
+    func prepareMainScreen() {
+        // NSApp does not exist yet, so the system's setting stands in for AppKit's appearance;
+        // launching checks it against AppKit's.
+        preparedColorScheme = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" ? "dark" : "light"
+        preparedMain = startScreen(route: initialRoute, options: mainOptions, viewport: CraftMacScene.contentSize(options: mainOptions, application: self, name: "main"), colorScheme: preparedColorScheme)
     }
     /// A menu command goes to the window it was chosen in (the key window), else the main one: with
     /// two windows of the same screen open, cmd-T opens one tab, not one in each.
@@ -236,7 +287,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             // AppKit lays the title bar out again for the new appearance, after this returns.
             scene.placeTrafficLights()
             DispatchQueue.main.async { [weak scene] in scene?.placeTrafficLights() }
-            scene.runtime.context.evaluateScript("__stxNativeBridge.colorScheme = '\(scheme)';")
+            scene.runtime.evaluate("__stxNativeBridge.colorScheme = '\(scheme)';")
             // The protocol's own message: the screen restyles its `dark:` classes and tells `craft.appearance.onChange`.
             scene.runtime.send("APPEARANCE", ["colorScheme": scheme])
             scene.window.effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -559,7 +610,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 return node
             }
             func classes(_ view: NSView) -> [String] { [String(describing: type(of: view))] + view.subviews.flatMap(classes) }
-            return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: type(of: scene.runtime.context)), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "viewportWidth": Double(scene.reportedViewportWidth), "errors": scene.runtime.errors]
+            return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: ZigJSContext.self), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "viewportWidth": Double(scene.reportedViewportWidth), "errors": scene.runtime.errors]
         }
         let webViews = windows.reduce(0) { count, window in count + ((window["viewClasses"] as? [String] ?? []).filter { $0.contains("WKWebView") || $0 == "WebView" }.count) }
         return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews, "menu": testMenu]
@@ -601,6 +652,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.network = CraftMacNetwork(base: api)
         let testDirectory = argument("--test-dir")
         if !testDirectory.isEmpty { application.testDirectory = URL(fileURLWithPath: testDirectory, isDirectory: true) }
+        if !application.requiresSession { application.prepareMainScreen() }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular); app.delegate = application; app.run()
     }
