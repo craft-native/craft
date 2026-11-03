@@ -134,6 +134,7 @@ internal class CraftNativeServices(
         if (config.optBoolean("enableKeepAwake")) add("keepAwake")
         if (config.optBoolean("enableGeolocation") || config.optBoolean("enableBackgroundLocation")) {
             add("geolocation")
+            if (config.optBoolean("enableBarometer") && config.optBoolean("enableBackgroundLocation")) add("locationRecordingBarometer")
             if (CraftNative.supportsRecordingOwnership()) add("locationRecordingOwnership")
             if (CraftNative.supportsRecordingIntentIdentity()) add("locationRecordingIntentIdentity")
             if (CraftNative.supportsRecordingPowerMode()) add("locationRecordingPowerMode")

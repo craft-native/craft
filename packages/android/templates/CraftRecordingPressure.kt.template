@@ -24,7 +24,7 @@ object CraftRecordingPressure {
         if (!config.optBoolean("enableBarometer") || !config.optBoolean("enableBackgroundLocation"))
             throw CraftRecordingException("CAPABILITY_DISABLED", "Recording pressure requires enableBarometer and enableBackgroundLocation")
         val manager = context.getSystemService(SensorManager::class.java)
-        if (manager?.getDefaultSensor(Sensor.TYPE_PRESSURE) == null)
+        if (manager?.getDefaultSensor(Sensor.TYPE_PRESSURE, true) == null && manager?.getDefaultSensor(Sensor.TYPE_PRESSURE) == null)
             throw CraftRecordingException("UNAVAILABLE", "Barometer is not present")
     }
     // Callers also hold the recording-store lock to serialize owner/ACK changes.
@@ -57,6 +57,7 @@ internal interface CraftRecordingPressureSource {
 
 private class AndroidRecordingPressureSource(private val context: Context) : CraftRecordingPressureSource {
     override fun open(sample: (Float, Long) -> Unit): AutoCloseable {
+        CraftRecordingPressure.requireAvailable(context)
         val manager = context.getSystemService(SensorManager::class.java)
             ?: throw IllegalStateException("Sensor manager unavailable")
         val sensor = manager.getDefaultSensor(Sensor.TYPE_PRESSURE, true)
@@ -148,7 +149,8 @@ internal class CraftRecordingPressureSession(
     fun close() {
         if (closed) return
         closed = true
-        registration?.close()
+        runCatching { registration?.close() }
+            .onFailure { android.util.Log.e("CraftLocation", "Unable to unregister pressure listener", it) }
         registration = null
     }
 }

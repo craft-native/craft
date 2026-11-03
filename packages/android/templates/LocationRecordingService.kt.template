@@ -112,7 +112,7 @@ object CraftLocationRecordingStore {
         if (saved.exists() && !saved.delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove acknowledged recording")
         CraftRecordingPressure.delete(context, id)
         if (file(context).exists() && !file(context).delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove acknowledged samples")
-        edit(context) { it.remove("id").remove("startedAt").putBoolean("active", false).putBoolean("paused", false) }
+        edit(context) { it.remove("id").remove("startedAt").remove("barometer").remove("barometerError").putBoolean("active", false).putBoolean("paused", false) }
         listener = null
     }
 
@@ -222,7 +222,7 @@ object CraftLocationRecordingStore {
         CraftRecordingPressure.delete(context, id)
         if (current) {
             if (file(context).exists() && !file(context).delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove recording samples")
-            edit(context) { it.remove("id").remove("startedAt").putBoolean("active", false).putBoolean("paused", false) }
+            edit(context) { it.remove("id").remove("startedAt").remove("barometer").remove("barometerError").putBoolean("active", false).putBoolean("paused", false) }
             listener = null
         }
         return true

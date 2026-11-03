@@ -138,6 +138,36 @@ class NativeRecordingTest {
         assertEquals("registration refused", Store.state(context).getString("barometerError"))
     }
 
+    @Test fun pressureCapabilityRequiresBothOptInsAndAcknowledgementClearsItsState() = fixture { context, _ ->
+        for (pressure in listOf(false, true)) for (background in listOf(false, true)) {
+            val host = CraftNativeServices(context, JSONObject().put("enableBarometer", pressure)
+                .put("enableBackgroundLocation", background).put("enableGeolocation", true)) { null }
+            try { assertEquals(pressure && background, host.names().contains("locationRecordingBarometer")) }
+            finally { host.close() }
+        }
+        Store.start(context, "pressure-ack", 1, barometer = true)
+        Store.finish(context, owner("pressure-ack"))
+        Store.acknowledge(context, owner("pressure-ack"))
+        assertFalse(Store.state(context).getBoolean("barometer"))
+        assertFalse(Store.state(context).has("barometerError"))
+    }
+
+    @Test fun pressureStorageFailureStopsTheOwnerAndReleasesItsSubscription() = fixture { context, root ->
+        Store.start(context, "pressure-disk", 1, barometer = true)
+        val source = PressureSource()
+        val session = CraftRecordingPressureSession(context, "pressure-disk", source)
+        session.start()
+        val journal = root.listFiles()!!.single { it.name.startsWith("craft-pressure-") }
+        assertTrue(journal.delete())
+        assertTrue(journal.mkdir()) // force the next native append to fail
+        source.deliver(1000f, 1_000_000_000)
+        assertFalse(Store.isActive(context))
+        assertTrue(Store.state(context).has("barometerError"))
+        assertEquals(1, source.closes)
+        source.deliver(999f, 2_000_000_000)
+        assertTrue(journal.isDirectory)
+    }
+
     @Test fun plannedIdentitySurvivesLostStartResponseAndRejectsReuse() = fixture { context, root ->
         val planned = UUID.randomUUID().toString()
         // Only permission and the OS service launch are isolated. The actual

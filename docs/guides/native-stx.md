@@ -1502,6 +1502,41 @@ begins a new reference. Route disposal unregisters the listener and discards
 late callbacks. Background route recording remains a separate capability;
 this API must not be represented as continuous screen-off recording.
 
+Android additionally advertises `locationRecordingBarometer` when both
+`enableBarometer` and `enableBackgroundLocation` are enabled. Opt a route into
+native pressure recording with `craft.location.startRecording({ barometer: true })`.
+Check that capability first; older hosts and iOS do not implement this option.
+This is owned by the location foreground service, independent of the screen,
+WebView, and JavaScript event listeners. The ordinary `craft.barometer` stream
+and its `background: false` contract remain unchanged.
+
+The recorder requests one pressure sample per second and journals accepted
+samples to private app storage. `stopRecording()` includes `barometerEvents`;
+recover them with `getRecordingState({ expectedId, includeBarometerSamples: true })`.
+`readRecording()` continues returning GPS points. Acknowledging the recording
+deletes both journals, and starting another recording preserves the old owner's
+pressure data until it is acknowledged. Pressure failures stop the recording
+and expose `barometerError` rather than silently continuing GPS-only.
+
+Each pressure sample has `recordingId`, `segmentId`, `pressureHpa`,
+`referencePressureHpa`, `relativeAltitudeMeters`, monotonic `timestampMs`, and
+wall-clock receipt `timestamp`. Segment events mark start/recovery and gaps over
+three seconds; pause and stop produce explicit stopped events. Every new segment
+has a new reference. Do not accumulate altitude differences across segment IDs
+or use wall-clock receipt time as the measurement time. No gain smoothing or
+weather correction is performed by the host.
+
+Wake-up pressure hardware is preferred. A non-wake-up sensor requires a partial
+wake lock while the opted-in recording is running; the builder adds `WAKE_LOCK`
+only for this combination of flags (or an independent `enableKeepAwake` opt-in).
+Pause, stop, service destruction, and sensor/storage failure release the listener
+and lock. This costs battery and does not defeat user force-stop or OS process
+termination. A restored service starts a new segment. Native instrumentation
+covers journal and lifecycle logic with injected pressure; continuous screen-off
+hardware delivery still needs device validation. iOS recording-owned pressure
+remains a separate follow-up.
+
+
 #### Raw Android motion sensors
 
 Native Android screens can opt in with `enableMotionSensors: true`. The host
