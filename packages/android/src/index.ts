@@ -175,6 +175,8 @@ export interface CraftAndroidConfig {
   enableSecureStorage?: boolean
   enableGeolocation?: boolean
   enableBackgroundLocation?: boolean
+  /** Foreground raw Android sensors on native screens; separate from iOS fused motion. */
+  enableMotionSensors?: boolean
   enableBluetooth?: boolean
   /**
    * A Bluetooth heart-rate strap, or a watch broadcasting its heart rate (the
@@ -455,6 +457,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   enableSecureStorage: false,
   enableGeolocation: false,
   enableBackgroundLocation: false,
+  enableMotionSensors: false,
   enableBluetooth: false,
   enableHeartRate: false,
   enableHealthConnect: false,
@@ -835,6 +838,7 @@ function writeNativeShellSources(output: string, packagePath: string, packageNam
   write('CraftSnapshotFile.kt.template', 'CraftSnapshotFile.kt')
   write('CraftNativeImageCache.kt.template', 'CraftNativeImageCache.kt')
   write('CraftNativeHaptics.kt.template', 'CraftNativeHaptics.kt')
+  write('CraftNativeMotion.kt.template', 'CraftNativeMotion.kt')
   write('CraftNativeBackground.kt.template', 'CraftNativeBackground.kt')
   write(config.enableHealthConnect ? 'CraftNativeHealth.kt.template' : 'CraftNativeHealthStub.kt.template', 'CraftNativeHealth.kt')
   write(config.enableHealthServices ? 'CraftHealthServices.kt.template' : 'CraftHealthServicesStub.kt.template', 'CraftHealthServices.kt')

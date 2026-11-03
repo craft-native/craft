@@ -1,0 +1,121 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Registration owns its listener. Closing an old registration cannot stop a replacement. */
+internal interface CraftMotionRegistration { fun close() }
+internal interface CraftMotionSource {
+    fun available(type: Int): Boolean
+    fun register(type: Int, periodUs: Int, sample: (FloatArray, Long, Int) -> Unit): CraftMotionRegistration?
+}
+
+internal class CraftAndroidMotionSource(context: Context) : CraftMotionSource {
+    private val manager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    override fun available(type: Int): Boolean = manager?.getDefaultSensor(type) != null
+    override fun register(type: Int, periodUs: Int, sample: (FloatArray, Long, Int) -> Unit): CraftMotionRegistration? {
+        val manager = manager ?: return null
+        val sensor = manager.getDefaultSensor(type) ?: return null
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                sample(event.values.clone(), event.timestamp, event.accuracy)
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        try {
+            if (!manager.registerListener(listener, sensor, periodUs, Handler(Looper.getMainLooper()))) {
+                manager.unregisterListener(listener)
+                return null
+            }
+        } catch (error: Exception) {
+            manager.unregisterListener(listener)
+            throw error
+        }
+        return object : CraftMotionRegistration {
+            override fun close() { manager.unregisterListener(listener) }
+        }
+    }
+}
+
+/** Foreground, route-owned raw readings; deliberately distinct from iOS CMDeviceMotion. */
+internal class CraftNativeMotion(private val source: CraftMotionSource) {
+    private data class Kind(val type: Int, val unit: String)
+    private val kinds = linkedMapOf(
+        "accelerometer" to Kind(Sensor.TYPE_ACCELEROMETER, "m/s²"),
+        "gyroscope" to Kind(Sensor.TYPE_GYROSCOPE, "rad/s"),
+        "magnetometer" to Kind(Sensor.TYPE_MAGNETIC_FIELD, "µT"),
+        "rotationVector" to Kind(Sensor.TYPE_ROTATION_VECTOR, "quaternion"),
+    )
+    private class Stream { var registration: CraftMotionRegistration? = null }
+    private val streams = mutableMapOf<String, Stream>()
+    private var closed = false
+    var emit: (JSONObject) -> Unit = {}
+
+    fun perform(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        if (closed) return failure("HOST_CLOSED", "Motion host is closed")
+        return when (method) {
+            "getAvailability" -> CraftNativeCapabilityResult(data = JSONObject().apply {
+                kinds.forEach { (name, kind) -> put(name, source.available(kind.type)) }
+            })
+            "start" -> start(args.optJSONObject(0))
+            "stop" -> {
+                val name = args.opt(0) as? String
+                if (name !in kinds) failure("INVALID_ARGUMENT", "Unknown motion sensor")
+                else CraftNativeCapabilityResult(data = stop(name!!))
+            }
+            "stopAll" -> { stopAll(); CraftNativeCapabilityResult(data = true) }
+            else -> failure("UNKNOWN_ACTION", "Unsupported MotionSensors method")
+        }
+    }
+
+    private fun start(options: JSONObject?): CraftNativeCapabilityResult {
+        val name = options?.opt("sensor") as? String
+        val kind = kinds[name] ?: return failure("INVALID_ARGUMENT", "Unknown motion sensor")
+        val rawInterval = if (options?.has("intervalMs") == true) options.opt("intervalMs") else 100
+        val interval = (rawInterval as? Number)?.toDouble() ?: Double.NaN
+        // Do not silently opt an app into Android's high sampling-rate permission.
+        if (!interval.isFinite() || interval < 5 || interval > 60_000 || interval % 1 != 0.0) {
+            return failure("INVALID_ARGUMENT", "intervalMs must be an integer from 5 through 60000")
+        }
+        if (!source.available(kind.type)) return failure("UNAVAILABLE", "Sensor is not present: $name")
+        val stream = Stream()
+        val registration = try {
+            source.register(kind.type, (interval * 1000).toInt()) { values, timestamp, accuracy ->
+                // Android can still deliver a queued sample after unregisterListener.
+                if (!closed && streams[name] === stream && values.size >= 3) {
+                    val reading = if (kind.type == Sensor.TYPE_ROTATION_VECTOR) {
+                        val quaternion = FloatArray(4)
+                        SensorManager.getQuaternionFromVector(quaternion, values)
+                        JSONObject().put("w", quaternion[0]).put("x", quaternion[1])
+                            .put("y", quaternion[2]).put("z", quaternion[3])
+                    } else JSONObject().put("x", values[0]).put("y", values[1]).put("z", values[2])
+                    emit(JSONObject().put("sensor", name).put("values", reading).put("unit", kind.unit)
+                        .put("timestampMs", timestamp / 1_000_000.0).put("accuracy", accuracy))
+                }
+            }
+        } catch (error: Exception) {
+            return failure("SENSOR_ERROR", error.message ?: "Sensor registration failed")
+        } ?: return failure("UNAVAILABLE", "Sensor registration was rejected: $name")
+        stream.registration = registration
+        // Validate and acquire the replacement before retiring a working stream.
+        val previous = streams.put(name!!, stream)
+        previous?.registration?.close()
+        return CraftNativeCapabilityResult(data = true)
+    }
+
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+    private fun stop(name: String): Boolean {
+        val stream = streams.remove(name) ?: return false
+        stream.registration?.close()
+        return true
+    }
+    fun stopAll() { streams.keys.toList().forEach(::stop) }
+    fun close() { closed = true; stopAll(); emit = {} }
+}

@@ -4596,6 +4596,7 @@ class MainActivity : AppCompatActivity() {
         val capabilityTimeouts = mutableMapOf<String, Runnable>()
         val audio = CraftNativeAudio()
         val sounds = CraftNativeSounds(view.context)
+        var motion: CraftNativeMotion? = null
         val soundRequestCancellers = mutableMapOf<String, () -> Unit>()
         /** Snapshot writes awaiting the writer thread; close rejects them once. */
         val pendingSyncResults = mutableSetOf<String>()
@@ -4617,6 +4618,7 @@ class MainActivity : AppCompatActivity() {
             soundRequestCancellers.values.toList().forEach { it() }
             soundRequestCancellers.clear()
             sounds.close()
+            motion?.close()
             // Evaluation completion does not mean its outbound messages have
             // reached the host. Close only after the ordered channel barrier,
             // so onDestroy's final writes run before navigation continues.
@@ -4688,6 +4690,8 @@ class MainActivity : AppCompatActivity() {
     private var hapticsEnabled = false
     private var clipboardEnabled = false
     private var shakeEnabled = false
+    private var motionSensorsEnabled = false
+    private var motionForeground = false
     internal var nativeAppState = "inactive"
         private set
     private var deliveredInitialDeepLink = false
@@ -4761,6 +4765,7 @@ class MainActivity : AppCompatActivity() {
         hapticsEnabled = config.optBoolean("enableHaptics", false)
         clipboardEnabled = config.optBoolean("enableClipboard", false)
         shakeEnabled = config.optBoolean("enableShakeGesture", false)
+        motionSensorsEnabled = config.optBoolean("enableMotionSensors", false)
         // Normally started already by its content provider; this covers a
         // process that skipped providers (instrumentation).
         CraftCrashReporter.start(this)
@@ -5153,6 +5158,14 @@ class MainActivity : AppCompatActivity() {
         activeScreen.view.onLayoutChanged = {
             if (activeScreen.active) emitLayoutEvents(activeScreen)
         }
+        if (motionSensorsEnabled && !headless) {
+            activeScreen.motion = CraftNativeMotion(CraftAndroidMotionSource(this)).apply {
+                emit = { detail ->
+                    if (activeScreen.active && motionForeground) send(activeScreen, "CRAFT_EVENT",
+                        JSONObject().put("event", "craftRawMotionUpdate").put("detail", detail))
+                }
+            }
+        }
         activeScreen.sounds.emit = { payload ->
             if (activeScreen.active) send(activeScreen, "SOUND_EVENT", payload)
         }
@@ -5534,6 +5547,7 @@ class MainActivity : AppCompatActivity() {
     private fun capabilityNames(): JSONArray = capabilities.names().apply {
         services.names().forEach { name -> put(name) }
         put("audio")
+        if (motionSensorsEnabled) put("rawMotionSensors")
         put("viewFocus")
         put("viewMeasure")
         put("viewScroll")
@@ -8039,6 +8053,17 @@ class MainActivity : AppCompatActivity() {
         val method = payload.optString("method")
         val perform: ((CraftNativeCapabilityResult) -> Unit) -> Unit = if (module == "View") {
             { completion -> performView(screen, method, args, completion) }
+        } else if (module == "MotionSensors") {
+            { completion ->
+                val motion = screen.motion
+                completion(if (!motionSensorsEnabled) {
+                    CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Motion sensors are disabled")
+                } else if (motion == null) {
+                    CraftNativeCapabilityResult(code = "NEEDS_ACTIVITY", message = "Motion sensors need a visible app")
+                } else if (method == "start" && !motionForeground) {
+                    CraftNativeCapabilityResult(code = "APP_INACTIVE", message = "Motion sensors need a foreground app")
+                } else motion.perform(method, args))
+            }
         } else if (module == "Audio") {
             { completion ->
                 val id = args.optString(0)
@@ -8290,6 +8315,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        motionForeground = false
+        allScreens().forEach { it.motion?.stopAll() }
         disarmShakeGesture()
         if (::services.isInitialized) services.pauseVoice()
         nativeAppState = "inactive"
@@ -8350,6 +8377,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        motionForeground = true
         armShakeGesture()
         if (::services.isInitialized) services.resumed()
     }

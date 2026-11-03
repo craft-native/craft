@@ -1436,6 +1436,47 @@ const available = await craft.biometrics.isAvailable()
 const biometricType = await craft.biometrics.getBiometricType()
 if (available) await craft.biometrics.authenticate('Unlock WildLoop')
 
+#### Raw Android motion sensors
+
+Native Android screens can opt in with `enableMotionSensors: true`. The host
+advertises `rawMotionSensors` and accepts these version-1 `API_REQUEST`s:
+
+| Module | Method | Args | Result |
+| --- | --- | --- | --- |
+| `MotionSensors` | `getAvailability` | `[]` | Boolean per sensor name |
+| `MotionSensors` | `start` | `[{ sensor, intervalMs: 100 }]` | `true`, or an error |
+| `MotionSensors` | `stop` | `[sensor]` | Whether a stream was stopped |
+| `MotionSensors` | `stopAll` | `[]` | `true` |
+
+Sensor names are `accelerometer`, `gyroscope`, `magnetometer`, and
+`rotationVector`. Each `CRAFT_EVENT` named `craftRawMotionUpdate` carries
+`{ sensor, values, unit, timestampMs, accuracy }`. Acceleration includes gravity
+in m/s², gyroscope values are angular velocity in rad/s, and magnetic field is
+in µT, all in Android's device coordinate axes. Rotation vectors become a
+quaternion `{ w, x, y, z }` relative to Android's East-North-Up reference frame;
+they are not Euler angles. `timestampMs` is monotonic time since boot, not a
+Unix timestamp. `accuracy` is Android's sensor accuracy code.
+
+`intervalMs` defaults to 100 and must be an integer from 5 through 60000.
+It requests a sampling period, not a guaranteed delivery cadence. This API
+does not request the high-sampling-rate permission. Missing hardware or a
+rejected registration returns `UNAVAILABLE`; disabled builds return
+`CAPABILITY_DISABLED`. Invalid replacement requests preserve the existing
+stream. Each route owns its registrations and discards late samples after
+replacement, stop, or teardown. Activity pause stops all streams; applications
+must explicitly restart them after returning to the foreground. Headless and
+background starts are rejected. This is not background fitness recording.
+
+This raw API deliberately differs from the legacy WebView `craftMotionUpdate`
+and iOS's fused `CMDeviceMotion` stream; it does not claim that raw acceleration
+or angular velocity is equivalent to gravity-free acceleration or attitude.
+These requests define the host contract for STX's `callNativeAPI` adapter.
+This change does not add a `craft.motionSensors` wrapper or expose
+`rawMotionSensors` through STX's convenience capability map; that integration
+must be added in STX. Stacks' Android capability allowlist must also map
+`motionSensors` to `enableMotionSensors` before a Stacks app's short-form
+configuration reaches this host.
+
 #### Mounted-view operations
 
 Shared overlays use the screen-owned `View` capability rather than reaching

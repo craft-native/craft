@@ -25,6 +25,142 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesTest {
+    private class MotionSourceProbe : CraftMotionSource {
+        val requests = mutableListOf<Triple<Int, Int, (FloatArray, Long, Int) -> Unit>>()
+        val stopped = mutableListOf<Int>()
+        var present = true
+        var reject = false
+        var throwOnRegister = false
+        override fun available(type: Int) = present
+        override fun register(type: Int, periodUs: Int, sample: (FloatArray, Long, Int) -> Unit): CraftMotionRegistration? {
+            if (throwOnRegister) throw SecurityException("fixture denied")
+            if (reject) return null
+            val index = requests.size
+            requests.add(Triple(type, periodUs, sample))
+            return object : CraftMotionRegistration { override fun close() { stopped.add(index) } }
+        }
+        fun deliver(index: Int, values: FloatArray = floatArrayOf(1f, 2f, 3f)) {
+            requests[index].third(values, 12_345_678_900L, 3)
+        }
+    }
+
+    private fun motionStart(sensor: String, interval: Any = 100): JSONArray =
+        JSONArray().put(JSONObject().put("sensor", sensor).put("intervalMs", interval))
+
+    @Test fun rawMotionReportsHardwareAvailabilityAndRegistrationFailure() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeMotion(source)
+        try {
+            source.present = false
+            val availability = host.perform("getAvailability", JSONArray()).data as JSONObject
+            for (name in listOf("accelerometer", "gyroscope", "magnetometer", "rotationVector")) {
+                assertFalse(availability.getBoolean(name))
+                assertEquals("UNAVAILABLE", host.perform("start", motionStart(name)).code)
+            }
+            assertTrue(source.requests.isEmpty())
+            source.present = true
+            source.reject = true
+            assertEquals("UNAVAILABLE", host.perform("start", motionStart("gyroscope")).code)
+            source.reject = false
+            source.throwOnRegister = true
+            assertEquals("SENSOR_ERROR", host.perform("start", motionStart("gyroscope")).code)
+        } finally { host.close() }
+    }
+
+    @Test fun rawMotionRejectsInvalidReplacementWithoutDroppingWorkingStream() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeMotion(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            assertNull(host.perform("start", motionStart("accelerometer", 20)).code)
+            assertEquals(20_000, source.requests.single().second)
+            for (interval in listOf<Any>(0, -1, 4, 60_001, 20.5, "20", true, JSONObject.NULL)) {
+                assertEquals("INVALID_ARGUMENT", host.perform("start", motionStart("accelerometer", interval)).code)
+            }
+            assertEquals("INVALID_ARGUMENT", host.perform("start", motionStart("attitude")).code)
+            source.reject = true
+            assertEquals("UNAVAILABLE", host.perform("start", motionStart("accelerometer")).code)
+            assertTrue(source.stopped.isEmpty())
+            source.deliver(0)
+            assertEquals(1, events.size)
+        } finally { host.close() }
+    }
+
+    @Test fun rawMotionNamesUnitsAndKeepsQuaternionSeparateFromAngularVelocity() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeMotion(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        try {
+            val names = listOf("accelerometer", "gyroscope", "magnetometer", "rotationVector")
+            val units = listOf("m/s²", "rad/s", "µT", "quaternion")
+            names.forEachIndexed { index, name ->
+                assertNull(host.perform("start", motionStart(name, 5)).code)
+                source.deliver(index, if (name == "rotationVector") floatArrayOf(0f, 0f, 0f, 1f) else floatArrayOf(1f, 2f, 3f))
+                val event = events.last()
+                assertEquals(name, event.getString("sensor"))
+                assertEquals(units[index], event.getString("unit"))
+                assertEquals(12345.6789, event.getDouble("timestampMs"), 0.00001)
+                assertEquals(3, event.getInt("accuracy"))
+                if (name == "rotationVector") {
+                    assertEquals(1.0, event.getJSONObject("values").getDouble("w"), 0.0)
+                    assertEquals(0.0, event.getJSONObject("values").getDouble("x"), 0.0)
+                } else assertFalse(event.getJSONObject("values").has("w"))
+            }
+        } finally { host.close() }
+    }
+
+    @Test fun rawMotionDiscardsRetiredSamplesAndClosesOnlyItsOwnRegistrations() {
+        val source = MotionSourceProbe()
+        val host = CraftNativeMotion(source)
+        val events = mutableListOf<JSONObject>()
+        host.emit = events::add
+        assertNull(host.perform("start", motionStart("gyroscope")).code)
+        assertNull(host.perform("start", motionStart("gyroscope", 40)).code)
+        assertEquals(listOf(0), source.stopped)
+        source.deliver(0)
+        assertTrue(events.isEmpty())
+        source.deliver(1)
+        assertEquals(1, events.size)
+        assertEquals(true, host.perform("stop", JSONArray().put("gyroscope")).data)
+        assertEquals(false, host.perform("stop", JSONArray().put("gyroscope")).data)
+        source.deliver(1)
+        assertEquals(1, events.size)
+        host.perform("start", motionStart("magnetometer"))
+        host.stopAll() // Activity pause uses exactly this teardown.
+        source.deliver(2)
+        assertEquals(1, events.size)
+        host.perform("start", motionStart("magnetometer"))
+        host.close()
+        host.close()
+        source.deliver(3)
+        assertEquals(listOf(0, 1, 2, 3), source.stopped)
+        assertEquals(1, events.size)
+        assertEquals("HOST_CLOSED", host.perform("start", motionStart("gyroscope")).code)
+    }
+
+    @Test fun rawMotionRegistersWithThePlatformAndStopsDelivery() {
+        val context = importContext()
+        val events = java.util.concurrent.atomic.AtomicInteger()
+        val arrived = CountDownLatch(1)
+        lateinit var host: CraftNativeMotion
+        instrumentation.runOnMainSync {
+            host = CraftNativeMotion(CraftAndroidMotionSource(context))
+            host.emit = { events.incrementAndGet(); arrived.countDown() }
+            val available = host.perform("getAvailability", JSONArray()).data as JSONObject
+            assertTrue("emulator fixture must provide an accelerometer", available.getBoolean("accelerometer"))
+            assertNull(host.perform("start", motionStart("accelerometer", 20)).code)
+        }
+        try {
+            assertTrue("SensorManager must deliver a real sample", arrived.await(10, TimeUnit.SECONDS))
+            instrumentation.runOnMainSync { host.stopAll() }
+            val stoppedAt = events.get()
+            Thread.sleep(150)
+            assertEquals(stoppedAt, events.get())
+        } finally { instrumentation.runOnMainSync { host.close() } }
+    }
+
     private class PickerHostProbe : CraftNativePickerHost {
         val launched = mutableListOf<Int>()
         val dismissed = mutableListOf<Int>()
