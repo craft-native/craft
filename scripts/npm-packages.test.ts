@@ -44,12 +44,18 @@ test('exports every verified npm archive with its exact digest', async () => {
   const output = join(root, 'archives')
   try {
     await verifyNpmPackages(false, output)
-    const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8')) as { packages: { name: string, file: string, sha256: string }[] }
+    const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8')) as { packages: { name: string, version: string, file: string, sha256: string }[] }
     expect(manifest.packages).toHaveLength(8)
     for (const archive of manifest.packages) {
       const path = join(output, archive.file)
       expect(existsSync(path)).toBe(true)
       expect(createHash('sha256').update(readFileSync(path)).digest('hex')).toBe(archive.sha256)
+      if (['@craft-native/react', '@craft-native/svelte', '@craft-native/vue'].includes(archive.name)) {
+        const packed = Bun.spawnSync(['tar', '-xOzf', path, 'package/package.json'], { stdout: 'pipe', stderr: 'pipe' })
+        expect(packed.exitCode).toBe(0)
+        expect(JSON.parse(packed.stdout.toString()).dependencies['craft-native'])
+          .toBe(manifest.packages.find(item => item.name === 'craft-native')!.version)
+      }
     }
   }
   finally { rmSync(root, { recursive: true, force: true }) }

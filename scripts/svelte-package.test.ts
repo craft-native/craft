@@ -46,6 +46,15 @@ test('store declarations expose the public Readable contract', () => {
     expect(result.exitCode).toBe(0)
   }
   try {
+    const packed = Bun.spawnSync([process.execPath, 'pm', 'pack', '--filename', join(temp, 'core.tgz')], {
+      cwd: join(root, 'packages/typescript'), stdout: 'pipe', stderr: 'pipe',
+    })
+    expect(packed.exitCode).toBe(0)
+    writeFileSync(join(temp, 'package.json'), JSON.stringify({
+      private: true, type: 'module', dependencies: { 'craft-native': `file:${join(temp, 'core.tgz')}` }, devDependencies: { 'bun-types': '1.4.4' },
+    }))
+    const installed = Bun.spawnSync([process.execPath, 'install'], { cwd: temp, stdout: 'pipe', stderr: 'pipe' })
+    expect(installed.exitCode).toBe(0)
     run([
       '-p', join(root, 'packages/svelte/tsconfig.json'), '--emitDeclarationOnly',
       '--outDir', join(temp, 'declarations'),
@@ -81,7 +90,7 @@ void [ready, info, another, unsubscribe, wrong]
     run([
       'consumer.mts', 'store-contract.d.ts', '--noEmit', '--strict',
       '--module', 'nodenext', '--moduleResolution', 'nodenext',
-      '--target', 'esnext', '--ignoreConfig',
+      '--target', 'esnext', '--ignoreConfig', '--types', 'bun-types',
     ])
   }
   finally {

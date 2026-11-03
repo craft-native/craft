@@ -14,11 +14,18 @@ test('packed Vue composables render on the server and expose usable types', () =
   const run = (args: string[], cwd = temp): void => {
     const result = Bun.spawnSync(args, { cwd, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 })
     expect(`${result.stdout}\n${result.stderr}`).not.toContain('error TS')
+    if (result.exitCode !== 0) throw new Error(`${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`)
     expect(result.exitCode).toBe(0)
   }
   try {
     run([process.execPath, 'run', 'build'], packageDir)
     run([process.execPath, 'pm', 'pack', '--filename', join(temp, 'package.tgz')], packageDir)
+    run([process.execPath, 'pm', 'pack', '--filename', join(temp, 'core.tgz')], join(root, 'packages/typescript'))
+    writeFileSync(join(temp, 'package.json'), JSON.stringify({
+      private: true, type: 'module', dependencies: { 'craft-native': `file:${join(temp, 'core.tgz')}` }, devDependencies: { 'bun-types': '1.4.4' },
+    }))
+    run([process.execPath, 'install'])
+    run([process.execPath, 'install', '--frozen-lockfile'])
     const installed = join(temp, 'node_modules/@craft-native/vue')
     mkdirSync(installed, { recursive: true })
     run(['tar', '-xzf', join(temp, 'package.tgz'), '--strip-components=1', '-C', installed])
@@ -67,7 +74,7 @@ void [ready, platform, wrong]
     run([
       process.execPath, join(root, 'packages/typescript/scripts/tsc.ts'),
       'consumer.mts', '--noEmit', '--strict', '--module', 'nodenext',
-      '--moduleResolution', 'nodenext', '--target', 'esnext', '--ignoreConfig',
+      '--moduleResolution', 'nodenext', '--target', 'esnext', '--ignoreConfig', '--types', 'bun-types',
     ])
   }
   finally {
