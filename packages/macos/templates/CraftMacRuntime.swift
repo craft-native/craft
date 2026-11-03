@@ -15,6 +15,8 @@ enum CraftTrace {
         return Double(info.kp_proc.p_starttime.tv_sec) + Double(info.kp_proc.p_starttime.tv_usec) / 1_000_000
     }()
     private static func since() -> Double { (Date().timeIntervalSince1970 - processStart) * 1000 }
+    /// Milliseconds on a monotonic clock, for timing a span from either side of the bridge.
+    static func now() -> Double { Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000 }
     static func mark(_ phase: @autoclosure () -> String) {
         guard enabled else { return }
         fputs(String(format: "[craft trace] %8.1f %@\n", since(), phase()), stderr)
@@ -135,10 +137,12 @@ final class CraftMacRuntime {
     let route: String
     let network: CraftMacNetwork
     private let thread = CraftMacScriptThread()
+    /// Decodes what the screen posts (`receive`), in the order it was posted, and keeps its network tasks.
+    private let decoder = DispatchQueue(label: "craft.script.decode", qos: .userInteractive)
+    private var tasks: [String: URLSessionTask] = [:]
     // Script thread only: the context and what the screen asked of it.
     private var context: ZigJSContext?
     private var timers: [Int: CFRunLoopTimer] = [:]
-    private var tasks: [String: URLSessionTask] = [:]
     private var stopped = false
     // Main thread only.
     private(set) weak var scene: CraftMacScene?
@@ -175,7 +179,13 @@ final class CraftMacRuntime {
             self?.report(message)
             fputs("[craft native] \(message)\n\(stack)\n", stderr)
         }
-        let post: @convention(block) (String) -> Void = { [weak self] text in self?.receive(text) }
+        // An NSString: bridging the text to a Swift String would copy it again on the screen's thread.
+        let post: @convention(block) (NSString) -> Void = { [weak self] text in self?.receive(text) }
+        // Under CRAFT_TRACE the screen's side of each post is timed too (`post`, below), from JavaScript.
+        let tracePost: @convention(block) (Double, Double) -> Void = { bytes, start in
+            CraftTrace.mark(String(format: "  post %.0f bytes (%.2f ms on the screen's thread)", bytes, CraftTrace.now() - start))
+        }
+        let now: @convention(block) () -> Double = { CraftTrace.now() }
         let schedule: @convention(block) (Int, Double) -> Void = { [weak self] id, delay in
             guard let self, !self.stopped else { return }
             self.timers[id] = self.thread.after(max(0, min(delay.isFinite ? delay : 0, 2_147_483_647)) / 1000) { [weak self] in
@@ -205,6 +215,10 @@ final class CraftMacRuntime {
         context.setObject(storageSet, forKeyedSubscript: "craftNativeStorageSet" as NSString)
         context.setObject(secureGet, forKeyedSubscript: "craftNativeSecureGet" as NSString)
         context.setObject(post, forKeyedSubscript: "craftNativePostMessage" as NSString)
+        if CraftTrace.enabled {
+            context.setObject(tracePost, forKeyedSubscript: "craftNativeTracePost" as NSString)
+            context.setObject(now, forKeyedSubscript: "craftNativeNow" as NSString)
+        }
         context.setObject(schedule, forKeyedSubscript: "craftNativeScheduleTimer" as NSString)
         context.setObject(cancel, forKeyedSubscript: "craftNativeCancelTimer" as NSString)
         context.setObject(log, forKeyedSubscript: "craftNativeLog" as NSString)
@@ -222,7 +236,9 @@ final class CraftMacRuntime {
         context.evaluateScript("""
         globalThis.__stxNativeCallback = null;
         globalThis.__stxNativeBridge = \(bridgeJSON);
-        __stxNativeBridge.postMessage = function(text) { craftNativePostMessage(text); };
+        __stxNativeBridge.postMessage = typeof craftNativeTracePost === 'function'
+            ? function(text) { var start = craftNativeNow(); craftNativePostMessage(text); craftNativeTracePost(text.length, start); }
+            : function(text) { craftNativePostMessage(text); };
         __stxNativeBridge.onMessage = function(callback) { globalThis.__stxNativeCallback = callback; };
         globalThis.craft = globalThis.craft || {};
         craft.storage = {
@@ -322,12 +338,12 @@ final class CraftMacRuntime {
         CraftMacWebTabs.shared.closeAll(owner: self)
         #endif
         network.cancelStreams(owner: self)
+        decoder.async { self.tasks.values.forEach { $0.cancel() }; self.tasks.removeAll() }
         let done = DispatchSemaphore(value: 0)
         thread.run {
             self.context?.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])
             self.stopped = true
             self.timers.values.forEach(CFRunLoopTimerInvalidate); self.timers.removeAll()
-            self.tasks.values.forEach { $0.cancel() }; self.tasks.removeAll()
             // Released on the thread that made it.
             self.context = nil
             done.signal()
@@ -355,10 +371,19 @@ final class CraftMacRuntime {
         send("EVENT", ["handlerId": id, "nativeEvent": payload])
     }
 
-    /// A message from the screen, on its thread. Network requests start here, so a screen's first fetch
-    /// leaves while AppKit is still launching; whatever draws or needs AppKit goes to the main thread.
-    private func receive(_ text: String) {
-        guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+    /// A message from the screen, on its thread: handed to a queue of its own to decode, so the screen's
+    /// post returns at once. Decoding a batch of a few hundred operations took the screen's thread several
+    /// milliseconds per post, inside the screen's render.
+    private func receive(_ text: NSString) {
+        decoder.async { [weak self] in self?.decode(text) }
+    }
+
+    /// Decodes the screen's messages in order. Network requests start and storage answers here; whatever
+    /// draws or needs AppKit goes to the main thread.
+    private func decode(_ text: NSString) {
+        guard let message = CraftTrace.span("  decode \(text.length) chars", atLeast: 1, {
+            text.data(using: String.Encoding.utf8.rawValue).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }) else { return }
         let payload = message["payload"] as? [String: Any] ?? [:]
         switch message["type"] as? String {
         case "RENDER", "MUTATE": DispatchQueue.main.async { self.whenAttached { self.handle(message) } }
@@ -414,15 +439,16 @@ final class CraftMacRuntime {
 
     /// An answer to the screen's request `id`, from any thread.
     func answer(_ id: String, _ value: Any = NSNull()) {
-        thread.run { self.tasks.removeValue(forKey: id) }
+        decoder.async { self.tasks.removeValue(forKey: id) }
         send("API_RESPONSE", ["version": 1, "requestId": id, "data": value], correlation: id)
     }
     func fail(_ id: String, _ code: String, _ message: String) {
-        thread.run { self.tasks.removeValue(forKey: id) }
+        decoder.async { self.tasks.removeValue(forKey: id) }
         send("API_ERROR", ["version": 1, "requestId": id, "code": code, "message": message], correlation: id)
     }
 
-    /// `Network` requests, on the script thread. Their answers come back on the network's own queue.
+    /// `Network` requests, on the decoding queue, which keeps their tasks: a request leaves as soon as it is
+    /// posted, even while the screen goes on rendering. Their answers come back on the network's own queue.
     private func fetch(_ id: String, _ method: String, _ args: [Any]) {
         let options = args.first as? [String: Any] ?? [:]
         if method == "cancelStream" { network.cancelStream(args.first as? String ?? "", owner: self); answer(id); return }
@@ -442,7 +468,7 @@ final class CraftMacRuntime {
         tasks[id] = task; network.resume(task)
     }
 
-    /// `Storage` and `SecureStorage`, on the script thread: UserDefaults and the Keychain answer on any.
+    /// `Storage` and `SecureStorage`, on the decoding queue: UserDefaults and the Keychain answer on any thread.
     private func store(_ id: String, _ module: String, _ method: String, _ args: [Any]) {
         switch module {
         case "SecureStorage":
