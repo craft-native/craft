@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, statSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 import { createTempDir, removeAllTempDirs, removeTempDir } from './temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -234,6 +234,33 @@ describe('macOS packaging diagnostics', () => {
     expect(shouldRetryHdiutil('Resource busy', 3)).toBe(false)
     expect(shouldRetryHdiutil('No space left on device', 1)).toBe(false)
     expect(() => shouldRetryHdiutil('Resource busy', 0)).toThrow('positive integers')
+  })
+
+  it('ejects a volume Spotlight is still holding instead of failing the build', async () => {
+    const busy = 'hdiutil exited with code 16: hdiutil: couldn\'t eject "disk5" - Resource busy'
+    const attempts: string[][] = []
+    const detached = await detachDiskImage('/tmp/mount', {
+      wait: async () => {},
+      run: async (args) => {
+        attempts.push(args)
+        return attempts.length < 3 ? { success: false as const, error: busy } : { success: true as const, stdout: '' }
+      },
+    })
+    expect(detached.success).toBe(true)
+    expect(attempts).toEqual([['detach', '/tmp/mount'], ['detach', '/tmp/mount'], ['detach', '/tmp/mount', '-force']])
+  })
+
+  it('reports an eject failure that is not contention without retrying it', async () => {
+    const attempts: string[][] = []
+    const detached = await detachDiskImage('/tmp/mount', {
+      wait: async () => {},
+      run: async (args) => {
+        attempts.push(args)
+        return { success: false as const, error: 'hdiutil: detach failed - No such file or directory' }
+      },
+    })
+    expect(detached).toEqual({ success: false, error: 'hdiutil: detach failed - No such file or directory' })
+    expect(attempts).toHaveLength(1)
   })
 })
 

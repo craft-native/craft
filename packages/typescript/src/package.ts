@@ -1192,8 +1192,11 @@ export function shouldRetryHdiutil(error: string, attempt: number, maxAttempts: 
   return attempt < maxAttempts && /(?:resource busy|resource temporarily unavailable)/i.test(error)
 }
 
+/** What a packaging tool reports: its output, or the diagnostic it failed with. */
+export type PackagingToolResult = { success: true, stdout: string } | { success: false, error: string }
+
 /** Run a packaging tool, capturing output so failures carry the real diagnostic. */
-function runTool(tool: string, args: string[]): Promise<{ success: true; stdout: string } | { success: false, error: string }> {
+function runTool(tool: string, args: string[]): Promise<PackagingToolResult> {
   return new Promise((resolve) => {
     const proc = spawn(tool, args)
     let stdout = ''
@@ -1208,7 +1211,33 @@ function runTool(tool: string, args: string[]): Promise<{ success: true; stdout:
   })
 }
 
-const runHdiutil = (args: string[]) => runTool('hdiutil', args)
+const runHdiutil = (args: string[]): Promise<PackagingToolResult> => runTool('hdiutil', args)
+
+/**
+ * Eject a mounted image, retrying the contention hdiutil reports as
+ * "couldn't eject ... - Resource busy".
+ *
+ * Writing the installer layout is what provokes it: Spotlight and fseventsd
+ * pick the volume up as soon as files land on it and can still hold it when
+ * the eject arrives. That is the same transient class `create` is already
+ * allowed to retry, so detaching gets the same bounded patience, and the
+ * final attempt escalates to `-force` rather than reporting a failed build
+ * for a volume nothing is really using any more.
+ */
+export async function detachDiskImage(
+  mount: string,
+  options: { run?: (args: string[]) => Promise<PackagingToolResult>, wait?: (ms: number) => Promise<void> } = {},
+): Promise<{ success: true } | { success: false, error: string }> {
+  const run = options.run ?? runHdiutil
+  const wait = options.wait ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) }))
+  for (let attempt = 1; ; attempt++) {
+    const forced = attempt >= HDIUTIL_MAX_ATTEMPTS
+    const result = await run(forced ? ['detach', mount, '-force'] : ['detach', mount])
+    if (result.success) return { success: true }
+    if (!shouldRetryHdiutil(result.error, attempt)) return { success: false, error: result.error }
+    await wait(attempt * 2000)
+  }
+}
 
 /**
  * Helper: Create DMG from app bundle
@@ -1250,7 +1279,8 @@ export async function createDiskImage(opts: {
     await run('hdiutil', ['attach', writable, '-nobrowse', '-mountpoint', mount])
     mounted = true
     writeInstallerLayout(mount, opts.volumeName, bundleName)
-    await run('hdiutil', ['detach', mount])
+    const detached = await detachDiskImage(mount)
+    if (!detached.success) throw new Error(detached.error)
     mounted = false
     await run('hdiutil', ['convert', writable, '-format', 'ULMO', '-ov', '-o', opts.outputPath])
     return { success: true, outputPath: opts.outputPath }
