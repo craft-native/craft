@@ -227,6 +227,7 @@ final class CraftHealth {
         if readOnly { shareTypes.removeAll() }
         healthStore.requestAuthorization(toShare: shareTypes, read: readTypes) { [weak self] success, error in
             if success {
+                DispatchQueue.main.async { CraftHealthBackground.shared.refresh() }
                 completion(.success(true))
             } else {
                 completion(.failure(CraftHealthError(message: error?.localizedDescription ?? "Authorization failed")))

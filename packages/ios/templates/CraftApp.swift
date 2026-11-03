@@ -299,6 +299,15 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         // push, a refresh, a route recording's location) draws nothing, and
         // its events still need someone to hear them.
         CraftHybrid.shared.configure(config)
+        CraftHealthBackground.shared.emit = { type in
+            let detail: [String: Any] = ["type": type]
+            CraftEventManager.shared.sendToWeb("craftHealthBackground", data: detail)
+            NotificationCenter.default.post(name: CraftWebServices.event, object: nil,
+                userInfo: ["event": "craftHealthBackground", "detail": detail])
+        }
+        CraftHealthBackground.shared.configure(types: config.enableHealthKit && config.enableHealthKitBackground ? config.healthKitBackgroundTypes : [],
+            frequency: config.healthKitBackgroundFrequency)
+
         if let shortcuts = config.appShortcuts {
             application.shortcutItems = shortcuts.prefix(4).map { shortcut in
                 UIApplicationShortcutItem(type: shortcut.id, localizedTitle: shortcut.title, localizedSubtitle: shortcut.subtitle,

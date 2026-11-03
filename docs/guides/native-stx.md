@@ -2037,3 +2037,42 @@ active; do not silently infer steps across that gap.
 The typed STX adapter exposes these methods as `craft.pedometer` only when the
 host advertises it. Permission requests use the person-facing untimed protocol;
 ordinary reads retain the usual cancellation and timeout behavior.
+
+### iOS background HealthKit delivery
+
+Enable `enableHealthKit` and `enableHealthKitBackground`, declare
+`healthKitBackgroundTypes` (`steps`, `heartRate`, `restingHeartRate`,
+`heartRateVariability`, `activeEnergy`, `distance`, `bodyMass`, `sleep`,
+`workouts`), and optionally set `healthKitBackgroundFrequency` to `immediate`,
+`hourly` (default), `daily`, or `weekly`. The builder signs the HealthKit
+background-delivery entitlement and keeps the existing health privacy purposes.
+Request read authorization for those same types through `craft.health`.
+
+Observers are registered at launch, including background launches. The native
+host reads additions and deletions in pages, persists each delta together with
+its new anchor, then acknowledges HealthKit without waiting for JavaScript.
+Frequency is a hint, not a real-time guarantee. Background delivery requires a
+signed physical-device test; the simulator tests validate persistence and
+callback ownership, not actual HealthKit wake scheduling.
+
+The `healthBackground` capability exposes module `HealthBackground`:
+
+- `status()` returns declared types, frequency, pending batch count, and errors.
+- `pending()` returns up to 20 durable batches `{ id, type, samples, deleted }`.
+- `acknowledge([ids])` removes only the batches your app has successfully handled.
+- `refresh()` retries registration and reads after a transient failure.
+
+Samples use Unix milliseconds for `startDate`/`endDate`; quantities include
+HealthKit's explicit `unit`, sleep records include their native `category`, and
+workouts include `workoutActivity` and `durationSeconds`. Deletions carry sample
+UUIDs. Treat batches as at-least-once delivery: deduplicate by sample UUID and
+acknowledge only after your local or server transaction commits. An app script
+can listen for `craftHealthBackground` and drain the outbox while running; the
+native host does not promise a background network upload or keep JavaScript
+alive indefinitely. Drain on launch too, because notifications are only hints.
+
+The protected, backup-excluded outbox is capped at 8 MiB. A full outbox, query
+failure or locked/corrupt storage retains the old anchor for a later retry;
+there is no silent reset. Unconsumed batches remain across restarts and account
+changes: applications must assign them to the device HealthKit owner and must
+not blindly upload them under whichever account signs in next.

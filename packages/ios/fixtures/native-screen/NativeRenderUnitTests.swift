@@ -5814,6 +5814,20 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
         }
     }
 
+    func testDisabledBridgeRejectsBackgroundDeliveryAndDoesNotAdvertiseIt() async {
+        let config = CraftConfig()
+        XCTAssertFalse(CraftNativeActions.capabilities(config: config).contains("healthBackground"))
+        let result: Result<Any, CraftNativeActionError> = await withCheckedContinuation { next in
+            CraftNativeActions.perform(requestToken: UUID().uuidString, version: 1, module: "HealthBackground", method: "pending", args: [], config: config) { next.resume(returning: $0) }
+        }
+        guard case .failure(let error) = result else { return XCTFail("disabled background health must reject") }
+        XCTAssertEqual(error.code, "CAPABILITY_DISABLED")
+        var enabled = config
+        enabled.enableHealthKit = true
+        enabled.enableHealthKitBackground = true
+        XCTAssertTrue(CraftNativeActions.capabilities(config: enabled).contains("healthBackground"))
+    }
+
     func testDeltaAndAnchorSurviveRelaunchUntilExplicitAcknowledgement() throws {
         let storage = Storage(), source = Source()
         let host = CraftHealthBackground(source: source, persistence: storage)

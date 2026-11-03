@@ -63,6 +63,7 @@ enum CraftNativeActions {
         if config.enableDeepLinks { values.append("deepLinks") }
         if config.enableLocalNotifications { values.append("notifications") }
         if config.enableHealthKit { values.append("health") }
+        if config.enableHealthKit && config.enableHealthKitBackground { values.append("healthBackground") }
         if config.enableBarometer { values.append("barometer") }
         if config.enablePedometer { values.append("pedometer") }
         if config.enableWallet { values.append("wallet") }
@@ -408,6 +409,17 @@ enum CraftNativeActions {
         case ("LiveActivities", _):
             CraftLiveActivities.perform(method: method, args: args, enabled: config.enableLiveActivities, appName: config.appName, healthEnabled: config.enableHealthKit) { result in
                 complete(requestToken, result, completion)
+            }
+            return
+        case ("HealthBackground", _):
+            guard config.enableHealthKit && config.enableHealthKitBackground else {
+                complete(requestToken, failure("CAPABILITY_DISABLED", "HealthKit background delivery is disabled"), completion)
+                return
+            }
+            DispatchQueue.main.async {
+                CraftHealthBackground.shared.perform(method: method, args: args) { result in
+                    complete(requestToken, result, completion)
+                }
             }
             return
         case ("Health", _):
