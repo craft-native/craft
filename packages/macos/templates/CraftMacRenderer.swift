@@ -1005,7 +1005,25 @@ final class CraftMacRenderer {
     var boxes: [String: CraftMacBox] = [:]
     weak var window: NSWindow?
     var sheets: [String: NSPanel] = [:]
+    /// Boxes whose nodes went away: hidden at once, and taken out of the window once the batch is drawn.
+    /// Leaving a window walks a view's whole subtree, every control in it hearing so, and a batch that
+    /// replaced a list's rows spent most of its time on the rows it dropped, before any new row showed.
+    private var leaving: [CraftMacBox] = []
     init(runtime: CraftMacRuntime) { self.runtime = runtime }
+
+    private func discard(_ box: CraftMacBox) {
+        box.imageTask?.cancel()
+        guard box.superview != nil else { return }
+        box.isHidden = true
+        if leaving.isEmpty { DispatchQueue.main.async { [weak self] in self?.sweep() } }
+        leaving.append(box)
+    }
+    private func sweep() {
+        let gone = leaving; leaving.removeAll()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        gone.forEach { $0.removeFromSuperview() }
+        CATransaction.commit()
+    }
     /// The box for `node`, made or reconfigured, and its children's in order; every id drawn goes into `retained`.
     func reconcile(_ node: [String: Any], retained: inout Set<String>) -> CraftMacBox {
         let box = configured(node, retained: &retained)
@@ -1029,8 +1047,8 @@ final class CraftMacRenderer {
         guard let flow = box.flow, box.kind != "Button" else { return }
         let nodes = (node["children"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
         let children = nodes.map { configured($0, retained: &retained) }
-        // A child that already moved to another parent in this pass stays there.
-        for child in flow.boxes where child.superview === flow && !children.contains(where: { $0 === child }) { child.removeFromSuperview() }
+        // A child dropped here either moves to another parent in this pass (adding it there takes it from
+        // here) or is gone, and the caller discards it: it is not taken out of the window twice.
         flow.boxes = children
         for child in children where child.superview !== flow && sheets[child.id] == nil { flow.addSubview(child) }
         for (child, childNode) in zip(children, nodes) { reconcileChildren(of: child, childNode, retained: &retained) }
@@ -1051,10 +1069,14 @@ final class CraftMacRenderer {
     func update(_ ids: [String], parentOf: (String) -> String?, node nodeFor: (String) -> [String: Any]?) -> Bool {
         guard !boxes.isEmpty else { return false }
         var targets: [String] = []
+        let top = root.boxes.first?.id
         for id in ids {
             var current: String? = id
             while let candidate = current, boxes[candidate] == nil { current = parentOf(candidate) }
-            guard let target = current else { return false }
+            // A node the batch removed has no parent left (one it made and removed never had a box): the
+            // removal marked the parent it left, which is drawn instead, discarding its box. Declining here
+            // redrew the whole window for any batch that dropped a row it had also updated.
+            guard let target = current, target == top || parentOf(target) != nil else { continue }
             if !targets.contains(target) { targets.append(target) }
         }
         // A target inside another is drawn with it.
@@ -1073,7 +1095,7 @@ final class CraftMacRenderer {
             _ = reconcile(node, retained: &retained)
             for id in before where !retained.contains(id) {
                 guard let gone = boxes.removeValue(forKey: id) else { continue }
-                gone.imageTask?.cancel(); gone.removeFromSuperview()
+                discard(gone)
             }
             for id in retained { if let drawn = boxes[id] { drawn.forgetMeasurements(); drawn.needsLayout = true } }
             var above: NSView? = box.superview
@@ -1111,7 +1133,7 @@ final class CraftMacRenderer {
         // Boxes were reconfigured and children replaced: nothing measured before now holds.
         CraftMacBox.measureGeneration &+= 1
         for (id, box) in boxes where !retained.contains(id) {
-            box.imageTask?.cancel(); box.removeFromSuperview(); boxes.removeValue(forKey: id)
+            discard(box); boxes.removeValue(forKey: id)
             if let sheet = sheets.removeValue(forKey: id) { window?.endSheet(sheet); sheet.close() }
         }
         box.frame = root.bounds; box.layoutSubtreeIfNeeded(); root.layoutBoxes(in: root.bounds.size)
