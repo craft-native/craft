@@ -18,6 +18,22 @@ function generatedFiles(path: string): string[] {
 }
 
 describe('Craft Android builder', () => {
+  it('generates the recorder pressure journal and scopes its wake-lock permission to background opt-in', async () => {
+    const root = createTempDir('craft-pressure-recorder-')
+    for (const background of [false, true]) {
+      const output = join(root, String(background))
+      await init({ name: 'Pressure Recorder', output, runtimeDir: null, config: {
+        enableBarometer: true, enableBackgroundLocation: background,
+      } })
+      const manifest = readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')
+      expect(manifest.includes('android.permission.WAKE_LOCK')).toBe(background)
+      const source = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/CraftRecordingPressure.kt'), 'utf8')
+      expect(source).toContain('package com.craft.runtime')
+      expect(source).toContain('class CraftRecordingPressureSession')
+      expect(source).not.toContain('{{')
+    }
+  })
+
   it('advertises the sensors implemented by this builder for app capability validation', () => {
     expect(nativeSensorCapabilities).toEqual(['motionSensors', 'barometer', 'pedometer'])
   })
@@ -1731,10 +1747,10 @@ describe('Craft Android builder', () => {
     const native = readFileSync(join(root, 'com/craft/runtime/CraftNative.kt'), 'utf8')
 
     // The mode asked for is stored (a build before this kept a powerSaver flag), validated before any side effect.
-    expect(service).toContain('fun start(context: Context, id: String, startedAt: Long, powerMode: String = "default")')
+    expect(service).toContain('fun start(context: Context, id: String, startedAt: Long, powerMode: String = "default", barometer: Boolean = false)')
     expect(service).toContain('.putString("powerMode", powerMode).remove("powerSaver")')
     expect(service).toContain('?: if (values.getBoolean("powerSaver", false)) "saver" else "default"')
-    expect(service).toContain('start(context, id, System.currentTimeMillis(), requestedPowerMode(options, "default"))')
+    expect(service).toContain('start(context, id, System.currentTimeMillis(), requestedPowerMode(options, "default"), pressure)')
     expect(service).toContain('throw CraftRecordingException("INVALID_ARGUMENT", "powerMode must be \'default\', \'saver\' or \'auto\'")')
 
     // setRecordingPowerMode: fenced like pause (owner, then argument, then an active recording), stored, then applied by the service.

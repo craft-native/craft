@@ -800,7 +800,7 @@ export function renderAndroidPermissions(config: CraftAndroidConfig): string {
     permissions.add('android.permission.FOREGROUND_SERVICE_LOCATION')
   }
   if (config.enablePushNotifications) permissions.add('android.permission.POST_NOTIFICATIONS')
-  if (config.enableKeepAwake) permissions.add('android.permission.WAKE_LOCK')
+  if (config.enableKeepAwake || (config.enableBarometer && config.enableBackgroundLocation)) permissions.add('android.permission.WAKE_LOCK')
   if (config.enableHealthConnect) healthConnectPermissions(config).forEach(permission => permissions.add(permission))
   if (config.enablePedometer) permissions.add('android.permission.ACTIVITY_RECOGNITION')
   if (config.enablePedometer && config.enableHealthServices) permissions.add('android.permission.RECEIVE_BOOT_COMPLETED')
@@ -1292,6 +1292,7 @@ export async function init(options: InitOptions): Promise<void> {
   // even when the service is not registered in the manifest. Keep these
   // support types in the same fixed package as CraftNative so every generated
   // app compiles regardless of its chosen package name or feature flags.
+  writeFileSync(join(nativeDir, 'CraftRecordingPressure.kt'), readFileSync(join(TEMPLATES_DIR, 'CraftRecordingPressure.kt.template'), 'utf-8'))
   const serviceTemplate = readFileSync(join(TEMPLATES_DIR, 'LocationRecordingService.kt.template'), 'utf-8')
   writeFileSync(join(nativeDir, 'LocationRecordingService.kt'), serviceTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName))
   const healthTemplate = readFileSync(join(

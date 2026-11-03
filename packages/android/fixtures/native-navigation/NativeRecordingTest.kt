@@ -7,6 +7,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.craft.runtime.CraftLocationRecordingStore as Store
 import com.craft.runtime.CraftRecordingException
+import com.craft.runtime.CraftRecordingPressure
+import com.craft.runtime.CraftRecordingPressureSession
+import com.craft.runtime.CraftRecordingPressureSource
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -39,6 +42,100 @@ class NativeRecordingTest {
     private fun rejects(code: String, operation: () -> Unit) {
         try { operation(); fail("Expected $code") }
         catch (error: CraftRecordingException) { assertEquals(code, error.code) }
+    }
+
+    private class PressureSource : CraftRecordingPressureSource {
+        lateinit var deliver: (Float, Long) -> Unit
+        var closes = 0
+        var reject = false
+        override fun open(sample: (Float, Long) -> Unit): AutoCloseable {
+            if (reject) error("registration refused")
+            deliver = sample
+            return AutoCloseable { closes += 1 }
+        }
+    }
+
+    @Test fun pressureJournalSurvivesReopenAndArchivesWithItsOwner() = fixture { context, _ ->
+        Store.start(context, "pressure-A", 1, barometer = true)
+        val source = PressureSource()
+        val session = CraftRecordingPressureSession(context, "pressure-A", source)
+        session.start()
+        source.deliver(1013f, 1_000_000_000)
+        source.deliver(1012f, 2_000_000_000)
+        // No native screen, WebView, or JS event subscriber exists in this test.
+        val events = CraftRecordingPressure.read(context, "pressure-A")
+        assertEquals(3, events.length())
+        assertEquals(1013.0, events.getJSONObject(2).getDouble("referencePressureHpa"), 0.01)
+        assertTrue(events.getJSONObject(2).getDouble("relativeAltitudeMeters") > 0)
+        val stopped = Store.finish(context, owner("pressure-A"))
+        assertEquals(4, stopped.getJSONArray("barometerEvents").length())
+        session.close()
+        source.deliver(900f, 3_000_000_000)
+        Store.start(context, "pressure-B", 2)
+        val recovered = JSONObject(Store.perform(context, "getRecordingState",
+            owner("pressure-A").put("includeBarometerSamples", true).toString())).getJSONObject("data")
+        assertEquals(4, recovered.getJSONArray("barometerEvents").length())
+        assertEquals(0, CraftRecordingPressure.read(context, "pressure-B").length())
+        Store.acknowledge(context, owner("pressure-A"))
+        assertEquals(0, CraftRecordingPressure.read(context, "pressure-A").length())
+        assertEquals(1, source.closes)
+    }
+
+    @Test fun pauseInvalidatesQueuedSamplesEvenAfterAnImmediateResume() = fixture { context, _ ->
+        Store.start(context, "pressure-pause", 1, barometer = true)
+        val first = PressureSource()
+        val session = CraftRecordingPressureSession(context, "pressure-pause", first)
+        session.start()
+        first.deliver(1000f, 1_000_000_000)
+        Store.updatePause(context, true, owner("pressure-pause"))
+        Store.updatePause(context, false, owner("pressure-pause"))
+        first.deliver(900f, 2_000_000_000)
+        session.close()
+        val next = PressureSource()
+        val replacement = CraftRecordingPressureSession(context, "pressure-pause", next)
+        replacement.start()
+        next.deliver(999f, 3_000_000_000)
+        val events = CraftRecordingPressure.read(context, "pressure-pause")
+        assertEquals(5, events.length())
+        assertEquals("paused", events.getJSONObject(2).getString("reason"))
+        assertNotEquals(events.getJSONObject(1).getString("segmentId"), events.getJSONObject(4).getString("segmentId"))
+        assertEquals(0.0, events.getJSONObject(4).getDouble("relativeAltitudeMeters"), 0.001)
+        replacement.close()
+        assertEquals(1, first.closes)
+        assertEquals(1, next.closes)
+    }
+
+    @Test fun pressureGapsResetTheReferenceAndRejectOutOfOrderSamples() = fixture { context, _ ->
+        Store.start(context, "pressure-gap", 1, barometer = true)
+        val source = PressureSource()
+        val session = CraftRecordingPressureSession(context, "pressure-gap", source)
+        session.start()
+        source.deliver(1000f, 1_000_000_000)
+        source.deliver(999f, 1_100_000_000) // throttled
+        source.deliver(999f, 0) // stale
+        source.deliver(990f, 5_000_000_000) // gap, not ten hPa of measured climb
+        val events = CraftRecordingPressure.read(context, "pressure-gap")
+        assertEquals(4, events.length())
+        assertEquals("sampleGap", events.getJSONObject(2).getString("reason"))
+        assertEquals(0.0, events.getJSONObject(3).getDouble("relativeAltitudeMeters"), 0.001)
+        source.deliver(Float.NaN, 6_000_000_000)
+        assertFalse(Store.isActive(context))
+        assertTrue(Store.state(context).has("barometerError"))
+        assertEquals(1, source.closes)
+        source.deliver(989f, 7_000_000_000)
+        assertEquals(5, CraftRecordingPressure.read(context, "pressure-gap").length())
+    }
+
+    @Test fun pressureRegistrationFailureAndDisabledRecordingsDoNotLeakSubscriptions() = fixture { context, _ ->
+        Store.start(context, "pressure-off", 1)
+        val off = PressureSource()
+        CraftRecordingPressureSession(context, "pressure-off", off).start()
+        assertEquals(0, CraftRecordingPressure.read(context, "pressure-off").length())
+        Store.finish(context, owner("pressure-off"))
+        Store.start(context, "pressure-failed", 2, barometer = true)
+        CraftRecordingPressureSession(context, "pressure-failed", PressureSource().apply { reject = true }).start()
+        assertFalse(Store.isActive(context))
+        assertEquals("registration refused", Store.state(context).getString("barometerError"))
     }
 
     @Test fun plannedIdentitySurvivesLostStartResponseAndRejectsReuse() = fixture { context, root ->

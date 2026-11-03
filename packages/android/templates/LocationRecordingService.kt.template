@@ -110,20 +110,21 @@ object CraftLocationRecordingStore {
         if (!acknowledged(context, id)) return
         val saved = archive(context, id)
         if (saved.exists() && !saved.delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove acknowledged recording")
+        CraftRecordingPressure.delete(context, id)
         if (file(context).exists() && !file(context).delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove acknowledged samples")
         edit(context) { it.remove("id").remove("startedAt").putBoolean("active", false).putBoolean("paused", false) }
         listener = null
     }
 
     @Synchronized
-    fun start(context: Context, id: String, startedAt: Long, powerMode: String = "default") {
+    fun start(context: Context, id: String, startedAt: Long, powerMode: String = "default", barometer: Boolean = false) {
         recover(context)
         if (isActive(context)) throw CraftRecordingException("RECORDING_ALREADY_ACTIVE", "A location recording is already active")
         if (id == recordingId(context) || archive(context, id).exists() || acknowledged(context, id))
             throw CraftRecordingException("RECORDING_CONFLICT", "Recording IDs cannot be reused")
         archiveCompleted(context)
         file(context).writeText("")
-        edit(context) { it.putString("id", id).putBoolean("active", true).putBoolean("paused", false).putLong("startedAt", startedAt).putString("powerMode", powerMode).remove("powerSaver") }
+        edit(context) { it.putString("id", id).putBoolean("barometer", barometer).remove("barometerError").putBoolean("active", true).putBoolean("paused", false).putLong("startedAt", startedAt).putString("powerMode", powerMode).remove("powerSaver") }
     }
 
     private val POWER_MODES = setOf("default", "saver", "auto")
@@ -187,7 +188,10 @@ object CraftLocationRecordingStore {
     fun updatePause(context: Context, paused: Boolean, options: JSONObject?): JSONObject {
         requireOwner(context, options)
         if (!isActive(context)) throw CraftRecordingException("NO_ACTIVE_RECORDING", "No active location recording")
+        if (paused && !isPaused(context)) pressureEvent(context, "paused")
         commit(context, true, paused)
+        pressureEpoch += 1
+        changed?.invoke()
         return state(context)
     }
     @Synchronized fun setPaused(context: Context, paused: Boolean) { updatePause(context, paused, null) }
@@ -196,8 +200,10 @@ object CraftLocationRecordingStore {
     fun finish(context: Context, options: JSONObject?): JSONObject {
         completed(context, expected(options))?.let { return it }
         requireOwner(context, options)
+        if (isActive(context)) pressureEvent(context, "stopped")
         val stopped = state(context, includeLocations = true)
         commit(context, false, false)
+        changed?.invoke()
         listener = null
         return stopped.put("active", false).put("paused", false).put("effectivePowerMode", "default")
     }
@@ -213,6 +219,7 @@ object CraftLocationRecordingStore {
         val marker = File(saved.path.replace("-completed-", "-ack-"))
         if (!marker.exists()) writeAtomic(marker, id)
         if (saved.exists() && !saved.delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove completed recording")
+        CraftRecordingPressure.delete(context, id)
         if (current) {
             if (file(context).exists() && !file(context).delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove recording samples")
             edit(context) { it.remove("id").remove("startedAt").putBoolean("active", false).putBoolean("paused", false) }
@@ -236,7 +243,11 @@ object CraftLocationRecordingStore {
                         if (requested !is String || requested.isBlank()) throw CraftRecordingException("INVALID_ARGUMENT", "recordingId must be a nonempty recording ID")
                         requested
                     } else java.util.UUID.randomUUID().toString()
-                    start(context, id, System.currentTimeMillis(), requestedPowerMode(options, "default"))
+                    if (options.has("barometer") && options.opt("barometer") !is Boolean)
+                        throw CraftRecordingException("INVALID_ARGUMENT", "barometer must be boolean")
+                    val pressure = options.optBoolean("barometer", false)
+                    if (pressure) CraftRecordingPressure.requireAvailable(context)
+                    start(context, id, System.currentTimeMillis(), requestedPowerMode(options, "default"), pressure)
                     try { ContextCompat.startForegroundService(context, Intent(context, LocationRecordingService::class.java).setAction(LocationRecordingService.ACTION_START).putExtra("recordingId", id)) }
                     catch (error: Exception) { finish(context, JSONObject().put("expectedId", id)); throw error }
                     state(context)
@@ -267,7 +278,16 @@ object CraftLocationRecordingStore {
                         context.startService(Intent(context, LocationRecordingService::class.java).setAction(LocationRecordingService.ACTION_STOP).putExtra("recordingId", stopped.optString("id")))
                     stopped
                 }
-                "getRecordingState" -> state(context, options = options)
+                "getRecordingState" -> {
+                    if (options.has("includeBarometerSamples") && options.opt("includeBarometerSamples") !is Boolean)
+                        throw CraftRecordingException("INVALID_ARGUMENT", "includeBarometerSamples must be boolean")
+                    state(context, options = options).also { result ->
+                        if (options.optBoolean("includeBarometerSamples")) {
+                            val id = result.optString("id")
+                            result.put("barometerEvents", CraftRecordingPressure.read(context, id))
+                        }
+                    }
+                }
                 "readRecording" -> read(context, options)
                 "acknowledgeRecording" -> acknowledge(context, options)
                 else -> throw CraftRecordingException("UNKNOWN_ACTION", "Unsupported Location method")
@@ -281,6 +301,19 @@ object CraftLocationRecordingStore {
     @Synchronized fun isActive(context: Context) = prefs(context).getBoolean("active", false)
     @Synchronized fun isPaused(context: Context) = prefs(context).getBoolean("paused", false)
     @Synchronized fun recordingId(context: Context): String? = prefs(context).getString("id", null)
+    @Volatile internal var pressureEpoch = 0L
+    @Volatile internal var changed: (() -> Unit)? = null
+    @Synchronized internal fun pressureEnabled(context: Context) = prefs(context).getBoolean("barometer", false)
+    @Synchronized internal fun failPressure(context: Context, id: String, message: String) {
+        if (recordingId(context) != id || !isActive(context)) return
+        edit(context) { it.putBoolean("active", false).putBoolean("paused", false).putString("barometerError", message) }
+        changed?.invoke()
+    }
+    private fun pressureEvent(context: Context, reason: String) {
+        val id = recordingId(context) ?: return
+        if (pressureEnabled(context)) CraftRecordingPressure.append(context, id,
+            JSONObject().put("state", "stopped").put("reason", reason).put("timestamp", System.currentTimeMillis()))
+    }
     @Volatile var listener: ((android.location.Location, String) -> Unit)? = null
     @Volatile var nativeListener: ((android.location.Location, String) -> Unit)? = null
 
@@ -329,7 +362,7 @@ object CraftLocationRecordingStore {
     @Synchronized
     fun state(context: Context, includeLocations: Boolean = false, options: JSONObject? = null): JSONObject {
         completed(context, expected(options))?.let {
-            if (!includeLocations) it.remove("locations")
+            if (!includeLocations) { it.remove("locations"); it.remove("barometerEvents") }
             return it
         }
         requireOwner(context, options)
@@ -343,7 +376,12 @@ object CraftLocationRecordingStore {
             put("sampleCount", locations.length())
             put("powerMode", powerMode(context))
             put("effectivePowerMode", if (isPowerSaver(context)) "saver" else "default")
-            if (includeLocations) put("locations", locations)
+            put("barometer", pressureEnabled(context))
+            values.getString("barometerError", null)?.let { put("barometerError", it) }
+            if (includeLocations) {
+                put("locations", locations)
+                if (pressureEnabled(context)) put("barometerEvents", CraftRecordingPressure.read(context, recordingId(context) ?: ""))
+            }
         }
     }
 }
@@ -355,9 +393,33 @@ class LocationRecordingService : Service() {
     private var callbackSaver = false
     private var serviceStartId = 0
     private var powerReceiver: BroadcastReceiver? = null
+    private var pressure: CraftRecordingPressureSession? = null
+    private val mainHandler = android.os.Handler(Looper.getMainLooper())
+    private val pressureChanged: () -> Unit = {
+        mainHandler.post {
+            if (!CraftLocationRecordingStore.isActive(this)) { stopUpdates(); stopSelfResult(serviceStartId) }
+            else syncPressure()
+        }
+        Unit
+    }
+
+    private fun syncPressure() = synchronized(CraftLocationRecordingStore) {
+        val id = CraftLocationRecordingStore.recordingId(this)
+        val wanted = id != null && CraftLocationRecordingStore.isActive(this) &&
+            !CraftLocationRecordingStore.isPaused(this) && CraftLocationRecordingStore.pressureEnabled(this)
+        if (wanted && pressure?.id == id && pressure?.epoch == CraftLocationRecordingStore.pressureEpoch) return@synchronized
+        pressure?.close()
+        pressure = null
+        if (wanted) {
+            val next = CraftRecordingPressureSession(this, id!!)
+            pressure = next
+            next.start()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+        CraftLocationRecordingStore.changed = pressureChanged
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Activity recording", NotificationManager.IMPORTANCE_LOW))
@@ -417,6 +479,7 @@ class LocationRecordingService : Service() {
         val saver = CraftLocationRecordingStore.isPowerSaver(this)
         if (callback != null && callbackRecordingId == id && callbackSaver == saver) {
             syncPowerReceiver()
+            syncPressure()
             return true
         }
         stopUpdates()
@@ -446,6 +509,7 @@ class LocationRecordingService : Service() {
         callbackRecordingId = id
         callbackSaver = saver
         syncPowerReceiver()
+        syncPressure()
         return try {
             client.requestLocationUpdates(request, nextCallback, Looper.getMainLooper())
                 .addOnFailureListener {
@@ -460,13 +524,15 @@ class LocationRecordingService : Service() {
                 }
             true
         } catch (error: Exception) {
-            callback = null
+            stopUpdates()
             runCatching { CraftLocationRecordingStore.finish(this, JSONObject().put("expectedId", id)) }
             false
         }
     }
 
     private fun stopUpdates() {
+        pressure?.close()
+        pressure = null
         callback?.let { client.removeLocationUpdates(it) }
         callback = null
         callbackRecordingId = null
@@ -504,6 +570,8 @@ class LocationRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        if (CraftLocationRecordingStore.changed === pressureChanged) CraftLocationRecordingStore.changed = null
+        mainHandler.removeCallbacksAndMessages(null)
         stopUpdates()
         super.onDestroy()
     }

@@ -1,0 +1,154 @@
+package com.craft.runtime
+
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.UUID
+
+/** Native-only journal: JS suspension cannot drop pressure readings from a route. */
+object CraftRecordingPressure {
+    private fun file(context: Context, id: String): File {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.toByteArray(Charsets.UTF_8))
+        return File(context.filesDir, "craft-pressure-${digest.joinToString("") { "%02x".format(it) }}.jsonl")
+    }
+    fun requireAvailable(context: Context) {
+        val config = context.assets.open("craft.config.json").bufferedReader().use { JSONObject(it.readText()) }
+        if (!config.optBoolean("enableBarometer") || !config.optBoolean("enableBackgroundLocation"))
+            throw CraftRecordingException("CAPABILITY_DISABLED", "Recording pressure requires enableBarometer and enableBackgroundLocation")
+        val manager = context.getSystemService(SensorManager::class.java)
+        if (manager?.getDefaultSensor(Sensor.TYPE_PRESSURE) == null)
+            throw CraftRecordingException("UNAVAILABLE", "Barometer is not present")
+    }
+    // Callers also hold the recording-store lock to serialize owner/ACK changes.
+    fun append(context: Context, id: String, event: JSONObject) {
+        val bytes = (event.put("recordingId", id).toString() + "\n").toByteArray(Charsets.UTF_8)
+        java.io.FileOutputStream(file(context, id), true).use { it.write(bytes); it.fd.sync() }
+    }
+    fun read(context: Context, id: String): JSONArray {
+        val result = JSONArray()
+        val source = file(context, id)
+        if (id.isEmpty() || !source.exists()) return result
+        source.forEachLine { line ->
+            if (line.isNotBlank()) {
+                val event = JSONObject(line)
+                check(event.getString("recordingId") == id) { "Invalid pressure recording owner" }
+                result.put(event)
+            }
+        }
+        return result
+    }
+    fun delete(context: Context, id: String) {
+        val source = file(context, id)
+        if (source.exists() && !source.delete()) throw CraftRecordingException("RECORDING_STORAGE_ERROR", "Unable to remove acknowledged pressure recording")
+    }
+}
+
+internal interface CraftRecordingPressureSource {
+    fun open(sample: (Float, Long) -> Unit): AutoCloseable
+}
+
+private class AndroidRecordingPressureSource(private val context: Context) : CraftRecordingPressureSource {
+    override fun open(sample: (Float, Long) -> Unit): AutoCloseable {
+        val manager = context.getSystemService(SensorManager::class.java)
+            ?: throw IllegalStateException("Sensor manager unavailable")
+        val sensor = manager.getDefaultSensor(Sensor.TYPE_PRESSURE, true)
+            ?: manager.getDefaultSensor(Sensor.TYPE_PRESSURE)
+            ?: throw IllegalStateException("Barometer unavailable")
+        // A non-wake-up sensor cannot deliver continuously during CPU suspend.
+        // Only the explicitly requested, unpaused foreground recording owns this lock.
+        val wake = if (!sensor.isWakeUpSensor) context.getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "craft:recording-pressure").apply { setReferenceCounted(false) } else null
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) { sample(event.values.firstOrNull() ?: Float.NaN, event.timestamp) }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        try {
+            wake?.acquire()
+            check(manager.registerListener(listener, sensor, 1_000_000, Handler(Looper.getMainLooper()))) { "Pressure registration rejected" }
+        } catch (error: Exception) {
+            manager.unregisterListener(listener)
+            if (wake?.isHeld == true) wake.release()
+            throw error
+        }
+        return AutoCloseable {
+            try { manager.unregisterListener(listener) }
+            finally { if (wake?.isHeld == true) wake.release() }
+        }
+    }
+}
+
+/** One service-owned segment, independent of native screen and WebView lifetimes. */
+internal class CraftRecordingPressureSession(
+    private val context: Context,
+    val id: String,
+    private val source: CraftRecordingPressureSource = AndroidRecordingPressureSource(context),
+) {
+    val epoch = CraftLocationRecordingStore.pressureEpoch
+    private var registration: AutoCloseable? = null
+    private var closed = false
+    private var started = false
+    private var reference: Float? = null
+    private var lastTimestamp: Long? = null
+    private var segment = UUID.randomUUID().toString()
+
+    private fun ownsRecording() = epoch == CraftLocationRecordingStore.pressureEpoch && CraftLocationRecordingStore.recordingId(context) == id &&
+        CraftLocationRecordingStore.isActive(context) && !CraftLocationRecordingStore.isPaused(context) &&
+        CraftLocationRecordingStore.pressureEnabled(context)
+
+    fun start() = synchronized(CraftLocationRecordingStore) {
+        if (closed || started || !ownsRecording()) return@synchronized
+        started = true
+        try {
+            write(JSONObject().put("state", "segment").put("reason", "startedOrRecovered"))
+            val acquired = source.open(::sample)
+            if (closed) acquired.close() else registration = acquired
+        } catch (error: Exception) { fail(error) }
+    }
+
+    private fun write(event: JSONObject) {
+        CraftRecordingPressure.append(context, id, event.put("segmentId", segment).put("timestamp", System.currentTimeMillis()))
+    }
+
+    private fun sample(pressure: Float, timestamp: Long) = synchronized(CraftLocationRecordingStore) {
+        if (closed || !ownsRecording()) return@synchronized
+        try {
+            require(pressure.isFinite() && pressure > 0 && timestamp >= 0) { "Invalid pressure sample" }
+            val previous = lastTimestamp
+            if (previous != null && timestamp <= previous) return@synchronized
+            if (previous != null && timestamp - previous < 1_000_000_000L) return@synchronized
+            if (previous != null && timestamp - previous > 3_000_000_000L) {
+                segment = UUID.randomUUID().toString()
+                reference = null
+                write(JSONObject().put("state", "segment").put("reason", "sampleGap").put("timestampMs", timestamp / 1_000_000.0))
+            }
+            val baseline = reference ?: pressure.also { reference = it }
+            val altitude = SensorManager.getAltitude(baseline, pressure)
+            require(altitude.isFinite()) { "Invalid pressure altitude" }
+            write(JSONObject().put("state", "sample").put("pressureHpa", pressure)
+                .put("referencePressureHpa", baseline).put("relativeAltitudeMeters", altitude)
+                .put("timestampMs", timestamp / 1_000_000.0))
+            lastTimestamp = timestamp
+        } catch (error: Exception) { fail(error) }
+    }
+
+    private fun fail(error: Exception) {
+        close()
+        runCatching { write(JSONObject().put("state", "stopped").put("reason", "sensorOrStorageError")) }
+        CraftLocationRecordingStore.failPressure(context, id, error.message ?: "Pressure recording failed")
+    }
+
+    fun close() {
+        if (closed) return
+        closed = true
+        registration?.close()
+        registration = null
+    }
+}
