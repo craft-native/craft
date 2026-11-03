@@ -206,7 +206,19 @@ final class CraftMacRuntime {
         let empty = CraftMacRenderer(runtime: runtime)
         require(!empty.update(["r1"], parentOf: { parents[$0] }, node: { tree[$0] }), "An update with nothing drawn did not ask for a full render")
 
+        // Flows inside flows are laid out in AppKit's one pass, not a nested pass per box: after a render
+        // and after the window resizes, the innermost box has the space its ancestors leave it.
+        renderer.root.frame = CGRect(x: 0, y: 0, width: 320, height: 300)
+        renderer.render(node("root", "View", ["flexGrow": 1, "flexDirection": "row"], [
+            node("pane", "View", ["flexGrow": 1], [node("inner", "View", ["flexGrow": 1, "padding": 10], [node("deep", "View", ["flexGrow": 1])])]),
+            node("rail", "View", ["width": 20])
+        ]))
+        require(renderer.boxes["deep"]!.frame.size == CGSize(width: 280, height: 280), "A nested flow was not laid out with its parents")
+        renderer.root.frame = CGRect(x: 0, y: 0, width: 420, height: 200); renderer.root.layoutSubtreeIfNeeded()
+        require(renderer.boxes["deep"]!.frame.size == CGSize(width: 380, height: 180), "A resize left a nested flow at its old size")
+        renderer.root.frame = CGRect(x: 0, y: 0, width: 320, height: 300); renderer.root.layoutSubtreeIfNeeded()
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements and in-place updates")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates and one-pass nested layout")
     }
 }

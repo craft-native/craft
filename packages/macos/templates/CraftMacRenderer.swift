@@ -56,7 +56,6 @@ final class CraftMacFlow: NSView {
         // scopes must preserve the root's allocation on that later pass too.
         if componentScope, boxes.count == 1, boxes[0].kind != "Modal", boxes[0].superview === self {
             boxes[0].frame = CGRect(origin: .zero, size: size)
-            boxes[0].layoutSubtreeIfNeeded()
             return
         }
         let horizontal = style["flexDirection"] as? String == "row"
@@ -102,9 +101,10 @@ final class CraftMacFlow: NSView {
             let measured = horizontal ? box.measure(width: frames[index].0, stretch: true) : sizes[index]
             let cross = min(crossAvailable, crossExplicit ?? (alignment == "stretch" ? crossAvailable : (horizontal ? measured.height : measured.width)))
             let offset = margins.start + (alignment == "center" ? (crossAvailable - cross) / 2 : alignment == "flex-end" ? crossAvailable - cross : 0)
+            // No layout pass of its own: a child whose size changed is marked for layout, and AppKit lays it out
+            // after this one returns, in the same pass. Asking here walked its subtree again for every ancestor.
             box.frame = horizontal ? CGRect(x: left + frames[index].1, y: top + offset, width: frames[index].0, height: cross)
                 : CGRect(x: left + offset, y: top + frames[index].1, width: cross, height: frames[index].0)
-            box.layoutSubtreeIfNeeded()
         }
         for box in boxes where !box.isHidden && box.layoutStyle["position"] as? String == "absolute" {
             let measured = box.measure(width: size.width)
@@ -113,7 +113,6 @@ final class CraftMacFlow: NSView {
             let width = dimension(box.layoutStyle["width"], base: size.width) ?? (leading != nil && trailing != nil ? max(0, size.width - leading! - trailing!) : measured.width)
             let height = dimension(box.layoutStyle["height"], base: size.height) ?? (above != nil && below != nil ? max(0, size.height - above! - below!) : measured.height)
             box.frame = CGRect(x: (leading ?? (trailing.map { size.width - $0 - width } ?? 0)), y: (above ?? (below.map { size.height - $0 - height } ?? 0)), width: width, height: height)
-            box.layoutSubtreeIfNeeded()
         }
     }
     func fitting(width: CGFloat, stretchChildren: Bool = true) -> CGSize {
@@ -808,7 +807,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
             }
         }
         if let child = componentRoot {
-            child.frame = bounds; child.layoutSubtreeIfNeeded()
+            child.frame = bounds
         } else if let scroll = control as? NSScrollView {
             if let flow {
                 let width = scroll.contentSize.width
