@@ -1,23 +1,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 
-// Type definitions
-interface CraftAPI {
-  getPlatform(): Promise<{ platform: string; version: string }>;
-  getDeviceInfo(): Promise<{ platform: string; model: string; os_version: string }>;
-  showToast(message: string, duration: 'short' | 'long'): Promise<void>;
-  haptic(type: string): Promise<void>;
-  requestPermission(permission: string): Promise<{ granted: boolean; message: string }>;
-  on(event: string, callback: (...args: any[]) => void): void;
-  off(event: string, callback: (...args: any[]) => void): void;
-  emit(event: string, data?: any): void;
-  invoke(method: string, params?: any): Promise<any>;
-}
-
-declare global {
-  interface Window {
-    craft?: CraftAPI;
-  }
-}
+// Core owns Window.craft; bindings retain their legacy flat host view.
+import type { CraftBindingsAPI as CraftAPI } from 'craft-native';
 
 /**
  * Composable to access the Craft API
@@ -28,14 +12,14 @@ export function useCraft() {
 
   onMounted(() => {
     if (window.craft) {
-      craft.value = window.craft;
+      craft.value = window.craft as unknown as CraftAPI;
       isReady.value = true;
     }
 else {
       // Wait for craft to be ready
       const checkCraft = setInterval(() => {
         if (window.craft) {
-          craft.value = window.craft;
+          craft.value = window.craft as unknown as CraftAPI;
           isReady.value = true;
           clearInterval(checkCraft);
         }

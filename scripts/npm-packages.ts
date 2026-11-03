@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { createTempDir } from '../packages/typescript/src/temp-dir'
+import { verifyBindingPackages } from './bindings-package'
 
 type Manifest = {
   name: string
@@ -122,6 +123,8 @@ export async function verifyNpmPackages(buildOnly = false, archiveDir?: string):
       specifiers.push(...importSpecifiers(packed))
       console.log(`Verified ${pkg.name}: ${manifestTargets(packed).length} packed targets`)
     }
+
+    await verifyBindingPackages(archives.map(archive => ({ ...archive, path: join(output ?? temp, archive.file) })))
 
     // Supply only declared external peers. Craft packages themselves must resolve
     // to the extracted archives, never to workspace symlinks or tsconfig paths.

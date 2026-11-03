@@ -1,23 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
-// Type definitions for window.craft
-interface CraftAPI {
-  getPlatform(): Promise<{ platform: string; version: string }>;
-  getDeviceInfo(): Promise<{ platform: string; model: string; os_version: string }>;
-  showToast(message: string, duration: 'short' | 'long'): Promise<void>;
-  haptic(type: string): Promise<void>;
-  requestPermission(permission: string): Promise<{ granted: boolean; message: string }>;
-  on(event: string, callback: (...args: any[]) => void): void;
-  off(event: string, callback: (...args: any[]) => void): void;
-  emit(event: string, data?: any): void;
-  invoke(method: string, params?: any): Promise<any>;
-}
-
-declare global {
-  interface Window {
-    craft?: CraftAPI;
-  }
-}
+// Core owns Window.craft; bindings retain their legacy flat host view.
+import type { CraftBindingsAPI as CraftAPI } from 'craft-native';
 
 /**
  * Hook to access the Craft API
@@ -29,14 +13,14 @@ export function useCraft() {
 
   useEffect(() => {
     if (window.craft) {
-      setCraft(window.craft);
+      setCraft(window.craft as unknown as CraftAPI);
       setIsReady(true);
     }
 else {
       // Wait for craft to be ready
       const checkCraft = setInterval(() => {
         if (window.craft) {
-          setCraft(window.craft);
+          setCraft(window.craft as unknown as CraftAPI);
           setIsReady(true);
           clearInterval(checkCraft);
         }
