@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.443...v0.0.444)
+
+## 🐛 Bug Fixes
+
+- **updater**: own background update policy and lifecycle ([ae53913](https://github.com/craft-native/craft/commit/ae53913)) _(by Chris Breuer)_
+- **ios**: tolerate disappearing notification permission prompts ([65536c5](https://github.com/craft-native/craft/commit/65536c5)) _(by glennmichael123)_ ([#466](https://github.com/craft-native/craft/issues/466))
+- **ci**: run Darwin SDK tests on source pushes and pull requests ([5f3dd0a](https://github.com/craft-native/craft/commit/5f3dd0a)) _(by glennmichael123)_ ([#465](https://github.com/craft-native/craft/issues/465))
+- **ios**: animate solid switches without fading the thumb ([1595167](https://github.com/craft-native/craft/commit/1595167)) _(by glennmichael123)_ ([#467](https://github.com/craft-native/craft/issues/467))
+
+## ⚡ Performance Improvements
+
+- **macos**: decode the screen's posts off its thread, and trace what a post costs it ([7ff75e2](https://github.com/craft-native/craft/commit/7ff75e2)) _(by Chris)_
+- **macos**: keep a component wrapper's merged layout style, and ask the cell only when it decides ([17bd101](https://github.com/craft-native/craft/commit/17bd101)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.442...v0.0.443)
 
 ## 🚀 Features
