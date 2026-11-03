@@ -1,4 +1,4 @@
-/*
+/*!
  * Format implementation adapted from MIT-licensed references:
  * Copyright (c) 2020 Kenty Gwend
  * Copyright (c) 2026 John Campion Jr

@@ -740,3 +740,27 @@ Craft's bundled-backend host reads `backend: { executable: 'stx-backend' }` from
 the helper with `--serve --managed`, and consumes its authenticated loopback URL.
 The helper's standard input is a lifetime lease: it must stop when that pipe
 closes. `craft --capabilities` advertises `bundleBackend` on macOS.
+
+## Drag-to-Applications disk images
+
+`createDiskImage` packages an existing macOS app bundle with an Applications
+shortcut, installation artwork and a Finder icon layout. The layout is written
+without launching Finder or requesting Automation permission.
+
+```ts
+import { createDiskImage } from 'craft-native'
+
+const image = await createDiskImage({
+  appBundlePath: './dist/Example.app',
+  outputPath: './dist/Example.dmg',
+  volumeName: 'Example',
+})
+if (!image.success) throw new Error(image.error)
+```
+
+Signing and notarization belong to the publishing pipeline. Stacks applications
+use Buddy and Pantry's native workflow to sign, notarize and staple the image
+before attaching its ZIP archive. Craft's updater accepts both app ZIPs and ZIPs
+containing a single DMG, and verifies the extracted app before installation.
+
+The shipped LICENSE file includes the installer layout's third-party notices.
