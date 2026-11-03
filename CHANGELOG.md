@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.437...v0.0.438)
+
+## 🚀 Features
+
+- **packaging**: build drag-to-Applications installer disk images ([260405d](https://github.com/craft-native/craft/commit/260405d)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **updater**: extract applications from zipped installer images ([2a285b1](https://github.com/craft-native/craft/commit/2a285b1)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: retain encoder progress before fixture deadlines ([a679a3d](https://github.com/craft-native/craft/commit/a679a3d)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.436...v0.0.437)
 
 ## ⚡ Performance Improvements
