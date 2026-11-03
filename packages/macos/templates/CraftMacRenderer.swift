@@ -304,8 +304,11 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     private struct MeasureKey: Hashable { let width: CGFloat, stretch: Bool }
     private var measured: [MeasureKey: CGSize] = [:]
     /// What this box measured is stale: it or something inside it changed (CraftMacRenderer.update).
-    func forgetMeasurements() { measured.removeAll(keepingCapacity: true) }
+    func forgetMeasurements() { measured.removeAll(keepingCapacity: true); controlSize = nil }
     private var measuredGeneration = -1
+    /// A control's own size (a button, a switch, a picker), asked once rather than at every width the box is
+    /// measured at: a button answers through SwiftUI's layout on current macOS. Forgotten with the measurements.
+    private var controlSize: CGSize?
     var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
@@ -368,6 +371,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
     required init?(coder: NSCoder) { fatalError("Native controls are created from STX") }
 
     func configure(_ node: [String: Any]) {
+        controlSize = nil
         props = node["props"] as? [String: Any] ?? [:]
         flow?.componentScope = props["data-stx-component-wrapper"] != nil
         style = node["style"] as? [String: Any] ?? [:]
@@ -747,8 +751,9 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         return NSEdgeInsets(top: number(style["paddingTop"]) ?? vertical, left: number(style["paddingLeft"]) ?? horizontal, bottom: number(style["paddingBottom"]) ?? vertical, right: number(style["paddingRight"]) ?? horizontal)
     }
     func measure(width: CGFloat, stretch: Bool = false) -> CGSize {
-        if measuredGeneration != CraftMacBox.measureGeneration || measured.count > 64 { measured.removeAll(keepingCapacity: true); measuredGeneration = CraftMacBox.measureGeneration }
-        let key = MeasureKey(width: width, stretch: stretch)
+        if measuredGeneration != CraftMacBox.measureGeneration || measured.count > 64 { forgetMeasurements(); measuredGeneration = CraftMacBox.measureGeneration }
+        // Only a box with children can stretch to the width offered; a leaf measures the same either way.
+        let key = MeasureKey(width: width, stretch: stretch && flow != nil)
         if let size = measured[key] { return size }
         let size = measureSubtree(width: width, stretch: stretch)
         measured[key] = size
@@ -776,7 +781,15 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
         else if kind == "Icon" { size = CGSize(width: 18, height: 18) }
         else if kind == "Image" || kind == "Video" { size = CGSize(width: limit, height: 160) }
         else if kind == "TextInput" { size = CGSize(width: limit, height: props["multiline"] as? Bool == true ? 48 : 28) }
-        else if let control = control as? NSControl { size = control.intrinsicContentSize; size.width = max(24, size.width); size.height = max(26, size.height) }
+        else if let control = control as? NSControl {
+            // A control its style sizes in full is not asked at all: the width and height below replace its answer.
+            if specifiedWidth != nil, dimension(style["height"], base: 1000) != nil { size = CGSize(width: 24, height: 26) }
+            else {
+                let natural = controlSize ?? control.intrinsicContentSize
+                controlSize = natural
+                size = natural; size.width = max(24, size.width); size.height = max(26, size.height)
+            }
+        }
         else if let flow { size = flow.fitting(width: limit, stretchChildren: false) }
         size.width = specifiedWidth ?? (flow != nil && stretch ? limit : min(limit, size.width))
         if let maximum = dimension(style["maxWidth"], base: width) { size.width = min(size.width, maximum) }

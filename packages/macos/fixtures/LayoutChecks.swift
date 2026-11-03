@@ -242,7 +242,15 @@ final class CraftMacRuntime {
         let buttonStar = (renderer.boxes["starButton1"]!.control as! NSButton).image
         require(buttonStar != nil && buttonStar === (renderer.boxes["starButton2"]!.control as! NSButton).image, "Two icon-only buttons of one symbol drew separate images")
 
+        // A control's own size is asked once a pass and asked again after it changes.
+        renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "flex-start"], [node("go", "Button", [:], props: ["title": "Go"])]))
+        let shortButton = renderer.boxes["go"]!.frame.width
+        renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "flex-start"], [node("go", "Button", [:], props: ["title": "Go somewhere much further away"])]))
+        require(renderer.boxes["go"]!.frame.width > shortButton + 60, "A button kept the size its old title measured")
+        renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "flex-start"], [node("go", "Button", ["width": 50, "height": 22], props: ["title": "Go somewhere much further away"])]))
+        require(renderer.boxes["go"]!.frame.size == CGSize(width: 50, height: 22), "A button its style sizes in full took its own size")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons and shared symbols")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons, shared symbols and control sizes")
     }
 }
