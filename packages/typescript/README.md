@@ -339,6 +339,29 @@ if (await updater.checkForUpdates()) {
 }
 ```
 
+### Background update lifecycle
+
+Start and stop background checks through Craft rather than an app-owned timer:
+
+```ts
+updater.startAutoCheck({
+  initialDelay: 60_000,
+  enabled: async () => (await readNativePreferences()).automaticUpdates,
+  autoDownload: true,
+})
+// On native backend shutdown:
+updater.stopAutoCheck()
+```
+
+`checkInterval` on the updater config controls cadence. `enabled` is re-read
+at most a minute later (`policyInterval`), and again before a background download.
+The host owns preference storage; Craft creates no parallel database. Starts are
+idempotent, concurrent manifest checks and downloads share one operation, and a
+verified download stays ready until the user chooses installation. Stopping also
+invalidates policy reads already in flight. Downloads already started may finish.
+`autoInstall` defaults to false; keep it false when installation requires a user
+choice. Timers are unreferenced so they cannot keep a backend process alive.
+
 ### macOS trust
 
 The manifest's SHA-256 proves the download matches what the manifest asked for. It

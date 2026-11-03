@@ -276,6 +276,8 @@ export * as updater from './updater/index.js'
 // namespace left them untyped for anything re-exporting this package.
 export { AutoUpdater, generateUpdateManifest } from './updater/index.js'
 export type {
+  AutoCheckOptions,
+  CheckForUpdatesOptions,
   UpdateInfo as UpdateManifest,
   UpdateProgress,
   UpdaterConfig,

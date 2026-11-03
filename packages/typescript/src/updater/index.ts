@@ -116,6 +116,21 @@ export interface UpdaterConfig {
   relaunch?: (appPath: string) => void | Promise<void>
 }
 
+/** Background policy; the host keeps preferences in its own native model. */
+export interface AutoCheckOptions {
+  enabled?: () => boolean | Promise<boolean>
+  /** Delay the first check without delaying manual checks. Defaults to zero. */
+  initialDelay?: number
+  /** How often to re-read enabled while a check is not due. Defaults to a minute. */
+  policyInterval?: number
+  /** Download in the background, independently of manual check behavior. */
+  autoDownload?: boolean
+}
+
+export interface CheckForUpdatesOptions {
+  autoDownload?: boolean
+}
+
 export interface UpdateProgress {
   phase: 'checking' | 'downloading' | 'extracting' | 'installing' | 'done' | 'error'
   percent: number
@@ -152,7 +167,12 @@ export class AutoUpdater extends EventEmitter {
   private config: UpdaterConfig
   private updateInfo: UpdateInfo | null = null
   private downloadPath: string | null = null
-  private checkTimer: NodeJS.Timeout | null = null
+  private verifiedDownloadPath: string | null = null
+  private checkTimer: ReturnType<typeof setTimeout> | null = null
+  private autoCheckGeneration = 0
+  private autoCheckRunning = false
+  private checking: Promise<UpdateInfo | null> | null = null
+  private downloading: Promise<string | null> | null = null
   // Conditional-GET cache so repeat checks against the manifest server
   // return 304 instead of a full body. Cleared when the URL changes.
   private cachedEtag: string | null = null
@@ -219,33 +239,64 @@ export class AutoUpdater extends EventEmitter {
     }
   }
 
-  /**
-   * Start automatic update checking
-   */
-  startAutoCheck(): void {
-    this.checkForUpdates()
-
-    if (this.config.checkInterval) {
-      this.checkTimer = setInterval(() => {
-        this.checkForUpdates()
-      }, this.config.checkInterval)
+  /** Start one background lifecycle. Repeated starts are idempotent. Never installs by default. */
+  startAutoCheck(options: AutoCheckOptions = {}): void {
+    if (this.autoCheckRunning) return
+    const initialDelay = options.initialDelay ?? 0
+    const policyInterval = options.policyInterval ?? 60_000
+    const interval = this.config.checkInterval ?? 3_600_000
+    if (!Number.isFinite(initialDelay) || initialDelay < 0
+      || !Number.isFinite(policyInterval) || policyInterval <= 0
+      || !Number.isFinite(interval) || interval < 0)
+      throw new Error('Updater: automatic check intervals must be finite and non-negative, with a positive policyInterval')
+    this.autoCheckRunning = true
+    const generation = ++this.autoCheckGeneration
+    const active = () => this.autoCheckRunning && generation === this.autoCheckGeneration
+    const enabled = async () => active() && (await options.enabled?.() ?? true) && active()
+    let nextCheck = Date.now() + initialDelay
+    const schedule = (delay: number) => {
+      if (!active()) return
+      this.checkTimer = setTimeout(() => { void tick() }, delay)
+      this.checkTimer.unref?.()
     }
+    const tick = async () => {
+      try {
+        if (await enabled() && Date.now() >= nextCheck && !(this.verifiedDownloadPath && existsSync(this.verifiedDownloadPath)) && !this.checking && !this.downloading) {
+          // Schedule from the attempt, including failures, to avoid retry storms.
+          nextCheck = interval === 0 ? Infinity : Date.now() + interval
+          const update = await this.checkForUpdates({ autoDownload: false })
+          if (update && !this.lastError && (options.autoDownload ?? this.config.autoDownload) && await enabled())
+            await this.downloadUpdate()
+        }
+      }
+      catch (error) { if (active()) this.emitError(error) }
+      finally {
+        if (active() && (interval !== 0 || nextCheck !== Infinity))
+          schedule(Math.min(policyInterval, nextCheck > Date.now() ? nextCheck - Date.now() : policyInterval))
+      }
+    }
+    schedule(initialDelay)
   }
 
-  /**
-   * Stop automatic update checking
-   */
+  /** Stop timers and invalidate policy reads already in flight. Downloads already started may finish. */
   stopAutoCheck(): void {
-    if (this.checkTimer) {
-      clearInterval(this.checkTimer)
-      this.checkTimer = null
-    }
+    this.autoCheckRunning = false
+    this.autoCheckGeneration++
+    if (this.checkTimer) clearTimeout(this.checkTimer)
+    this.checkTimer = null
   }
 
-  /**
-   * Check for available updates
-   */
-  async checkForUpdates(): Promise<UpdateInfo | null> {
+  /** Concurrent manual and background callers share one manifest request. */
+  checkForUpdates(options: CheckForUpdatesOptions = {}): Promise<UpdateInfo | null> {
+    if (!this.checking && this.downloading) return this.downloading.then(() => this.checkForUpdates(options))
+    if (!this.checking) {
+      this.checking = this.performCheck(options.autoDownload ?? this.config.autoDownload ?? true)
+        .finally(() => { this.checking = null })
+    }
+    return this.checking
+  }
+
+  private async performCheck(autoDownload: boolean): Promise<UpdateInfo | null> {
     this.emit('checking-for-update')
     this.lastError = null
 
@@ -270,7 +321,7 @@ export class AutoUpdater extends EventEmitter {
           this.emit('update-available', this.cachedManifest)
           // A cached manifest says nothing about whether its archive arrived.
           // Retry the normal download path after a failed or interrupted fetch.
-          if (this.config.autoDownload) {
+          if (autoDownload) {
             await this.downloadUpdate()
           }
           return this.cachedManifest
@@ -297,10 +348,14 @@ export class AutoUpdater extends EventEmitter {
           console.log(`Update requires minimum version ${updateInfo.minVersion}`)
         }
 
+        if (this.updateInfo?.version !== updateInfo.version) {
+          this.downloadPath = null
+          this.verifiedDownloadPath = null
+        }
         this.updateInfo = updateInfo
         this.emit('update-available', updateInfo)
 
-        if (this.config.autoDownload) {
+        if (autoDownload) {
           await this.downloadUpdate()
         }
 
@@ -320,7 +375,16 @@ catch (error) {
   /**
    * Download the update
    */
-  async downloadUpdate(): Promise<string | null> {
+  downloadUpdate(): Promise<string | null> {
+    if (this.downloading) return this.downloading
+    if (this.verifiedDownloadPath && existsSync(this.verifiedDownloadPath)) return Promise.resolve(this.verifiedDownloadPath)
+    if (!this.downloading) {
+      this.downloading = this.performDownload().finally(() => { this.downloading = null })
+    }
+    return this.downloading
+  }
+
+  private async performDownload(): Promise<string | null> {
     if (!this.updateInfo) {
       throw new Error('No update available')
     }
@@ -476,6 +540,7 @@ catch (error) {
         }
       }
 
+      this.verifiedDownloadPath = this.downloadPath
       this.emit('update-downloaded', {
         path: this.downloadPath,
         version: this.updateInfo.version,
