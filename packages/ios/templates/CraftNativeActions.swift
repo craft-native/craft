@@ -1,4 +1,7 @@
 import Foundation
+#if CRAFT_PERMISSION_MOTION
+import CoreMotion
+#endif
 import AuthenticationServices
 #if CRAFT_PERMISSION_BIOMETRIC
 import LocalAuthentication
@@ -60,6 +63,7 @@ enum CraftNativeActions {
         if config.enableDeepLinks { values.append("deepLinks") }
         if config.enableLocalNotifications { values.append("notifications") }
         if config.enableHealthKit { values.append("health") }
+        if config.enableBarometer { values.append("barometer") }
         if config.enableWallet { values.append("wallet") }
         if config.enableLiveActivities { values.append("liveActivities") }
         // The in-app browser and the system's web sign-in sheet (CraftBrowser).
@@ -1997,5 +2001,141 @@ enum CraftHaptics {
         let generator = UISelectionFeedbackGenerator()
         selector = generator
         return generator
+    }
+}
+
+// MARK: - Route-owned barometer
+
+struct CraftBarometerSample {
+    let pressureHpa: Double
+    let relativeAltitudeMeters: Double
+    let timestampMs: Double
+}
+
+protocol CraftBarometerSource: AnyObject {
+    var available: Bool { get }
+    var denied: Bool { get }
+    func start(_ receive: @escaping (Result<CraftBarometerSample, Error>) -> Void) throws
+    func stop()
+}
+
+#if CRAFT_PERMISSION_MOTION
+private final class CraftCoreMotionBarometer: CraftBarometerSource {
+    private let altimeter = CMAltimeter()
+    var available: Bool { CMAltimeter.isRelativeAltitudeAvailable() }
+    var denied: Bool { [.denied, .restricted].contains(CMAltimeter.authorizationStatus()) }
+    func start(_ receive: @escaping (Result<CraftBarometerSample, Error>) -> Void) throws {
+        altimeter.startRelativeAltitudeUpdates(to: .main) { data, error in
+            if let error { receive(.failure(error)); return }
+            guard let data else { return }
+            receive(.success(CraftBarometerSample(pressureHpa: data.pressure.doubleValue * 10,
+                relativeAltitudeMeters: data.relativeAltitude.doubleValue, timestampMs: data.timestamp * 1000)))
+        }
+    }
+    func stop() { altimeter.stopRelativeAltitudeUpdates() }
+}
+#endif
+
+private final class CraftUnavailableBarometer: CraftBarometerSource {
+    var available: Bool { false }
+    var denied: Bool { false }
+    func start(_ receive: @escaping (Result<CraftBarometerSample, Error>) -> Void) throws {}
+    func stop() {}
+}
+
+final class CraftNativeBarometer {
+    private final class Stream {
+        let source: CraftBarometerSource
+        var lastTimestamp: Double?
+        init(_ source: CraftBarometerSource) { self.source = source }
+    }
+    private let makeSource: () -> CraftBarometerSource
+    private var stream: Stream?
+    private var closed = false
+    var emit: ([String: Any]) -> Void = { _ in }
+
+    init(makeSource: (() -> CraftBarometerSource)? = nil) {
+        self.makeSource = makeSource ?? {
+            #if CRAFT_PERMISSION_MOTION
+            return CraftCoreMotionBarometer()
+            #else
+            return CraftUnavailableBarometer()
+            #endif
+        }
+    }
+
+    func perform(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
+        guard !closed else { return failure("HOST_CLOSED", "Barometer host is closed") }
+        switch method {
+        case "getAvailability":
+            let source = makeSource()
+            return .success(["relativeAltitude": source.available, "absoluteAltitude": false,
+                "background": false, "permissionDenied": source.denied])
+        case "start": return start(args)
+        case "stop": return .success(stop(reason: "requested"))
+        default: return failure("UNKNOWN_ACTION", "Unsupported Barometer method")
+        }
+    }
+
+    private func start(_ args: [Any]) -> Result<Any, CraftNativeActionError> {
+        guard args.isEmpty || args.first is [String: Any] else { return failure("INVALID_ARGUMENT", "Barometer.start needs an options object") }
+        let options = args.first as? [String: Any] ?? [:]
+        if let background = options["background"] {
+            guard let flag = background as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() else {
+                return failure("INVALID_ARGUMENT", "background must be boolean")
+            }
+            if flag.boolValue { return failure("UNSUPPORTED", "Background barometer recording is not supported") }
+        }
+        let value = options["intervalMs"] ?? 100
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.doubleValue >= 5, number.doubleValue <= 60000,
+              number.doubleValue.rounded() == number.doubleValue else {
+            return failure("INVALID_ARGUMENT", "intervalMs must be an integer from 5 through 60000")
+        }
+        let source = makeSource()
+        guard source.available else { return failure("UNAVAILABLE", "Barometer is not present") }
+        guard !source.denied else { return failure("PERMISSION_DENIED", "Motion access was denied or restricted") }
+        let next = Stream(source)
+        do {
+            try source.start { [weak self, weak next] result in
+                guard let self, let next, !self.closed, self.stream === next else { return }
+                switch result {
+                case .failure:
+                    self.stop(reason: next.source.denied ? "permissionDenied" : "sensorError")
+                case .success(let sample):
+                    guard sample.pressureHpa.isFinite, sample.pressureHpa > 0,
+                          sample.relativeAltitudeMeters.isFinite, sample.timestampMs.isFinite else {
+                        self.stop(reason: "sensorError")
+                        return
+                    }
+                    // Core Motion chooses its own cadence. A requested slower
+                    // output rate never invents or interpolates sensor readings.
+                    if let last = next.lastTimestamp, sample.timestampMs - last < number.doubleValue { return }
+                    next.lastTimestamp = sample.timestampMs
+                    self.emit(["state": "sample", "pressureHpa": sample.pressureHpa,
+                        "relativeAltitudeMeters": sample.relativeAltitudeMeters, "timestampMs": sample.timestampMs])
+                }
+            }
+        } catch {
+            source.stop()
+            return failure("SENSOR_ERROR", error.localizedDescription)
+        }
+        let previous = stream
+        stream = next
+        previous?.source.stop()
+        return .success(true)
+    }
+
+    @discardableResult func stop(reason: String) -> Bool {
+        guard let previous = stream else { return false }
+        stream = nil
+        previous.source.stop()
+        emit(["state": "stopped", "reason": reason])
+        return true
+    }
+    func close() { closed = true; stop(reason: "disposed"); emit = { _ in } }
+    deinit { stream?.source.stop() }
+    private func failure(_ code: String, _ message: String) -> Result<Any, CraftNativeActionError> {
+        .failure(CraftNativeActionError(code: code, message: message))
     }
 }

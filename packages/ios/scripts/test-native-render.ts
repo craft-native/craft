@@ -32,7 +32,7 @@ try {
     output,
     // These tests construct enabled service implementations (including injected
     // location managers and fake heart-rate straps), so compile those services.
-    config: { renderer: 'native', enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
+    config: { renderer: 'native', enableBarometer: true, enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
     runtimeDir: null,
   })
   await build({

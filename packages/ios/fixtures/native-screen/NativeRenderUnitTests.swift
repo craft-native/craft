@@ -5508,3 +5508,128 @@ final class NativeImageGeometryUnitTests: XCTestCase {
         XCTAssertEqual(try pixels(view).frame, CGRect(x: 0, y: 75, width: 300, height: 150))
     }
 }
+
+@MainActor
+final class NativeBarometerUnitTests: XCTestCase {
+    private final class Source: CraftBarometerSource {
+        var available = true
+        var denied = false
+        var refuse = false
+        var stops = 0
+        var receive: ((Result<CraftBarometerSample, Error>) -> Void)?
+        func start(_ receive: @escaping (Result<CraftBarometerSample, Error>) -> Void) throws {
+            if refuse { throw NSError(domain: "fixture", code: 1) }
+            self.receive = receive
+        }
+        func stop() { stops += 1 }
+        func sample(_ altitude: Double, pressure: Double = 1013.25, time: Double = 1000) {
+            receive?(.success(CraftBarometerSample(pressureHpa: pressure, relativeAltitudeMeters: altitude, timestampMs: time)))
+        }
+    }
+    private func code(_ answer: Result<Any, CraftNativeActionError>) -> String? {
+        if case .failure(let error) = answer { return error.code }
+        return nil
+    }
+
+    func testMissingHardwareAndDeniedPermissionAreDistinct() throws {
+        let source = Source()
+        let host = CraftNativeBarometer(makeSource: { source })
+        defer { host.close() }
+        source.available = false
+        let availability = try XCTUnwrap(try host.perform(method: "getAvailability", args: []).get() as? [String: Bool])
+        XCTAssertEqual(availability["relativeAltitude"], false)
+        XCTAssertEqual(availability["background"], false)
+        XCTAssertEqual(availability["absoluteAltitude"], false)
+        XCTAssertEqual(code(host.perform(method: "start", args: [])), "UNAVAILABLE")
+        source.available = true
+        source.denied = true
+        XCTAssertEqual(code(host.perform(method: "start", args: [])), "PERMISSION_DENIED")
+        XCTAssertNil(source.receive)
+    }
+
+    func testInvalidAndFailedReplacementsKeepTheOriginalSession() {
+        let first = Source(), replacement = Source()
+        var next = first
+        let host = CraftNativeBarometer(makeSource: { next })
+        var events = [[String: Any]]()
+        host.emit = { events.append($0) }
+        defer { host.close() }
+        XCTAssertNil(code(host.perform(method: "start", args: [])))
+        for interval in [true, "20", 0, 4, 20.5, 60001, NSNull()] as [Any] {
+            XCTAssertEqual(code(host.perform(method: "start", args: [["intervalMs": interval]])), "INVALID_ARGUMENT")
+        }
+        XCTAssertEqual(code(host.perform(method: "start", args: ["bad"])), "INVALID_ARGUMENT")
+        XCTAssertEqual(code(host.perform(method: "start", args: [["background": "false"]])), "INVALID_ARGUMENT")
+        XCTAssertEqual(code(host.perform(method: "start", args: [["background": true]])), "UNSUPPORTED")
+        next = replacement
+        replacement.refuse = true
+        XCTAssertEqual(code(host.perform(method: "start", args: [])), "SENSOR_ERROR")
+        XCTAssertEqual(first.stops, 0)
+        XCTAssertEqual(replacement.stops, 1)
+        first.sample(12)
+        XCTAssertEqual(events.last?["relativeAltitudeMeters"] as? Double, 12)
+    }
+
+    func testSamplesAreThrottledWithoutInventingAltitudeAndLateCallbacksAreIgnored() {
+        let first = Source(), second = Source()
+        var next = first
+        let host = CraftNativeBarometer(makeSource: { next })
+        var events = [[String: Any]]()
+        host.emit = { events.append($0) }
+        defer { host.close() }
+        XCTAssertNil(code(host.perform(method: "start", args: [["intervalMs": 100]])))
+        first.sample(0, time: 1000)
+        first.sample(2, time: 1050)
+        first.sample(3, time: 1100)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.last?["pressureHpa"] as? Double, 1013.25)
+        XCTAssertEqual(events.last?["timestampMs"] as? Double, 1100)
+        next = second
+        XCTAssertNil(code(host.perform(method: "start", args: [])))
+        first.sample(99, time: 1200)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(first.stops, 1)
+        second.sample(0)
+        XCTAssertEqual(events.last?["relativeAltitudeMeters"] as? Double, 0)
+    }
+
+    func testBackgroundAndSensorErrorsAnnounceAGapAndStopExactlyOnce() {
+        let first = Source(), second = Source()
+        var next = first
+        let host = CraftNativeBarometer(makeSource: { next })
+        var events = [[String: Any]]()
+        host.emit = { events.append($0) }
+        XCTAssertNil(code(host.perform(method: "start", args: [])))
+        XCTAssertTrue(host.stop(reason: "background"))
+        XCTAssertFalse(host.stop(reason: "background"))
+        XCTAssertEqual(events.last?["state"] as? String, "stopped")
+        XCTAssertEqual(events.last?["reason"] as? String, "background")
+        first.sample(42)
+        XCTAssertEqual(events.count, 1)
+        next = second
+        XCTAssertNil(code(host.perform(method: "start", args: [])))
+        second.sample(0, pressure: .nan)
+        XCTAssertEqual(events.last?["reason"] as? String, "sensorError")
+        XCTAssertEqual(second.stops, 1)
+        host.close()
+        host.close()
+        second.sample(9)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(code(host.perform(method: "start", args: [])), "HOST_CLOSED")
+        XCTAssertEqual(first.stops, 1)
+        XCTAssertEqual(second.stops, 1)
+    }
+
+    func testAsynchronousPermissionFailureBalancesCoreMotionStart() {
+        let source = Source()
+        let host = CraftNativeBarometer(makeSource: { source })
+        var events = [[String: Any]]()
+        host.emit = { events.append($0) }
+        defer { host.close() }
+        XCTAssertNil(code(host.perform(method: "start", args: [])))
+        source.denied = true
+        source.receive?(.failure(NSError(domain: "CMErrorDomain", code: 105)))
+        XCTAssertEqual(events.last?["reason"] as? String, "permissionDenied")
+        XCTAssertEqual(source.stops, 1)
+    }
+}

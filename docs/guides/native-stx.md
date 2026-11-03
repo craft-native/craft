@@ -1438,12 +1438,12 @@ if (available) await craft.biometrics.authenticate('Unlock WildLoop')
 
 #### Barometer samples
 
-Android native hosts support opt-in `enableBarometer: true` and advertise
+iOS and Android native hosts support opt-in `enableBarometer: true` and advertise
 `barometer`. The `Barometer` module accepts `getAvailability` with no args,
 `start` with `[{ intervalMs: 100, background: false }]` (options optional), and
 `stop` with no args. Availability reports `relativeAltitude`, `absoluteAltitude`
-and `background` booleans; Android currently supports only relative altitude
-when a pressure sensor exists. A missing sensor rejects `start` with
+and `background` booleans; both currently support only relative altitude
+when the hardware exists. iOS also reports `permissionDenied`. A missing sensor rejects `start` with
 `UNAVAILABLE`. The requested period must be an integer from 5 to 60000 ms.
 
 `craftBarometerUpdate` events contain `{ state: 'sample', pressureHpa,
@@ -1453,6 +1453,17 @@ relative altitude with `SensorManager.getAltitude`. Timestamps are monotonic
 milliseconds since boot. No elevation-gain smoothing, cumulative gain, or
 weather correction is applied; the value is not GPS or calibrated absolute
 altitude. Invalid replacements leave a running session intact.
+
+On iOS, `CMAltimeter` supplies relative altitude directly and its pressure in
+kPa is converted to hPa. iOS omits Android's `referencePressureHpa` field.
+Core Motion chooses the hardware cadence; `intervalMs` only limits the output
+rate and cannot force faster sampling. `enableBarometer` compiles the motion
+implementation and supplies `NSMotionUsageDescription`. A denied or restricted
+motion authorization rejects with `PERMISSION_DENIED`; initial access may
+prompt the user, and a later refusal emits a `permissionDenied` stop event.
+A successful start means updates were requested, not that authorization or a
+first sample has already arrived. STX's adapter must expose this versioned host
+contract before an app can use a convenience `craft.barometer` API.
 
 This foreground stream explicitly rejects `background: true`. App pause stops
 it and emits `{ state: 'stopped', reason: 'background' }`, so consumers can mark
