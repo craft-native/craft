@@ -1491,8 +1491,8 @@ implementation and supplies `NSMotionUsageDescription`. A denied or restricted
 motion authorization rejects with `PERMISSION_DENIED`; initial access may
 prompt the user, and a later refusal emits a `permissionDenied` stop event.
 A successful start means updates were requested, not that authorization or a
-first sample has already arrived. STX's adapter must expose this versioned host
-contract before an app can use a convenience `craft.barometer` API.
+first sample has already arrived. STX's native adapter exposes this versioned
+host contract as `craft.barometer` when advertised by the host.
 
 This foreground stream explicitly rejects `background: true`. App pause stops
 it and emits `{ state: 'stopped', reason: 'background' }`, so consumers can mark
@@ -1537,11 +1537,9 @@ This raw API deliberately differs from the legacy WebView `craftMotionUpdate`
 and iOS's fused `CMDeviceMotion` stream; it does not claim that raw acceleration
 or angular velocity is equivalent to gravity-free acceleration or attitude.
 These requests define the host contract for STX's `callNativeAPI` adapter.
-This change does not add a `craft.motionSensors` wrapper or expose
-`rawMotionSensors` through STX's convenience capability map; that integration
-must be added in STX. Stacks' Android capability allowlist must also map
-`motionSensors` to `enableMotionSensors` before a Stacks app's short-form
-configuration reaches this host.
+STX exposes this as `craft.rawMotionSensors`, keeping it distinct from iOS's
+fused motion API. Stacks maps Android `motionSensors` to `enableMotionSensors`
+and checks the selected builder's sensor support before generating the app.
 
 #### Mounted-view operations
 
@@ -2076,3 +2074,25 @@ failure or locked/corrupt storage retains the old anchor for a later retry;
 there is no silent reset. Unconsumed batches remain across restarts and account
 changes: applications must assign them to the device HealthKit owner and must
 not blindly upload them under whichever account signs in next.
+
+#### Wear OS passive daily steps
+
+When both `enablePedometer` and `enableHealthServices` are enabled, the native
+Android host also advertises `pedometerPassive`. Module `PedometerPassive`
+provides `availability`, `start`, `stop`, and `history`, all with no arguments.
+Request activity-recognition permission with `Pedometer.requestPermission`
+first. `availability` checks Health Services' actual supported data types;
+ordinary phones without that provider return `UNAVAILABLE`.
+
+This uses a signature-permission-protected `PassiveListenerService`, not a
+route's sensor registration, so collection can continue without an open screen.
+Explicit registration intent is saved and restored by WorkManager after boot.
+`stop` clears intent before unregistering; late callbacks cannot add records.
+`history` retains up to eight provider day/time-zone totals, with `kind: 'daily'`,
+`source: 'healthServices'`, Unix-millisecond interval timestamps, and `steps`.
+Newer totals replace the same day's earlier total rather than being summed.
+This is only data delivered since registration, not seven-day iOS backfill.
+
+The phone emulator validates the service manifest and durable daily-total
+semantics. Actual passive delivery and reboot restoration require a Wear OS
+device with Health Services and the declared sensor support.
