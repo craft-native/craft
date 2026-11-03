@@ -1,5 +1,26 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.436...v0.0.437)
+
+## ⚡ Performance Improvements
+
+- **macos**: zig-js that compiles less and rescans fewer functions ([cfc43bc](https://github.com/craft-native/craft/commit/cfc43bc)) _(by Chris)_
+- **macos**: make edge-border layers when they first show ([9ff2ff5](https://github.com/craft-native/craft/commit/9ff2ff5)) _(by Chris)_
+- **macos**: attach new views to the window top down ([baac54b](https://github.com/craft-native/craft/commit/baac54b)) _(by Chris)_
+- **macos**: ask a control its natural size once per pass ([af81637](https://github.com/craft-native/craft/commit/af81637)) _(by Chris)_
+- **macos**: share SF Symbol images by name ([5b398f8](https://github.com/craft-native/craft/commit/5b398f8)) _(by Chris)_
+- **macos**: make buttons without sizeToFit ([8f04095](https://github.com/craft-native/craft/commit/8f04095)) _(by Chris)_
+- **macos**: lay out nested flows in AppKit's one pass ([194aa6a](https://github.com/craft-native/craft/commit/194aa6a)) _(by Chris)_
+
+## 🧪 Tests
+
+- **ios**: retain each mobile UI result bundle ([aaf84cc](https://github.com/craft-native/craft/commit/aaf84cc)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.435...v0.0.436)
 
 ## 🚀 Features
