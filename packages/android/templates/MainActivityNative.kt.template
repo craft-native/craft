@@ -4598,6 +4598,7 @@ class MainActivity : AppCompatActivity() {
         val sounds = CraftNativeSounds(view.context)
         var motion: CraftNativeMotion? = null
         var barometer: CraftNativeBarometer? = null
+        var pedometer: CraftNativePedometer? = null
         val soundRequestCancellers = mutableMapOf<String, () -> Unit>()
         /** Snapshot writes awaiting the writer thread; close rejects them once. */
         val pendingSyncResults = mutableSetOf<String>()
@@ -4621,6 +4622,7 @@ class MainActivity : AppCompatActivity() {
             sounds.close()
             motion?.close()
             barometer?.close()
+            pedometer?.close()
             // Evaluation completion does not mean its outbound messages have
             // reached the host. Close only after the ordered channel barrier,
             // so onDestroy's final writes run before navigation continues.
@@ -4694,6 +4696,7 @@ class MainActivity : AppCompatActivity() {
     private var shakeEnabled = false
     private var motionSensorsEnabled = false
     private var barometerEnabled = false
+    private var pedometerEnabled = false
     private var motionForeground = false
     internal var nativeAppState = "inactive"
         private set
@@ -4770,6 +4773,7 @@ class MainActivity : AppCompatActivity() {
         shakeEnabled = config.optBoolean("enableShakeGesture", false)
         motionSensorsEnabled = config.optBoolean("enableMotionSensors", false)
         barometerEnabled = config.optBoolean("enableBarometer", false)
+        pedometerEnabled = config.optBoolean("enablePedometer", false)
         // Normally started already by its content provider; this covers a
         // process that skipped providers (instrumentation).
         CraftCrashReporter.start(this)
@@ -5178,6 +5182,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        if (pedometerEnabled && !headless) {
+            activeScreen.pedometer = CraftNativePedometer(CraftAndroidMotionSource(this), capabilities::pedometerPermissionGranted).apply {
+                emit = { detail ->
+                    if (activeScreen.active) send(activeScreen, "CRAFT_EVENT",
+                        JSONObject().put("event", "craftPedometerUpdate").put("detail", detail))
+                }
+            }
+        }
         activeScreen.sounds.emit = { payload ->
             if (activeScreen.active) send(activeScreen, "SOUND_EVENT", payload)
         }
@@ -5561,6 +5573,7 @@ class MainActivity : AppCompatActivity() {
         put("audio")
         if (motionSensorsEnabled) put("rawMotionSensors")
         if (barometerEnabled) put("barometer")
+        if (pedometerEnabled) put("pedometer")
         put("viewFocus")
         put("viewMeasure")
         put("viewScroll")
@@ -8066,6 +8079,15 @@ class MainActivity : AppCompatActivity() {
         val method = payload.optString("method")
         val perform: ((CraftNativeCapabilityResult) -> Unit) -> Unit = if (module == "View") {
             { completion -> performView(screen, method, args, completion) }
+        } else if (module == "Pedometer") {
+            { completion ->
+                val pedometer = screen.pedometer
+                if (!pedometerEnabled) completion(CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Pedometer is disabled"))
+                else if (pedometer == null) completion(CraftNativeCapabilityResult(code = "NEEDS_ACTIVITY", message = "Pedometer needs a visible app"))
+                else if (method in listOf("start", "requestPermission") && !motionForeground) completion(CraftNativeCapabilityResult(code = "APP_INACTIVE", message = "Pedometer needs a foreground app"))
+                else if (method == "requestPermission") capabilities.perform(token, payload.optInt("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION), module, method, args, completion)
+                else completion(pedometer.perform(method, args))
+            }
         } else if (module == "Barometer") {
             { completion ->
                 val barometer = screen.barometer
@@ -8340,7 +8362,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         motionForeground = false
-        allScreens().forEach { it.motion?.stopAll(); it.barometer?.stop("background") }
+        allScreens().forEach { it.motion?.stopAll(); it.barometer?.stop("background"); it.pedometer?.stop("background") }
         disarmShakeGesture()
         if (::services.isInitialized) services.pauseVoice()
         nativeAppState = "inactive"
@@ -8408,7 +8430,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (::capabilities.isInitialized) { capabilities.onBluetoothPermissions(requestCode); capabilities.onNotificationPermissions(requestCode) }
+        if (::capabilities.isInitialized) { capabilities.onBluetoothPermissions(requestCode); capabilities.onNotificationPermissions(requestCode); capabilities.onPedometerPermissions(requestCode) }
         if (::services.isInitialized) services.onRequestPermissionsResult(requestCode)
     }
 

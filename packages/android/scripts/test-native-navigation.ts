@@ -32,6 +32,7 @@ try {
     name: 'NativeNavigation', packageName, output,
     config: {
       renderer: 'native',
+      enablePedometer: true,
       mapProvider: 'maplibre',
       nativeScreens: {
         '/': 'home',

@@ -253,6 +253,43 @@ class NativeCapabilitiesTest {
         } finally { host.close() }
     }
 
+    @Test fun pedometerPermissionCancellationCannotResolveTheNextRequest() {
+        var granted = false
+        val launched = mutableListOf<Int>()
+        val replies = mutableListOf<Pair<String, CraftNativeCapabilityResult>>()
+        val host = CraftNativeCapabilities(instrumentation.targetContext, JSONObject().put("enablePedometer", true),
+            requestPedometerPermission = { launched.add(it) }, checkPedometerPermission = { granted })
+        try {
+            instrumentation.runOnMainSync {
+                fun ask(token: String) { host.perform(token, 1, "Pedometer", "requestPermission", JSONArray()) { replies.add(token to it) } }
+                ask("old")
+                assertEquals(1, launched.size)
+                host.cancel("old")
+                ask("busy")
+                assertEquals("PERMISSION_BUSY", replies.single().second.code)
+                host.onPedometerPermissions(999)
+                assertEquals(1, replies.size)
+                host.onPedometerPermissions(launched.single())
+                assertEquals(1, replies.size)
+                ask("next")
+                assertEquals(2, launched.size)
+                granted = true
+                host.onPedometerPermissions(launched.last())
+                assertEquals("next", replies.last().first)
+                assertEquals("granted", replies.last().second.data)
+                granted = false
+                ask("disposed")
+                host.close()
+                host.onPedometerPermissions(launched.last())
+                assertEquals(2, replies.size)
+            }
+        } finally { host.close() }
+        val disabled = CraftNativeCapabilities(instrumentation.targetContext, JSONObject(),
+            requestPedometerPermission = { error("disabled must never prompt") })
+        try { assertEquals("CAPABILITY_DISABLED", call(disabled, "Pedometer", "requestPermission").code) }
+        finally { disabled.close() }
+    }
+
     @Test fun pedometerKeepsSinceBootCountsSeparateFromDetectorEvents() {
         val source = MotionSourceProbe()
         val host = CraftNativePedometer(source) { true }

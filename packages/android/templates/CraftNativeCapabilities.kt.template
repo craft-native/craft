@@ -22,6 +22,7 @@ import android.net.NetworkCapabilities
 import android.provider.MediaStore
 import android.util.Base64
 import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -50,6 +51,7 @@ private const val CRAFT_NATIVE_FILE_PICK_FIRST = 0x4000
 private const val CRAFT_NATIVE_FILE_PICK_LAST = 0xffff
 private const val CRAFT_NATIVE_FILE_PICK_STATE = "craft.filePicker.nextCode"
 private const val CRAFT_NATIVE_NOTIFICATION_PERMISSION_REQUEST = 4102
+private const val CRAFT_NATIVE_PEDOMETER_PERMISSION_REQUEST = 4358
 private const val CRAFT_NATIVE_FILE_DEFAULT_MAX_PIXELS = 2048
 private const val CRAFT_NATIVE_FILE_LARGEST_MAX_PIXELS = 8192
 private const val CRAFT_NATIVE_FILE_DEFAULT_QUALITY = 0.85
@@ -88,6 +90,8 @@ internal class CraftNativeCapabilities(
             override fun dismiss(requestCode: Int) { host.finishActivity(requestCode) }
         }
     },
+    private val requestPedometerPermission: ((Int) -> Unit)? = null,
+    private val checkPedometerPermission: (() -> Boolean)? = null,
 ) {
     companion object {
         private val pickerCodes = CraftNativePickerCodes()
@@ -127,6 +131,8 @@ internal class CraftNativeCapabilities(
     private val fileRoot by lazy { File(context.cacheDir, "craft-files").apply { mkdirs() } }
     private var pendingFilePick: PendingFilePick? = null
     private var pendingNotificationPermission: ((Boolean) -> Unit)? = null
+    private var pendingPedometerPermission: Pair<String, (CraftNativeCapabilityResult) -> Unit>? = null
+    private var pedometerPermissionInFlight = false
     private var database: SQLiteDatabase? = null
     private val biometricPrompts = ConcurrentHashMap<String, BiometricPrompt>()
 
@@ -214,6 +220,29 @@ internal class CraftNativeCapabilities(
                 if (method == "randomUUID") complete(requestToken, success(UUID.randomUUID().toString()), completion)
                 else complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Crypto method"), completion)
             }
+            "Pedometer" -> {
+                if (!config.optBoolean("enablePedometer")) complete(requestToken, failure("CAPABILITY_DISABLED", "Pedometer is disabled"), completion)
+                else if (method != "requestPermission") complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Pedometer permission method"), completion)
+                else onMain {
+                    if (cancelled.remove(requestToken) || closed.get()) return@onMain
+                    val host = activity
+                    if (host == null && requestPedometerPermission == null) complete(requestToken, failure("NEEDS_ACTIVITY", "Pedometer permission needs a screen"), completion)
+                    else if (pedometerPermissionGranted()) complete(requestToken, success("granted"), completion)
+                    else if (pedometerPermissionInFlight) complete(requestToken, failure("PERMISSION_BUSY", "An activity recognition request is already open"), completion)
+                    else {
+                        pendingPedometerPermission = requestToken to completion
+                        pedometerPermissionInFlight = true
+                        try {
+                            if (requestPedometerPermission != null) requestPedometerPermission.invoke(CRAFT_NATIVE_PEDOMETER_PERMISSION_REQUEST)
+                            else ActivityCompat.requestPermissions(requireNotNull(host), arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), CRAFT_NATIVE_PEDOMETER_PERMISSION_REQUEST)
+                        } catch (error: Exception) {
+                            pendingPedometerPermission = null
+                            pedometerPermissionInFlight = false
+                            complete(requestToken, failure("PERMISSION_ERROR", error.message ?: "Permission could not be requested"), completion)
+                        }
+                    }
+                }
+            }
             "Bluetooth" -> {
                 if (!config.optBoolean("enableBluetooth")) complete(requestToken, failure("CAPABILITY_DISABLED", "Bluetooth is disabled"), completion)
                 else bluetooth.perform(method, args) { complete(requestToken, it, completion) }
@@ -268,6 +297,7 @@ internal class CraftNativeCapabilities(
         cancelled.add(requestToken)
         fetchConnections.remove(requestToken)?.disconnect()
         onMain {
+            if (pendingPedometerPermission?.first == requestToken) pendingPedometerPermission = null
             if (pendingFilePick?.requestToken == requestToken) {
                 dismissFilePick()
                 cancelled.remove(requestToken)
@@ -285,11 +315,22 @@ internal class CraftNativeCapabilities(
         networkExecutor.shutdownNow()
         fetchConnections.values.forEach(HttpURLConnection::disconnect)
         fetchConnections.clear()
-        onMain { dismissFilePick() }
+        onMain { dismissFilePick(); pendingPedometerPermission = null; pedometerPermissionInFlight = false }
         database?.close()
         database = null
         biometricPrompts.values.forEach { it.cancelAuthentication() }
         biometricPrompts.clear()
+    }
+
+    fun pedometerPermissionGranted(): Boolean = checkPedometerPermission?.invoke() ?: (Build.VERSION.SDK_INT < 29 ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED)
+
+    fun onPedometerPermissions(requestCode: Int) {
+        if (requestCode != CRAFT_NATIVE_PEDOMETER_PERMISSION_REQUEST) return
+        pedometerPermissionInFlight = false
+        val pending = pendingPedometerPermission
+        pendingPedometerPermission = null
+        pending?.let { (token, completion) -> complete(token, success(if (pedometerPermissionGranted()) "granted" else "denied"), completion) }
     }
 
     private fun onMain(work: () -> Unit) {

@@ -2018,3 +2018,22 @@ existing platform defaults (iOS aspect-fit can upscale; Android center-inside
 cannot). Source loading, retained view identity and `source` remain unchanged.
 Geometry recomputes after load, source replacement, layout and property changes;
 changing fit or position does not restart an unchanged image request.
+
+#### Android step counters and permission
+
+`enablePedometer: true` adds `ACTIVITY_RECOGNITION` and the `pedometer`
+capability. Call `Pedometer.requestPermission` from an active screen before
+starting. On API 29+ this opens the system activity-recognition prompt. A
+cancelled screen request does not consume another screen's permission result.
+
+`start([{ sensor: 'counter' }])` emits `kind: 'counter'` with `stepsSinceBoot`;
+`start([{ sensor: 'detector' }])` emits `kind: 'step'` with `count: 1`.
+`timestampMs` is monotonic time since boot. These are raw sensor measurements,
+not iOS interval history. `query` rejects `UNSUPPORTED`; availability explicitly
+reports no history, cadence, pace, floors or background streaming. On pause,
+the registration stops and emits a `background` gap. Restart explicitly when
+active; do not silently infer steps across that gap.
+
+The typed STX adapter exposes these methods as `craft.pedometer` only when the
+host advertises it. Permission requests use the person-facing untimed protocol;
+ordinary reads retain the usual cancellation and timeout behavior.
