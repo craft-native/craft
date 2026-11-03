@@ -2053,6 +2053,15 @@ Frequency is a hint, not a real-time guarantee. Background delivery requires a
 signed physical-device test; the simulator tests validate persistence and
 callback ownership, not actual HealthKit wake scheduling.
 
+The shared Zig configuration validator also validates these sensor settings,
+including builds that still dispatch the native operation to Swift. Use JSON
+booleans for `enableBarometer`, `enablePedometer`, and `enableHealthKitBackground`,
+a string array for `healthKitBackgroundTypes`, and a string for its frequency.
+A wrongly typed setting invalidates the shared configuration rather than
+silently leaving unrelated native permissions enabled. The page SDK types the
+`craftHealthBackground` event's `detail.type`; the event is a drain hint, not the
+batch itself or a guarantee that JavaScript ran while the app was suspended.
+
 The `healthBackground` capability exposes module `HealthBackground`:
 
 - `status()` returns declared types, frequency, pending batch count, and errors.

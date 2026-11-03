@@ -173,9 +173,9 @@ pub const Flags = std.EnumSet(Feature);
 
 /// Stored config keys whose present values Swift validates after overlaying
 /// the bundled object on its defaults. Missing and null values keep defaults.
-const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
-const extra_bool_keys = [_][]const u8{ "darkMode", "enableShakeGesture" };
-const array_of_string_keys = [_][]const u8{ "associatedDomains", "trustedOrigins" };
+const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor", "healthKitBackgroundFrequency" };
+const extra_bool_keys = [_][]const u8{ "darkMode", "enableShakeGesture", "enableBarometer", "enablePedometer", "enableHealthKitBackground" };
+const array_of_string_keys = [_][]const u8{ "associatedDomains", "trustedOrigins", "healthKitBackgroundTypes" };
 const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "tintColor", "fontFamily", "headingFontFamily", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
 const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains", "allowsLinkPreview", "keyboardAccessory", "disableZoom" };
 /// Swift `Double`s with a default. Any JSON number decodes; a string or a
@@ -666,7 +666,9 @@ fn mentions(comptime overrides: []const u8, comptime key: []const u8) bool {
 }
 
 fn placeholderFor(comptime key: []const u8) []const u8 {
-    if (std.mem.eql(u8, key, "associatedDomains") or std.mem.eql(u8, key, "trustedOrigins")) return "[]";
+    inline for (array_of_string_keys) |array_key| {
+        if (std.mem.eql(u8, key, array_key)) return "[]";
+    }
     inline for (extra_bool_keys) |boolean_key| {
         if (std.mem.eql(u8, key, boolean_key)) return "true";
     }
@@ -1013,4 +1015,18 @@ test "the config file read distinguishes absent from unreadable" {
 
     // And a real file that is not a config is all-false rather than a crash.
     try testing.expectEqual(@as(usize, 0), parse(testing.allocator, bytes).count());
+}
+
+// Native-only sensor settings still participate in the shared Codable validation.
+test "native sensor settings retain unrelated flags only when their types decode" {
+    const valid = parse(testing.allocator,
+        \\{"enableShare":true,"enableBarometer":true,"enablePedometer":false,"enableHealthKitBackground":true,"healthKitBackgroundTypes":["steps"],"healthKitBackgroundFrequency":"hourly"}
+    );
+    try testing.expect(valid.contains(.share));
+    inline for (.{ "enableBarometer", "enablePedometer", "enableHealthKitBackground" }) |key| {
+        const parsed_flags = parse(testing.allocator, "{\"enableShare\":true,\"" ++ key ++ "\":\"true\"}");
+        try testing.expect(parsed_flags.eql(Flags.empty));
+    }
+    try testing.expect(parse(testing.allocator, "{\"enableShare\":true,\"healthKitBackgroundTypes\":[1]}").eql(Flags.empty));
+    try testing.expect(parse(testing.allocator, "{\"enableShare\":true,\"healthKitBackgroundFrequency\":1}").eql(Flags.empty));
 }

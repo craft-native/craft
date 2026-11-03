@@ -2339,6 +2339,8 @@ declare global {
     craftHealthHeartRate: CraftHealthHeartRateEvent;
     // iOS, while a live HealthKit workout is active.
     craftHealthWorkout: CraftHealthWorkoutEvent;
+    /** Durable HealthKit batches are available; drain them again on launch. */
+    craftHealthBackground: CustomEvent<{ type: string }>;
     craftResume: CraftResumeEvent;
     craftMemoryWarning: CustomEvent<Record<string, never>>;
     craftSilentPush: CraftBackgroundWorkEvent;
