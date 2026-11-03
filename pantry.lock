@@ -6,11 +6,12 @@
       "name": "craft",
       "devDependencies": {
         "@stacksjs/buddy": "0.72.56",
-        "@stacksjs/bumpx": "^0.2.26",
+        "@stacksjs/bumpx": "^0.2.27",
         "@stacksjs/bunpress": "^0.2.13",
         "@stacksjs/env": "^0.72.50",
         "better-dx": "^0.2.38",
-        "buddy-bot": "^0.9.17"
+        "buddy-bot": "^0.9.17",
+        "playwright": "1.64.1"
       },
       "system": {
         "bun.sh": "1.4.3",
@@ -62,6 +63,9 @@
     "packages/react": {
       "name": "@craft-native/react",
       "version": "0.0.440",
+      "dependencies": {
+        "craft-native": "workspace:*"
+      },
       "devDependencies": {
         "@types/react": "^18.2.0",
         "react": "^18.2.0",
@@ -72,6 +76,9 @@
     "packages/svelte": {
       "name": "@craft-native/svelte",
       "version": "0.0.440",
+      "dependencies": {
+        "craft-native": "workspace:*"
+      },
       "devDependencies": {
         "svelte": "^4.0.0",
         "tsup": "^8.0.0",
@@ -100,6 +107,9 @@
     "packages/vue": {
       "name": "@craft-native/vue",
       "version": "0.0.440",
+      "dependencies": {
+        "craft-native": "workspace:*"
+      },
       "devDependencies": {
         "tsup": "^8.0.0",
         "typescript": "7.1.0-dev.20261011.1",

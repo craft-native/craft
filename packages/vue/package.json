@@ -45,5 +45,8 @@
     "vue": "^3.5.43",
     "tsup": "^8.0.0",
     "typescript": "7.1.0-dev.20261011.1"
+  },
+  "dependencies": {
+    "craft-native": "workspace:*"
   }
 }
