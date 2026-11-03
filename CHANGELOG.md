@@ -1,5 +1,32 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.438...v0.0.440)
+
+## 🚀 Features
+
+- **macos**: CRAFT_TRACE prints launch and render phases ([1d127e3](https://github.com/craft-native/craft/commit/1d127e3)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **packaging**: retain installer layout notices in published packages ([e6e8b4a](https://github.com/craft-native/craft/commit/e6e8b4a)) _(by Chris Breuer)_
+
+## ⚡ Performance Improvements
+
+- **macos**: run screens without zig-js's JIT ([5e22008](https://github.com/craft-native/craft/commit/5e22008)) _(by Chris)_
+- **macos**: open a window with its first tree, made deferred and without the zoom ([610086d](https://github.com/craft-native/craft/commit/610086d)) _(by Chris)_
+- **macos**: take dropped views out of the window after the batch is drawn ([1e088a5](https://github.com/craft-native/craft/commit/1e088a5)) _(by Chris)_
+- **macos**: ask for the native session while the window opens, not before ([2f43757](https://github.com/craft-native/craft/commit/2f43757)) _(by Chris)_
+- **macos**: run each screen's JavaScript on its own thread, started before AppKit launches ([77efb7c](https://github.com/craft-native/craft/commit/77efb7c)) _(by Chris)_
+
+## 🧹 Chores
+
+- release v0.0.439 ([e2cfd49](https://github.com/craft-native/craft/commit/e2cfd49)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.438...v0.0.439)
 
 ## 🚀 Features
