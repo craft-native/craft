@@ -129,6 +129,7 @@ internal class CraftNativeServices(
             add("healthAvailability")
         }
         if (healthServices != null) add("healthServices")
+        if (healthServices != null && config.optBoolean("enablePedometer")) add("pedometerPassive")
         if (config.optBoolean("enableWallet")) add("wallet")
         if (config.optBoolean("enableKeepAwake")) add("keepAwake")
         if (config.optBoolean("enableGeolocation") || config.optBoolean("enableBackgroundLocation")) {
@@ -146,7 +147,7 @@ internal class CraftNativeServices(
     }
 
     fun handles(module: String): Boolean = module in setOf(
-        "Dialog", "Browser", "Linking", "Share", "Push", "Health", "KeepAwake", "Brightness", "StatusBar", "Speech", "Background",
+        "Dialog", "Browser", "Linking", "Share", "Push", "Health", "PedometerPassive", "KeepAwake", "Brightness", "StatusBar", "Speech", "Background",
         "Location", "Media", "CrashReporter", "HeartRate", "AudioRecording",
         "Wallet",
     )
@@ -165,6 +166,9 @@ internal class CraftNativeServices(
                 "Health" -> if (healthServices != null && method in setOf("startWorkout", "pauseWorkout", "resumeWorkout", "endWorkout")) {
                     healthServices.perform(method, args, done)
                 } else health?.perform(method, args, done) ?: done(failure("CAPABILITY_DISABLED", "Health is not enabled for this app"))
+                "PedometerPassive" -> if (config.optBoolean("enablePedometer") && healthServices != null) {
+                    healthServices.perform("passive:$method", args, done)
+                } else done(failure("CAPABILITY_DISABLED", "Passive steps require pedometer and Health Services"))
                 "Wallet" -> wallet(method, args, done)
                 "KeepAwake" -> keepAwake(args.optBoolean(0, true), done)
                 "Brightness" -> brightness(method, args, done)

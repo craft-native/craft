@@ -2608,6 +2608,21 @@ describe('Craft Android builder', () => {
     }
   })
 
+  it('declares passive step delivery only with pedometer and Health Services enabled', async () => {
+    const output = createTempDir('craft-passive-steps-')
+    for (const enablePedometer of [false, true]) {
+      await init({ name: 'PassiveSteps', packageName: 'org.craft.passive', output, runtimeDir: null,
+        config: { renderer: 'native', enableHealthServices: true, enablePedometer } })
+      const manifest = readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')
+      expect(manifest.includes('CraftPassiveStepsService')).toBe(enablePedometer)
+      expect(manifest.includes('PASSIVE_DATA_BINDING')).toBe(enablePedometer)
+    }
+    await init({ name: 'PassiveSteps', packageName: 'org.craft.passive', output, runtimeDir: null,
+      config: { renderer: 'native', enablePedometer: true } })
+    expect(existsSync(join(output, 'app/src/main/java/org/craft/passive/CraftPassiveSteps.kt'))).toBe(false)
+    expect(readFileSync(join(output, 'app/build.gradle.kts'), 'utf8')).not.toContain('health-services-client')
+  })
+
   it('generates the opt-in Health Services dependency, permissions, and service owner', async () => {
     const output = createTempDir('craft-android-health-services-')
     try {

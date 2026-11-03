@@ -1,0 +1,139 @@
+package {{PACKAGE_NAME}}
+
+import android.Manifest
+import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import androidx.work.Worker
+import androidx.work.WorkerParameters
+import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
+import android.content.pm.PackageManager
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
+import androidx.health.services.client.HealthServices
+import androidx.health.services.client.PassiveListenerService
+import androidx.health.services.client.data.DataPointContainer
+import androidx.health.services.client.data.DataType
+import androidx.health.services.client.data.PassiveListenerConfig
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.Instant
+import java.time.ZoneId
+import java.util.concurrent.TimeUnit
+
+/** Daily Health Services totals are not the raw counter since boot. */
+internal class CraftPassiveStepStore(context: Context) {
+    private val prefs = context.getSharedPreferences("craft-passive-steps", Context.MODE_PRIVATE)
+    companion object { private val lock = Any() }
+    fun enabled(): Boolean = synchronized(lock) { prefs.getBoolean("enabled", false) }
+    fun setEnabled(value: Boolean): Boolean = synchronized(lock) { prefs.edit().putBoolean("enabled", value).commit() }
+    fun history(): JSONArray = synchronized(lock) { JSONArray(prefs.getString("days", "[]")) }
+    fun save(steps: Long, start: Long, end: Long, zone: String): Boolean = synchronized(lock) {
+        if (!enabled() || steps < 0 || start > end) return@synchronized false
+        val day = Instant.ofEpochMilli(end).atZone(ZoneId.of(zone)).toLocalDate().toString()
+        val rows = history()
+        val values = (0 until rows.length()).map { rows.getJSONObject(it) }.toMutableList()
+        val previous = values.firstOrNull { it.optString("day") == day && it.optString("timeZone") == zone }
+        if (previous != null && previous.optLong("endDate") > end) return@synchronized false
+        values.removeAll { it.optString("day") == day && it.optString("timeZone") == zone }
+        values.add(JSONObject().put("kind", "daily").put("source", "healthServices").put("day", day).put("timeZone", zone)
+            .put("startDate", start).put("endDate", end).put("steps", steps))
+        val retained = JSONArray(values.sortedBy { it.getLong("endDate") }.takeLast(8))
+        prefs.edit().putString("days", retained.toString()).commit()
+    }
+}
+
+/** Health Services binds this service even when no Craft screen is alive. */
+class CraftPassiveStepsService : PassiveListenerService() {
+    override fun onNewDataPointsReceived(dataPoints: DataPointContainer) {
+        val storage = CraftPassiveStepStore(this)
+        val boot = Instant.ofEpochMilli(System.currentTimeMillis() - SystemClock.elapsedRealtime())
+        for (point in dataPoints.getData(DataType.STEPS_DAILY)) {
+            storage.save(point.value, point.getStartInstant(boot).toEpochMilli(), point.getEndInstant(boot).toEpochMilli(), ZoneId.systemDefault().id)
+        }
+    }
+    override fun onPermissionLost() { CraftPassiveStepStore(this).setEnabled(false) }
+}
+
+internal class CraftPassiveSteps(private val context: Context) {
+    private val storage = CraftPassiveStepStore(context)
+    private val client get() = HealthServices.getClient(context).passiveMonitoringClient
+    private fun permission(): Boolean = ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+
+    fun perform(method: String, done: (CraftNativeCapabilityResult) -> Unit) {
+        // These bounded provider calls run on a worker: no main-thread binder wait.
+        executor.execute {
+            val result = try {
+                when (method) {
+                    "history" -> CraftNativeCapabilityResult(data = storage.history())
+                    "availability" -> CraftNativeCapabilityResult(data = JSONObject()
+                        .put("supported", DataType.STEPS_DAILY in client.getCapabilitiesAsync().get(10, TimeUnit.SECONDS).supportedDataTypesPassiveMonitoring)
+                        .put("enabled", storage.enabled()).put("permissionGranted", permission()))
+                    "start", "restore" -> {
+                        if (method == "restore" && !storage.enabled()) CraftNativeCapabilityResult(data = false)
+                        else if (!permission()) failure("PERMISSION_DENIED", "Activity recognition access is required")
+                        else if (DataType.STEPS_DAILY !in client.getCapabilitiesAsync().get(10, TimeUnit.SECONDS).supportedDataTypesPassiveMonitoring)
+                            failure("UNAVAILABLE", "This device has no passive daily steps provider")
+                        else {
+                            // Persist intent before binding; the service may receive data immediately.
+                            if (!storage.setEnabled(true)) failure("STORAGE_ERROR", "Passive registration intent could not be saved")
+                            else {
+                                try {
+                                    client.setPassiveListenerServiceAsync(CraftPassiveStepsService::class.java,
+                                        PassiveListenerConfig.builder().setDataTypes(setOf(DataType.STEPS_DAILY)).build()).get(10, TimeUnit.SECONDS)
+                                    CraftNativeCapabilityResult(data = true)
+                                } catch (error: Exception) {
+                                    storage.setEnabled(false)
+                                    client.clearPassiveListenerServiceAsync()
+                                    throw error
+                                }
+                            }
+                        }
+                    }
+                    "stop" -> {
+                        if (!storage.setEnabled(false)) failure("STORAGE_ERROR", "Passive registration intent could not be cleared")
+                        else {
+                            client.clearPassiveListenerServiceAsync().get(10, TimeUnit.SECONDS)
+                            CraftNativeCapabilityResult(data = true)
+                        }
+                    }
+                    else -> failure("UNKNOWN_ACTION", "Unknown passive pedometer action")
+                }
+            } catch (error: Exception) {
+                failure("UNAVAILABLE", error.cause?.message ?: error.message ?: "Health Services is unavailable")
+            }
+            ContextCompat.getMainExecutor(context).execute { done(result) }
+        }
+    }
+    companion object {
+        // Serialize app-wide start/stop commands, including commands from different routes.
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    }
+}
+
+/** Registrations do not survive a reboot. Restore only explicit saved opt-in. */
+class CraftPassiveStepsBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED || !CraftPassiveStepStore(context).enabled()) return
+        WorkManager.getInstance(context).enqueueUniqueWork("craft-passive-steps-restore", ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<CraftPassiveStepsRestoreWorker>().build())
+    }
+}
+
+class CraftPassiveStepsRestoreWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+    override fun doWork(): Result {
+        if (!CraftPassiveStepStore(applicationContext).enabled()) return Result.success()
+        val finished = java.util.concurrent.CountDownLatch(1)
+        var answer: CraftNativeCapabilityResult? = null
+        CraftPassiveSteps(applicationContext).perform("restore") { answer = it; finished.countDown() }
+        if (!finished.await(25, TimeUnit.SECONDS)) return Result.retry()
+        return when (answer?.code) {
+            null -> Result.success()
+            "PERMISSION_DENIED" -> { CraftPassiveStepStore(applicationContext).setEnabled(false); Result.failure() }
+            else -> if (runAttemptCount < 3) Result.retry() else Result.failure()
+        }
+    }
+}

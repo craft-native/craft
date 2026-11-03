@@ -803,6 +803,7 @@ export function renderAndroidPermissions(config: CraftAndroidConfig): string {
   if (config.enableKeepAwake) permissions.add('android.permission.WAKE_LOCK')
   if (config.enableHealthConnect) healthConnectPermissions(config).forEach(permission => permissions.add(permission))
   if (config.enablePedometer) permissions.add('android.permission.ACTIVITY_RECOGNITION')
+  if (config.enablePedometer && config.enableHealthServices) permissions.add('android.permission.RECEIVE_BOOT_COMPLETED')
   // A background refresh (WorkManager) after a restart.
   if (config.renderer === 'native' && config.backgroundRefresh?.enabled) permissions.add('android.permission.RECEIVE_BOOT_COMPLETED')
   // A heart-rate recording keeps the process in the foreground while it
@@ -854,9 +855,11 @@ function writeNativeShellSources(output: string, packagePath: string, packageNam
   write(config.enableHealthServices ? 'CraftHealthServices.kt.template' : 'CraftHealthServicesStub.kt.template', 'CraftHealthServices.kt')
   if (config.enableHealthServices) {
     write('CraftHealthServicesService.kt.template', 'CraftHealthServicesService.kt')
+    write('CraftPassiveSteps.kt.template', 'CraftPassiveSteps.kt')
   }
   else {
     rmSync(join(javaDir, 'CraftHealthServicesService.kt'), { force: true })
+    rmSync(join(javaDir, 'CraftPassiveSteps.kt'), { force: true })
   }
   write('CraftNativeServices.kt.template', 'CraftNativeServices.kt', source => source
     .replace('{{NATIVE_PUSH_IMPORTS}}', config.enablePushNotifications ? 'import com.google.firebase.messaging.FirebaseMessaging' : '')
@@ -1327,6 +1330,7 @@ export async function init(options: InitOptions): Promise<void> {
       : '')
     .replace(/\{\{HEALTH_SERVICES_SERVICE\}\}/g, config.enableHealthServices
       ? '        <service android:name=".CraftHealthServicesService" android:exported="false" android:foregroundServiceType="health" android:stopWithTask="false" />'
+        + (config.enablePedometer ? '\n        <service android:name=".CraftPassiveStepsService" android:exported="true" android:permission="com.google.android.wearable.healthservices.permission.PASSIVE_DATA_BINDING" />\n        <receiver android:name=".CraftPassiveStepsBootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>' : '')
       : '')
     .replace(/\{\{NATIVE_NOTIFICATION_RECEIVER\}\}/g, config.renderer === 'native'
       ? renderNativeShellManifest(config)

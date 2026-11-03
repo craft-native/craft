@@ -20,9 +20,11 @@ internal class CraftHealthServices(
     private val activityProvider: () -> Activity?,
     private val fallback: ((String, JSONArray, (CraftNativeCapabilityResult) -> Unit) -> Unit)? = null,
 ) {
+    private val passiveSteps by lazy { CraftPassiveSteps(context) }
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
 
     fun perform(method: String, args: JSONArray, done: (CraftNativeCapabilityResult) -> Unit) {
+        if (method.startsWith("passive:")) { passiveSteps.perform(method.removePrefix("passive:"), done); return }
         when (method) {
             "startWorkout" -> start(args.optJSONObject(0) ?: JSONObject(), done)
             "pauseWorkout" -> command(CraftHealthServicesService.ACTION_PAUSE, done)
