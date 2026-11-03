@@ -144,6 +144,9 @@ final class CraftMacRuntime {
     private(set) weak var scene: CraftMacScene?
     /// What the screen drew or asked of AppKit before its window existed, done when it attaches.
     private var held: [() -> Void] = []
+    /// The screen's first tree is in its views; `whenDrawn` work waits for it.
+    private(set) var hasDrawn = false
+    private var drawn: [() -> Void] = []
     private var disposed = false
     var errors: [String] = []
     let document = CraftNativeMutationDocument()
@@ -274,6 +277,8 @@ final class CraftMacRuntime {
         let waiting = held; held.removeAll()
         waiting.forEach { $0() }
     }
+    /// On the main thread: `work` once the screen's first tree is drawn (now, if it is).
+    func whenDrawn(_ work: @escaping () -> Void) { if hasDrawn { work() } else { drawn.append(work) } }
     /// On the main thread: `work` now if the window exists, else when it attaches.
     private func whenAttached(_ work: @escaping () -> Void) {
         guard !disposed else { return }
@@ -380,6 +385,7 @@ final class CraftMacRuntime {
                 document.replace(with: tree)
                 scene?.renderer.render(tree)
             }
+            if !hasDrawn { hasDrawn = true; let waiting = drawn; drawn.removeAll(); waiting.forEach { $0() } }
         case "MUTATE":
             do { try CraftTrace.span("  native MUTATE \((payload["mutations"] as? [Any])?.count ?? 0)", atLeast: 1) {
                 let result = try document.apply(payload)

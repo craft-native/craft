@@ -24,6 +24,11 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
     var holdsQuit = false
     /// The content width the screen last heard, so a resize that changes nothing sends nothing.
     var reportedViewportWidth: CGFloat = -1
+    /// The content size the screen started with, which the window corrects once it shows.
+    let startedViewport: CGSize
+    private var shown = false
+    /// How long a window waits for its screen's first tree before it opens without it.
+    static let firstTreeGrace: TimeInterval = 0.5
     /// `runtime` is the screen already started for this window (the main one starts before AppKit has
     /// launched); without one the screen starts here, and evaluates its bundle while the window is made.
     init(name: String, route: String, options: [String: Any], application: CraftMacApplication, runtime prepared: CraftMacRuntime? = nil) {
@@ -34,10 +39,11 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         let viewport = Self.contentSize(options: options, application: application, name: name)
         runtime = prepared ?? application.startScreen(route: route, options: options, viewport: viewport, colorScheme: CraftMacColor.isDark ? "dark" : "light")
         reportedViewportWidth = viewport.width
+        startedViewport = viewport
         renderer = CraftMacRenderer(runtime: runtime)
         let lights = options["trafficLights"] as? [Any] ?? (name == "main" ? application.trafficLights : nil)
         trafficLights = lights.flatMap { values in values.count == 2 ? number(values[0]).flatMap { x in number(values[1]).map { CGPoint(x: x, y: $0) } } : nil }
-        let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        let panel = CraftMacWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: transparent ? [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView] : [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: true)
         panel.runtime = runtime
         window = panel
         CraftTrace.mark("window created")
@@ -56,14 +62,31 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         window.contentView = renderer.root
         window.delegate = self; window.center()
         if let autosave = Self.autosaveName(name: name, application: application) { window.setFrameAutosaveName(autosave) }
-        // Whatever the screen drew while the window was made is in it before it shows.
+        // Whatever the screen drew while the window was made is in it before it shows. A screen that has not
+        // drawn yet gets a moment to, so the window opens with its content rather than blank.
         runtime.attach(self)
+        if runtime.hasDrawn { show() } else {
+            runtime.whenDrawn { [weak self] in self?.show() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.firstTreeGrace) { [weak self] in self?.show() }
+        }
+    }
+
+    /// Orders the window front the first time. The window is made deferred, so the window server's side
+    /// of it is made here, once, rather than updated for each property set while it was configured; and
+    /// it opens without the zoom AppKit plays for a new window, which runs a display link and draws it in
+    /// over several frames. Later showings animate as usual.
+    func show() {
+        guard !shown else { return }
+        shown = true
+        let behavior = window.animationBehavior
+        window.animationBehavior = .none
         CraftTrace.span("window ordered front") { window.makeKeyAndOrderFront(nil) }
+        window.animationBehavior = behavior
         placeTrafficLights()
         // The screen started with the size this window was expected to open at; a saved frame the
         // screen cannot fit, or a smaller display, makes it another, which the screen now hears.
         let size = window.contentLayoutRect.size
-        if abs(size.width - viewport.width) >= 0.5 || abs(size.height - viewport.height) >= 0.5 {
+        if abs(size.width - startedViewport.width) >= 0.5 || abs(size.height - startedViewport.height) >= 0.5 {
             reportedViewportWidth = size.width
             runtime.send("VIEWPORT", ["width": Double(size.width), "height": Double(size.height)])
         }
