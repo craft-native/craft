@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.442...v0.0.443)
+
+## 🚀 Features
+
+- **splash**: scaled iOS launch images and an Android 12 splash ([fb3e90b](https://github.com/craft-native/craft/commit/fb3e90b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.440...v0.0.442)
 
 ## 🚀 Features
