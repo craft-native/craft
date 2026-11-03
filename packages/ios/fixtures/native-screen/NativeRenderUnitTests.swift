@@ -5792,6 +5792,7 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
     private final class Source: CraftHealthBackgroundSource {
         var updates: [String: (Error?, @escaping () -> Void) -> Void] = [:]
         var requests: [(String, Data?, (Result<CraftHealthBackgroundPage, Error>) -> Void)] = []
+        var enableError: Error?
         var cancelled = 0
         var stopped = 0
         var disabled: [String] = []
@@ -5802,7 +5803,7 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
         }
         func disable(type: String) { disabled.append(type) }
         func enable(type: String, frequency: String, completion: @escaping (Error?) -> Void) {
-            enables.append((type, frequency)); completion(nil)
+            enables.append((type, frequency)); completion(enableError)
         }
         func read(type: String, anchor: Data?, completion: @escaping (Result<CraftHealthBackgroundPage, Error>) -> Void) -> () -> Void {
             requests.append((type, anchor, completion))
@@ -5857,6 +5858,7 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
     func testPersistenceFailureRetainsAnchorAndAcknowledgesObserverExactlyOnce() {
         let storage = Storage(), source = Source()
         storage.state.anchors["steps"] = Data([7])
+        storage.state.observedTypes = ["steps"]
         storage.failSave = true
         let host = CraftHealthBackground(source: source, persistence: storage)
         host.configure(types: ["steps"], frequency: "daily")
@@ -5940,6 +5942,48 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
         }
         XCTAssertEqual(storage.state.batches.count, 1)
         host.stop()
+    }
+
+    func testReadSuccessCannotHideARegistrationFailure() {
+        let storage = Storage(), source = Source()
+        source.enableError = CraftHealthBackgroundError.unavailable
+        let host = CraftHealthBackground(source: source, persistence: storage)
+        host.configure(types: ["steps"], frequency: "hourly")
+        source.updates["steps"]?(nil, {})
+        source.deliver(0, anchor: 1)
+        XCTAssertNotNil(host.errors["steps.registration"])
+        source.enableError = nil
+        host.refresh()
+        XCTAssertNil(host.errors["steps.registration"])
+        host.stop()
+    }
+
+    func testHungReadAcknowledgesAtDeadlineAndRejectsItsLateResult() async {
+        let storage = Storage(), source = Source()
+        let host = CraftHealthBackground(source: source, persistence: storage, readTimeout: 0.02)
+        host.configure(types: ["steps"], frequency: "hourly")
+        let acknowledged = expectation(description: "HealthKit acknowledgement at native deadline")
+        acknowledged.assertForOverFulfill = true
+        source.updates["steps"]?(nil) { acknowledged.fulfill() }
+        await fulfillment(of: [acknowledged], timeout: 2)
+        XCTAssertEqual(source.cancelled, 1)
+        source.deliver(0, anchor: 1)
+        XCTAssertTrue(storage.state.anchors.isEmpty)
+        XCTAssertNotNil(host.errors["steps"])
+        host.stop()
+    }
+
+    func testRemovedDeclarationIsDisabledEvenBeforeItsFirstSampleArrives() {
+        let storage = Storage(), first = Source()
+        let host = CraftHealthBackground(source: first, persistence: storage)
+        host.configure(types: ["steps"], frequency: "hourly")
+        XCTAssertTrue(storage.state.anchors.isEmpty)
+        host.stop()
+        let second = Source(), disabled = CraftHealthBackground(source: second, persistence: storage)
+        disabled.configure(types: [], frequency: "hourly")
+        XCTAssertEqual(second.disabled, ["steps"])
+        XCTAssertTrue(second.requests.isEmpty)
+        disabled.stop()
     }
 
     func testAtomicFileRoundTripAndCorruptionDetection() throws {

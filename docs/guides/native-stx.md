@@ -2056,6 +2056,9 @@ callback ownership, not actual HealthKit wake scheduling.
 The `healthBackground` capability exposes module `HealthBackground`:
 
 - `status()` returns declared types, frequency, pending batch count, and errors.
+  Registration errors remain under `<type>.registration` even if a foreground
+  read succeeds. Reads have a native 20-second acknowledgement deadline; a late
+  result cannot advance the retained anchor.
 - `pending()` returns up to 20 durable batches `{ id, type, samples, deleted }`.
 - `acknowledge([ids])` removes only the batches your app has successfully handled.
 - `refresh()` retries registration and reads after a transient failure.
@@ -2087,6 +2090,9 @@ ordinary phones without that provider return `UNAVAILABLE`.
 This uses a signature-permission-protected `PassiveListenerService`, not a
 route's sensor registration, so collection can continue without an open screen.
 Explicit registration intent is saved and restored by WorkManager after boot.
+A temporary provider failure retains that intent for the bounded retry; a
+permission denial or an explicit stop clears it. `availability.enabled` is
+saved intent, not a guarantee that the provider is currently delivering.
 `stop` clears intent before unregistering; late callbacks cannot add records.
 `history` retains up to eight provider day/time-zone totals, with `kind: 'daily'`,
 `source: 'healthServices'`, Unix-millisecond interval timestamps, and `steps`.

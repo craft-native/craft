@@ -32,7 +32,8 @@ internal class CraftPassiveStepStore(context: Context) {
     fun history(): JSONArray = synchronized(lock) { JSONArray(prefs.getString("days", "[]")) }
     fun save(steps: Long, start: Long, end: Long, zone: String): Boolean = synchronized(lock) {
         if (!enabled() || steps < 0 || start > end) return@synchronized false
-        val day = Instant.ofEpochMilli(end).atZone(ZoneId.of(zone)).toLocalDate().toString()
+        // Attribute a completed interval ending at midnight to its start day.
+        val day = Instant.ofEpochMilli(start).atZone(ZoneId.of(zone)).toLocalDate().toString()
         val rows = history()
         val values = (0 until rows.length()).map { rows.getJSONObject(it) }.toMutableList()
         val previous = values.firstOrNull { it.optString("day") == day && it.optString("timeZone") == zone }
@@ -57,10 +58,30 @@ class CraftPassiveStepsService : PassiveListenerService() {
     override fun onPermissionLost() { CraftPassiveStepStore(this).setEnabled(false) }
 }
 
-internal class CraftPassiveSteps(private val context: Context) {
+internal interface CraftPassiveStepProvider {
+    fun supported(): Boolean
+    fun start()
+    fun stop()
+    fun discardRegistration() { stop() }
+}
+
+private class CraftHealthPassiveProvider(context: Context) : CraftPassiveStepProvider {
+    private val client = HealthServices.getClient(context).passiveMonitoringClient
+    override fun supported(): Boolean = DataType.STEPS_DAILY in client.getCapabilitiesAsync().get(10, TimeUnit.SECONDS).supportedDataTypesPassiveMonitoring
+    override fun start() {
+        client.setPassiveListenerServiceAsync(CraftPassiveStepsService::class.java,
+            PassiveListenerConfig.builder().setDataTypes(setOf(DataType.STEPS_DAILY)).build()).get(10, TimeUnit.SECONDS)
+    }
+    override fun stop() { client.clearPassiveListenerServiceAsync().get(10, TimeUnit.SECONDS) }
+    override fun discardRegistration() { client.clearPassiveListenerServiceAsync() }
+}
+
+internal class CraftPassiveSteps(
+    private val context: Context,
+    private val provider: CraftPassiveStepProvider = CraftHealthPassiveProvider(context),
+    private val permission: () -> Boolean = { ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED },
+) {
     private val storage = CraftPassiveStepStore(context)
-    private val client get() = HealthServices.getClient(context).passiveMonitoringClient
-    private fun permission(): Boolean = ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
 
     fun perform(method: String, done: (CraftNativeCapabilityResult) -> Unit) {
@@ -70,24 +91,23 @@ internal class CraftPassiveSteps(private val context: Context) {
                 when (method) {
                     "history" -> CraftNativeCapabilityResult(data = storage.history())
                     "availability" -> CraftNativeCapabilityResult(data = JSONObject()
-                        .put("supported", DataType.STEPS_DAILY in client.getCapabilitiesAsync().get(10, TimeUnit.SECONDS).supportedDataTypesPassiveMonitoring)
+                        .put("supported", provider.supported())
                         .put("enabled", storage.enabled()).put("permissionGranted", permission()))
                     "start", "restore" -> {
                         if (method == "restore" && !storage.enabled()) CraftNativeCapabilityResult(data = false)
                         else if (!permission()) failure("PERMISSION_DENIED", "Activity recognition access is required")
-                        else if (DataType.STEPS_DAILY !in client.getCapabilitiesAsync().get(10, TimeUnit.SECONDS).supportedDataTypesPassiveMonitoring)
+                        else if (!provider.supported())
                             failure("UNAVAILABLE", "This device has no passive daily steps provider")
                         else {
                             // Persist intent before binding; the service may receive data immediately.
                             if (!storage.setEnabled(true)) failure("STORAGE_ERROR", "Passive registration intent could not be saved")
                             else {
                                 try {
-                                    client.setPassiveListenerServiceAsync(CraftPassiveStepsService::class.java,
-                                        PassiveListenerConfig.builder().setDataTypes(setOf(DataType.STEPS_DAILY)).build()).get(10, TimeUnit.SECONDS)
+                                    provider.start()
                                     CraftNativeCapabilityResult(data = true)
                                 } catch (error: Exception) {
-                                    storage.setEnabled(false)
-                                    client.clearPassiveListenerServiceAsync()
+                                    if (method == "start") storage.setEnabled(false)
+                                    runCatching { provider.discardRegistration() }
                                     throw error
                                 }
                             }
@@ -96,7 +116,7 @@ internal class CraftPassiveSteps(private val context: Context) {
                     "stop" -> {
                         if (!storage.setEnabled(false)) failure("STORAGE_ERROR", "Passive registration intent could not be cleared")
                         else {
-                            client.clearPassiveListenerServiceAsync().get(10, TimeUnit.SECONDS)
+                            provider.stop()
                             CraftNativeCapabilityResult(data = true)
                         }
                     }

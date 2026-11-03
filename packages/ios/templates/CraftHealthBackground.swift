@@ -30,6 +30,7 @@ struct CraftHealthBackgroundBatch: Codable {
 
 struct CraftHealthBackgroundState: Codable {
     var anchors: [String: Data] = [:]
+    var observedTypes: [String]? = nil
     var batches: [CraftHealthBackgroundBatch] = []
 }
 
@@ -86,6 +87,7 @@ final class CraftHealthBackground {
         var deadline: DispatchWorkItem?
         var dirty = false
     }
+    private let readTimeout: TimeInterval
     private let source: CraftHealthBackgroundSource
     private let persistence: CraftHealthBackgroundPersistence
     private var state = CraftHealthBackgroundState()
@@ -98,9 +100,10 @@ final class CraftHealthBackground {
     private(set) var errors: [String: String] = [:]
     var emit: (String) -> Void = { _ in }
 
-    init(source: CraftHealthBackgroundSource, persistence: CraftHealthBackgroundPersistence) {
+    init(source: CraftHealthBackgroundSource, persistence: CraftHealthBackgroundPersistence, readTimeout: TimeInterval = 20) {
         self.source = source
         self.persistence = persistence
+        self.readTimeout = readTimeout
     }
 
     func configure(types: [String], frequency: String) {
@@ -117,7 +120,18 @@ final class CraftHealthBackground {
         }
         errors.removeValue(forKey: "storage")
         let current = generation
-        for old in state.anchors.keys where !types.contains(old) { source.disable(type: old) }
+        let observed = Set(state.observedTypes ?? []).union(state.anchors.keys).union(types)
+        if Set(state.observedTypes ?? []) != observed {
+            do {
+                var next = state
+                next.observedTypes = observed.sorted()
+                try persistence.save(next)
+                state = next
+            } catch { errors["storage"] = "Health registration intent could not be persisted"; return }
+        }
+        // Keep retired declarations so a temporarily unavailable store can
+        // retry disabling them on a later launch, even before its first delta.
+        for old in observed where !types.contains(old) { source.disable(type: old) }
         for type in types {
             if observers[type] == nil {
                 observers[type] = source.observe(type: type) { [weak self] error, acknowledge in
@@ -128,8 +142,8 @@ final class CraftHealthBackground {
             }
             source.enable(type: type, frequency: frequency) { [weak self] error in
                 guard let self, self.generation == current else { return }
-                if error != nil { self.errors[type] = "Background delivery registration failed" }
-                else { self.changed(type, acknowledge: {}) }
+                if error != nil { self.errors["\(type).registration"] = "Background delivery registration failed" }
+                else { self.errors.removeValue(forKey: "\(type).registration"); self.changed(type, acknowledge: {}) }
             }
         }
     }
@@ -147,7 +161,7 @@ final class CraftHealthBackground {
             self.finish(type, read)
         }
         read.deadline = deadline
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: deadline)
+        DispatchQueue.main.asyncAfter(deadline: .now() + readTimeout, execute: deadline)
         next(type, read)
     }
 
