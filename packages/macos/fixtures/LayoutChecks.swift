@@ -250,7 +250,18 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1, "alignItems": "flex-start"], [node("go", "Button", ["width": 50, "height": 22], props: ["title": "Go somewhere much further away"])]))
         require(renderer.boxes["go"]!.frame.size == CGSize(width: 50, height: 22), "A button its style sizes in full took its own size")
 
+        // New views join the window top down, after their parent; a component's zIndex (its root's) still
+        // raises it, and a box moved under a sibling's subtree in one render stays where it moved.
+        let raisedScope = node("raisedScope", "View", [:], [node("raisedRoot", "View", ["position": "absolute", "zIndex": 2, "top": 0, "left": 0, "width": 10, "height": 10])], props: ["data-stx-component-wrapper": true])
+        renderer.render(node("root", "View", ["flexGrow": 1], [raisedScope, node("under", "View", ["flexGrow": 1])]))
+        require(renderer.boxes["root"]!.flow!.subviews.last === renderer.boxes["raisedScope"], "A component whose root has a zIndex was not drawn above its siblings")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("outer", "View", [:], [node("moving", "View", ["height": 10]), node("holder", "View", [:])])]))
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("outer", "View", [:], [node("holder", "View", [:], [node("moving", "View", ["height": 10])])])]))
+        require(renderer.boxes["moving"]!.superview === renderer.boxes["holder"]!.flow, "A box moved into a sibling's subtree was dropped")
+        renderer.render(node("root", "View", ["flexGrow": 1], [node("outer", "View", [:], [node("moving", "View", ["height": 10]), node("holder", "View", [:])])]))
+        require(renderer.boxes["moving"]!.superview === renderer.boxes["outer"]!.flow, "A box moved out to its grandparent was dropped")
+
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
-        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons, shared symbols and control sizes")
+        print("PASS native component sizing, text limits, overlays, borders, toolbar actions, filtered scrolling, gradients, pointer styles, remembered measurements, in-place updates, one-pass nested layout, buttons, shared symbols, control sizes and top-down attachment")
     }
 }
