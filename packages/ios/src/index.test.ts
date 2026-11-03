@@ -14,6 +14,7 @@ import {
   init,
   installRuntime,
   nativeMessages,
+  nativeSensorCapabilities,
   nativeRouteBundles,
   nativeRouteRuntime,
   renderFeatureSettings,
@@ -52,6 +53,10 @@ function profileFixture(directory: string, names: string[]): void {
 }
 
 describe('Craft iOS builder', () => {
+  it('advertises the sensors implemented by this builder for app capability validation', () => {
+    expect(nativeSensorCapabilities).toEqual(['barometer', 'pedometer', 'healthKitBackground'])
+  })
+
   it('requires declared health types and signs background delivery only when enabled', async () => {
     const output = createTempDir('craft-health-background-')
     await init({ name: 'HealthBackground', output, runtimeDir: null, config: { enableHealthKit: true } })

@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
-import { compressNativeSources, ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
+import { nativeSensorCapabilities, compressNativeSources, ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -18,6 +18,10 @@ function generatedFiles(path: string): string[] {
 }
 
 describe('Craft Android builder', () => {
+  it('advertises the sensors implemented by this builder for app capability validation', () => {
+    expect(nativeSensorCapabilities).toEqual(['motionSensors', 'barometer', 'pedometer'])
+  })
+
   it('preserves explicit native database and local notification opt-ins without enabling omitted capabilities', async () => {
     const root = createTempDir('craft-android-local-capability-config-')
     for (const enabled of [true, false, undefined]) {

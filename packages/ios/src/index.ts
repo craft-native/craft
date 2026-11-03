@@ -581,6 +581,9 @@ export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nat
  * well as the one-file bundle, and the app runs each screen from its own
  * route's file. Stacks asks for route bundles only when this is true.
  */
+/** Build-time proof for Stacks capability mappings, including unreleased source builds. */
+export const nativeSensorCapabilities = ['barometer', 'pedometer', 'healthKitBackground'] as const
+
 export const nativeRouteBundles = true
 
 /**
