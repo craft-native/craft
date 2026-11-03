@@ -1,5 +1,47 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.440...v0.0.441)
+
+## 🚀 Features
+
+- **native**: let a screen reader perform what a hold offers (#463) ([4eb7e59](https://github.com/craft-native/craft/commit/4eb7e59)) _(by Glenn Michael Torregosa)_ ([#463](https://github.com/craft-native/craft/issues/463), [#460](https://github.com/craft-native/craft/issues/460))
+- **android**: advertise pressure recording and verify failure cleanup ([0a29ea8](https://github.com/craft-native/craft/commit/0a29ea8)) _(by glennmichael123)_
+- **android**: persist pressure samples with background route recordings ([59d28db](https://github.com/craft-native/craft/commit/59d28db)) _(by glennmichael123)_
+- **android**: retain passive Health Services daily steps across app restarts ([feb4a5a](https://github.com/craft-native/craft/commit/feb4a5a)) _(by glennmichael123)_
+- **ios**: register background health delivery at launch and expose durable batches ([1d13b6d](https://github.com/craft-native/craft/commit/1d13b6d)) _(by glennmichael123)_
+- **mobile**: advertise supported native sensor build capabilities ([c4fbd77](https://github.com/craft-native/craft/commit/c4fbd77)) _(by glennmichael123)_
+- **ios**: persist anchored HealthKit deltas before acknowledging wakes ([793f357](https://github.com/craft-native/craft/commit/793f357)) _(by glennmichael123)_
+- **android**: route pedometer permissions and lifecycle cleanup ([502515a](https://github.com/craft-native/craft/commit/502515a)) _(by glennmichael123)_
+- **ios**: declare background HealthKit types and entitlement ([49c2d8b](https://github.com/craft-native/craft/commit/49c2d8b)) _(by glennmichael123)_
+- **ios**: route pedometer calls and cancel departed screen requests ([5a4e088](https://github.com/craft-native/craft/commit/5a4e088)) _(by glennmichael123)_
+- **android**: expose permission-gated step counter and detector ([0cfe32f](https://github.com/craft-native/craft/commit/0cfe32f)) _(by glennmichael123)_
+- **ios**: expose interval pedometer history and live cadence ([ebb5285](https://github.com/craft-native/craft/commit/ebb5285)) _(by glennmichael123)_
+- **ios**: declare pedometer access and motion purpose ([af671c4](https://github.com/craft-native/craft/commit/af671c4)) _(by glennmichael123)_
+- **ios**: expose authorized route-owned barometer samples ([290001d](https://github.com/craft-native/craft/commit/290001d)) _(by glennmichael123)_
+- **android**: expose barometer samples and explicit recording gaps ([3a0dd12](https://github.com/craft-native/craft/commit/3a0dd12)) _(by glennmichael123)_
+- **ios**: gate barometer access with motion authorization ([1dbbf06](https://github.com/craft-native/craft/commit/1dbbf06)) _(by glennmichael123)_
+- **android**: expose route-owned raw motion sensors ([0fa4c17](https://github.com/craft-native/craft/commit/0fa4c17)) _(by glennmichael123)_
+- **types**: export the framework bindings bridge contract ([31217ad](https://github.com/craft-native/craft/commit/31217ad)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ci**: install managed Git before Windows Vulkan acceptance ([88941d5](https://github.com/craft-native/craft/commit/88941d5)) _(by glennmichael123)_
+- **ios**: mirror native sensor configuration and health delivery events ([dc35096](https://github.com/craft-native/craft/commit/dc35096)) _(by glennmichael123)_
+- **mobile**: preserve background sensor intent and acknowledge stalled reads ([01a6e44](https://github.com/craft-native/craft/commit/01a6e44)) _(by glennmichael123)_
+- **bindings**: share core-owned bridge types across UI adapters ([614d6f9](https://github.com/craft-native/craft/commit/614d6f9)) _(by glennmichael123)_
+- **packaging**: declare core dependency for UI bindings ([6ad3517](https://github.com/craft-native/craft/commit/6ad3517)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ios**: give every system picker appearance the same patience ([ddfa91f](https://github.com/craft-native/craft/commit/ddfa91f)) _(by glennmichael123)_
+- **android**: exercise passive step persistence in the native fixture ([33599e7](https://github.com/craft-native/craft/commit/33599e7)) _(by glennmichael123)_
+- **packaging**: install core when checking binding declarations ([726dde5](https://github.com/craft-native/craft/commit/726dde5)) _(by glennmichael123)_
+
+## Contributors
+
+- _Glenn Michael Torregosa_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.438...v0.0.440)
 
 ## 🚀 Features
