@@ -163,7 +163,9 @@ final class CraftMacRuntime {
     private func setUp(params: [String: Any], colorScheme: String) {
         // zig-js's precise collector, not the default arena: an arena frees nothing until the
         // context goes, so a window open all day kept every object its screen ever made.
-        let created = ZJSGlobalContextCreateGarbageCollected(true)!
+        // Without the JIT: its optimizer turns a screen's object and call code into runtime calls that
+        // often exit back to the interpreter, which made the browser's first rows render ~15% slower.
+        let created = ZJSGlobalContextCreateGarbageCollected(false)!
         defer { JSGlobalContextRelease(created) }
         let context = ZigJSContext(jsGlobalContextRef: created)!
         self.context = context
