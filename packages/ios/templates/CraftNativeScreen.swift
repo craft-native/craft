@@ -6191,6 +6191,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var inputIdentities: [ObjectIdentifier: String] = [:]
     private var inputDrafts: [String: String] = [:]
     private var longPressHandlers: [ObjectIdentifier: String] = [:]
+    private var accessibilityActionHandlers: [ObjectIdentifier: String] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
@@ -9430,6 +9431,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)
         applyAccessibility(props, type: type, to: result)
+        // After applyAccessibility: it settles whether the view is an element
+        // at all, and an action on a non-element is unreachable.
+        updateAccessibilityActions(props["accessibilityActions"], handler: props["disabled"] as? Bool == true ? nil : events["onAccessibilityAction"], for: result)
         (result as? CraftNativeFlowView)?.configureCelebration(props["celebration"])
         return current
     }
@@ -9912,6 +9916,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         inputEventCounts.removeValue(forKey: id)
         if node.type == "TextInput" && !preservingInputDrafts { inputDrafts.removeValue(forKey: node.identity) }
         longPressHandlers.removeValue(forKey: id)
+        accessibilityActionHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
@@ -10126,6 +10131,47 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 view.removeGestureRecognizer(recognizer)
             }
             if !ownsTouches(view) { view.isUserInteractionEnabled = handlers[id] != nil || linkTargets[id] != nil || view is CraftNativeFlowView }
+        }
+    }
+
+    /// What a hold offers, published where the rotor can reach it.
+    ///
+    /// A long press is invisible to VoiceOver: nothing announces that it is
+    /// there and nothing can perform it, so an action living only behind a
+    /// hold does not exist for anyone driving the screen by assistive
+    /// technology. A thread that holds a message for Copy and Report is the
+    /// case this was written for; without this the honest mitigation is a
+    /// permanently visible button under every message.
+    ///
+    /// Shape follows the rest of the accessibility props: `name` identifies
+    /// the action to the handler, `label` is what a person hears, and the
+    /// event says which one ran so one handler can serve them all.
+    private func updateAccessibilityActions(_ raw: Any?, handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        let entries = (raw as? [[String: Any]] ?? []).compactMap { entry -> (name: String, label: String)? in
+            guard let name = entry["name"] as? String, !name.isEmpty else { return nil }
+            return (name, (entry["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name)
+        }
+        guard let handler, !handler.isEmpty, !entries.isEmpty else {
+            accessibilityActionHandlers.removeValue(forKey: id)
+            view.accessibilityCustomActions = nil
+            return
+        }
+        accessibilityActionHandlers[id] = handler
+        view.accessibilityCustomActions = entries.map { entry in
+            UIAccessibilityCustomAction(name: entry.label) { [weak self, weak view] _ in
+                // Read the handler at firing time: a reconcile can rename it
+                // while the rotor sits on the element.
+                guard let self, let view, let current = self.accessibilityActionHandlers[ObjectIdentifier(view)] else { return false }
+                self.send(type: "EVENT", payload: ["handlerName": current, "nativeEvent": ["actionName": entry.name]])
+                return true
+            }
+        }
+        // The rotor only lands on an element, and actions on a view it walks
+        // straight through are actions nobody can get to. A bubble whose own
+        // label is its text is exactly that case.
+        if !view.isAccessibilityElement && view.accessibilityElements == nil && view.accessibilityLabel != nil {
+            view.isAccessibilityElement = true
         }
     }
 

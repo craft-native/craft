@@ -56,6 +56,55 @@ final class ScriptThreadUnitTests: XCTestCase {
         return controller
     }
 
+    /// A hold is invisible to VoiceOver, so anything reachable only by
+    /// holding needs custom actions to exist for a screen reader at all.
+    /// The rotor reads `label`, the handler is told `name`, one handler
+    /// serves every action, and clearing the prop takes them away again.
+    func testAccessibilityActionsReachTheScriptAndSayWhichOneRan() throws {
+        let controller = mounted()
+        defer { controller.viewDidDisappear(false); window?.isHidden = true; window = nil }
+        controller.evaluateScript("""
+            globalThis.__actions = [];
+            globalThis.__stxNativeCallback = function(json) {
+                const message = JSON.parse(json);
+                if (message.type === 'EVENT') __actions.push(message.payload.handlerName + ':' + message.payload.nativeEvent.actionName);
+            };
+        """)
+        controller.render([
+            "id": "bubble", "type": "View", "key": "bubble",
+            "props": [
+                "testID": "bubble",
+                "accessibilityLabel": "Thanks for telling us",
+                "accessibilityActions": [
+                    ["name": "copy", "label": "Copy"],
+                    // No label: the rotor falls back to the name.
+                    ["name": "report"],
+                    // No name: nothing to tell the handler, so not an action.
+                    ["label": "Nameless"],
+                ],
+            ],
+            "events": ["onAccessibilityAction": "acted"],
+        ])
+        let bubble = try XCTUnwrap(find(UIView.self, key: "bubble", below: controller.view))
+        XCTAssertEqual(bubble.accessibilityCustomActions?.map(\.name), ["Copy", "report"])
+        // Actions on a view the rotor walks past are actions nobody can reach.
+        XCTAssertTrue(bubble.isAccessibilityElement)
+        for action in bubble.accessibilityCustomActions ?? [] {
+            XCTAssertTrue(action.actionHandler?(action) ?? false, "\(action.name) did not report success")
+        }
+        XCTAssertEqual(controller.evaluateScript("__actions.join('|')")?.toString(), "acted:copy|acted:report")
+
+        // Taking the actions away takes them off the view too: a stale Report
+        // in the rotor would act on a message that no longer offers it.
+        controller.render([
+            "id": "bubble", "type": "View", "key": "bubble",
+            "props": ["testID": "bubble", "accessibilityLabel": "Thanks for telling us"],
+            "events": ["onAccessibilityAction": "acted"],
+        ])
+        let plain = try XCTUnwrap(find(UIView.self, key: "bubble", below: controller.view))
+        XCTAssertTrue(plain.accessibilityCustomActions?.isEmpty ?? true)
+    }
+
     func testSwitchEventsReachBackgroundScriptWithoutAnotherMainQueueTurn() throws {
         for solid in [false, true] {
             let controller = mounted()

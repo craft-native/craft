@@ -425,6 +425,18 @@ export interface BaseProps {
   accessibilityValue?: string | number
   /** Accessibility state exposed to assistive technologies */
   accessibilityState?: AccessibilityState
+  /**
+   * Actions a screen reader can perform on this node, published to the
+   * VoiceOver rotor and TalkBack's actions menu.
+   *
+   * A long press announces nothing and cannot be performed by assistive
+   * technology, so anything reachable only by holding needs these to exist
+   * for a screen reader at all. Pair with `onAccessibilityAction`, which
+   * receives the `name` of whichever one ran.
+   */
+  accessibilityActions?: AccessibilityAction[]
+  /** Fired when a screen reader performs one of `accessibilityActions`. */
+  onAccessibilityAction?: (event: { nativeEvent: { actionName: string } }) => void
   /** Accessibility role */
   accessibilityRole?:
     | 'none'
@@ -465,6 +477,16 @@ export interface AccessibilityState {
   disabled?: boolean
   selected?: boolean
   checked?: boolean
+}
+
+/**
+ * One action a screen reader can perform on a node.
+ */
+export interface AccessibilityAction {
+  /** Identifies the action to `onAccessibilityAction`; never spoken. */
+  name: string
+  /** What the person hears. Falls back to `name` when absent. */
+  label?: string
 }
 
 /**

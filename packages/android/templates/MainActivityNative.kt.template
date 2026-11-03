@@ -4563,6 +4563,11 @@ class MainActivity : AppCompatActivity() {
         val pressUnderlayShowHandlers = mutableMapOf<View, String>()
         val pressUnderlayHideHandlers = mutableMapOf<View, String>()
         val longPressHandlers = mutableMapOf<View, String>()
+        val accessibilityActionHandlers = mutableMapOf<View, String>()
+        // TalkBack actions are added by id, so removing them on a reconcile
+        // needs the ids back; without this a renamed action stacks up beside
+        // the old one every render.
+        val accessibilityActionIds = mutableMapOf<View, List<Int>>()
         val scrollHandlers = mutableMapOf<View, String>()
         val scrollBeginHandlers = mutableMapOf<View, String>()
         val scrollEndHandlers = mutableMapOf<View, String>()
@@ -6992,6 +6997,7 @@ class MainActivity : AppCompatActivity() {
         CraftNativePointers.configure(control, props, style, control is CraftNativeFlexLayout || control is CraftNativeImageBackgroundView ||
             control is CraftNativeKeyboardAvoidingView || control is CraftNativeScrollView || control is CraftNativeRefreshableFlatList || control is CraftNativeModalView)
         applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
+        applyAccessibilityActions(screen, control, props, events, longPressDisabled)
         // One element across an animated change (craft.animation.next).
         control.transitionName = craftNativeOptionalString(props.opt("transitionID"))?.takeIf { it.isNotBlank() }
         val layoutHandler = craftNativeEventName(events, "onLayout")
@@ -7892,6 +7898,54 @@ class MainActivity : AppCompatActivity() {
         val boundedStart = start.coerceIn(0, value.length)
         val boundedEnd = end.coerceIn(0, value.length)
         field.setSelection(minOf(boundedStart, boundedEnd), maxOf(boundedStart, boundedEnd))
+    }
+
+    /**
+     * What a hold offers, published where TalkBack can reach it.
+     *
+     * A long click is invisible to a screen reader: nothing announces that it
+     * is there and nothing can perform it, so an action living only behind a
+     * hold does not exist for anyone driving the screen by assistive
+     * technology. A thread that holds a message for Copy and Report is the
+     * case this was written for; without this the honest mitigation is a
+     * permanently visible button under every message.
+     *
+     * Runs after applyAccessibility, which installs its own delegate and
+     * would drop actions added before it.
+     */
+    private fun applyAccessibilityActions(
+        screen: Screen,
+        control: View,
+        props: JSONObject,
+        events: JSONObject,
+        disabled: Boolean,
+    ) {
+        screen.accessibilityActionIds.remove(control)?.forEach { ViewCompat.removeAccessibilityAction(control, it) }
+        val handler = craftNativeEventName(events, "onAccessibilityAction").takeUnless { disabled } ?: ""
+        val authored = props.optJSONArray("accessibilityActions")
+        if (handler.isBlank() || authored == null || authored.length() == 0) {
+            screen.accessibilityActionHandlers.remove(control)
+            return
+        }
+        screen.accessibilityActionHandlers[control] = handler
+        val ids = mutableListOf<Int>()
+        for (index in 0 until authored.length()) {
+            val entry = authored.optJSONObject(index) ?: continue
+            val name = craftNativeOptionalString(entry.opt("name"))?.takeIf { it.isNotBlank() } ?: continue
+            val label = craftNativeOptionalString(entry.opt("label"))?.takeIf { it.isNotBlank() } ?: name
+            ids += ViewCompat.addAccessibilityAction(control, label) { _, _ ->
+                // Read the handler at firing time: a reconcile can rename it
+                // while the action sits in TalkBack's menu.
+                val current = screen.accessibilityActionHandlers[control]
+                if (current.isNullOrBlank()) {
+                    false
+                } else {
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("actionName", name)))
+                    true
+                }
+            }
+        }
+        if (ids.isEmpty()) screen.accessibilityActionHandlers.remove(control) else screen.accessibilityActionIds[control] = ids
     }
 
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {

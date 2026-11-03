@@ -2079,6 +2079,24 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(swift).toContain('field.borderStyle = style["borderWidth"] != nil || style["backgroundColor"] != nil ? .none : .roundedRect')
   })
 
+  it('publishes a hold\u2019s actions to the rotor, and drops them when they go', () => {
+    // A long press announces nothing and cannot be performed by VoiceOver,
+    // so a thread that holds a message for Copy and Report had to carry a
+    // permanently visible Report button instead (craft-native/craft#460).
+    const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
+    const actions = swift.slice(swift.indexOf('private func updateAccessibilityActions('))
+    expect(actions).toContain('guard let name = entry["name"] as? String, !name.isEmpty else { return nil }')
+    expect(actions).toContain('view.accessibilityCustomActions = nil')
+    expect(actions).toContain('"nativeEvent": ["actionName": entry.name]')
+    // Read at firing time: a reconcile can rename the handler while the
+    // rotor sits on the element.
+    expect(actions).toContain('self.accessibilityActionHandlers[ObjectIdentifier(view)]')
+    // After applyAccessibility, which decides whether the view is an element.
+    expect(swift.indexOf('updateAccessibilityActions(props["accessibilityActions"]'))
+      .toBeGreaterThan(swift.indexOf('applyAccessibility(props, type: type, to: result)'))
+    expect(swift).toContain('accessibilityActionHandlers.removeValue(forKey: id)')
+  })
+
   it('keeps a labelled scroll view, picker or group a container, so VoiceOver reads what it holds', () => {
     // A tour pager labelled for VoiceOver became one element and hid its pages.
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
