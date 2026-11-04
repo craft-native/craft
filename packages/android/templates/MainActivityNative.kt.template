@@ -3385,10 +3385,17 @@ internal class CraftNativeContextMenu(private val anchor: View) {
     private var revision = 0
     private var items: List<CraftNativeMenuItem> = emptyList()
     private var dispatch: ((String) -> Unit)? = null
+    private var handlerIdentity: String? = null
 
-    fun update(next: List<CraftNativeMenuItem>, callback: (String) -> Unit) {
+    fun update(next: List<CraftNativeMenuItem>, identity: String? = null, callback: (String) -> Unit) {
+        val valid = next.filter { it.id.isNotBlank() && it.title.isNotBlank() }.distinctBy { it.id }
+        if (identity != null && identity == handlerIdentity && valid == items) {
+            dispatch = callback
+            return
+        }
         clear()
-        items = next.filter { it.id.isNotBlank() && it.title.isNotBlank() }.distinctBy { it.id }
+        handlerIdentity = identity
+        items = valid
         dispatch = callback
     }
 
@@ -7112,7 +7119,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (menuHandler.isNotBlank() && menuItems.isNotEmpty()) {
             val menu = screen.contextMenus.getOrPut(control) { CraftNativeContextMenu(control) }
-            menu.update(menuItems) { id ->
+            menu.update(menuItems, menuHandler) { id ->
                 send(screen, "EVENT", JSONObject().put("handlerName", menuHandler).put("nativeEvent", JSONObject().put("id", id)))
             }
             // A configured menu owns the hold, rather than firing onLongPress too.

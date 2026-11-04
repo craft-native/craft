@@ -119,6 +119,23 @@ final class NativeContextMenuUnitTests: XCTestCase {
         XCTAssertEqual(removed.actionHandler?(removed), false)
     }
 
+    func testUnchangedMenuSurvivesAnUnrelatedRenderButChangedHandlerInvalidatesIt() {
+        let view = UIView()
+        let host = CraftNativeContextMenu(view: view)
+        let items: [[String: Any]] = [["id": "copy", "title": "Copy"]]
+        var count = 0
+        host.update(items, handler: "same") { _ in count += 1 }
+        let original = host.selection("copy")
+        host.update(items, handler: "same") { _ in count += 2 }
+        original()
+        XCTAssertEqual(count, 2)
+        host.update(items, handler: "different") { _ in count += 4 }
+        original()
+        XCTAssertEqual(count, 2)
+        host.selection("copy")()
+        XCTAssertEqual(count, 6)
+    }
+
     func testMenuAttributesAndStaleSelections() throws {
         let view = UIView()
         let host = CraftNativeContextMenu(view: view)

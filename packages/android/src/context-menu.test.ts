@@ -53,6 +53,17 @@ fun main() {
     check(current.dismissed && !current.click(current.menu.items[0]))
     check(!host.show { _, _ -> })
     check(selected == listOf("copy", "new:delete"))
+    val stable = CraftNativeContextMenu(anchor)
+    val stableItems = listOf(CraftNativeMenuItem("copy", "Copy"))
+    var count = 0
+    stable.update(stableItems, "same") { count++ }
+    check(stable.show { _, _ -> })
+    val held = requireNotNull(PopupMenu.last)
+    stable.update(stableItems, "same") { count += 2 }
+    check(!held.dismissed && held.click(held.menu.items[0]) && count == 2)
+    stable.update(stableItems, "changed") { count += 4 }
+    check(held.dismissed && !held.click(held.menu.items[0]) && count == 2)
+
 }
 `)
 }, 60_000)

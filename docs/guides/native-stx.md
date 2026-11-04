@@ -2183,7 +2183,8 @@ page coordinates or custom preview controller are needed. Android uses a native
 `PopupMenu` anchored to the same view, with disabled items and destructive titles;
 symbols use the app's `craft-icons.json` catalog where available. A configured menu owns
 the hold instead of also calling `onLongPress`. Removing or disabling the node
-removes the interaction, and reconciliation invalidates choices from an old menu.
+removes the interaction. Changing the items or handler invalidates old choices;
+unrelated renders preserve an open menu.
 Use `accessibilityActions` / `onAccessibilityAction` for the corresponding
 VoiceOver and TalkBack actions. They remain independent of menu presentation.
 

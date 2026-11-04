@@ -20,6 +20,7 @@ final class CraftNativeContextMenu: NSObject, UIContextMenuInteractionDelegate {
     private weak var view: UIView?
     private(set) lazy var interaction = UIContextMenuInteraction(delegate: self)
     private var revision = 0
+    private var handlerIdentity: String?
 
     init(view: UIView) {
         self.view = view
@@ -36,7 +37,12 @@ final class CraftNativeContextMenu: NSObject, UIContextMenuInteractionDelegate {
         }
     }
 
-    func update(_ entries: [[String: Any]], dispatch: @escaping (String) -> Void) {
+    func update(_ entries: [[String: Any]], handler: String? = nil, dispatch: @escaping (String) -> Void) {
+        if let handler, handler == handlerIdentity, NSArray(array: items).isEqual(to: entries) {
+            self.dispatch = dispatch
+            return
+        }
+        handlerIdentity = handler
         revision += 1
         interaction.dismissMenu()
         items = entries
@@ -9737,7 +9743,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if hasMenu, let menuHandler {
             let menu = contextMenus[menuID] ?? CraftNativeContextMenu(view: result)
             contextMenus[menuID] = menu
-            menu.update(menuEntries) { [weak self] itemID in
+            menu.update(menuEntries, handler: menuHandler) { [weak self] itemID in
                 self?.send(type: "EVENT", payload: ["handlerName": menuHandler, "nativeEvent": ["id": itemID]])
             }
             result.isUserInteractionEnabled = true
