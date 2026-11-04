@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.459...v0.0.460)
+
+## 🐛 Bug Fixes
+
+- **ios**: reject unreadable switch tap results ([f02709f](https://github.com/craft-native/craft/commit/f02709f)) _(by glennmichael123)_ ([#464](https://github.com/craft-native/craft/issues/464))
+
+## 🧪 Tests
+
+- **android**: isolate pointer fixture window ownership ([2f18247](https://github.com/craft-native/craft/commit/2f18247)) _(by Chris Breuer)_
+- **android**: observe notification cancellation after queued publication ([31c0850](https://github.com/craft-native/craft/commit/31c0850)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.458...v0.0.459)
 
 ## 🚀 Features
