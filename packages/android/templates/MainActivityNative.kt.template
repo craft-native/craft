@@ -7108,8 +7108,9 @@ class MainActivity : AppCompatActivity() {
             control.setOnLongClickListener(null)
             control.isLongClickable = false
         }
-        val menuHandler = craftNativeEventName(events, "onContextMenuAction").takeUnless { longPressDisabled }.orEmpty()
-        val authoredMenu = props.optJSONArray("contextMenu")
+        // STX emits @contextmenu as onLongPress and lowercases unknown bound props.
+        val menuHandler = craftNativeEventName(events, "onContextMenuAction").ifBlank { longPressHandler }.takeUnless { longPressDisabled }.orEmpty()
+        val authoredMenu = props.optJSONArray("contextMenu") ?: props.optJSONArray("contextmenu")
         val menuItems = (0 until (authoredMenu?.length() ?: 0)).mapNotNull { index ->
             val item = authoredMenu?.optJSONObject(index) ?: return@mapNotNull null
             val id = craftNativeOptionalString(item.opt("id"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null

@@ -3,6 +3,9 @@ import { runKotlinFixture } from './testing'
 
 test('anchored menus reject disabled, duplicate and stale choices after updates or teardown', async () => {
   const source = await Bun.file(new URL('../templates/MainActivityNative.kt.template', import.meta.url)).text()
+  // The shared compiler emits this event and lowercased binding for .stx screens.
+  expect(source).toContain('craftNativeEventName(events, "onContextMenuAction").ifBlank { longPressHandler }')
+  expect(source).toContain('props.optJSONArray("contextMenu") ?: props.optJSONArray("contextmenu")')
   const start = source.indexOf('internal data class CraftNativeMenuItem')
   const end = source.indexOf('private fun craftNativeAnnounce(', start)
   expect(start).toBeGreaterThan(0)

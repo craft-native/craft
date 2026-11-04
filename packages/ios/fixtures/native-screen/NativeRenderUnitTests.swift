@@ -171,10 +171,10 @@ final class NativeContextMenuUnitTests: XCTestCase {
     func testRetainedNodeInstallsRemovesAndDisablesItsOwnMenu() throws {
         let screen = CraftNativeScreenController(config: CraftConfig())
         screen.loadViewIfNeeded()
-        func document(_ enabled: Bool, menu: Bool = true) -> [String: Any] {
+        func document(_ enabled: Bool, menu: Bool = true, template: Bool = false) -> [String: Any] {
             ["type": "Text", "props": ["key": "bubble", "disabled": !enabled,
-                "contextMenu": menu ? [["id": "report", "title": "Report"]] : []],
-             "events": ["onContextMenuAction": "chosen", "onLongPress": "held"], "children": ["Message"]]
+                template ? "contextmenu" : "contextMenu": menu ? [["id": "report", "title": "Report"]] : []],
+             "events": template ? ["onLongPress": "chosen"] : ["onContextMenuAction": "chosen", "onLongPress": "held"], "children": ["Message"]]
         }
         func find(_ view: UIView) -> UIView? {
             if view.accessibilityIdentifier == "bubble" { return view }
@@ -189,6 +189,11 @@ final class NativeContextMenuUnitTests: XCTestCase {
             XCTAssertTrue(find(screen.view) === bubble)
             XCTAssertEqual(bubble.interactions.filter { $0 is UIContextMenuInteraction }.count, enabled ? 1 : 0)
         }
+        // The actual STX compiler shape must mount the same retained menu.
+        screen.render(document(true, template: true))
+        XCTAssertTrue(find(screen.view) === bubble)
+        XCTAssertEqual(bubble.interactions.filter { $0 is UIContextMenuInteraction }.count, 1)
+        XCTAssertFalse((bubble.gestureRecognizers ?? []).contains { $0 is UILongPressGestureRecognizer })
         screen.render(document(true, menu: false))
         XCTAssertFalse(bubble.interactions.contains { $0 is UIContextMenuInteraction })
         XCTAssertTrue((bubble.gestureRecognizers ?? []).contains { $0 is UILongPressGestureRecognizer })

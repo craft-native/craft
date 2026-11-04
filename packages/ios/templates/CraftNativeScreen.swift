@@ -9713,8 +9713,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
         let menuDisabled = props["disabled"] as? Bool == true || (props["accessibilityState"] as? [String: Any])?["disabled"] as? Bool == true
-        let menuEntries = menuDisabled ? [] : CraftNativeContextMenu.entries(props["contextMenu"])
-        let menuHandler = nonEmptyHandler(events["onContextMenuAction"])
+        // STX's HTML parser lowercases unknown bound props and maps
+        // @contextmenu to onLongPress. Keep that authored path usable too.
+        let menuEntries = menuDisabled ? [] : CraftNativeContextMenu.entries(props["contextMenu"] ?? props["contextmenu"])
+        let menuHandler = nonEmptyHandler(events["onContextMenuAction"]) ?? nonEmptyHandler(events["onLongPress"])
         let hasMenu = !menuEntries.isEmpty && menuHandler != nil
         // A menu owns the hold when both are authored; never open an action
         // sheet from onLongPress underneath UIKit's menu.

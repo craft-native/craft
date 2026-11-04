@@ -2184,9 +2184,23 @@ page coordinates or custom preview controller are needed. Android uses a native
 symbols use the app's `craft-icons.json` catalog where available. A configured menu owns
 the hold instead of also calling `onLongPress`. Removing or disabling the node
 removes the interaction. Changing the items or handler invalidates old choices;
-unrelated renders preserve an open menu.
+unrelated renders preserve an open menu. Ordinary `.stx` templates can use the
+existing compiler event mapping:
+
+```html
+<View :contextMenu="actions" @contextmenu="chooseAction">
+  <Text>Hold for actions</Text>
+</View>
+```
+
+STX currently emits `contextmenu` and `onLongPress` for that markup. Both hosts
+accept these spellings: with menu items present, the handler runs on selection
+with `nativeEvent.id`, not when the hold begins. An explicit `onContextMenuAction`
+handler in the native protocol takes precedence.
 Use `accessibilityActions` / `onAccessibilityAction` for the corresponding
-VoiceOver and TalkBack actions. They remain independent of menu presentation.
+VoiceOver and TalkBack actions in the native protocol. They remain independent of
+menu presentation; these newer event/prop names still need STX compiler support
+before they can be authored directly as template attributes.
 
 The typed component contract uses the same item ids for touch and accessibility:
 
