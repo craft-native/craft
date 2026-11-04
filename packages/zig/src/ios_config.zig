@@ -309,8 +309,8 @@ fn checkRouteConstraints(value: std.json.Value) bool {
                     if (item != .string) return false;
                 } else if (std.mem.eql(u8, name, "exclude")) {
                     if (!isStringArray(item)) return false;
-                } else if (std.mem.eql(u8, name, "ignoreCase")) {
-                    if (item != .bool) return false;
+                } else if (std.mem.eql(u8, name, "normalize")) {
+                    if (item != .string or !std.mem.eql(u8, item.string, "lowercase")) return false;
                 } else return false;
             }
         }
@@ -1067,7 +1067,7 @@ test "native route constraints mirror Swift's strict dictionary decoder" {
     inline for (.{
         "\"nativeScreenConstraints\":null",
         "\"nativeScreenConstraints\":{}",
-        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":\"[a-z]+\",\"exclude\":[\"terms\"],\"ignoreCase\":true}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":\"[a-z]+\",\"exclude\":[\"terms\"],\"normalize\":\"lowercase\"}}}",
         "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{}}}",
     }) |good| {
         const json = try completeConfig(testing.allocator, good);
@@ -1081,7 +1081,10 @@ test "native route constraints mirror Swift's strict dictionary decoder" {
         "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":null}}}",
         "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":1}}}",
         "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"exclude\":[null]}}}",
-        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"ignoreCase\":\"yes\"}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"normalize\":\"uppercase\"}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"normalize\":true}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"normalize\":null}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"ignoreCase\":true}}}",
         "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"unknown\":true}}}",
     }) |bad| {
         const json = try completeConfig(testing.allocator, bad);
