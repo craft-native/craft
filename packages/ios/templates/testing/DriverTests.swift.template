@@ -295,7 +295,14 @@ final class DriverTests: XCTestCase {
     /// The switch answers `/exec` with 200 whatever the hook did, its first
     /// word the hook's exit code: only `exit 0` is a hook that worked.
     func hookSucceeded(_ answer: String) -> Bool {
-        answer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("exit 0")
+        // get() already requires HTTP success. Custom control servers may
+        // return a message or no body. Preserve the legacy shell protocol's
+        // explicit failures, without accepting "exit 01" as a zero status.
+        let body = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body == "no such hook" { return false }
+        let fields = body.split(whereSeparator: { $0.isWhitespace })
+        guard fields.first == "exit" else { return true }
+        return fields.count >= 2 && fields[1] == "0"
     }
 
     func switchFlipped(from before: String?, to after: String?) -> Bool {

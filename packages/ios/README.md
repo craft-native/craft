@@ -1420,4 +1420,4 @@ when available. `monospace`/`ui-monospace`, `serif`/`ui-serif` and
 weight, italic style and system text scaling. A missing custom face falls through
 to the next family rather than silently replacing a requested mono font with sans.
 
-The simulator driver requires a successful HTTP response from each control-server `exec` hook. A failed or unavailable hook fails XCTest and stops the journey before its next command.
+The simulator driver requires a successful HTTP response from each control-server `exec` hook. A failed or unavailable hook fails XCTest and stops the journey before its next command. A successful hook may return a message or HTTP 204 with no body. Legacy shell responses (`exit <code> ...`) must report exactly `0`; nonzero or malformed exit statuses and the legacy `no such hook` response fail the journey.
