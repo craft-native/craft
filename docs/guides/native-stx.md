@@ -2173,3 +2173,14 @@ This is only data delivered since registration, not seven-day iOS backfill.
 The phone emulator validates the service manifest and durable daily-total
 semantics. Actual passive delivery and reboot restoration require a Wear OS
 device with Health Services and the declared sensor support.
+
+### Native context menus
+
+On iOS, a node can declare `contextMenu: [{ id, title, symbol?, destructive?, disabled? }]`
+and an `onContextMenuAction` handler receiving `nativeEvent.id`. UIKit anchors the
+menu to that native view and supplies its standard lifted-view presentation; no
+page coordinates or custom preview controller are needed. A configured menu owns
+the hold instead of also calling `onLongPress`. Removing or disabling the node
+removes the interaction, and reconciliation invalidates choices from an old menu.
+Use `accessibilityActions` / `onAccessibilityAction` for the corresponding
+VoiceOver and TalkBack actions. They remain independent of menu presentation.

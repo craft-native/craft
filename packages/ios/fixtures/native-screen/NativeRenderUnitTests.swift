@@ -6,6 +6,70 @@ import XCTest
 @testable import NativeRender
 
 @MainActor
+final class NativeContextMenuUnitTests: XCTestCase {
+    func testMenuAttributesAndStaleSelections() throws {
+        let view = UIView()
+        let host = CraftNativeContextMenu(view: view)
+        var selected: [String] = []
+        let entries = CraftNativeContextMenu.entries([
+            ["id": "copy", "title": "Copy", "symbol": "doc.on.doc"],
+            ["id": "report", "title": "Report", "destructive": true],
+            ["id": "blocked", "title": "Blocked", "disabled": true],
+            ["id": "copy", "title": "Duplicate"], ["id": "", "title": "Invalid"],
+        ])
+        XCTAssertEqual(entries.count, 3)
+        host.update(entries) { selected.append($0) }
+        XCTAssertTrue(view.interactions.contains { $0 === host.interaction })
+        let menu = host.menu()
+        XCTAssertNotNil(menu.children[0].image)
+        XCTAssertTrue((menu.children[1] as? UIAction)?.attributes.contains(.destructive) == true)
+        XCTAssertTrue((menu.children[2] as? UIAction)?.attributes.contains(.disabled) == true)
+        host.selection("copy")()
+        host.selection("blocked")()
+        XCTAssertEqual(selected, ["copy"])
+        let stale = host.selection("report")
+        host.update([["id": "report", "title": "Changed"]]) { selected.append("new:" + $0) }
+        stale()
+        host.selection("report")()
+        XCTAssertEqual(selected, ["copy", "new:report"])
+        let detached = host.selection("report")
+        host.detach()
+        detached()
+        XCTAssertFalse(view.interactions.contains { $0 === host.interaction })
+        XCTAssertEqual(selected.count, 2)
+    }
+
+    func testRetainedNodeInstallsRemovesAndDisablesItsOwnMenu() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        func document(_ enabled: Bool, menu: Bool = true) -> [String: Any] {
+            ["type": "Text", "props": ["key": "bubble", "disabled": !enabled,
+                "contextMenu": menu ? [["id": "report", "title": "Report"]] : []],
+             "events": ["onContextMenuAction": "chosen", "onLongPress": "held"], "children": ["Message"]]
+        }
+        func find(_ view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "bubble" { return view }
+            return view.subviews.compactMap(find).first
+        }
+        screen.render(document(true))
+        let bubble = try XCTUnwrap(find(screen.view))
+        XCTAssertTrue(bubble.isUserInteractionEnabled)
+        XCTAssertEqual(bubble.interactions.filter { $0 is UIContextMenuInteraction }.count, 1)
+        for enabled in [true, false, true] {
+            screen.render(document(enabled))
+            XCTAssertTrue(find(screen.view) === bubble)
+            XCTAssertEqual(bubble.interactions.filter { $0 is UIContextMenuInteraction }.count, enabled ? 1 : 0)
+        }
+        screen.render(document(true, menu: false))
+        XCTAssertFalse(bubble.interactions.contains { $0 is UIContextMenuInteraction })
+        XCTAssertTrue((bubble.gestureRecognizers ?? []).contains { $0 is UILongPressGestureRecognizer })
+        screen.render(document(true))
+        screen.render(["type": "View", "children": []])
+        XCTAssertFalse(bubble.interactions.contains { $0 is UIContextMenuInteraction })
+    }
+}
+
+@MainActor
 final class NativeAccessibilityUnitTests: XCTestCase {
     func testAnnouncementsUseSpeechPriorityWithoutMovingFocus() throws {
         for polite in [true, false] {

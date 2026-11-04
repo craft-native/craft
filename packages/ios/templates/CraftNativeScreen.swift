@@ -13,6 +13,74 @@ import Security
 import SwiftUI
 import UIKit
 
+/// A menu belongs to its native view, not to coordinates in a web page.
+final class CraftNativeContextMenu: NSObject, UIContextMenuInteractionDelegate {
+    private(set) var items: [[String: Any]] = []
+    private var dispatch: ((String) -> Void)?
+    private weak var view: UIView?
+    private(set) lazy var interaction = UIContextMenuInteraction(delegate: self)
+    private var revision = 0
+
+    init(view: UIView) {
+        self.view = view
+        super.init()
+        view.addInteraction(interaction)
+    }
+
+    static func entries(_ raw: Any?) -> [[String: Any]] {
+        var seen = Set<String>()
+        return (raw as? [[String: Any]] ?? []).filter {
+            guard let id = $0["id"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let title = $0["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            return seen.insert(id).inserted
+        }
+    }
+
+    func update(_ entries: [[String: Any]], dispatch: @escaping (String) -> Void) {
+        revision += 1
+        interaction.dismissMenu()
+        items = entries
+        self.dispatch = dispatch
+    }
+
+    func detach() {
+        revision += 1
+        dispatch = nil
+        items = []
+        interaction.dismissMenu()
+        view?.removeInteraction(interaction)
+    }
+
+    /// Captured actions from an open menu cannot target a reconciled row.
+    func selection(_ id: String) -> () -> Void {
+        let expected = revision
+        return { [weak self] in
+            guard let self, self.revision == expected,
+                  let item = self.items.first(where: { $0["id"] as? String == id }),
+                  item["disabled"] as? Bool != true else { return }
+            self.dispatch?(id)
+        }
+    }
+
+    func menu() -> UIMenu {
+        UIMenu(children: items.map { item in
+            var attributes: UIMenuElement.Attributes = []
+            if item["disabled"] as? Bool == true { attributes.insert(.disabled) }
+            if item["destructive"] as? Bool == true { attributes.insert(.destructive) }
+            let chosen = selection(item["id"] as! String)
+            return UIAction(title: item["title"] as! String,
+                            image: (item["symbol"] as? String).flatMap { UIImage(systemName: $0) },
+                            attributes: attributes) { _ in chosen() }
+        })
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard dispatch != nil, !items.isEmpty else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in self?.menu() }
+    }
+}
+
 private let craftNativeCapabilityTimeoutMilliseconds = 30_000
 
 /// A retained JavaScript context must lose storage and snapshot access when
@@ -6411,6 +6479,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var inputIdentities: [ObjectIdentifier: String] = [:]
     private var inputDrafts: [String: String] = [:]
     private var longPressHandlers: [ObjectIdentifier: String] = [:]
+    private var contextMenus: [ObjectIdentifier: CraftNativeContextMenu] = [:]
     private var accessibilityActionHandlers: [ObjectIdentifier: String] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
@@ -9636,7 +9705,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        updateLongPressHandler(props["disabled"] as? Bool == true ? nil : events["onLongPress"], for: result)
+        let menuDisabled = props["disabled"] as? Bool == true || (props["accessibilityState"] as? [String: Any])?["disabled"] as? Bool == true
+        let menuEntries = menuDisabled ? [] : CraftNativeContextMenu.entries(props["contextMenu"])
+        let menuHandler = nonEmptyHandler(events["onContextMenuAction"])
+        let hasMenu = !menuEntries.isEmpty && menuHandler != nil
+        // A menu owns the hold when both are authored; never open an action
+        // sheet from onLongPress underneath UIKit's menu.
+        updateLongPressHandler(menuDisabled || hasMenu ? nil : events["onLongPress"], for: result)
         if type != "Button" && type != "Link" && type != "Checkbox" && type != "TextInput" && type != "Picker" && type != "SegmentedControl" && type != "DatePicker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" && type != "StatusBar" && type != "RefreshControl" && type != "Map" {
             let disabled = props["disabled"] as? Bool == true
             updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
@@ -9657,6 +9732,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // After applyAccessibility: it settles whether the view is an element
         // at all, and an action on a non-element is unreachable.
         updateAccessibilityActions(props["accessibilityActions"], handler: props["disabled"] as? Bool == true ? nil : events["onAccessibilityAction"], for: result)
+        let menuID = ObjectIdentifier(result)
+        if hasMenu, let menuHandler {
+            let menu = contextMenus[menuID] ?? CraftNativeContextMenu(view: result)
+            contextMenus[menuID] = menu
+            menu.update(menuEntries) { [weak self] itemID in
+                self?.send(type: "EVENT", payload: ["handlerName": menuHandler, "nativeEvent": ["id": itemID]])
+            }
+            result.isUserInteractionEnabled = true
+        } else {
+            contextMenus.removeValue(forKey: menuID)?.detach()
+        }
         (result as? CraftNativeFlowView)?.configureCelebration(props["celebration"])
         return current
     }
@@ -10139,6 +10225,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         inputEventCounts.removeValue(forKey: id)
         if node.type == "TextInput" && !preservingInputDrafts { inputDrafts.removeValue(forKey: node.identity) }
         longPressHandlers.removeValue(forKey: id)
+        contextMenus.removeValue(forKey: id)?.detach()
         accessibilityActionHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
