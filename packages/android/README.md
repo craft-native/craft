@@ -292,7 +292,12 @@ native bridge supports device info, clipboard read/write, haptic impact,
 persistent JSON storage, SQLite queries and transactions, lifecycle and deep-link
 events, and local notifications. Storage and SQLite survive process relaunch;
 notifications use `AlarmManager`, so delivery does not require a running
-JavaScriptSandbox process. Enable `enableLocalDatabase`,
+JavaScriptSandbox process. Notification groups retain their child membership
+across receiver recreation. Replacing a child updates that membership before
+posting; cancelling or dismissing the last child removes its summary even when
+Android has not yet applied an earlier post or cancellation. Cancelling all
+notifications also clears their saved membership and action tokens.
+Enable `enableLocalDatabase`,
 `enableLocalNotifications`, and `enableDeepLinks` explicitly. These optional
 boolean fields are accepted by `CraftAndroidConfig` and `InitOptions.config`;
 omitting them or setting them to `false` keeps the capabilities disabled. Disabled or

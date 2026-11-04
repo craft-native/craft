@@ -16,8 +16,7 @@ import org.json.JSONObject
 internal class CraftNativeNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         intent.getStringExtra("craft.dismissedId")?.let {
-            CraftNativeNotifications.revoke(context, it)
-            CraftNativeNotifications.clearEmptyGroup(context, intent.getStringExtra("craft.dismissedThread"))
+            CraftNativeNotifications.cancel(context, it, intent.getStringExtra("craft.dismissedThread"))
             return
         }
         if (intent.hasExtra("craft.actionToken")) {
@@ -110,21 +109,50 @@ internal object CraftNativeNotifications {
         edit.commit()
     }
 
+    @Synchronized
     fun clearEmptyGroup(context: Context, thread: String?) {
         if (thread.isNullOrEmpty()) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val children = manager.activeNotifications.any {
-            it.notification.group == thread && (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0
+        val children = notificationGroups(context).all.any { (key, value) ->
+            key.startsWith("notification:") && value == thread
         }
         if (!children) manager.cancel("craft.group:$thread", 1)
     }
 
-    fun cancel(context: Context, id: String) {
+    @Synchronized
+    fun cancel(context: Context, id: String, dismissedThread: String? = null) {
         revoke(context, id)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val thread = manager.activeNotifications.firstOrNull { it.tag == id && it.id == 0 }?.notification?.group
+        val groups = notificationGroups(context)
+        val thread = groups.getString("notification:$id", null) ?: dismissedThread
+        check(groups.edit().remove("notification:$id").commit()) { "Could not save notification cancellation" }
         manager.cancel(id, 0)
         clearEmptyGroup(context, thread)
+    }
+
+    @Synchronized
+    fun cancelAll(context: Context) {
+        revoke(context)
+        check(notificationGroups(context).edit().clear().putBoolean("initialized", true).commit()) { "Could not clear notification groups" }
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
+    }
+
+    private fun notificationGroups(context: Context): android.content.SharedPreferences {
+        val storage = context.getSharedPreferences("craft-native-notification-groups", Context.MODE_PRIVATE)
+        if (!storage.getBoolean("initialized", false)) {
+            // Adopt notifications posted by earlier app versions once. After
+            // migration, our durable intent owns membership: OS snapshots can
+            // lag both notify() and cancel(), including across receiver calls.
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val edit = storage.edit().putBoolean("initialized", true)
+            manager.activeNotifications.filter {
+                it.tag != null && it.id == 0 && (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0
+            }.forEach { entry ->
+                entry.notification.group?.takeIf { it.isNotEmpty() }?.let { edit.putString("notification:${entry.tag}", it) }
+            }
+            check(edit.commit()) { "Could not initialize notification groups" }
+        }
+        return storage
     }
 
     private fun pending(context: Context, value: JSONObject, action: JSONObject?): android.app.PendingIntent? {
@@ -153,6 +181,7 @@ internal object CraftNativeNotifications {
         else android.app.PendingIntent.getBroadcast(context, 0, target, flags)
     }
 
+    @Synchronized
     fun show(context: Context, original: JSONObject, id: String, channel: String) {
         if (invalidOptions(original) != null) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -196,6 +225,11 @@ internal object CraftNativeNotifications {
             .setAction("craft.notification.dismiss:" + android.net.Uri.encode(id)).putExtra("craft.dismissedId", id).putExtra("craft.dismissedThread", thread)
         notification.setDeleteIntent(android.app.PendingIntent.getBroadcast(context, 0, dismissed,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+        val groups = notificationGroups(context)
+        val previousThread = groups.getString("notification:$id", null)
+        val edit = groups.edit()
+        if (thread.isEmpty()) edit.remove("notification:$id") else edit.putString("notification:$id", thread)
+        check(edit.commit()) { "Could not save notification group" }
         manager.notify(id, 0, notification.build())
         if (thread.isNotEmpty()) {
             manager.notify("craft.group:$thread", 1, NotificationCompat.Builder(context, channelId)
@@ -203,5 +237,6 @@ internal object CraftNativeNotifications {
                 .setContentTitle(context.applicationInfo.loadLabel(context.packageManager))
                 .setContentIntent(pending(context, value, null)).setGroup(thread).setGroupSummary(true).setAutoCancel(true).build())
         }
+        if (previousThread != thread) clearEmptyGroup(context, previousThread)
     }
 }
