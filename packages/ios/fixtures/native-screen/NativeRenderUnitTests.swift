@@ -8,6 +8,31 @@ import UserNotifications
 
 @MainActor
 final class NativeNotificationActionUnitTests: XCTestCase {
+    func testLocalCategoriesAdvertiseBackgroundAcknowledgementWithoutPushOrRefresh() async throws {
+        var config = CraftConfig()
+        config.enableLocalNotifications = true
+        config.notificationCategories = [CraftNotificationCategory(id: "message", actions: [])]
+        XCTAssertFalse(config.enablePushNotifications)
+        XCTAssertNil(config.backgroundRefresh)
+        XCTAssertTrue(CraftNativeActions.capabilities(config: config).contains("background"))
+        let screen = CraftNativeScreenController(config: config)
+        screen.loadViewIfNeeded()
+        defer { screen.viewDidDisappear(false) }
+        var acknowledged = false
+        let id = CraftBackgroundWork.shared.hold { _ in acknowledged = true }
+        screen.evaluateScript("""
+            globalThis.__backgroundResult = null;
+            __stxNativeBridge.postMessage(JSON.stringify({type:'API_REQUEST', id:'notification-ack-test',
+              payload:{version:1,module:'Background',method:'complete',args:[true,'\(id)']}}));
+        """)
+        for _ in 0..<100 {
+            if acknowledged { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(acknowledged)
+        CraftBackgroundWork.shared.release(id)
+    }
+
     func testCategoriesCarryActionFlagsAndInlineReply() throws {
         let json = #"[{"id":"message","actions":[{"id":"reply","title":"Reply","textInput":{"buttonTitle":"Send","placeholder":"Your reply"}},{"id":"delete","title":"Delete","destructive":true,"foreground":true,"authenticationRequired":true}]}]"#
         let categories = try JSONDecoder().decode([CraftNotificationCategory].self, from: Data(json.utf8))

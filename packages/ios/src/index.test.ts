@@ -2607,7 +2607,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(screen).toContain('appBuild: \\(appBuild),')
     expect(actions).toContain('case ("Background", "complete"):')
     expect(actions).toContain('CraftBackgroundWork.shared.complete(id: id, ok: ok)')
-    expect(actions).toContain('if config.backgroundRefresh?.enabled == true || config.enablePushNotifications { values.append("background") }')
+    expect(actions).toContain('if config.backgroundRefresh?.enabled == true || config.enablePushNotifications || !(config.notificationCategories ?? []).isEmpty { values.append("background") }')
     // Every snapshot but the kept ones, from a native screen (a sign-out).
     expect(screen).toContain('craftNativeSnapshotClear(names, function(ok) {')
     expect(actions).toContain('static func clear(keeping keep: Set<String> = [], completion: ((Bool) -> Void)? = nil)')

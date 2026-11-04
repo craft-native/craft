@@ -139,7 +139,8 @@ internal class CraftNativeServices(
             if (CraftNative.supportsRecordingIntentIdentity()) add("locationRecordingIntentIdentity")
             if (CraftNative.supportsRecordingPowerMode()) add("locationRecordingPowerMode")
         }
-        if (config.optJSONObject("backgroundRefresh")?.optBoolean("enabled") == true || config.optBoolean("enablePushNotifications")) add("background")
+        if (config.optJSONObject("backgroundRefresh")?.optBoolean("enabled") == true || config.optBoolean("enablePushNotifications") ||
+            (config.optJSONArray("notificationCategories")?.length() ?: 0) > 0) add("background")
         // A Bluetooth heart-rate strap (CraftHeartRate.kt), the app's own
         // service: one connection and one recording for every screen.
         if (heartRateEnabled) addAll(listOf("heartRate", "heartRateRecordingOwnership", "heartRateRecordingIntentIdentity"))

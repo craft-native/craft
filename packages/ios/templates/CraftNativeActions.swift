@@ -92,7 +92,7 @@ enum CraftNativeActions {
         if config.enableAppleMusic { values.append("music") }
         // `craft.background.complete(ok, id)`: the answer to a silent push or
         // a background refresh, which the app script (`nativeApp`) hears.
-        if config.backgroundRefresh?.enabled == true || config.enablePushNotifications { values.append("background") }
+        if config.backgroundRefresh?.enabled == true || config.enablePushNotifications || !(config.notificationCategories ?? []).isEmpty { values.append("background") }
         // A heart-rate strap is the app's own service (CraftHeartRate.swift),
         // so it needs no web view.
         if config.enableHeartRate { values.append(contentsOf: ["heartRate", "heartRateRecordingOwnership", "heartRateRecordingIntentIdentity"]) }
@@ -679,7 +679,7 @@ enum CraftNativeActions {
             // The app script's answer to `craftSilentPush` or
             // `craftBackgroundRefresh`: args `[ok, id?]`, with no id for
             // everything still pending, as a page's `craft.background.complete`.
-            guard config.backgroundRefresh?.enabled == true || config.enablePushNotifications else {
+            guard config.backgroundRefresh?.enabled == true || config.enablePushNotifications || !(config.notificationCategories ?? []).isEmpty else {
                 complete(requestToken, failure("CAPABILITY_DISABLED", "Background work is disabled"), completion)
                 return
             }
