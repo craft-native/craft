@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
@@ -18,6 +18,9 @@ test('packed Vue composables render on the server and expose usable types', () =
     expect(result.exitCode).toBe(0)
   }
   try {
+    // The package's declarations import craft-native's, so build it first rather than relying on
+    // another test file having built it earlier in the same run.
+    if (!existsSync(join(root, 'packages/typescript/dist/index.d.ts'))) run([process.execPath, 'run', 'build'], join(root, 'packages/typescript'))
     run([process.execPath, 'run', 'build'], packageDir)
     run([process.execPath, 'pm', 'pack', '--filename', join(temp, 'package.tgz')], packageDir)
     run([process.execPath, 'pm', 'pack', '--filename', join(temp, 'core.tgz')], join(root, 'packages/typescript'))
