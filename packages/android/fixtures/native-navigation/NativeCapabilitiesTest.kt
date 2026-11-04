@@ -32,6 +32,9 @@ class NativeCapabilitiesTest {
             instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS").use {
                 java.io.FileInputStream(it.fileDescriptor).use { stream -> stream.readBytes() }
             }
+            assertEquals("A local-only app must declare and obtain notification permission",
+                android.content.pm.PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
         }
         // No Activity is launched by this test; the worker must load __app.
         assertNull("The test must exercise a headless app, not a retained Activity", CraftNativeBackground.foreground)
@@ -46,8 +49,16 @@ class NativeCapabilitiesTest {
             val value = JSONObject().put("title", "Fixture message").put("body", "Reply without opening a screen")
                 .put("categoryId", "fixture-message").put("threadIdentifier", "fixture-thread")
                 .put("data", JSONObject().put("thread", 42))
+            val deadline = android.os.SystemClock.uptimeMillis() + 30000
             instrumentation.runOnMainSync { CraftNativeNotifications.show(context, value, id, "craft-fixture-actions") }
-            val posted = requireNotNull(manager.activeNotifications.firstOrNull { it.tag == id })
+            // The system enqueues publication; observe the single submission
+            // within the same deadline used for the headless reply below.
+            var visible: android.service.notification.StatusBarNotification? = null
+            while (visible == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                visible = manager.activeNotifications.firstOrNull { it.tag == id }
+                if (visible == null) android.os.SystemClock.sleep(50)
+            }
+            val posted = requireNotNull(visible) { "The permitted local notification was not published" }
             assertEquals("fixture-thread", posted.notification.group)
             val reply = posted.notification.actions.first { it.title.toString() == "Reply" }
             assertTrue(!reply.remoteInputs.isNullOrEmpty())
@@ -57,7 +68,6 @@ class NativeCapabilitiesTest {
                 arrayOf(androidx.core.app.RemoteInput.Builder("craft.reply").build()), fillIn, results)
             reply.actionIntent.send(context, 0, fillIn)
             var delivered: JSONObject? = null
-            val deadline = android.os.SystemClock.uptimeMillis() + 30000
             while (delivered == null && android.os.SystemClock.uptimeMillis() < deadline) {
                 delivered = storage.getString("fixture-notification-action", null)?.let { JSONObject(it) }
                 if (delivered == null) android.os.SystemClock.sleep(50)

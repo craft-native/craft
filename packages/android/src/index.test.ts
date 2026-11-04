@@ -40,17 +40,23 @@ describe('Craft Android builder', () => {
 
   it('preserves explicit native database and local notification opt-ins without enabling omitted capabilities', async () => {
     const root = createTempDir('craft-android-local-capability-config-')
-    for (const enabled of [true, false, undefined]) {
-      const output = join(root, String(enabled))
-      await init({ name: 'Local Capabilities', output, runtimeDir: null, config: {
-        renderer: 'native',
-        ...(enabled === undefined ? {} : { enableLocalDatabase: enabled, enableLocalNotifications: enabled }),
-      } })
-      for (const path of ['craft.config.json', 'app/src/main/assets/craft.config.json']) {
-        const config = JSON.parse(readFileSync(join(output, path), 'utf8'))
-        for (const flag of ['enableLocalDatabase', 'enableLocalNotifications']) {
-          expect(Object.hasOwn(config, flag)).toBe(enabled !== undefined)
-          expect(config[flag]).toBe(enabled)
+    for (const database of [true, false, undefined]) {
+      for (const notifications of [true, false, undefined]) {
+        const output = join(root, `${database}-${notifications}`)
+        await init({ name: 'Local Capabilities', output, runtimeDir: null, config: {
+          renderer: 'native',
+          ...(database === undefined ? {} : { enableLocalDatabase: database }),
+          ...(notifications === undefined ? {} : { enableLocalNotifications: notifications }),
+        } })
+        const manifest = readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')
+        expect(manifest.includes('android.permission.POST_NOTIFICATIONS')).toBe(notifications === true)
+        expect(readFileSync(join(output, 'app/build.gradle.kts'), 'utf8')).not.toContain('firebase-messaging')
+        for (const path of ['craft.config.json', 'app/src/main/assets/craft.config.json']) {
+          const config = JSON.parse(readFileSync(join(output, path), 'utf8'))
+          for (const [flag, enabled] of [['enableLocalDatabase', database], ['enableLocalNotifications', notifications]] as const) {
+            expect(Object.hasOwn(config, flag)).toBe(enabled !== undefined)
+            expect(config[flag]).toBe(enabled)
+          }
         }
       }
     }
