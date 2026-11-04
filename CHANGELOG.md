@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.450...v0.0.451)
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve focused text selections in the native driver ([e6f6363](https://github.com/craft-native/craft/commit/e6f6363)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: keep lifecycle fixtures in valid native host states ([44010da](https://github.com/craft-native/craft/commit/44010da)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.449...v0.0.450)
 
 ## 🐛 Bug Fixes
