@@ -2186,3 +2186,20 @@ the hold instead of also calling `onLongPress`. Removing or disabling the node
 removes the interaction, and reconciliation invalidates choices from an old menu.
 Use `accessibilityActions` / `onAccessibilityAction` for the corresponding
 VoiceOver and TalkBack actions. They remain independent of menu presentation.
+
+The typed component contract uses the same item ids for touch and accessibility:
+
+```ts
+const actions = [{ id: 'copy', title: 'Copy message', symbol: 'doc.on.doc' }]
+const bubble: TextProps = {
+  contextMenu: actions,
+  onContextMenuAction: event => copyMessage(event.nativeEvent.id),
+  accessibilityActions: actions.map(item => ({ name: item.id, label: item.title })),
+  onAccessibilityAction: event => copyMessage(event.nativeEvent.actionName),
+}
+```
+
+An empty menu or a missing menu handler leaves `onLongPress` available. Item ids
+must be nonempty and unique (the first duplicate wins); malformed items are
+omitted. Disabling an individual item keeps it visible but unselectable.
+Android shows catalog icons on API 29 and later; older versions retain the titles.

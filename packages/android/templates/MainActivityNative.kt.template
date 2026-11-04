@@ -3406,6 +3406,7 @@ internal class CraftNativeContextMenu(private val anchor: View) {
         val expected = revision
         val shown = android.widget.PopupMenu(anchor.context, anchor)
         popup = shown
+        if (Build.VERSION.SDK_INT >= 29) shown.setForceShowIcon(true)
         items.forEachIndexed { index, item ->
             shown.menu.add(0, index, index, item.title).also {
                 it.isEnabled = !item.disabled

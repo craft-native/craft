@@ -50,6 +50,23 @@ import type {
 } from '../components'
 
 describe('Component System', () => {
+  it('types native menu items and selected ids alongside accessible actions', () => {
+    let chosen = ''
+    const bubble: TextProps = {
+      contextMenu: [
+        { id: 'copy', title: 'Copy', symbol: 'doc.on.doc' },
+        { id: 'report', title: 'Report', destructive: true, disabled: false },
+      ],
+      onContextMenuAction: event => { chosen = event.nativeEvent.id },
+      accessibilityActions: [{ name: 'copy', label: 'Copy message' }],
+      onAccessibilityAction: event => { chosen = event.nativeEvent.actionName },
+    }
+    bubble.onContextMenuAction?.({ nativeEvent: { id: 'report' } })
+    expect(chosen).toBe('report')
+    bubble.onAccessibilityAction?.({ nativeEvent: { actionName: 'copy' } })
+    expect(chosen).toBe('copy')
+  })
+
   it('accepts nested conditional native style values on component props', () => {
     const highlighted = true
     const view: ViewProps = {

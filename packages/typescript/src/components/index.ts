@@ -437,6 +437,10 @@ export interface BaseProps {
    * receives the `name` of whichever one ran.
    */
   accessibilityActions?: AccessibilityAction[]
+  /** Native anchored menu. Takes precedence over onLongPress when actionable. */
+  contextMenu?: NativeContextMenuItem[]
+  /** Selected item's id; disabled and stale menu choices never dispatch. */
+  onContextMenuAction?: (event: { nativeEvent: { id: string } }) => void
   /** Fired when a screen reader performs one of `accessibilityActions`. */
   onAccessibilityAction?: (event: { nativeEvent: { actionName: string } }) => void
   /** Accessibility role */
@@ -484,6 +488,15 @@ export interface AccessibilityState {
 /**
  * One action a screen reader can perform on a node.
  */
+export interface NativeContextMenuItem {
+  id: string
+  title: string
+  /** SF Symbol on iOS; an app catalog symbol on Android. */
+  symbol?: string
+  destructive?: boolean
+  disabled?: boolean
+}
+
 export interface AccessibilityAction {
   /** Identifies the action to `onAccessibilityAction`; never spoken. */
   name: string

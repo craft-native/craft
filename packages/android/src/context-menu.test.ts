@@ -9,6 +9,7 @@ test('anchored menus reject disabled, duplicate and stale choices after updates 
   expect(end).toBeGreaterThan(start)
   const implementation = source.slice(start, end).replaceAll('android.widget.PopupMenu', 'PopupMenu').replaceAll('android.view.MenuItem', 'MenuItem')
   await runKotlinFixture(`
+object Build { object VERSION { const val SDK_INT = 35 } }
 class View { val context = Any(); var isEnabled = true }
 class MenuItem(val itemId: Int, val title: String) { var isEnabled = true }
 class Menu {
@@ -23,6 +24,8 @@ class PopupMenu(val context: Any, val anchor: View) {
     var onDismiss: (PopupMenu) -> Unit = {}
     fun setOnMenuItemClickListener(callback: (MenuItem) -> Boolean) { click = callback }
     fun setOnDismissListener(callback: (PopupMenu) -> Unit) { onDismiss = callback }
+    var forceIcons = false
+    fun setForceShowIcon(value: Boolean) { forceIcons = value }
     fun dismiss() { dismissed = true; onDismiss(this) }
     fun show() { last = this }
 }
@@ -35,7 +38,7 @@ fun main() {
         CraftNativeMenuItem("blocked", "Blocked", disabled = true), CraftNativeMenuItem("copy", "Duplicate"), CraftNativeMenuItem("", "Bad"))) { selected.add(it) }
     check(host.show { _, _ -> })
     val old = requireNotNull(PopupMenu.last)
-    check(old.anchor === anchor && old.menu.items.size == 3)
+    check(old.anchor === anchor && old.menu.items.size == 3 && old.forceIcons)
     check(old.click(old.menu.items[0]))
     check(!old.menu.items[2].isEnabled && !old.click(old.menu.items[2]))
     host.update(listOf(CraftNativeMenuItem("delete", "New delete"))) { selected.add("new:" + it) }
