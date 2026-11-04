@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.449...v0.0.450)
+
+## 🐛 Bug Fixes
+
+- **ios**: honor HTTP-success simulator control hooks ([f67947c](https://github.com/craft-native/craft/commit/f67947c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.448...v0.0.449)
 
 ## ⚡ Performance Improvements
