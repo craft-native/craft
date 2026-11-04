@@ -1,5 +1,42 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.455...v0.0.456)
+
+## 🚀 Features
+
+- **android**: deliver registered notification actions and replies ([9c8f9e1](https://github.com/craft-native/craft/commit/9c8f9e1)) _(by glennmichael123)_
+- **android**: retain background action payloads through retries ([3467ab2](https://github.com/craft-native/craft/commit/3467ab2)) _(by glennmichael123)_
+- **native**: validate notification categories before generation ([2fe1fa3](https://github.com/craft-native/craft/commit/2fe1fa3)) _(by glennmichael123)_
+- **ios**: deliver notification actions and inline replies ([77b5b92](https://github.com/craft-native/craft/commit/77b5b92)) _(by glennmichael123)_
+- **native**: expose typed context menu actions ([104f9a3](https://github.com/craft-native/craft/commit/104f9a3)) _(by glennmichael123)_
+- **android**: anchor context menus to retained native views ([05a4156](https://github.com/craft-native/craft/commit/05a4156)) _(by glennmichael123)_
+- **ios**: anchor context menus to native views ([3845aab](https://github.com/craft-native/craft/commit/3845aab)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: observe the tapped input taking keyboard focus before typing ([867303d](https://github.com/craft-native/craft/commit/867303d)) _(by Chris Breuer)_
+- **native**: accept context menus from ordinary stx templates ([da19d7b](https://github.com/craft-native/craft/commit/da19d7b)) _(by glennmichael123)_
+- **native**: preserve open menus across unrelated renders ([49af51e](https://github.com/craft-native/craft/commit/49af51e)) _(by glennmichael123)_
+- **native**: invalidate stale accessibility actions on reconciliation ([e756e1b](https://github.com/craft-native/craft/commit/e756e1b)) _(by glennmichael123)_
+- **android**: revoke notification actions and empty groups on dismissal ([6921c82](https://github.com/craft-native/craft/commit/6921c82)) _(by glennmichael123)_
+- **native**: require an action listener for notification categories ([0a7cfc4](https://github.com/craft-native/craft/commit/0a7cfc4)) _(by glennmichael123)_
+- **native**: acknowledge local notification actions without push ([f5a422f](https://github.com/craft-native/craft/commit/f5a422f)) _(by glennmichael123)_
+- **android**: attach speech accessibility fixture to its native window ([2dc513d](https://github.com/craft-native/craft/commit/2dc513d)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **android**: exercise notification replies through a headless app ([9d4d3ff](https://github.com/craft-native/craft/commit/9d4d3ff)) _(by glennmichael123)_
+- **android**: diagnose authored speech locale failures ([92e1276](https://github.com/craft-native/craft/commit/92e1276)) _(by Chris Breuer)_
+
+## 📄 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([f8bb748](https://github.com/craft-native/craft/commit/f8bb748)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.454...v0.0.455)
 
 ## 🚀 Features
