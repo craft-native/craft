@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.447...v0.0.448)
+
+## 🧪 Tests
+
+- **vue**: build craft-native before checking the packed Vue package's types ([fbd02ee](https://github.com/craft-native/craft/commit/fbd02ee)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.446...v0.0.447)
 
 ## ⚡ Performance Improvements
