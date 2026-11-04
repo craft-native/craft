@@ -1,5 +1,27 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.456...v0.0.457)
+
+## 🐛 Bug Fixes
+
+- **android**: declare notification permission for local-only apps ([f398b22](https://github.com/craft-native/craft/commit/f398b22)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: record enabled state around boolean taps ([1ada6c9](https://github.com/craft-native/craft/commit/1ada6c9)) _(by glennmichael123)_
+- **ios**: retain notification banner target and foreground evidence ([2273833](https://github.com/craft-native/craft/commit/2273833)) _(by glennmichael123)_
+- **ios**: retain cancellation file removal evidence ([3c7a6f6](https://github.com/craft-native/craft/commit/3c7a6f6)) _(by glennmichael123)_
+- **ios**: exercise single consent taps through the shared driver ([c924922](https://github.com/craft-native/craft/commit/c924922)) _(by glennmichael123)_
+
+## 📄 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([fe5a7fd](https://github.com/craft-native/craft/commit/fe5a7fd)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.455...v0.0.456)
 
 ## 🚀 Features
