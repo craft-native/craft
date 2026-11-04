@@ -1,5 +1,26 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.458...v0.0.459)
+
+## 🚀 Features
+
+- **ios**: generate and embed notification service extensions ([ca616e2](https://github.com/craft-native/craft/commit/ca616e2)) _(by glennmichael123)_ ([#461](https://github.com/craft-native/craft/issues/461))
+- **ios**: download bounded remote notification attachments ([0ee30a5](https://github.com/craft-native/craft/commit/0ee30a5)) _(by glennmichael123)_ ([#461](https://github.com/craft-native/craft/issues/461))
+
+## 🐛 Bug Fixes
+
+- **android**: compile Firebase shells and await notification removal ([3fdfd2c](https://github.com/craft-native/craft/commit/3fdfd2c)) _(by Chris Breuer)_
+- **android**: preserve component root layout through native scopes ([dd8683c](https://github.com/craft-native/craft/commit/dd8683c)) _(by Chris Breuer)_
+
+## 📄 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([73b9648](https://github.com/craft-native/craft/commit/73b9648)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.457...v0.0.458)
 
 ## 🚀 Features
