@@ -511,24 +511,22 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
         if (step.uses?.startsWith('pantry-pm/pantry/packages/action@')) {
           // Keep each workflow on the released Pantry version it declares.
           // Source, release and their required mobile acceptance all use the
-          // qualified provider. An older fixture pin hit PathAlreadyExists
-          // while reconciling a restored Git cache and blocked v0.0.302.
+          // provider with repeatable symlink materialization. The 0.11.120
+          // installer hit PathAlreadyExists on restored Git prefixes.
           const version = ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'windows-managed-git.yml'].includes(file)
-            ? '0.11.120'
+            ? '0.11.166'
             : file === 'windows-source-provenance.yml' || (file === 'ci.yml' && name === 'windows-multi-window')
               ? '0.11.109'
               : ['benchmarks.yml', 'binary-size.yml'].includes(file)
                 ? '0.11.106'
                 : '0.11.101'
-          const source = file === 'release.yml' && name === 'publish-pantry'
-            ? 'ba9c66fc12af6bca2dd50dcad421f4a824531bcc'
-            : version === '0.11.120'
-              ? '3de609e1a7e305393b3d94e2848d859b39c5b5de'
-              : version === '0.11.109'
-                ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
-                : version === '0.11.106'
-                  ? 'e62755c21d946ed0f8dc8e4af39f6ea5f084537a'
-                  : 'ae59a7b7fc5f4e6f7b8041a75e6b5772680bebdf'
+          const source = version === '0.11.166'
+            ? '530408c77647750a68877773a3ea6165e5dc6281'
+            : version === '0.11.109'
+              ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
+              : version === '0.11.106'
+                ? 'e62755c21d946ed0f8dc8e4af39f6ea5f084537a'
+                : 'ae59a7b7fc5f4e6f7b8041a75e6b5772680bebdf'
           expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
           expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
         }
@@ -749,7 +747,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(release.jobs.npm.if).toContain("needs.prepare-npm.result == 'success'")
   expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
-  expect(zigPublish?.with).toMatchObject({ version: '0.11.120', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
+  expect(zigPublish?.with).toMatchObject({ version: '0.11.166', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
   expect(zigPublish?.with?.release).toBeUndefined()
   expect(Object.entries(release.jobs).flatMap(([name, job]) =>
     (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])
