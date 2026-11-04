@@ -129,6 +129,10 @@ class NativeNavigationTest {
         try {
             instrumentation.runOnMainSync {
                 val text = TextView(activity).apply { this.text = "Guten Morgen" }
+                // View skips base accessibility metadata while detached. Use
+                // the real activity window, as the renderer does at runtime.
+                activity.addContentView(text, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                assertTrue("Speech fixture must be attached to the native window", text.isAttachedToWindow)
                 val apply = MainActivity::class.java.getDeclaredMethod(
                     "applyAccessibility", View::class.java, JSONObject::class.java, String::class.java, String::class.java,
                 ).apply { isAccessible = true }
@@ -136,11 +140,14 @@ class NativeNavigationTest {
                     val props = JSONObject().put("accessibilityLabel", "Greeting").put("accessibilityHint", "Read")
                     if (language != null) props.put("accessibilityLanguage", language)
                     apply.invoke(activity, text, props, "Text", "greeting")
+                    assertEquals("Greeting", text.contentDescription?.toString())
                     val info = text.createAccessibilityNodeInfo()
-                    for (spoken in listOf(info.text, info.contentDescription, info.hintText)) {
+                    for ((field, spoken) in listOf("text" to info.text, "contentDescription" to info.contentDescription, "hintText" to info.hintText)) {
+                        assertEquals(when (field) { "text" -> "Guten Morgen"; "contentDescription" -> "Greeting"; else -> "Read" }, spoken?.toString())
                         val spans = (spoken as? Spanned)?.let { it.getSpans(0, it.length, android.text.style.LocaleSpan::class.java) }
-                        if (language == null) assertTrue("Removed language left a stale speech span", spans.isNullOrEmpty())
-                        else assertEquals(language, spans?.singleOrNull()?.locale?.toLanguageTag())
+                        val diagnostic = "$field language=$language text=$spoken type=${spoken?.javaClass?.name} spans=${spans?.map { it.locales.toLanguageTags() }}"
+                        if (language == null) assertTrue("Removed language left a stale speech span: $diagnostic", spans.isNullOrEmpty())
+                        else assertEquals(diagnostic, language, spans?.singleOrNull()?.locale?.toLanguageTag())
                     }
                     assertEquals(language ?: activity.resources.configuration.locales[0].toLanguageTag(), text.textLocales[0].toLanguageTag())
                 }
