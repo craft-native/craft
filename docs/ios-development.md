@@ -441,3 +441,19 @@ until Phase 8.
 The hand-off table exists so that every phase before then ships a **working app**, not a
 half-migrated one. If this effort stalls at any point, the app still runs: Swift keeps
 serving everything Zig hasn't taken over yet.
+
+### Investigating a notification tap that did not foreground the app
+
+The Mobile E2E notification test retains a JSON attachment named
+`Notification banner target and application states` in each leg's notification
+XCResult. It records the resolved SpringBoard target's identity/frame, one
+physical gesture, and monotonic observations before/after the tap and foreground
+waits. Failure also retains SpringBoard's screenshot and accessibility tree.
+The original 10 + 50 second foreground budget and stopped-app guard remain:
+only an already-running background process may be activated, never a stopped
+app. The scheduling-window and notification payload assertions are unchanged.
+
+For #450, the original shim log identifies `NotificationShortLookView` and event
+synthesis, but lacks the target frame and immediate post-tap app state. Its later
+system-log capture cannot reconstruct that interval. A subsequent passing run
+qualifies the diagnostic fixture; it does not explain that original failure.

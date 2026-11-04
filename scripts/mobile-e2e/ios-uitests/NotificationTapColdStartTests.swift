@@ -236,6 +236,54 @@ final class NotificationTapColdStartTests: XCTestCase {
         print("CRAFT-E2E-LOCAL-RESULT \(local.label)")
     }
 
+    /// Preserve the original single gesture and 10 + 50 second foreground
+    /// budget. Observations must never turn a stopped app into a passing launch.
+    private func observeNotificationTap(tap: () -> Void, state: () -> XCUIApplication.State,
+                                        waitForForeground: (TimeInterval) -> Bool, activate: () -> Void,
+                                        observe: (String, XCUIApplication.State) -> Void) -> Bool {
+        observe("before-tap", state())
+        tap()
+        observe("after-tap", state())
+        if waitForForeground(10) { observe("foreground", state()); return true }
+        let afterInitialWait = state()
+        observe("after-initial-wait", afterInitialWait)
+        if afterInitialWait == .runningBackground { activate(); observe("after-activate", state()) }
+        let foreground = waitForForeground(50)
+        observe("after-final-wait", state())
+        return foreground
+    }
+
+    func testNotificationTapNeverLaunchesAStoppedAppOrRetriesItsGesture() {
+        var taps = 0
+        var waits: [TimeInterval] = []
+        var phases: [String] = []
+        XCTAssertFalse(observeNotificationTap(tap: { taps += 1 }, state: { .notRunning },
+            waitForForeground: { waits.append($0); return false },
+            activate: { XCTFail("a stopped app must never be activated as a fallback") },
+            observe: { phase, state in phases.append(phase); XCTAssertEqual(state, .notRunning) }))
+        XCTAssertEqual(taps, 1)
+        XCTAssertEqual(waits, [10, 50])
+        XCTAssertEqual(phases, ["before-tap", "after-tap", "after-initial-wait", "after-final-wait"])
+    }
+
+    func testNotificationTapRecordsForegroundAndBackgroundTransitionsWithoutExtendingTheBudget() {
+        for immediate in [false, true] {
+            var taps = 0
+            var activations = 0
+            var waits: [TimeInterval] = []
+            var state: XCUIApplication.State = .notRunning
+            XCTAssertTrue(observeNotificationTap(tap: { taps += 1; state = .runningBackground }, state: { state },
+                waitForForeground: { seconds in
+                    waits.append(seconds)
+                    if immediate || activations == 1 { state = .runningForeground; return true }
+                    return false
+                }, activate: { activations += 1 }, observe: { _, _ in }))
+            XCTAssertEqual(taps, 1)
+            XCTAssertEqual(activations, immediate ? 0 : 1)
+            XCTAssertEqual(waits, immediate ? [10] : [10, 50])
+        }
+    }
+
     /// Taps the banner of a notification that has arrived or is about to.
     ///
     /// The banner, not Notification Center: on iOS 26 Notification Center is
@@ -254,15 +302,51 @@ final class NotificationTapColdStartTests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS %@", text))
             .firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: timeout), "no banner for \(text) ever appeared")
-        banner.tap()
-        // SpringBoard can leave an app launched by a notification in the
-        // background while it finishes dismissing the banner. Give that
-        // launch a short chance to reach the foreground itself, then activate
-        // the already-running process. Activating a not-running app is not a
-        // fallback: the final wait still proves the notification tap launched
-        // it rather than hiding a missed banner behind a fresh launch.
-        if app.wait(for: .runningForeground, timeout: 10) { return }
-        if app.state == .runningBackground { app.activate() }
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 50), "tapping the banner did not start the app")
+        let began = ProcessInfo.processInfo.systemUptime
+        var evidence: [String: Any] = ["notificationText": text, "gestureCount": 1]
+        // Retain the actual resolved target before input. The original #450
+        // artifact named NotificationShortLookView but retained no target frame.
+        if let snapshot = try? banner.snapshot() {
+            let frame = snapshot.frame
+            var target: [String: Any] = ["identifier": snapshot.identifier, "label": snapshot.label,
+                "elementType": snapshot.elementType.rawValue, "enabled": snapshot.isEnabled]
+            let coordinates = [frame.origin.x, frame.origin.y, frame.width, frame.height]
+            if coordinates.allSatisfy({ $0.isFinite }) { target["frame"] = coordinates }
+            else { target["invalidFrame"] = true }
+            evidence["target"] = target
+        } else { evidence["snapshotUnavailable"] = true }
+        if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]) {
+            let target = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            target.name = "Notification banner resolved before tap"
+            target.lifetime = .keepAlways
+            add(target)
+        }
+        var observations: [[String: Any]] = []
+        let foreground = observeNotificationTap(tap: { banner.tap() }, state: { app.state },
+            waitForForeground: { app.wait(for: .runningForeground, timeout: $0) },
+            activate: { app.activate() }, observe: { phase, state in
+                observations.append(["phase": phase, "state": state.rawValue,
+                    "milliseconds": (ProcessInfo.processInfo.systemUptime - began) * 1000])
+            })
+        evidence["observations"] = observations
+        evidence["foreground"] = foreground
+        if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "Notification banner target and application states"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            print("CRAFT-E2E-BANNER-OBSERVATION \(String(data: data, encoding: .utf8) ?? "")")
+        }
+        if !foreground {
+            let screenshot = XCTAttachment(screenshot: springboard.screenshot())
+            screenshot.name = "SpringBoard after the notification foreground deadline"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            let hierarchy = XCTAttachment(string: springboard.debugDescription)
+            hierarchy.name = "SpringBoard hierarchy after the notification foreground deadline"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        XCTAssertTrue(foreground, "tapping the banner did not start the app")
     }
 }
