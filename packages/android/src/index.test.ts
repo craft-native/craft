@@ -623,9 +623,9 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('val path = screen.nodePaths[target] ?: return false')
       // A targeted update keeps the fontFamily its ancestors gave the subtree.
       expect(nativeActivity).toContain('makeView(screen, document, path, screen.controls, inheritedFontFamily = screen.inheritedFontFamilies[target])')
-      expect(nativeActivity).toContain('val style = craftNativeInheritFontFamily(node.optJSONObject("style") ?: JSONObject(), inheritedFontFamily)')
+      expect(nativeActivity).toContain('val style = craftNativeInheritFontFamily(craftNativeComponentLayoutStyle(node), inheritedFontFamily)')
       expect(nativeActivity).toContain('makeView(screen, node, "$path.$itemIdentity", next, previous, fontFamily)')
-      expect(nativeActivity).toContain('screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)')
+      expect(nativeActivity).toContain('screen.view.setChildStyle(tree, craftNativeComponentLayoutStyle(document), resources.displayMetrics.density)')
       expect(nativeActivity).toContain('if (type == "SafeAreaView") setSafeAreaEdges(props.optJSONArray("edges"))\n                else setWindowSafeInsets(0, 0, 0, 0)')
       expect(nativeActivity).toContain('private fun applyViewStyle(view: View, style: JSONObject)')
       expect(nativeActivity).toContain('private fun gridIntrinsicSize(height: Int): Pair<Int, Int>')
@@ -1888,6 +1888,7 @@ describe('Craft Android builder', () => {
       'app/src/main/java/dev/craft/glyph/CraftNativeNotificationReceiver.kt',
       'app/src/main/java/com/craft/runtime/LocationRecordingService.kt',
     ].map(path => readFileSync(join(defaults, path), 'utf8'))
+    expect(builders[0]).toContain('import android.content.Context')
     expect(builders[0]).toContain('CraftNativeNotifications.show(this, value, id, CHANNEL)')
     for (const source of builders.slice(1)) {
       expect(source).toContain('.setSmallIcon(R.drawable.craft_notification_icon)')

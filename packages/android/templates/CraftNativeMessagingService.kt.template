@@ -1,5 +1,6 @@
 package {{PACKAGE_NAME}}
 
+import android.content.Context
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject

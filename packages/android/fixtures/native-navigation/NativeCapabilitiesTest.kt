@@ -87,6 +87,8 @@ class NativeCapabilitiesTest {
                 CraftNativeNotifications.show(context, value, id, "craft-fixture-actions")
                 CraftNativeNotifications.cancel(context, id)
             }
+            while (manager.activeNotifications.any { it.tag == id || it.tag == "craft.group:fixture-thread" } &&
+                android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(50)
             assertFalse(manager.activeNotifications.any { it.tag == id || it.tag == "craft.group:fixture-thread" })
             val tokens = context.getSharedPreferences("craft-native-notification-actions", android.content.Context.MODE_PRIVATE)
             assertFalse(tokens.all.values.any { raw ->
