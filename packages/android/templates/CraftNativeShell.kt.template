@@ -1370,6 +1370,12 @@ internal object CraftNativeSymbols {
  * transfer finishes on its own; the next keep answers from the copy.
  */
 internal object CraftNativeMedia {
+    /** Caller-owned account/resource/version identity; the request retains its authorized URL. */
+    fun identity(source: String, options: JSONObject?): String {
+        val key = options?.opt("cacheKey") as? String
+        return if (key != null && key.isNotEmpty() && key.toByteArray().size <= 1024) "craft-media-key:$key" else source
+    }
+
     const val ATTEMPT_SETTLED = "craft.media.attemptSettled"
     private const val TAG = "craft-media"
     private const val PREFS = "craft.media"
@@ -1409,14 +1415,22 @@ internal object CraftNativeMedia {
     /** The unique job for an address and connection rule: `any` or `wifi`. */
     private fun workName(address: String, wifiOnly: Boolean) = "$TAG:${digest(address)}:${if (wifiOnly) "wifi" else "any"}"
 
-    fun keep(context: Context, address: String, headers: JSONObject, cellular: Boolean, done: (CraftNativeCapabilityResult) -> Unit) {
-        val uri = runCatching { Uri.parse(address) }.getOrNull()
+    fun keep(context: Context, source: String, headers: JSONObject, cellular: Boolean, cacheKey: String? = null, done: (CraftNativeCapabilityResult) -> Unit) {
+        val address = identity(source, JSONObject().put("cacheKey", cacheKey))
+        val uri = runCatching { Uri.parse(source) }.getOrNull()
         if (uri == null || uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrBlank()) {
             return done(CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "media.keep needs an absolute http or https URL"))
         }
         val app = context.applicationContext
+        var sourceChanged = false
         val started = synchronized(lock) {
             local(app, address)?.let { return done(CraftNativeCapabilityResult(data = describe(address, it))) }
+            if (cacheKey != null) {
+                val sourceKey = "source:${digest(address)}"
+                val authorization = digest(source + "\n" + headers.keys().asSequence().sorted().joinToString("\n") { "$it:${headers.optString(it)}" })
+                sourceChanged = prefs(app).getString(sourceKey, null) != authorization
+                if (!prefs(app).edit().putString(sourceKey, authorization).commit()) return done(CraftNativeCapabilityResult(code = "IO_ERROR", message = "Could not persist media authorization"))
+            }
             generation(app).also { waiting.getOrPut(address) { mutableListOf() }.add(Waiting(it, done)) }
         }
         val wifiOnly = !cellular
@@ -1425,7 +1439,7 @@ internal object CraftNativeMedia {
         work.cancelUniqueWork(workName(address, !wifiOnly))
         val request = androidx.work.OneTimeWorkRequestBuilder<CraftNativeMediaWorker>()
             .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED).build())
-            .setInputData(androidx.work.workDataOf("address" to address, "headers" to headers.toString(), "generation" to started))
+            .setInputData(androidx.work.workDataOf("address" to address, "source" to source, "headers" to headers.toString(), "generation" to started))
             .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
             .addTag(TAG)
             .addTag("$TAG:generation:$started")
@@ -1438,7 +1452,8 @@ internal object CraftNativeMedia {
             try {
                 if (generation(app) == started) {
                     val pending = work.getWorkInfosForUniqueWork(name).get().any {
-                        "$TAG:generation:$started" in it.tags && !it.progress.getBoolean(ATTEMPT_SETTLED, false) &&
+                        "$TAG:generation:$started" in it.tags &&
+                            !sourceChanged && !it.progress.getBoolean(ATTEMPT_SETTLED, false) &&
                             (it.state == androidx.work.WorkInfo.State.RUNNING ||
                                 (it.state == androidx.work.WorkInfo.State.ENQUEUED && it.runAttemptCount == 0))
                     }
@@ -1486,7 +1501,7 @@ internal object CraftNativeMedia {
      * file where it stopped, moves it into place whole, and answers whoever
      * waits. RETRY leaves the part file for the next attempt.
      */
-    fun transfer(context: Context, address: String, headers: JSONObject, started: Int, attempt: Int, beforeAnswer: () -> Unit = {}, stopped: () -> Boolean): Outcome {
+    fun transfer(context: Context, address: String, headers: JSONObject, started: Int, attempt: Int, source: String = address, beforeAnswer: () -> Unit = {}, stopped: () -> Boolean): Outcome {
         fun answer(result: CraftNativeCapabilityResult) {
             // The callback can immediately call keep again. Publish completion
             // before that callback, while WorkManager may still say RUNNING.
@@ -1521,8 +1536,8 @@ internal object CraftNativeMedia {
             val asked = headers.keys().asSequence().associateWith { headers.optString(it) }
             val fetched = try {
                 // A part that no longer lines up was dropped: the whole file, now, not after a backoff.
-                download.fetch(address, asked, staging, stopped).let { first ->
-                    if (first is CraftResumableDownload.Fetched.Restart) download.fetch(address, asked, staging, stopped) else first
+                download.fetch(source, asked, staging, stopped).let { first ->
+                    if (first is CraftResumableDownload.Fetched.Restart) download.fetch(source, asked, staging, stopped) else first
                 }
             } catch (error: Exception) {
                 val full = generateSequence<Throwable>(error) { it.cause }.take(16).any {
@@ -1720,7 +1735,7 @@ internal class CraftNativeMediaWorker(context: Context, parameters: androidx.wor
         val started = inputData.getInt("generation", 0)
         return try {
             setProgressAsync(androidx.work.workDataOf(CraftNativeMedia.ATTEMPT_SETTLED to false)).get()
-            val outcome = CraftNativeMedia.transfer(applicationContext, address, headers, started, runAttemptCount,
+            val outcome = CraftNativeMedia.transfer(applicationContext, address, headers, started, runAttemptCount, source = inputData.getString("source") ?: address,
                 beforeAnswer = { setProgressAsync(androidx.work.workDataOf(CraftNativeMedia.ATTEMPT_SETTLED to true)).get() }
             ) { isStopped }
             if (outcome == CraftNativeMedia.Outcome.RETRY) Result.retry() else Result.success()

@@ -108,6 +108,7 @@ enum CraftNativeActions {
         // Video and audio kept on the phone for offline (CraftNativeMedia),
         // which the native Video element plays in place of the address.
         values.append("media")
+        values.append("media-cache-key")
         if config.enableCamera { values.append("camera") }
         if config.enableAudioRecording { values.append("audioRecording") }
         // craft.crashReporter: the app's crash and error reporter (bughq).
@@ -331,9 +332,13 @@ enum CraftNativeActions {
             keepMedia(requestToken: requestToken, args: args, completion: completion)
             return
         case ("Media", "path"):
-            sync = .success(CraftNativeMedia.local(args.first as? String ?? "")?.path ?? NSNull())
+            sync = .success(CraftNativeMedia.local(CraftNativeMedia.identity(args.first as? String ?? "", options: args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]))?.path ?? NSNull())
         case ("Media", "prune"):
-            let keep = (args.first as? [Any] ?? []).compactMap { $0 as? String }
+            let keep = (args.first as? [Any] ?? []).compactMap { value -> String? in
+                if let url = value as? String { return url }
+                guard let source = value as? [String: Any], let url = source["url"] as? String else { return nil }
+                return CraftNativeMedia.identity(url, options: source)
+            }
             DispatchQueue.global(qos: .utility).async {
                 complete(requestToken, .success(CraftNativeMedia.prune(keep: keep)), completion)
             }
@@ -950,18 +955,19 @@ enum CraftNativeActions {
         args: [Any],
         completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
     ) {
-        guard let address = args.first as? String,
-              let url = URL(string: address),
+        guard let source = args.first as? String,
+              let url = URL(string: source),
               let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
               url.host?.isEmpty == false else {
             complete(requestToken, failure("INVALID_ARGUMENT", "media.keep needs an absolute http or https URL"), completion)
             return
         }
+        let options = args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]
+        let address = CraftNativeMedia.identity(source, options: options)
         if let kept = CraftNativeMedia.local(address) {
             complete(requestToken, .success(CraftNativeMedia.describe(address, kept)), completion)
             return
         }
-        let options = args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]
         var request = URLRequest(url: url, timeoutInterval: craftNativeFetchTimeoutSeconds)
         request.httpMethod = "GET"
         if let headers = options["headers"] as? [String: Any] {

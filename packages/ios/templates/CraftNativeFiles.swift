@@ -913,6 +913,12 @@ enum CraftNativeFiles {
 // JavaScript. The screen decides what to keep (`keep`) and what to drop
 // (`prune`); nothing is evicted behind its back.
 enum CraftNativeMedia {
+    /// A caller-owned account + resource + version identity. Never used as a network URL.
+    static func identity(_ source: String, options: [String: Any]) -> String {
+        guard let key = options["cacheKey"] as? String, !key.isEmpty, key.utf8.count <= 1024 else { return source }
+        return "craft-media-key:" + key
+    }
+
     /// Foundation often wraps ENOSPC inside a URL or Cocoa file error.
     static func errorCode(_ error: Error, fallback: String) -> String {
         var cause: NSError? = error as NSError
@@ -1152,7 +1158,17 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         lock.lock()
         let task: URLSessionDownloadTask
         if let earlier = restored.removeValue(forKey: address), earlier.state == .running || earlier.state == .suspended {
-            task = earlier
+            if earlier.originalRequest?.url == request.url && earlier.originalRequest?.allHTTPHeaderFields == request.allHTTPHeaderFields {
+                task = earlier
+            }
+            else {
+                // A queued capability can expire while the app is suspended.
+                // Retain its cache identity, replace only its authorized source.
+                earlier.taskDescription = nil
+                earlier.cancel()
+                task = session.downloadTask(with: request)
+                task.taskDescription = address
+            }
         }
         else {
             task = session.downloadTask(with: request)

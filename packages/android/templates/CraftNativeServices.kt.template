@@ -119,6 +119,7 @@ internal class CraftNativeServices(
         if (config.optBoolean("enableAudioRecording")) add("audioRecording")
         // Videos kept on the phone for offline (CraftNativeMedia).
         add("media")
+        add("media-cache-key")
         if (config.optBoolean("enableShare")) add("share")
         if (config.optBoolean("enablePushNotifications")) add("push")
         if (health != null || healthServices != null) {
@@ -180,11 +181,11 @@ internal class CraftNativeServices(
                 "Location" -> location(method, args, done)
                 "HeartRate" -> heartRate(method, args, done)
                 "Media" -> when (method) {
-                    "keep" -> CraftNativeMedia.keep(context, args.optString(0), args.optJSONObject(1)?.optJSONObject("headers") ?: JSONObject(), args.optJSONObject(1)?.optBoolean("cellular", true) ?: true, done)
-                    "path" -> done(success(CraftNativeMedia.local(context, args.optString(0))?.absolutePath ?: JSONObject.NULL))
+                    "keep" -> CraftNativeMedia.keep(context, args.optString(0), args.optJSONObject(1)?.optJSONObject("headers") ?: JSONObject(), args.optJSONObject(1)?.optBoolean("cellular", true) ?: true, cacheKey = args.optJSONObject(1)?.optString("cacheKey"), done = done)
+                    "path" -> done(success(CraftNativeMedia.local(context, CraftNativeMedia.identity(args.optString(0), args.optJSONObject(1)))?.absolutePath ?: JSONObject.NULL))
                     "prune" -> {
                         val keep = args.optJSONArray(0) ?: JSONArray()
-                        done(success(CraftNativeMedia.prune(context, (0 until keep.length()).map { keep.optString(it) })))
+                        done(success(CraftNativeMedia.prune(context, (0 until keep.length()).map { index -> keep.optJSONObject(index)?.let { CraftNativeMedia.identity(it.optString("url"), it) } ?: keep.optString(index) })))
                     }
                     "usage" -> done(success(CraftNativeMedia.usage(context)))
                     "clear" -> done(success(CraftNativeMedia.clear(context)))

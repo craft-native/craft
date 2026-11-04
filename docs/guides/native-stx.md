@@ -1884,6 +1884,18 @@ does not. Writes already admitted before close may still finish on disk, so a
 rejected completion is not a rollback guarantee. Await the final checkpoint
 before leaving the screen when persistence must be confirmed.
 
+Hosts advertising `media-cache-key` separate a private file's identity from its
+short-lived authorized source. STX exposes `craft.media.cacheKeys` for feature
+detection. Call `keep(fullSignedUrl, { cacheKey: 'account:7:lesson:4:version:a' })`
+and `path(fullSignedUrl, { cacheKey })`; pass `{ url: fullSignedUrl, cacheKey }`
+entries to `prune`. Include the service, account, resource and prepared version
+in every private key. A URL renewal reuses a complete copy, while account or
+version changes get different files. The full URL and headers still go to the
+network. These calls do not revalidate cached authorization: applications must
+refresh access online, remove denied sources with `prune`, and `clear` on
+sign-out. Older hosts reject keyed operations through STX instead of silently
+falling back to a shared URL identity.
+
 The `media` capability (iOS) keeps video and audio on the phone for offline,
 in Application Support rather than the temporary directory, left out of
 iCloud backups. `craft.media.keep(url, { headers })` downloads the file once
