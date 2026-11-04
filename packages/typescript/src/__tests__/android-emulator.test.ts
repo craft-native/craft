@@ -389,13 +389,17 @@ test('disposal reaps the process and removes its private registry without consul
     mkdirSync(join(owned, 'device.avd'))
     writeFileSync(join(owned, 'device.ini'), 'private registry entry')
     writeFileSync(join(owned, 'device.avd/config.ini'), 'private device')
+    const appData = join(owned, 'device.avd/checkpoint-app-data')
+    writeFileSync(appData, 'private fixture checkpoint and package registry')
     const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
     // The device is already owned and booted. Its lifecycle must not depend
     // on launching the provisioning JVM a second time during disposal.
     writeFileSync(options.avdmanager, '#!/bin/sh\nprintf "manager unavailable after provisioning\\n" >&2\nexit 1\n', { mode: 0o755 })
+    writeFileSync(join(options.sdkRoot, 'platform-tools/adb'), '#!/bin/sh\necho "package manager unavailable after boot" >&2\nexit 1\n', { mode: 0o755 })
     await session.dispose()
     await session.dispose()
     expect(existsSync(owned)).toBe(false)
+    expect(existsSync(appData)).toBe(false)
     expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
     expect(readFileSync(join(foreign, 'my-phone.ini'), 'utf8')).toBe('user-owned device')
     expect(existsSync(options.sdkmanager)).toBe(true)

@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -282,11 +282,18 @@ finally {
       } catch (error) { failure ??= error; proof[`${label}Error`] = String(error) }
     }
     try {
-      await run('cleanup-stop', adb('shell', 'am', 'force-stop', packageName), 10000, workspace, true)
-      await run('cleanup-uninstall', adb('uninstall', packageName), 10000, workspace, true)
+      // This fixture owns the entire disposable guest. Its authoritative
+      // lifecycle reaps the processes and removes all private app storage;
+      // starting PackageManager again adds no cleanup guarantee.
+      const privateAvd = device.env.ANDROID_AVD_HOME
+      await device.dispose()
+      await device.closed
+      proof.emulatorDisposed = true
+      if (!privateAvd || existsSync(privateAvd)) throw new Error('Owned guest private storage was not removed')
+      proof.privateAvdRemoved = true
       proof.appDisposed = true
-    } catch (error) { failure ??= error; proof.appCleanupError = String(error) }
-    try { await device.dispose(); await device.closed; proof.emulatorDisposed = true } catch (error) { failure ??= error; proof.emulatorCleanupError = String(error) }
+      proof.appDisposal = 'owned-private-guest-storage-removed'
+    } catch (error) { failure ??= error; proof.emulatorCleanupError = String(error) }
   }
   proof.commandGroupsDisposed = scope.allDisposed
   if (workspace && scope.allDisposed && proof.emulatorDisposalUnconfirmed !== true && (!device || proof.emulatorDisposed === true)) {
