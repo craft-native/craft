@@ -160,6 +160,7 @@ try {
       'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
       '-configuration', 'Debug', '-destination', `id=${device.udid}`,
       '-derivedDataPath', join(workspace, 'DerivedData'),
+      '-jobs', '2',
       '-parallel-testing-enabled', 'NO', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'ENABLE_TESTABILITY=YES',
     ]
     // Separate build and test sessions: the combined action can stall before

@@ -924,7 +924,14 @@ final class NativeNavigationUnitTests: XCTestCase {
             let finished = XCTestExpectation(description: "layout observer page loaded")
             func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished.fulfill() }
         }
-        let page = WKWebView()
+        let home = try XCTUnwrap(stack("/"))
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        let page = WKWebView(frame: CGRect(x: 0, y: 0, width: screen.view.bounds.width, height: 120))
+        // Exercise a real foreground web view. An unattached zero-sized page
+        // can lose its WebContent process's foreground lifecycle assertion.
+        screen.view.addSubview(page)
+        defer { page.removeFromSuperview() }
+        XCTAssertNotNil(page.window)
         let load = PageLoad()
         page.navigationDelegate = load
         page.loadHTMLString("<!doctype html><html><body>Layout observer</body></html>", baseURL: nil)
@@ -934,9 +941,6 @@ final class NativeNavigationUnitTests: XCTestCase {
         let previousWebView = CraftChrome.shared.webView
         CraftChrome.shared.webView = page
         defer { CraftChrome.shared.webView = previousWebView }
-        let home = try XCTUnwrap(stack("/"))
-        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
-
         // Repeated full-width -> compact -> absent transitions must remove
         // UIKit's accessory container and any old manually reserved shelf.
         for _ in 0..<2 {

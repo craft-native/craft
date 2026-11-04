@@ -15,12 +15,20 @@ final class NativeRenderUITests: XCTestCase {
     /// the sheet must still present, and must still be cancellable.
     private let systemSheetTimeout: TimeInterval = 30
 
+    private func waitForBackground(_ app: XCUIApplication) {
+        let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 10), .completed,
+                       "Home must background the app, including when iOS has already suspended it")
+    }
+
     private func backgroundAfterObservingPicker(_ app: XCUIApplication) {
         // The fixture arms API_CANCEL or NAVIGATE_REPLACE for APP_STATE.
         // The caller must first establish that the real system picker exists.
         // Do not race that observation against an autonomous JS timer.
         XCUIDevice.shared.press(.home)
-        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        waitForBackground(app)
         app.activate()
     }
 
@@ -184,7 +192,7 @@ final class NativeRenderUITests: XCTestCase {
         waitForLabel(app.staticTexts["checkpoint-status"], "Recovered: 32 (burst)")
 
         XCUIDevice.shared.press(.home)
-        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        waitForBackground(app)
         app.activate()
         waitForLabel(app.staticTexts["checkpoint-status"], "Recovered: 33 (background)")
         // This kills the app process, not just its screen/JS context. The next

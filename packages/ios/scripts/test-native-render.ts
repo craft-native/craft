@@ -115,6 +115,7 @@ try {
     'xcodebuild', '-project', 'NativeRender.xcodeproj', '-scheme', 'NativeRender',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,
     '-derivedDataPath', join(workspace, 'DerivedData'),
+    '-jobs', '2',
     '-collect-test-diagnostics', 'never',
     '-test-timeouts-enabled', 'YES',
     '-default-test-execution-time-allowance', '300',
