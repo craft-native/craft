@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.453...v0.0.454)
+
+## 🐛 Bug Fixes
+
+- **android**: align native route exclusion case folding ([6508847](https://github.com/craft-native/craft/commit/6508847)) _(by glennmichael123)_ ([#471](https://github.com/craft-native/craft/issues/471))
+
+## 🧪 Tests
+
+- **android**: retain bounded display diagnostics after native failure ([a0d8ca1](https://github.com/craft-native/craft/commit/a0d8ca1)) _(by Chris Breuer)_
+
+## 🧹 Chores
+
+- **release**: consume recoverable release transactions ([7573a63](https://github.com/craft-native/craft/commit/7573a63)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.452...v0.0.453)
 
 ## 🐛 Bug Fixes
