@@ -1,3 +1,5 @@
+import { nativeNotificationProblems, type NativeNotificationCategory } from '../../typescript/src/native-notifications.js'
+export type { NativeNotificationCategory } from '../../typescript/src/native-notifications.js'
 import { matchNativePath, normalizeNativePath, nativeRouteConstraintProblems, routeSegments, type NativeRouteConstraints } from '../../typescript/src/native-routing.js'
 export { matchNativePath, normalizeNativePath } from '../../typescript/src/native-routing.js'
 export type { NativePathMatch, NativeParameterConstraint, NativeRouteConstraints } from '../../typescript/src/native-routing.js'
@@ -149,6 +151,8 @@ export interface CraftConfig {
   enableContacts?: boolean
   enableCalendar?: boolean
   enableLocalNotifications?: boolean
+  /** Notification buttons and inline replies registered at launch. */
+  notificationCategories?: NativeNotificationCategory[]
   enableInAppPurchase?: boolean
   enableKeepAwake?: boolean
   enableOrientationLock?: boolean
@@ -455,8 +459,8 @@ export function nativeStartPath(config: Pick<CraftConfig, 'devServerURL'>): stri
 }
 
 /** What is wrong with a config's hybrid and tab settings, one sentence each. */
-export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread'>): string[] {
-  const problems: string[] = []
+export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread' | 'notificationCategories'>): string[] {
+  const problems: string[] = nativeNotificationProblems(config.notificationCategories, config.nativeApp)
   const screens = Object.entries(config.nativeScreens ?? {})
   problems.push(...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints))
   for (const [pattern, screen] of screens) {

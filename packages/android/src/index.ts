@@ -1,3 +1,5 @@
+import { nativeNotificationProblems, type NativeNotificationCategory } from '../../typescript/src/native-notifications.js'
+export type { NativeNotificationCategory } from '../../typescript/src/native-notifications.js'
 import { matchNativePath, nativeRouteConstraintProblems, type NativeRouteConstraints } from '../../typescript/src/native-routing.js'
 import { gzipSync } from 'node:zlib'
 /**
@@ -176,6 +178,8 @@ export interface CraftAndroidConfig {
   enableLocalDatabase?: boolean
   /** Enable native AlarmManager local notification scheduling. Disabled unless explicitly true. */
   enableLocalNotifications?: boolean
+  /** Notification buttons and inline replies registered at launch. */
+  notificationCategories?: NativeNotificationCategory[]
   enableSecureStorage?: boolean
   enableGeolocation?: boolean
   enableBackgroundLocation?: boolean
@@ -761,7 +765,8 @@ function nativeStartPath(config: CraftAndroidConfig): string {
 }
 
 function validateNativeRouteConfig(config: CraftAndroidConfig): void {
-  const constraintProblems = nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints)
+  const constraintProblems = [...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints),
+    ...nativeNotificationProblems(config.notificationCategories, config.nativeApp)]
   if (constraintProblems.length) throw new Error(constraintProblems.join('\n'))
   const screens = Object.entries(config.nativeScreens ?? {})
   for (const [pattern, screen] of screens) {
