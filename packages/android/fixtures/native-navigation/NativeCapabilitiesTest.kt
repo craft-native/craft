@@ -42,6 +42,7 @@ class NativeCapabilitiesTest {
         storage.edit().remove("fixture-notification-action").commit()
         val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         val id = "fixture-reply-${UUID.randomUUID()}"
+        val cancellationProbe = "$id-cancelled"
         try {
             val forged = Intent(context, MainActivity::class.java).putExtra("craft.actionToken", "not-minted")
             instrumentation.runOnMainSync { assertTrue(CraftNativeNotifications.receiveAction(context, forged)) }
@@ -86,16 +87,25 @@ class NativeCapabilitiesTest {
             instrumentation.runOnMainSync {
                 CraftNativeNotifications.show(context, value, id, "craft-fixture-actions")
                 CraftNativeNotifications.cancel(context, id)
+                CraftNativeNotifications.show(context, JSONObject().put("title", "Cancellation probe"), cancellationProbe, "craft-fixture-actions")
             }
-            while (manager.activeNotifications.any { it.tag == id || it.tag == "craft.group:fixture-thread" } &&
-                android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(50)
-            assertFalse(manager.activeNotifications.any { it.tag == id || it.tag == "craft.group:fixture-thread" })
+            var cancellationObserved = false
+            while (!cancellationObserved && android.os.SystemClock.uptimeMillis() < deadline) {
+                val entries = manager.activeNotifications
+                cancellationObserved = entries.any { it.tag == cancellationProbe } &&
+                    entries.none { it.tag == id || it.tag == "craft.group:fixture-thread" }
+                if (!cancellationObserved) android.os.SystemClock.sleep(50)
+            }
+            assertTrue("The later probe must be published with the cancelled child and summary absent", cancellationObserved)
             val tokens = context.getSharedPreferences("craft-native-notification-actions", android.content.Context.MODE_PRIVATE)
             assertFalse(tokens.all.values.any { raw ->
                 runCatching { JSONObject(raw as String).optJSONObject("value")?.optString("id") == id }.getOrDefault(false)
             })
         } finally {
-            instrumentation.runOnMainSync { CraftNativeNotifications.cancel(context, id) }
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.cancel(context, id)
+                CraftNativeNotifications.cancel(context, cancellationProbe)
+            }
             manager.cancel(id, 0)
             manager.cancel("craft.group:fixture-thread", 1)
             androidx.work.WorkManager.getInstance(context).cancelUniqueWork("craft-native-background-once").result.get(10, TimeUnit.SECONDS)
