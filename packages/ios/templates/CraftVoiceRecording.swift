@@ -105,11 +105,21 @@ final class CraftVoiceRecording {
     private var generation = 0
     private let startupTimeout: TimeInterval
     private let stopTimeout: TimeInterval
+    struct FileRemovalReceipt: Encodable {
+        let queueMilliseconds: Double
+        let removalMilliseconds: Double
+        let ownedBefore: Bool
+        let removed: Bool
+        let existsAfter: Bool
+    }
+    // Internal observation of the real deletion, not a replacement filesystem.
+    private let fileRemovalObserved: ((FileRemovalReceipt) -> Void)?
     private var backgroundObserver: NSObjectProtocol?
 
     init(audioQueue: DispatchQueue = DispatchQueue(label: "craft.voice-recording", qos: .userInitiated),
          startupTimeout: TimeInterval = 15,
          stopTimeout: TimeInterval = 10,
+         fileRemovalObserved: ((FileRemovalReceipt) -> Void)? = nil,
          permission: @escaping (@escaping (Bool) -> Void) -> Void = { answer in
              #if CRAFT_PERMISSION_MICROPHONE
              AVAudioSession.sharedInstance().requestRecordPermission(answer)
@@ -132,6 +142,7 @@ final class CraftVoiceRecording {
         self.audioQueue = audioQueue
         self.startupTimeout = startupTimeout
         self.stopTimeout = stopTimeout
+        self.fileRemovalObserved = fileRemovalObserved
         self.permission = permission
         self.makeRecorder = makeRecorder
         self.deactivate = deactivate
@@ -164,7 +175,24 @@ final class CraftVoiceRecording {
         session.finish(.failure(error))
         if let file = session.file {
             // A stalled encoder must not hold deletion behind its audio queue.
-            Self.fileQueue.async { CraftNativeFiles.remove(file.path) }
+            let queued = ProcessInfo.processInfo.systemUptime
+            let observed = fileRemovalObserved
+            Self.trace("cancel \(session.key.prefix(8)): file removal queued")
+            Self.fileQueue.async {
+                let began = ProcessInfo.processInfo.systemUptime
+                let owned = CraftNativeFiles.owned(file.path) != nil
+                let removed = CraftNativeFiles.remove(file.path)
+                let receipt = FileRemovalReceipt(
+                    queueMilliseconds: (began - queued) * 1000,
+                    removalMilliseconds: (ProcessInfo.processInfo.systemUptime - began) * 1000,
+                    ownedBefore: owned, removed: removed,
+                    existsAfter: FileManager.default.fileExists(atPath: file.path))
+                // No path or recording content is included in diagnostics.
+                if let json = try? JSONEncoder().encode(receipt), let text = String(data: json, encoding: .utf8) {
+                    Self.trace("cancel \(session.key.prefix(8)): file removal \(text)")
+                }
+                observed?(receipt)
+            }
         }
         audioQueue.async { self.erase(session) }
     }

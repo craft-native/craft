@@ -77,6 +77,15 @@ use their own temporary namespace and are erased on the next native launch after
 an interruption or process termination, including the earlier recorder's M4A files.
 Picked files and downloads retain their separate lifetime.
 
+For cancellation diagnostics, the native `voice-recording` log records the
+removal queue delay, removal duration, ownership check and whether the path still
+exists, without including the path or audio content. The blocked-encoder unit
+test retains the same receipt alongside each file-absence predicate observation
+in its XCResult. Its original two-second cleanup bound still applies before the
+encoder is released. These observations distinguish delayed removal from a
+missed observation; a later passing run alone does not explain issue #448's
+original timeout.
+
 ### Device Access
 
 - **Camera & Gallery** - Take photos or pick from gallery

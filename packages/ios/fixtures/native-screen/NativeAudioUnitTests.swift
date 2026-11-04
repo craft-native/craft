@@ -441,12 +441,41 @@ final class NativeAudioUnitTests: XCTestCase {
         let entered = expectation(description: "encoder started on audio queue")
         let startFinished = expectation(description: "start cancelled immediately")
         let cancelled = expectation(description: "cancel acknowledged")
+        let removalObserved = expectation(description: "real file removal observed before encoder release")
         let drained = expectation(description: "audio queue cleaned")
         let release = DispatchSemaphore(value: 0)
         let queue = DispatchQueue(label: "voice-cancellation-test")
         let recorder = VoiceRecorder()
         var recordingFile: URL?
-        let service = CraftVoiceRecording(audioQueue: queue, permission: { $0(true) }, makeRecorder: { file in
+        let receiptLock = NSLock()
+        var removalReceipt: CraftVoiceRecording.FileRemovalReceipt?
+        var observations: [[String: Any]] = []
+        let observationStart = ProcessInfo.processInfo.systemUptime
+        func observe(_ phase: String) -> Bool {
+            let exists = recordingFile.map { FileManager.default.fileExists(atPath: $0.path) } ?? true
+            receiptLock.withLock {
+                observations.append(["phase": phase, "milliseconds": (ProcessInfo.processInfo.systemUptime - observationStart) * 1000, "exists": exists])
+            }
+            return exists
+        }
+        defer {
+            let evidence: [String: Any] = receiptLock.withLock {
+                var report: [String: Any] = ["observations": observations]
+                if let receipt = removalReceipt, let data = try? JSONEncoder().encode(receipt),
+                   let object = try? JSONSerialization.jsonObject(with: data) { report["removal"] = object }
+                return report
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]) {
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = "Voice cancellation file removal before encoder release"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        let service = CraftVoiceRecording(audioQueue: queue, fileRemovalObserved: { receipt in
+            receiptLock.withLock { removalReceipt = receipt }
+            removalObserved.fulfill()
+        }, permission: { $0(true) }, makeRecorder: { file in
             XCTAssertFalse(Thread.isMainThread)
             recordingFile = file
             try Data([1, 2, 3]).write(to: file)
@@ -464,12 +493,20 @@ final class NativeAudioUnitTests: XCTestCase {
         // Reaching this main-actor continuation while the factory is held is
         // the responsiveness regression, not a longer microphone deadline.
         XCTAssertTrue(Thread.isMainThread)
+        XCTAssertTrue(observe("before-cancel"), "factory must have created the owned file")
         service.perform(method: "cancel", args: [key]) { _ in cancelled.fulfill() }
         await fulfillment(of: [cancelled, startFinished], timeout: 2)
+        _ = observe("after-cancel-acknowledgement")
         let erased = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            recordingFile.map { !FileManager.default.fileExists(atPath: $0.path) } ?? false
+            !observe("file-absence-predicate")
         }, object: nil)
-        await fulfillment(of: [erased], timeout: 2)
+        // Both observations share the original bound; no extra cleanup wait.
+        await fulfillment(of: [erased, removalObserved], timeout: 2)
+        XCTAssertFalse(observe("before-encoder-release"))
+        let receipt = receiptLock.withLock { removalReceipt }
+        XCTAssertEqual(receipt?.ownedBefore, true)
+        XCTAssertEqual(receipt?.removed, true)
+        XCTAssertEqual(receipt?.existsAfter, false)
         release.signal()
         queue.async { drained.fulfill() }
         await fulfillment(of: [drained], timeout: 2)
