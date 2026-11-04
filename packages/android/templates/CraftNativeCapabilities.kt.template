@@ -1349,7 +1349,7 @@ internal class CraftNativeCapabilities(
     }
 
     private fun cancelNotification(id: String) {
-        CraftNativeNotifications.revoke(context, id)
+        CraftNativeNotifications.cancel(context, id)
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = notificationIntent(id)
         alarm.cancel(intent)

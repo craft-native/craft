@@ -68,6 +68,18 @@ class NativeCapabilitiesTest {
             assertEquals("Hello 👋", detail.getString("userText"))
             assertEquals(42, detail.getJSONObject("data").getInt("thread"))
             assertTrue(detail.getString("id").isNotEmpty())
+            assertFalse("The last handled child must not leave an empty notification group",
+                manager.activeNotifications.any { it.tag == "craft.group:fixture-thread" })
+            // A cancelled notification invalidates every remaining action token.
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.show(context, value, id, "craft-fixture-actions")
+                CraftNativeNotifications.cancel(context, id)
+            }
+            assertFalse(manager.activeNotifications.any { it.tag == id || it.tag == "craft.group:fixture-thread" })
+            val tokens = context.getSharedPreferences("craft-native-notification-actions", android.content.Context.MODE_PRIVATE)
+            assertFalse(tokens.all.values.any { raw ->
+                runCatching { JSONObject(raw as String).optJSONObject("value")?.optString("id") == id }.getOrDefault(false)
+            })
         } finally {
             instrumentation.runOnMainSync { CraftNativeNotifications.revoke(context, id) }
             manager.cancel(id, 0)

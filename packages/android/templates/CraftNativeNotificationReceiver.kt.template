@@ -15,7 +15,11 @@ import org.json.JSONObject
 /** Delivers native-runtime notifications even when the app process has exited. */
 internal class CraftNativeNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        intent.getStringExtra("craft.dismissedId")?.let { CraftNativeNotifications.revoke(context, it); return }
+        intent.getStringExtra("craft.dismissedId")?.let {
+            CraftNativeNotifications.revoke(context, it)
+            CraftNativeNotifications.clearEmptyGroup(context, intent.getStringExtra("craft.dismissedThread"))
+            return
+        }
         if (intent.hasExtra("craft.actionToken")) {
             val pending = goAsync()
             CraftNativeNotifications.receiveAction(context, intent) { pending.finish() }
@@ -89,9 +93,8 @@ internal object CraftNativeNotifications {
         val detail = actionDetail(config(context), value, actionId,
             androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(REPLY))
         if (detail == null) { queued?.invoke(); return true }
-        revoke(context, detail.optString("notificationId"))
+        cancel(context, detail.optString("notificationId"))
         CraftNativeBackground.runOnce(context, "craftNotificationAction", detail, queued)
-        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(detail.optString("notificationId"), 0)
         return true
     }
 
@@ -107,13 +110,30 @@ internal object CraftNativeNotifications {
         edit.commit()
     }
 
+    fun clearEmptyGroup(context: Context, thread: String?) {
+        if (thread.isNullOrEmpty()) return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val children = manager.activeNotifications.any {
+            it.notification.group == thread && (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0
+        }
+        if (!children) manager.cancel("craft.group:$thread", 1)
+    }
+
+    fun cancel(context: Context, id: String) {
+        revoke(context, id)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val thread = manager.activeNotifications.firstOrNull { it.tag == id && it.id == 0 }?.notification?.group
+        manager.cancel(id, 0)
+        clearEmptyGroup(context, thread)
+    }
+
     private fun pending(context: Context, value: JSONObject, action: JSONObject?): android.app.PendingIntent? {
         val foreground = action == null || action.optBoolean("foreground", false)
         val target = if (foreground) Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         else Intent(context, CraftNativeNotificationReceiver::class.java)
         target.action = "craft.notification:" + android.net.Uri.encode(value.optString("id")) + ":" +
-            android.net.Uri.encode(action?.optString("id") ?: "default")
+            (if (action == null) "tap" else "action:" + android.net.Uri.encode(action.optString("id")))
         target.putExtra("craft.notification", true)
         if (action == null) target.putExtra("craft.notification.data", (value.optJSONObject("data") ?: JSONObject()).toString())
         else {
@@ -137,6 +157,7 @@ internal object CraftNativeNotifications {
         if (invalidOptions(original) != null) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        revoke(context, id) // replacing a notification also invalidates removed actions
         val value = JSONObject(original.toString()).put("id", id)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val level = value.optString("interruptionLevel", "active")
@@ -172,7 +193,7 @@ internal object CraftNativeNotifications {
             notification.addAction(action.build())
         }
         val dismissed = Intent(context, CraftNativeNotificationReceiver::class.java)
-            .setAction("craft.notification.dismiss:" + android.net.Uri.encode(id)).putExtra("craft.dismissedId", id)
+            .setAction("craft.notification.dismiss:" + android.net.Uri.encode(id)).putExtra("craft.dismissedId", id).putExtra("craft.dismissedThread", thread)
         notification.setDeleteIntent(android.app.PendingIntent.getBroadcast(context, 0, dismissed,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
         manager.notify(id, 0, notification.build())
