@@ -412,6 +412,41 @@ final class NativeNotificationActionUnitTests: XCTestCase {
 
 @MainActor
 final class NativeContextMenuUnitTests: XCTestCase {
+    func testDeferredMenuProviderRejectsChangedItemsHandlersAndDetachment() {
+        for change in ["items", "handler", "detach"] {
+            let view = UIView()
+            let host = CraftNativeContextMenu(view: view)
+            let items: [[String: Any]] = [["id": "copy", "title": "Copy"]]
+            host.update(items, handler: "original") { _ in }
+            // UIKit requests this provider when presentation starts, which can
+            // happen after reconciliation has changed the view's menu.
+            let pending = host.menuProvider()
+            switch change {
+            case "items": host.update([["id": "report", "title": "Report"]], handler: "original") { _ in }
+            case "handler": host.update(items, handler: "replacement") { _ in }
+            default: host.detach()
+            }
+            XCTAssertNil(pending([]), "A deferred provider must not cross a \(change) boundary")
+            if change != "detach" {
+                XCTAssertNotNil(host.menuProvider()([]), "A fresh request must still present the current menu")
+            }
+        }
+    }
+
+    func testDeferredMenuProviderSurvivesUnchangedRenderWithoutRetainingItsOwner() throws {
+        let view = UIView()
+        var host: CraftNativeContextMenu? = CraftNativeContextMenu(view: view)
+        weak var weakHost = host
+        let items: [[String: Any]] = [["id": "copy", "title": "Copy"]]
+        host?.update(items, handler: "same") { _ in }
+        let pending = try XCTUnwrap(host).menuProvider()
+        host?.update(items, handler: "same") { _ in }
+        XCTAssertEqual(try XCTUnwrap(pending([])).children.first?.title, "Copy")
+        host = nil
+        XCTAssertNil(weakHost)
+        XCTAssertNil(pending([]))
+    }
+
     func testAccessibilityActionsRejectReplacedDisabledAndUnmountedSelections() throws {
         let screen = CraftNativeScreenController(config: CraftConfig())
         screen.loadViewIfNeeded()

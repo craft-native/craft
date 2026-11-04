@@ -80,10 +80,22 @@ final class CraftNativeContextMenu: NSObject, UIContextMenuInteractionDelegate {
         })
     }
 
+    func menuProvider() -> UIContextMenuActionProvider {
+        // UIKit asks for contents when presentation begins, after configuration
+        // was requested. A reconciled node must not supply a different menu to
+        // an interaction that started against its previous items or handler.
+        let expected = revision
+        return { [weak self] _ in
+            guard let self, self.revision == expected,
+                  self.dispatch != nil, !self.items.isEmpty else { return nil }
+            return self.menu()
+        }
+    }
+
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         guard dispatch != nil, !items.isEmpty else { return nil }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in self?.menu() }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil, actionProvider: menuProvider())
     }
 }
 

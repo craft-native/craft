@@ -2184,8 +2184,12 @@ page coordinates or custom preview controller are needed. Android uses a native
 symbols use the app's `craft-icons.json` catalog where available. A configured menu owns
 the hold instead of also calling `onLongPress`. Removing or disabling the node
 removes the interaction. Changing the items or handler invalidates old choices;
-unrelated renders preserve an open menu. Ordinary `.stx` templates can use the
-existing compiler event mapping:
+unrelated renders preserve an open menu. On iOS this also covers UIKit's deferred
+request for menu contents: if the items or handler change, or the node is removed,
+before that callback runs, the old request returns no menu. A new interaction can
+show the current items.
+
+Ordinary `.stx` templates can use the existing compiler event mapping:
 
 ```html
 <View :contextMenu="actions" @contextmenu="chooseAction">
