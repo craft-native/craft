@@ -85,7 +85,10 @@ class NativeNavigationTest {
                 if (chosen == null) SystemClock.sleep(50)
             }
             var target = requireNotNull(chosen) { "Anchored native menu did not appear" }
-            while (!target.isClickable && target.parent != null) target = target.parent
+            while (!target.isClickable) {
+                val parent = target.parent ?: break
+                target = parent
+            }
             assertTrue(target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             assertEquals("copy", selected.get())

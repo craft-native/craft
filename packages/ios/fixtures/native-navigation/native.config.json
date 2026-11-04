@@ -7,5 +7,6 @@
     "details": "Details.stx",
     "summary": "Summary.stx",
     "feedback": "Feedback.stx"
-  }
+  },
+  "app": "NotificationApp.ts"
 }

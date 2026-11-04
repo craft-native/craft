@@ -32,6 +32,11 @@ try {
     name: 'NativeNavigation', packageName, output,
     config: {
       renderer: 'native',
+      nativeApp: '__app',
+      notificationCategories: [{ id: 'fixture-message', actions: [
+        { id: 'reply', title: 'Reply', textInput: { buttonTitle: 'Send', placeholder: 'Fixture reply' } },
+        { id: 'open', title: 'Open', foreground: true },
+      ] }],
       enablePedometer: true,
       enableHealthServices: true,
       mapProvider: 'maplibre',

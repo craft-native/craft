@@ -25,6 +25,57 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesTest {
+    @Test fun notificationReplyRunsInHeadlessAppAndRejectsForgedLaunchExtras() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS").use {
+                java.io.FileInputStream(it.fileDescriptor).use { stream -> stream.readBytes() }
+            }
+        }
+        // No Activity is launched by this test; the worker must load __app.
+        assertNull("The test must exercise a headless app, not a retained Activity", CraftNativeBackground.foreground)
+        val storage = context.getSharedPreferences("craft-native-storage", android.content.Context.MODE_PRIVATE)
+        storage.edit().remove("fixture-notification-action").commit()
+        val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val id = "fixture-reply-${UUID.randomUUID()}"
+        try {
+            val forged = Intent(context, MainActivity::class.java).putExtra("craft.actionToken", "not-minted")
+            instrumentation.runOnMainSync { assertTrue(CraftNativeNotifications.receiveAction(context, forged)) }
+            assertNull(storage.getString("fixture-notification-action", null))
+            val value = JSONObject().put("title", "Fixture message").put("body", "Reply without opening a screen")
+                .put("categoryId", "fixture-message").put("threadIdentifier", "fixture-thread")
+                .put("data", JSONObject().put("thread", 42))
+            instrumentation.runOnMainSync { CraftNativeNotifications.show(context, value, id, "craft-fixture-actions") }
+            val posted = requireNotNull(manager.activeNotifications.firstOrNull { it.tag == id })
+            assertEquals("fixture-thread", posted.notification.group)
+            val reply = posted.notification.actions.first { it.title.toString() == "Reply" }
+            assertTrue(!reply.remoteInputs.isNullOrEmpty())
+            val fillIn = Intent()
+            val results = android.os.Bundle().apply { putCharSequence("craft.reply", "Hello 👋") }
+            androidx.core.app.RemoteInput.addResultsToIntent(
+                arrayOf(androidx.core.app.RemoteInput.Builder("craft.reply").build()), fillIn, results)
+            reply.actionIntent.send(context, 0, fillIn)
+            var delivered: JSONObject? = null
+            val deadline = android.os.SystemClock.uptimeMillis() + 30000
+            while (delivered == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                delivered = storage.getString("fixture-notification-action", null)?.let { JSONObject(it) }
+                if (delivered == null) android.os.SystemClock.sleep(50)
+            }
+            val detail = requireNotNull(delivered) { "Notification reply did not reach the headless app script" }
+            assertEquals("reply", detail.getString("actionId"))
+            assertEquals(id, detail.getString("notificationId"))
+            assertEquals("Hello 👋", detail.getString("userText"))
+            assertEquals(42, detail.getJSONObject("data").getInt("thread"))
+            assertTrue(detail.getString("id").isNotEmpty())
+        } finally {
+            instrumentation.runOnMainSync { CraftNativeNotifications.revoke(context, id) }
+            manager.cancel(id, 0)
+            manager.cancel("craft.group:fixture-thread", 1)
+            androidx.work.WorkManager.getInstance(context).cancelUniqueWork("craft-native-background-once").result.get(10, TimeUnit.SECONDS)
+        }
+    }
+
     private class MotionSourceProbe : CraftMotionSource {
         val requests = mutableListOf<Triple<Int, Int, (FloatArray, Long, Int) -> Unit>>()
         val stopped = mutableListOf<Int>()
