@@ -1,6 +1,6 @@
 {
   "name": "craft",
-  "version": "0.0.457",
+  "version": "0.0.458",
   "private": true,
   "description": "Build desktop apps with web languages, powered by Zig",
   "author": "Chris Breuer <chris@stacksjs.org>",
