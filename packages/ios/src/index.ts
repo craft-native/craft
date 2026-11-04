@@ -1,3 +1,6 @@
+import { matchNativePath, normalizeNativePath, nativeRouteConstraintProblems, routeSegments, type NativeRouteConstraints } from '../../typescript/src/native-routing.js'
+export { matchNativePath, normalizeNativePath } from '../../typescript/src/native-routing.js'
+export type { NativePathMatch, NativeParameterConstraint, NativeRouteConstraints } from '../../typescript/src/native-routing.js'
 import { gzipSync } from 'node:zlib'
 import { iosPermissionMask, iosPermissions, renderPermissionSource, verifyInstalledProfile, verifyRuntimeProfile, withAppRuntime, writeInstalledProfile } from './runtime-profile.js'
 /**
@@ -337,6 +340,7 @@ export interface CraftConfig {
    * opens in the in-app browser on the app's site.
    */
   nativeScreens?: Record<string, string>
+  nativeScreenConstraints?: NativeRouteConstraints
   /**
    * The bundle `stx native compile --format bundle` wrote, copied to
    * `dist/native-screen.js`; or a directory of route bundles (stx's
@@ -419,88 +423,6 @@ export interface CraftTab {
   selectedIconPulse?: boolean
 }
 
-/** `/a//b/?q#h` → `/a/b`, the way the shell and the page compare paths. Null for a relative path. */
-export function normalizeNativePath(raw: string): string | null {
-  if (typeof raw !== 'string') return null
-  let path = raw
-  const cut = path.search(/[?#]/)
-  if (cut >= 0) path = path.slice(0, cut)
-  if (!path.startsWith('/')) return null
-  path = path.replace(/\/{2,}/g, '/')
-  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)
-  return path
-}
-
-export interface NativePathMatch {
-  path: string
-  screen: string
-  params: Record<string, string>
-}
-
-function routeSegments(path: string): string[] {
-  return path === '/' ? [] : path.slice(1).split('/')
-}
-
-/**
- * The native screen for a path, by the rules the shell (`CraftHybridRoutes`)
- * and the page script apply: static segments win over `:params`, which win
- * over a trailing `*`; query items become params under the path's own.
- */
-export function matchNativePath(nativeScreens: Record<string, string> | undefined, raw: string): NativePathMatch | null {
-  const path = normalizeNativePath(raw)
-  if (path === null) return null
-  const routes = Object.entries(nativeScreens ?? {})
-    .map(([pattern, screen]) => ({ pattern: normalizeNativePath(pattern), screen }))
-    .filter((route): route is { pattern: string, screen: string } => route.pattern !== null && !!route.screen)
-    .map(route => ({ ...route, segments: routeSegments(route.pattern) }))
-  const wild = (segments: string[]) => (segments.at(-1) === '*' ? 1 : 0)
-  const fixed = (segments: string[]) => segments.filter(s => s !== '*' && !s.startsWith(':')).length
-  routes.sort((a, b) => (wild(a.segments) - wild(b.segments))
-    || (fixed(b.segments) - fixed(a.segments))
-    || (b.segments.length - a.segments.length)
-    || (a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0))
-  const decode = (value: string) => {
-    try {
-      return decodeURIComponent(value)
-    }
-    catch {
-      return value
-    }
-  }
-  const parts = routeSegments(path)
-  for (const route of routes) {
-    const params: Record<string, string> = {}
-    let matched = true
-    for (let i = 0; i < route.segments.length; i++) {
-      const segment = route.segments[i]!
-      if (segment === '*') {
-        params['*'] = parts.slice(i).join('/')
-        break
-      }
-      if (i >= parts.length) { matched = false; break }
-      if (segment.startsWith(':')) {
-        if (!parts[i]) { matched = false; break }
-        params[segment.slice(1)] = decode(parts[i]!)
-      }
-      else if (segment !== parts[i]) { matched = false; break }
-    }
-    if (!matched) continue
-    if (route.segments.at(-1) !== '*' && route.segments.length !== parts.length) continue
-    const query = raw.indexOf('?')
-    if (query >= 0) {
-      for (const item of raw.slice(query + 1).split('#')[0]!.split('&')) {
-        if (!item) continue
-        const [rawKey = '', ...rest] = item.split('=')
-        const key = decode(rawKey)
-        if (!key || key in params) continue
-        params[key] = decode(rest.join('=').replace(/\+/g, ' '))
-      }
-    }
-    return { path, screen: route.screen, params }
-  }
-  return null
-}
-
 /** Whether a config mixes native screens into its web page. */
 export function isHybrid(config: Pick<CraftConfig, 'renderer' | 'nativeScreens'>): boolean {
   return (config.renderer ?? 'web') === 'web' && Object.keys(config.nativeScreens ?? {}).length > 0
@@ -533,9 +455,10 @@ export function nativeStartPath(config: Pick<CraftConfig, 'devServerURL'>): stri
 }
 
 /** What is wrong with a config's hybrid and tab settings, one sentence each. */
-export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread'>): string[] {
+export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread'>): string[] {
   const problems: string[] = []
   const screens = Object.entries(config.nativeScreens ?? {})
+  problems.push(...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints))
   for (const [pattern, screen] of screens) {
     if (normalizeNativePath(pattern) !== pattern || /[?#]/.test(pattern))
       problems.push(`nativeScreens path "${pattern}" must be an absolute path with no query, hash or trailing slash.`)
@@ -560,11 +483,11 @@ export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nat
   // tab and the start path must be drawn by a native screen.
   if (hasNativeRoutes(config)) {
     for (const id of ids) {
-      if (!matchNativePath(config.nativeScreens, id))
+      if (!matchNativePath(config.nativeScreens, id, config.nativeScreenConstraints))
         problems.push(`Tab "${id}" is not a nativeScreens path; with renderer: "native" every tab must be a native screen.`)
     }
     const start = nativeStartPath(config)
-    if (!matchNativePath(config.nativeScreens, start))
+    if (!matchNativePath(config.nativeScreens, start, config.nativeScreenConstraints))
       problems.push(`The start path "${start}" (from devServerURL) is not a nativeScreens path; with renderer: "native" the app must start on a native screen.`)
   }
   if (config.nativeApp !== undefined) {
@@ -2190,3 +2113,6 @@ else {
 
 export { createNativeMutationValidator, initSimulatorDriver, serializeSimulatorSteps } from './testing.js'
 export type { NativeMutationValidator, NativeValidationResult, SimulatorDriverOptions, SimulatorStep, TimedTouchPoint } from './testing.js'
+
+/** The native hosts enforce declared named-parameter constraints. */
+export const nativeRouteConstraints = true

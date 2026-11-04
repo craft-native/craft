@@ -45,6 +45,41 @@ import Combine
 /// page script and the typescript API (`matchNativePath`) implement the same
 /// rules, and the tests hold all three to one set of cases.
 struct CraftHybridRoutes {
+    struct ParameterConstraint: Codable {
+        var pattern: String? = nil
+        var exclude: [String]? = nil
+        var ignoreCase: Bool? = nil
+
+        private enum CodingKeys: String, CodingKey { case pattern, exclude, ignoreCase }
+        private struct Field: CodingKey {
+            let stringValue: String
+            let intValue: Int? = nil
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: Field.self)
+            guard fields.allKeys.allSatisfy({ ["pattern", "exclude", "ignoreCase"].contains($0.stringValue) }) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown native path parameter constraint"))
+            }
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            pattern = values.contains(.pattern) ? try values.decode(String.self, forKey: .pattern) : nil
+            exclude = values.contains(.exclude) ? try values.decode([String].self, forKey: .exclude) : nil
+            ignoreCase = values.contains(.ignoreCase) ? try values.decode(Bool.self, forKey: .ignoreCase) : nil
+        }
+
+        func accepts(_ value: String) -> Bool {
+            if (exclude ?? []).contains(where: { ignoreCase == true ? $0.lowercased() == value.lowercased() : $0 == value }) { return false }
+            if let pattern {
+                let range = NSRange(value.startIndex..<value.endIndex, in: value)
+                guard let expression = try? NSRegularExpression(pattern: "^(?:\(pattern))$", options: ignoreCase == true ? [.caseInsensitive] : []),
+                      expression.firstMatch(in: value, range: range)?.range == range else { return false }
+            }
+            return true
+        }
+    }
+
     struct Match: Equatable {
         let path: String
         let screen: String
@@ -55,14 +90,15 @@ struct CraftHybridRoutes {
         let pattern: String
         let segments: [String]
         let screen: String
+        let constraints: [String: ParameterConstraint]
     }
 
     private let routes: [Route]
 
-    init(_ table: [String: String]) {
+    init(_ table: [String: String], constraints: [String: [String: ParameterConstraint]] = [:]) {
         routes = table.compactMap { pattern, screen -> Route? in
             guard let normalized = CraftHybridRoutes.normalize(pattern), !screen.isEmpty else { return nil }
-            return Route(pattern: normalized, segments: CraftHybridRoutes.segments(normalized), screen: screen)
+            return Route(pattern: normalized, segments: CraftHybridRoutes.segments(normalized), screen: screen, constraints: constraints[pattern] ?? [:])
         }.sorted(by: CraftHybridRoutes.precedes)
     }
 
@@ -100,6 +136,7 @@ struct CraftHybridRoutes {
         let parts = Self.segments(path)
         for route in routes {
             guard var params = Self.bind(route.segments, to: parts) else { continue }
+            guard route.constraints.allSatisfy({ name, rule in params[name].map(rule.accepts) ?? false }) else { continue }
             if let query = raw.firstIndex(of: "?") {
                 let rest = raw[raw.index(after: query)...].split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
                 for item in rest.split(separator: "&") {
@@ -370,7 +407,7 @@ final class CraftHybrid: NSObject {
         siteURL = config.devServerURL.flatMap(URL.init(string:)).flatMap { url in
             ["http", "https"].contains((url.scheme ?? "").lowercased()) ? url : nil
         }
-        routes = CraftHybridRoutes(config.nativeScreens ?? [:])
+        routes = CraftHybridRoutes(config.nativeScreens ?? [:], constraints: config.nativeScreenConstraints ?? [:])
         startPath = config.devServerURL.flatMap(URL.init(string:)).map(CraftHybridRoutes.appPath(of:)) ?? "/"
         if startPath.isEmpty { startPath = "/" }
         let wanted = !routes.isEmpty
@@ -498,7 +535,11 @@ final class CraftHybrid: NSObject {
     /// The document-start script the hybrid page runs, with the route table
     /// and the shared storage keys filled in.
     func pageScript() -> String {
-        let routeList = (config.nativeScreens ?? [:]).map { ["pattern": $0.key, "screen": $0.value] }
+        let routeList: [[String: Any]] = (config.nativeScreens ?? [:]).map { pattern, screen in
+            let encoded = try? JSONEncoder().encode(config.nativeScreenConstraints?[pattern] ?? [:])
+            let constraints = encoded.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [:]
+            return ["pattern": pattern, "screen": screen, "constraints": constraints]
+        }
         let share = Array((config.shareStorage ?? [:]).keys).sorted()
         // The page's key for the sign-in token, when it shares one.
         let tokenKey = CraftSession.tokenKey(config)
@@ -537,7 +578,7 @@ final class CraftHybrid: NSObject {
       var table = [];
       for (var i = 0; i < ROUTES.length; i++) {
         var pattern = normalize(ROUTES[i].pattern);
-        if (pattern && ROUTES[i].screen) table.push({ pattern: pattern, segments: segments(pattern), screen: ROUTES[i].screen });
+        if (pattern && ROUTES[i].screen) table.push({ pattern: pattern, segments: segments(pattern), screen: ROUTES[i].screen, constraints: ROUTES[i].constraints === undefined ? {} : ROUTES[i].constraints });
       }
       function wild(r) { return r.segments[r.segments.length - 1] === '*' ? 1 : 0; }
       function fixed(r) { return r.segments.filter(function (s) { return s !== '*' && s.charAt(0) !== ':'; }).length; }
@@ -562,6 +603,25 @@ final class CraftHybrid: NSObject {
         for (var i = 0; i < table.length; i++) {
           var params = bind(table[i].segments, parts);
           if (!params) continue;
+          var rules = table[i].constraints;
+          if (!rules || typeof rules !== 'object' || Array.isArray(rules)) continue;
+          var accepted = Object.keys(rules).every(function (name) {
+            var rule = table[i].constraints[name], value = params[name];
+            if (!rule || typeof rule !== 'object' || Array.isArray(rule) || typeof value !== 'string') return false;
+            if (Object.keys(rule).some(function (key) { return ['pattern', 'exclude', 'ignoreCase'].indexOf(key) < 0; })) return false;
+            if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') return false;
+            if (rule.exclude !== undefined) {
+              if (!Array.isArray(rule.exclude) || rule.exclude.some(function (item) { return typeof item !== 'string'; })) return false;
+              if (rule.exclude.some(function (item) { return rule.ignoreCase ? item.toLowerCase() === value.toLowerCase() : item === value; })) return false;
+            }
+            if (rule.pattern !== undefined) {
+              if (typeof rule.pattern !== 'string') return false;
+              try { var found = new RegExp('^(?:' + rule.pattern + ')$', rule.ignoreCase ? 'i' : '').exec(value); if (!found || found[0] !== value) return false; }
+              catch (e) { return false; }
+            }
+            return true;
+          });
+          if (!accepted) continue;
           var query = raw.indexOf('?');
           if (query >= 0) {
             raw.slice(query + 1).split('#')[0].split('&').forEach(function (item) {

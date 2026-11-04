@@ -1895,6 +1895,7 @@ struct CraftConfig: Codable {
     /// Hybrid: app paths drawn natively, to the screen in `dist/native-screen.js`
     /// that draws each (`{"/m": "today"}`). Everything else is the web page.
     var nativeScreens: [String: String]? = nil
+    var nativeScreenConstraints: [String: [String: CraftHybridRoutes.ParameterConstraint]]? = nil
     /// The tab bar to show before the page describes its own.
     var tabs: [Tab]? = nil
     /// Static styling for the selected tab indicator; the page may still

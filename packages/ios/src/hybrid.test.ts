@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
 import { build, hasNativeRoutes, hybridConfigProblems, init, isHybrid, matchNativePath, nativeStartPath, normalizeNativePath, usesNativeBundle } from './index'
+import type { NativeRouteConstraints } from '../../typescript/src/native-routing'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -45,11 +46,22 @@ const CASES: Array<[string, [string, Record<string, string>] | null]> = [
   ['', null],
 ]
 
+const PROFILE_TABLE = { '/:username': 'Profile', '/me': 'Account' }
+const PROFILE_CONSTRAINTS: NativeRouteConstraints = { '/:username': { username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy', 'health-safety'], ignoreCase: true } } }
+const PROFILE_CASES: Array<[string, [string, Record<string, string>] | null]> = [
+  ['/terms', null], ['/TERMS?username=ava', null], ['/%74erms', null],
+  ['/privacy', null], ['/health-safety', null], ['/-invalid', null],
+  ['/ava%2Fsmith', null], ['/ava%0A', null], ['/ava_smith', null],
+  ['/ava-smith', ['Profile', { username: 'ava-smith' }]],
+  ['/AVA?username=terms&view=week', ['Profile', { username: 'AVA', view: 'week' }]],
+  ['/me', ['Account', {}]],
+]
+
 // ---------------------------------------------------------------------------
 // The page script, run against a fake page
 // ---------------------------------------------------------------------------
 
-function pageScriptSource(routes: Record<string, string>, share: string[] = [], session: string | null = null): string {
+function pageScriptSource(routes: Record<string, string>, share: string[] = [], session: string | null = null, constraints?: NativeRouteConstraints): string {
   const open = 'static let pageScriptTemplate = #"""\n'
   const start = swift.indexOf(open)
   if (start === -1) throw new Error('CraftHybrid.swift no longer declares pageScriptTemplate')
@@ -57,7 +69,7 @@ function pageScriptSource(routes: Record<string, string>, share: string[] = [], 
   // Swift strips the closing delimiter's four spaces from every line.
   const body = swift.slice(start + open.length, end).split('\n').map(line => line.replace(/^ {4}/, '')).join('\n')
   return body
-    .replace('__CRAFT_HYBRID_ROUTES__', JSON.stringify(Object.entries(routes).map(([pattern, screen]) => ({ pattern, screen }))))
+    .replace('__CRAFT_HYBRID_ROUTES__', JSON.stringify(Object.entries(routes).map(([pattern, screen]) => ({ pattern, screen, constraints: constraints?.[pattern] }))))
     .replace('__CRAFT_HYBRID_SHARE__', JSON.stringify(share))
     .replace('__CRAFT_HYBRID_SESSION__', JSON.stringify(session ? [session] : []))
 }
@@ -74,7 +86,7 @@ class FakeStorage {
   clear() { this.map.clear() }
 }
 
-function loadPage(options: { routes?: Record<string, string>, share?: string[], session?: string, craft?: Record<string, any>, protocol?: string, readyState?: string, presetStorage?: Record<string, string>, routerFirst?: boolean } = {}) {
+function loadPage(options: { routes?: Record<string, string>, constraints?: NativeRouteConstraints, share?: string[], session?: string, craft?: Record<string, any>, protocol?: string, readyState?: string, presetStorage?: Record<string, string>, routerFirst?: boolean } = {}) {
   const posts: any[] = []
   const dispatched: any[] = []
   const listeners: Record<string, Array<{ fn: Listener, capture: boolean }>> = {}
@@ -138,7 +150,7 @@ function loadPage(options: { routes?: Record<string, string>, share?: string[], 
     addEventListener(type: string, fn: Listener) { (docListeners[type] ||= []).push(fn) },
   }
   // eslint-disable-next-line no-new-func
-  new Function('window', 'document', 'location', 'history', 'URL', 'Promise', pageScriptSource(options.routes ?? TABLE, options.share, options.session ?? null))(
+  new Function('window', 'document', 'location', 'history', 'URL', 'Promise', pageScriptSource(options.routes ?? TABLE, options.share, options.session ?? null, options.constraints))(
     window,
     document,
     location,
@@ -165,6 +177,21 @@ describe('hybrid page script', () => {
         continue
       }
       expect(got && { screen: got.screen, params: got.params }).toEqual({ screen: expected[0], params: expected[1] })
+    }
+  })
+
+  it('constrains decoded parameters by the shared profile cases', () => {
+    const page = loadPage({ routes: PROFILE_TABLE, constraints: PROFILE_CONSTRAINTS })
+    for (const [path, expected] of PROFILE_CASES) {
+      const got = page.window.__craftHybrid.match(path)
+      expect([path, got && [got.screen, got.params]]).toEqual([path, expected])
+    }
+  })
+
+  it('keeps malformed parameter constraints outside the page route', () => {
+    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { ignoreCase: 'yes' }, { unknown: true }, []]) {
+      const page = loadPage({ routes: PROFILE_TABLE, constraints: { '/:username': { username: rule } } as NativeRouteConstraints })
+      expect(page.window.__craftHybrid.match('/ava')).toBeNull()
     }
   })
 
@@ -411,6 +438,23 @@ describe('hybrid page script', () => {
 // ---------------------------------------------------------------------------
 
 describe('hybrid paths in typescript', () => {
+  it('constrains decoded parameters before adding query items', () => {
+    for (const [path, expected] of PROFILE_CASES) {
+      const got = matchNativePath(PROFILE_TABLE, path, PROFILE_CONSTRAINTS)
+      expect([path, got && [got.screen, got.params]]).toEqual([path, expected])
+    }
+  })
+
+  it('rejects malformed constraints instead of accepting broader routes', () => {
+    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { ignoreCase: 'yes' }, { unknown: true }, []]) {
+      const constraints = { '/:username': { username: rule } } as NativeRouteConstraints
+      expect(hybridConfigProblems({ nativeScreens: PROFILE_TABLE, nativeScreenConstraints: constraints }).length).toBeGreaterThan(0)
+      expect(matchNativePath(PROFILE_TABLE, '/ava', constraints)).toBeNull()
+    }
+    expect(hybridConfigProblems({ nativeScreens: PROFILE_TABLE, nativeScreenConstraints: { '/missing': {} } })[0]).toContain('no native screen')
+    expect(hybridConfigProblems({ nativeScreens: PROFILE_TABLE, nativeScreenConstraints: { '/:username': { absent: {} } } })[0]).toContain('no path parameter')
+  })
+
   it('matches paths by the shared cases', () => {
     for (const [path, expected] of CASES) {
       const got = matchNativePath(TABLE, path)
@@ -627,7 +671,8 @@ ${declaration('enum CraftHybridMessage: Equatable {')}
 let input = try! JSONSerialization.jsonObject(with: Data(CommandLine.arguments[1].utf8)) as! [String: Any]
 var out: [String: Any] = [:]
 
-let routes = CraftHybridRoutes(input["table"] as! [String: String])
+let constraints = try! JSONDecoder().decode([String: [String: CraftHybridRoutes.ParameterConstraint]].self, from: JSONSerialization.data(withJSONObject: input["constraints"] ?? [:]))
+let routes = CraftHybridRoutes(input["table"] as! [String: String], constraints: constraints)
 out["matches"] = (input["paths"] as! [String]).map { path -> Any in
     guard let match = routes.match(path) else { return NSNull() }
     return [match.screen, match.params]
@@ -686,6 +731,13 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.s
     CASES.forEach(([path, expected], index) => {
       expect([path, result.matches[index]]).toEqual([path, expected])
     })
+  })
+
+  it('constrains decoded parameters by the shared profile cases', () => {
+    const input = { table: PROFILE_TABLE, constraints: PROFILE_CONSTRAINTS, paths: PROFILE_CASES.map(([path]) => path), urls: [], tabPaths: [], tabIds: [], site: 'https://hq.training', opens: [], links: [], messages: [] }
+    const probe = Bun.spawnSync([binary, JSON.stringify(input)], { stderr: 'pipe' })
+    if (probe.exitCode !== 0) throw new Error(probe.stderr.toString())
+    expect(JSON.parse(probe.stdout.toString()).matches).toEqual(PROFILE_CASES.map(([, match]) => match))
   })
 
   it('turns links into app paths', () => {

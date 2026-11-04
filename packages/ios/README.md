@@ -1423,3 +1423,25 @@ to the next family rather than silently replacing a requested mono font with san
 The simulator driver requires a successful HTTP response from each control-server `exec` hook. A failed or unavailable hook fails XCTest and stops the journey before its next command. A successful hook may return a message or HTTP 204 with no body. Legacy shell responses (`exit <code> ...`) must report exactly `0`; nonzero or malformed exit statuses and the legacy `no such hook` response fail the journey.
 
 `longpressid` establishes keyboard focus before holding a native text field or text view, so the gesture opens its edit menu. Typing into an already focused control preserves its current selection. Other elements keep their ordinary long-press behavior. The real native text-editing regression runs with `CRAFT_DRIVER_SIMULATOR=<owned-uuid> CRAFT_DRIVER_TEXT_RESULT=<retained-path>.xcresult bun packages/ios/scripts/test-driver-text.ts`; it uses the existing selection and typing commands to edit and clear Unicode values.
+
+### Constraining native path parameters
+
+`nativeScreenConstraints` keeps a parameter route from claiming paths owned by
+website pages. Rules use the exact `nativeScreens` route key and named parameter:
+
+```ts
+nativeScreens: { '/:username': 'Profile', '/me': 'Account' },
+nativeScreenConstraints: {
+  '/:username': {
+    username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy'], ignoreCase: true },
+  },
+},
+```
+
+Patterns match the complete decoded value. Use regular expressions supported by
+JavaScript, Foundation and Kotlin; invalid patterns fail closed. Exclusions use
+`ignoreCase` too. Constraints run before query parameters are added, so a query
+cannot replace a path parameter. Static routes still win. Unmatched paths retain
+the shell's normal website fallback. Invalid configuration is rejected when the
+project is generated. The browser-safe `craft-native/mobile` entry exports
+`matchNativePath(screens, path, constraints)` for the app's own resolver.
