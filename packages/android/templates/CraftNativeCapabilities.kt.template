@@ -1297,8 +1297,7 @@ internal class CraftNativeCapabilities(
             }
             "cancelAll" -> {
                 notificationStorage.all.keys.forEach(::cancelNotification)
-                CraftNativeNotifications.revoke(context)
-                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
+                CraftNativeNotifications.cancelAll(context)
                 complete(requestToken, success(true), completion)
             }
             "pending" -> complete(requestToken, success(JSONArray(notificationStorage.all.values.mapNotNull {

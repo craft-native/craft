@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.457...v0.0.458)
+
+## 🚀 Features
+
+- **ios**: attach owned media to native local notifications ([d0e1a70](https://github.com/craft-native/craft/commit/d0e1a70)) _(by glennmichael123)_ ([#461](https://github.com/craft-native/craft/issues/461))
+
+## 🐛 Bug Fixes
+
+- **android**: retain notification group ownership during cancellation ([f9dd89d](https://github.com/craft-native/craft/commit/f9dd89d)) _(by Chris Breuer)_
+- **ios**: observe Metal readiness in one accessibility query ([c32f031](https://github.com/craft-native/craft/commit/c32f031)) _(by glennmichael123)_ ([#452](https://github.com/craft-native/craft/issues/452))
+
+## 📄 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([0b8552b](https://github.com/craft-native/craft/commit/0b8552b)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.456...v0.0.457)
 
 ## 🐛 Bug Fixes

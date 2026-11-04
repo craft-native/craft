@@ -78,6 +78,8 @@ class NativeCapabilitiesTest {
             assertEquals("Hello 👋", detail.getString("userText"))
             assertEquals(42, detail.getJSONObject("data").getInt("thread"))
             assertTrue(detail.getString("id").isNotEmpty())
+            while (manager.activeNotifications.any { it.tag == "craft.group:fixture-thread" } &&
+                android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(50)
             assertFalse("The last handled child must not leave an empty notification group",
                 manager.activeNotifications.any { it.tag == "craft.group:fixture-thread" })
             // A cancelled notification invalidates every remaining action token.
@@ -91,10 +93,92 @@ class NativeCapabilitiesTest {
                 runCatching { JSONObject(raw as String).optJSONObject("value")?.optString("id") == id }.getOrDefault(false)
             })
         } finally {
-            instrumentation.runOnMainSync { CraftNativeNotifications.revoke(context, id) }
+            instrumentation.runOnMainSync { CraftNativeNotifications.cancel(context, id) }
             manager.cancel(id, 0)
             manager.cancel("craft.group:fixture-thread", 1)
             androidx.work.WorkManager.getInstance(context).cancelUniqueWork("craft-native-background-once").result.get(10, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test fun notificationGroupMembershipSurvivesQueuedRemovalReplacementAndDismissal() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS").use {
+                java.io.FileInputStream(it.fileDescriptor).use { stream -> stream.readBytes() }
+            }
+            assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
+        }
+        val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val prefix = "fixture-groups-${UUID.randomUUID()}"
+        val first = "$prefix-first"
+        val second = "$prefix-second"
+        val probe = "$prefix-probe"
+        val left = "$prefix-left"
+        val right = "$prefix-right"
+        val deadline = android.os.SystemClock.uptimeMillis() + 30000
+        fun value(thread: String = "") = JSONObject().put("title", "Group membership")
+            .put("body", "Native notification ownership").put("threadIdentifier", thread)
+        fun awaitState(message: String, matches: (Array<android.service.notification.StatusBarNotification>) -> Boolean) {
+            while (android.os.SystemClock.uptimeMillis() < deadline) {
+                if (matches(manager.activeNotifications)) return
+                android.os.SystemClock.sleep(50)
+            }
+            assertTrue(message, matches(manager.activeNotifications))
+        }
+        try {
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.show(context, value(left), first, "craft-fixture-actions")
+                CraftNativeNotifications.show(context, value(left), second, "craft-fixture-actions")
+            }
+            awaitState("Both children and their group must be published") { entries ->
+                listOf(first, second, "craft.group:$left").all { tag -> entries.any { it.tag == tag } }
+            }
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.cancel(context, first)
+                CraftNativeNotifications.cancel(context, second)
+                CraftNativeNotifications.show(context, value(), probe, "craft-fixture-actions")
+            }
+            awaitState("Consecutive cancellations must remove the final group before the later probe") { entries ->
+                entries.any { it.tag == probe } && entries.none { it.tag in listOf(first, second, "craft.group:$left") }
+            }
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.show(context, value(left), first, "craft-fixture-actions")
+                CraftNativeNotifications.show(context, value(right), first, "craft-fixture-actions")
+                CraftNativeNotifications.show(context, value(left), second, "craft-fixture-actions")
+            }
+            awaitState("Replacing a queued child must move it to its new group without losing its sibling") { entries ->
+                entries.any { it.tag == first && it.notification.group == right } &&
+                    entries.any { it.tag == second && it.notification.group == left } &&
+                    listOf(left, right).all { group -> entries.any { it.tag == "craft.group:$group" } }
+            }
+            instrumentation.runOnMainSync { CraftNativeNotifications.cancel(context, first) }
+            awaitState("Removing one group must preserve the other child's group") { entries ->
+                entries.none { it.tag == first || it.tag == "craft.group:$right" } &&
+                    entries.any { it.tag == second } && entries.any { it.tag == "craft.group:$left" }
+            }
+            val child = requireNotNull(manager.activeNotifications.firstOrNull { it.tag == second })
+            child.notification.deleteIntent.send()
+            awaitState("The system dismissal receiver must remove the last group") { entries ->
+                entries.none { it.tag == second || it.tag == "craft.group:$left" }
+            }
+            instrumentation.runOnMainSync {
+                CraftNativeNotifications.show(context, value(left), first, "craft-fixture-actions")
+                CraftNativeNotifications.cancel(context, first)
+                CraftNativeNotifications.show(context, value(right), second, "craft-fixture-actions")
+                CraftNativeNotifications.cancelAll(context)
+                CraftNativeNotifications.show(context, value(), probe, "craft-fixture-actions")
+            }
+            awaitState("Immediate cancel and cancel-all must also remove notifications still being published") { entries ->
+                entries.any { it.tag == probe } && entries.none {
+                    it.tag in listOf(first, second, "craft.group:$left", "craft.group:$right")
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                listOf(first, second, probe).forEach { CraftNativeNotifications.cancel(context, it) }
+            }
         }
     }
 

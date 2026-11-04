@@ -53,3 +53,77 @@ fun main() {
 }
 `, ['org.json:json:20250517'])
 }, 60_000)
+
+test('notification cancellation uses intended group membership while Android removal is queued', async () => {
+  const source = await Bun.file(new URL('../templates/CraftNativeNotificationReceiver.kt.template', import.meta.url)).text()
+  const start = source.indexOf('    fun clearEmptyGroup(')
+  const end = source.indexOf('    private fun pending(', start)
+  expect(start).toBeGreaterThan(0)
+  expect(end).toBeGreaterThan(start)
+  await runKotlinFixture(`
+const val GROUP_SUMMARY = 512
+class Notification(val group: String, val flags: Int = 0)
+class Entry(val tag: String?, val id: Int, val notification: Notification)
+class NotificationManager(var activeNotifications: Array<Entry>) {
+    val cancelled = mutableListOf<Pair<String, Int>>()
+    var cleared = false
+    // Android's service processes cancellation asynchronously. A read made
+    // after cancel() can still return the original notification snapshot.
+    fun cancel(tag: String, id: Int) { cancelled.add(tag to id) }
+    fun cancelAll() { cleared = true }
+}
+class Preferences {
+    val all = mutableMapOf<String, Any>()
+    fun getBoolean(key: String, fallback: Boolean) = all[key] as? Boolean ?: fallback
+    fun getString(key: String, fallback: String?) = all[key] as? String ?: fallback
+    fun edit() = Editor(this)
+    class Editor(val owner: Preferences) {
+        val updates = mutableMapOf<String, Any?>()
+        var clearing = false
+        fun clear() = apply { clearing = true }
+        fun putBoolean(key: String, value: Boolean) = apply { updates[key] = value }
+        fun putString(key: String, value: String) = apply { updates[key] = value }
+        fun remove(key: String) = apply { updates[key] = null }
+        fun commit(): Boolean {
+            if (clearing) owner.all.clear()
+            updates.forEach { (key, value) -> if (value == null) owner.all.remove(key) else owner.all[key] = value }
+            return true
+        }
+    }
+}
+class Context(val manager: NotificationManager, val preferences: Preferences = Preferences()) {
+    companion object { const val NOTIFICATION_SERVICE = "notifications"; const val MODE_PRIVATE = 0 }
+    fun getSystemService(name: String): Any = manager
+    fun getSharedPreferences(name: String, mode: Int) = preferences
+}
+object Notifications {
+    fun revoke(context: Context, id: String? = null) {}
+${source.slice(start, end).replaceAll('android.app.Notification.FLAG_GROUP_SUMMARY', 'GROUP_SUMMARY').replaceAll('android.content.SharedPreferences', 'Preferences')}
+}
+fun main() {
+    val child = Entry("first", 0, Notification("thread"))
+    val second = Entry("second", 0, Notification("thread"))
+    val summary = Entry("craft.group:thread", 1, Notification("thread", GROUP_SUMMARY))
+    val manager = NotificationManager(arrayOf(child, summary))
+    val context = Context(manager)
+    Notifications.cancel(context, "first")
+    check(manager.cancelled == listOf("first" to 0, "craft.group:thread" to 1)) {
+        "The cancelled child must not keep its own summary alive"
+    }
+    val multiple = NotificationManager(arrayOf(child, second, summary))
+    val shared = Context(multiple)
+    Notifications.cancel(shared, "first")
+    check(multiple.cancelled == listOf("first" to 0)) { "Another child still owns the group" }
+    // A second receiver instance/process reads the same durable membership.
+    Notifications.cancel(Context(multiple, shared.preferences), "second")
+    check(multiple.cancelled == listOf("first" to 0, "second" to 0, "craft.group:thread" to 1))
+    // Cancelling an unrelated identifier must not dismiss another group.
+    val unrelated = NotificationManager(arrayOf(second, summary))
+    Notifications.cancel(Context(unrelated), "unknown")
+    check(unrelated.cancelled == listOf("unknown" to 0))
+    Notifications.cancelAll(shared)
+    check(multiple.cleared)
+    check(shared.preferences.all == mapOf("initialized" to true))
+}
+`)
+}, 60_000)
