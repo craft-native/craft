@@ -1,5 +1,17 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.451...v0.0.452)
+
+## 🚀 Features
+
+- **android**: enforce constrained native route parameters ([43e2fcd](https://github.com/craft-native/craft/commit/43e2fcd)) _(by Chris Breuer)_
+- **ios**: enforce native path parameter constraints ([ad5abc2](https://github.com/craft-native/craft/commit/ad5abc2)) _(by Chris Breuer)_
+- **mobile**: share constrained native route matching ([6752d53](https://github.com/craft-native/craft/commit/6752d53)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.450...v0.0.451)
 
 ## 🐛 Bug Fixes
