@@ -1,3 +1,4 @@
+import { matchNativePath, nativeRouteConstraintProblems, type NativeRouteConstraints } from '../../typescript/src/native-routing.js'
 import { gzipSync } from 'node:zlib'
 /**
  * Craft Android Builder
@@ -266,6 +267,7 @@ export interface CraftAndroidConfig {
    * script that runs beside the screens. The same keys as the iOS builder.
    */
   nativeScreens?: Record<string, string>
+  nativeScreenConstraints?: NativeRouteConstraints
   tabs?: Array<{
     id: string
     title: string
@@ -743,26 +745,8 @@ function nativeRouteSegments(path: string): string[] {
   return path === '/' ? [] : path.slice(1).split('/')
 }
 
-function matchesNativeRoute(nativeScreens: Record<string, string> | undefined, raw: string): boolean {
-  const path = normalizeNativeRoutePath(raw)
-  if (path === null) return false
-  const parts = nativeRouteSegments(path)
-  return Object.entries(nativeScreens ?? {}).some(([pattern, screen]) => {
-    if (!screen) return false
-    const normalized = normalizeNativeRoutePath(pattern)
-    if (normalized === null) return false
-    const route = nativeRouteSegments(normalized)
-    for (let index = 0; index < route.length; index++) {
-      const segment = route[index]
-      if (segment === '*') return index === route.length - 1
-      if (index >= parts.length) return false
-      if (segment.startsWith(':')) {
-        if (!parts[index]) return false
-      }
-      else if (segment !== parts[index]) return false
-    }
-    return route.length === parts.length
-  })
+function matchesNativeRoute(nativeScreens: Record<string, string> | undefined, raw: string, constraints?: NativeRouteConstraints): boolean {
+  return matchNativePath(nativeScreens, raw, constraints) !== null
 }
 
 function nativeStartPath(config: CraftAndroidConfig): string {
@@ -777,6 +761,8 @@ function nativeStartPath(config: CraftAndroidConfig): string {
 }
 
 function validateNativeRouteConfig(config: CraftAndroidConfig): void {
+  const constraintProblems = nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints)
+  if (constraintProblems.length) throw new Error(constraintProblems.join('\n'))
   const screens = Object.entries(config.nativeScreens ?? {})
   for (const [pattern, screen] of screens) {
     if (normalizeNativeRoutePath(pattern) !== pattern || /[?#]/.test(pattern))
@@ -797,11 +783,11 @@ function validateNativeRouteConfig(config: CraftAndroidConfig): void {
 
   if (config.renderer === 'native' && screens.length > 0) {
     for (const id of ids) {
-      if (!matchesNativeRoute(config.nativeScreens, id))
+      if (!matchesNativeRoute(config.nativeScreens, id, config.nativeScreenConstraints))
         throw new Error(`Tab "${id}" is not a nativeScreens path; with renderer: "native" every tab must be a native screen.`)
     }
     const start = nativeStartPath(config)
-    if (!matchesNativeRoute(config.nativeScreens, start))
+    if (!matchesNativeRoute(config.nativeScreens, start, config.nativeScreenConstraints))
       throw new Error(`The start path "${start}" (from devServerURL) is not a nativeScreens path; with renderer: "native" the app must start on a native screen.`)
   }
 
@@ -1900,3 +1886,6 @@ catch (error) {
     throw error
   }
 }
+
+/** The native host enforces declared named-parameter constraints. */
+export const nativeRouteConstraints = true

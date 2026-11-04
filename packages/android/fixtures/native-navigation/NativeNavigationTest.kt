@@ -623,6 +623,29 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun nativeParameterConstraintsKeepReservedWebsiteNamesOutsideProfiles() {
+        val table = JSONObject().put("/:username", "Profile").put("/me", "Account")
+        val rule = JSONObject().put("pattern", "[a-z0-9]+(?:-[a-z0-9]+)*")
+            .put("exclude", JSONArray().put("terms").put("privacy").put("health-safety")).put("ignoreCase", true)
+        fun configured(value: Any): CraftNativeRoutes = CraftNativeRoutes(JSONObject().put("nativeScreens", table)
+            .put("nativeScreenConstraints", JSONObject().put("/:username", JSONObject().put("username", value))))
+        val routes = configured(rule)
+        for (path in listOf("/terms", "/TERMS?username=ava", "/%74erms", "/privacy", "/health-safety", "/-invalid", "/ava%2Fsmith", "/ava%0A", "/ava_smith")) {
+            assertEquals("Reserved or invalid path $path became a profile", null, routes.match(path))
+        }
+        assertEquals("Profile", routes.match("/ava-smith")?.screen)
+        val query = routes.match("/AVA?username=terms&view=week")!!
+        assertEquals("AVA", query.params.getString("username"))
+        assertEquals("week", query.params.getString("view"))
+        assertEquals("Account", routes.match("/me")?.screen)
+        for (invalid in listOf(JSONObject().put("pattern", "["), JSONObject().put("unknown", true), JSONObject().put("exclude", JSONArray().put(1)), JSONArray())) {
+            assertEquals(null, configured(invalid).match("/ava"))
+        }
+        assertEquals(null, CraftNativeRoutes(JSONObject().put("nativeScreens", table).put("nativeScreenConstraints", JSONArray())).match("/ava"))
+        assertEquals("Profile", CraftNativeRoutes(JSONObject().put("nativeScreens", table)).match("/terms")?.screen)
+    }
+
+    @Test
     fun firstInterceptedMoveAdvancesTabBeforeAnotherTouchArrives() {
         instrumentation.runOnMainSync {
             val chrome = CraftNativeChrome(instrumentation.targetContext, listOf(

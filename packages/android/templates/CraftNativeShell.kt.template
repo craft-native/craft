@@ -98,18 +98,21 @@ internal data class CraftNativeChromeFonts(val body: Typeface? = null, val headi
 
 /** The app's paths (`nativeScreens`), its tabs and its site. */
 internal class CraftNativeRoutes(config: JSONObject) {
-    private data class Route(val segments: List<String>, val screen: String)
+    private data class Route(val segments: List<String>, val screen: String, val constraints: Any?)
 
     /**
      * The iOS shell's order (CraftHybrid.swift's route table): a trailing
      * `*` last, then more fixed segments first, then longer patterns, then
      * by name, so `/m/store/library` is never taken for `/m/store/:slug`.
      */
+    private val validConstraints = !config.has("nativeScreenConstraints") || config.opt("nativeScreenConstraints") is JSONObject
+
     private val routes: List<Route> = buildList {
         val screens = config.optJSONObject("nativeScreens") ?: JSONObject()
+        val constraints = config.optJSONObject("nativeScreenConstraints")
         screens.keys().forEach { pattern ->
             val screen = screens.optString(pattern)
-            if (screen.isNotBlank()) add(Route(segmentsOf(pattern), screen))
+            if (screen.isNotBlank()) add(Route(segmentsOf(pattern), screen, constraints?.opt(pattern)))
         }
     }.sortedWith(
         compareBy<Route> { if (it.segments.lastOrNull() == "*") 1 else 0 }
@@ -189,11 +192,13 @@ internal class CraftNativeRoutes(config: JSONObject) {
 
     /** The screen that draws `path`, with its parameters and query as params. */
     fun match(path: String): CraftNativeRouteMatch? {
+        if (!validConstraints) return null
         val bare = normalize(path.substringBefore('#').substringBefore('?'))
         val query = path.substringBefore('#').substringAfter('?', "")
         val parts = segmentsOf(bare)
         for (route in routes) {
             val params = bind(route.segments, parts) ?: continue
+            if (!parametersAllowed(params, route.constraints)) continue
             if (query.isNotBlank()) {
                 query.split('&').filter { it.isNotBlank() }.forEach { pair ->
                     val key = Uri.decode(pair.substringBefore('='))
@@ -203,6 +208,31 @@ internal class CraftNativeRoutes(config: JSONObject) {
             return CraftNativeRouteMatch(route.screen, params, bare)
         }
         return null
+    }
+
+    private fun parametersAllowed(params: JSONObject, raw: Any?): Boolean {
+        if (raw == null) return true
+        val rules = raw as? JSONObject ?: return false
+        for (name in rules.keys()) {
+            val value = params.opt(name) as? String ?: return false
+            val rule = rules.optJSONObject(name) ?: return false
+            if (rule.keys().asSequence().any { it !in setOf("pattern", "exclude", "ignoreCase") }) return false
+            if (rule.has("ignoreCase") && rule.opt("ignoreCase") !is Boolean) return false
+            val ignoreCase = rule.optBoolean("ignoreCase", false)
+            if (rule.has("exclude")) {
+                val excluded = rule.optJSONArray("exclude") ?: return false
+                for (index in 0 until excluded.length()) {
+                    val item = excluded.opt(index) as? String ?: return false
+                    if (value.equals(item, ignoreCase = ignoreCase)) return false
+                }
+            }
+            if (rule.has("pattern")) {
+                val pattern = rule.opt("pattern") as? String ?: return false
+                val expression = try { Regex(pattern, if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet()) } catch (_: Exception) { return false }
+                if (!expression.matches(value)) return false
+            }
+        }
+        return true
     }
 
     private fun bind(pattern: List<String>, parts: List<String>): JSONObject? {

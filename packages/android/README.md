@@ -1178,3 +1178,14 @@ when available. `monospace`/`ui-monospace`, `serif`/`ui-serif` and
 `sans-serif`/`ui-sans-serif`/`system-ui` select platform fonts, retaining requested
 weight, italic style and system text scaling. A missing custom face falls through
 to the next family rather than silently replacing a requested mono font with sans.
+
+### Native route parameter constraints
+
+`nativeScreenConstraints` applies the same decoded parameter rules as the iOS
+host and browser-safe `craft-native/mobile` matcher. For example,
+`{ '/:username': { username: { pattern: '[a-z]+', exclude: ['terms'], ignoreCase: true } } }`
+leaves `/terms` to the normal website fallback while `/ava` opens the profile.
+Patterns match the complete value; use syntax shared by JavaScript, Foundation
+and Kotlin. Invalid configuration is rejected by the builder, invalid runtime
+rules fail closed, and query parameters cannot replace path parameters. Static
+routes retain priority.
