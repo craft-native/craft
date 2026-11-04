@@ -46,8 +46,11 @@ const CASES: Array<[string, [string, Record<string, string>] | null]> = [
   ['', null],
 ]
 
-const PROFILE_TABLE = { '/:username': 'Profile', '/me': 'Account' }
-const PROFILE_CONSTRAINTS: NativeRouteConstraints = { '/:username': { username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy', 'health-safety'], ignoreCase: true } } }
+const PROFILE_TABLE = { '/:username': 'Profile', '/me': 'Account', '/fold/:username': 'Profile' }
+const PROFILE_CONSTRAINTS: NativeRouteConstraints = {
+  '/:username': { username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy', 'health-safety'], ignoreCase: true } },
+  '/fold/:username': { username: { exclude: ['i', 'σ'], ignoreCase: true } },
+}
 const PROFILE_CASES: Array<[string, [string, Record<string, string>] | null]> = [
   ['/terms', null], ['/TERMS?username=ava', null], ['/%74erms', null],
   ['/privacy', null], ['/health-safety', null], ['/-invalid', null],
@@ -55,6 +58,10 @@ const PROFILE_CASES: Array<[string, [string, Record<string, string>] | null]> = 
   ['/ava-smith', ['Profile', { username: 'ava-smith' }]],
   ['/AVA?username=terms&view=week', ['Profile', { username: 'AVA', view: 'week' }]],
   ['/me', ['Account', {}]],
+  ['/fold/i', null], ['/fold/I', null], ['/fold/%CF%83', null], ['/fold/%CE%A3', null],
+  ['/fold/%C4%B1', ['Profile', { username: 'ı' }]],
+  ['/fold/%C4%B0', ['Profile', { username: 'İ' }]],
+  ['/fold/%CF%82', ['Profile', { username: 'ς' }]],
 ]
 
 // ---------------------------------------------------------------------------

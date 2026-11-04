@@ -221,9 +221,12 @@ internal class CraftNativeRoutes(config: JSONObject) {
             val ignoreCase = rule.optBoolean("ignoreCase", false)
             if (rule.has("exclude")) {
                 val excluded = rule.optJSONArray("exclude") ?: return false
+                // Match JS String.toLowerCase and Foundation lowercased on the
+                // whole value, independently of the Android device's locale.
+                val folded = if (ignoreCase) value.lowercase(java.util.Locale.ROOT) else value
                 for (index in 0 until excluded.length()) {
                     val item = excluded.opt(index) as? String ?: return false
-                    if (value.equals(item, ignoreCase = ignoreCase)) return false
+                    if (folded == if (ignoreCase) item.lowercase(java.util.Locale.ROOT) else item) return false
                 }
             }
             if (rule.has("pattern")) {

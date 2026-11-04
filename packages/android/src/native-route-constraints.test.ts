@@ -33,6 +33,13 @@ fun main() {
     for (value in listOf("ava-smith", "AVA")) check(matcher.accepts(value, rule))
     for (invalid in listOf(JSONObject("pattern" to "["), JSONObject("pattern" to 1), JSONObject("exclude" to JSONArray(1)), JSONObject("ignoreCase" to "yes"), JSONObject("unknown" to true), JSONArray())) check(!matcher.accepts("ava", invalid))
     check(matcher.accepts("ava", JSONObject()))
+    // Java's equals(ignoreCase) merges dotless i and final sigma with other
+    // letters, unlike the complete-string lowercase comparison used by JS/iOS.
+    val exclusions = JSONObject("exclude" to JSONArray("i", "σ"), "ignoreCase" to true)
+    for (value in listOf("i", "I", "σ", "Σ")) check(!matcher.accepts(value, exclusions))
+    for (value in listOf("ı", "İ", "ς")) check(matcher.accepts(value, exclusions)) { "Unicode exclusion drift: $value" }
+    java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"))
+    check(!matcher.accepts("I", exclusions)) { "Exclusions must not depend on the device locale" }
     println("PASS full-value Kotlin regex, exclusions, case folding and malformed-rule rejection")
 }
 `)
