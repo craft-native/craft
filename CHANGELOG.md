@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.446...v0.0.447)
+
+## ⚡ Performance Improvements
+
+- **macos**: zig-js with property caches, cheaper calls and fewer allocations ([fb6a208](https://github.com/craft-native/craft/commit/fb6a208)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.445...v0.0.446)
 
 ## 🐛 Bug Fixes
