@@ -1183,7 +1183,9 @@ to the next family rather than silently replacing a requested mono font with san
 
 `nativeScreenConstraints` applies the same decoded parameter rules as the iOS
 host and browser-safe `craft-native/mobile` matcher. For example,
-`{ '/:username': { username: { pattern: '[a-z]+', exclude: ['terms'], ignoreCase: true } } }`
+`{ '/:username': { username: { pattern: '[a-z]+', exclude: ['terms'], normalize: 'lowercase' } } }`
+normalizes decoded parameters and exclusions independently of device locale,
+then applies a complete case-sensitive pattern and returns normalized parameters.
 leaves `/terms` to the normal website fallback while `/ava` opens the profile.
 Patterns match the complete value; use syntax shared by JavaScript, Foundation
 and Kotlin. Invalid configuration is rejected by the builder, invalid runtime

@@ -214,26 +214,25 @@ internal class CraftNativeRoutes(config: JSONObject) {
         if (raw == null) return true
         val rules = raw as? JSONObject ?: return false
         for (name in rules.keys()) {
-            val value = params.opt(name) as? String ?: return false
+            var value = params.opt(name) as? String ?: return false
             val rule = rules.optJSONObject(name) ?: return false
-            if (rule.keys().asSequence().any { it !in setOf("pattern", "exclude", "ignoreCase") }) return false
-            if (rule.has("ignoreCase") && rule.opt("ignoreCase") !is Boolean) return false
-            val ignoreCase = rule.optBoolean("ignoreCase", false)
+            if (rule.keys().asSequence().any { it !in setOf("pattern", "exclude", "normalize") }) return false
+            if (rule.has("normalize") && rule.opt("normalize") != "lowercase") return false
+            val normalize = rule.has("normalize")
+            if (normalize) value = value.lowercase(java.util.Locale.ROOT)
             if (rule.has("exclude")) {
                 val excluded = rule.optJSONArray("exclude") ?: return false
-                // Match JS String.toLowerCase and Foundation lowercased on the
-                // whole value, independently of the Android device's locale.
-                val folded = if (ignoreCase) value.lowercase(java.util.Locale.ROOT) else value
                 for (index in 0 until excluded.length()) {
                     val item = excluded.opt(index) as? String ?: return false
-                    if (folded == if (ignoreCase) item.lowercase(java.util.Locale.ROOT) else item) return false
+                    if (value == if (normalize) item.lowercase(java.util.Locale.ROOT) else item) return false
                 }
             }
             if (rule.has("pattern")) {
                 val pattern = rule.opt("pattern") as? String ?: return false
-                val expression = try { Regex(pattern, if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet()) } catch (_: Exception) { return false }
+                val expression = try { Regex(pattern) } catch (_: Exception) { return false }
                 if (!expression.matches(value)) return false
             }
+            params.put(name, value)
         }
         return true
     }
