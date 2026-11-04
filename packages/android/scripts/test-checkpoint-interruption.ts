@@ -7,7 +7,7 @@ import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../../io
 import { build, init } from '../src/index'
 import { createAndroidEmulator } from '../src/emulator'
 import { emulatorVersionCommand } from './vulkan-surface-probe'
-import { captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
+import { captureAndroidNativeDiagnostics, captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
 
 // #440: one controlled Android interruption boundary, not the full #396 matrix.
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' } } })
@@ -267,6 +267,14 @@ try {
 catch (error) { failure = error; proof.status = 'failed'; proof.error = String(error) }
 finally {
   if (device) {
+    if (failure) {
+      // The original screenshot timeout remains the failure. Capture the
+      // display service's state before disposing this owned guest.
+      proof.nativeFailureDiagnostics = await captureAndroidNativeDiagnostics({
+        packageName, adb,
+        run: (label, args, timeoutMs) => run(label, args, timeoutMs, workspace, true),
+      }).catch(error => [{ status: 'failed', error: String(error) }])
+    }
     for (const [label, args] of [['final-logcat', ['logcat', '-d', '-b', 'all']], ['final-events', ['logcat', '-d', '-b', 'events']]] as const) {
       try {
         const log = await run(label, adb(...args), 10000, workspace, true)

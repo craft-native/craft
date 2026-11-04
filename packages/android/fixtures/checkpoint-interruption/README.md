@@ -84,3 +84,10 @@ observation and continues inside that same thirty-second phase. Each valid dump
 uses a fresh owned path and must contain a complete XML hierarchy; transport
 errors, unknown dump output and late observations fail. No previous dump can
 stand in for the current surface.
+
+After a failed acceptance command, the runner reads SurfaceFlinger, the app's
+frame statistics, window state and process wait channels from its owned guest.
+These diagnostics share an eight-second budget, with at most two seconds per
+command, and are retained before guest disposal. A diagnostic failure never
+replaces the original acceptance failure. The runner does not retry the failed
+screenshot, request another frame, or change any acceptance deadline.

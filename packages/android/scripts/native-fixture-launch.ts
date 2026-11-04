@@ -56,3 +56,31 @@ export async function captureAndroidNativeUi(options: {
   remaining()
   return xml
 }
+
+/** Read display/process state after failure; never request another frame or retry acceptance. */
+export async function captureAndroidNativeDiagnostics(options: {
+  packageName: string
+  adb: (...args: string[]) => string[]
+  run: (label: string, args: string[], timeoutMs: number) => Promise<string>
+  now?: () => number
+}): Promise<Array<{ name: string, status: 'captured' | 'failed', error?: string }>> {
+  const now = options.now ?? (() => performance.now())
+  const deadline = now() + 8000
+  const results: Array<{ name: string, status: 'captured' | 'failed', error?: string }> = []
+  const commands = [
+    ['display-surfaceflinger', ['dumpsys', 'SurfaceFlinger']],
+    ['display-app-frames', ['dumpsys', 'gfxinfo', options.packageName]],
+    ['display-windows', ['dumpsys', 'window', 'windows']],
+    ['display-processes', ['ps', '-A', '-o', 'PID,PPID,USER,NAME,STAT,WCHAN']],
+  ] as const
+  for (const [name, args] of commands) {
+    const remaining = Math.floor(deadline - now())
+    if (remaining <= 0) break
+    try {
+      await options.run(name, options.adb('shell', ...args), Math.min(2000, remaining))
+      results.push({ name, status: 'captured' })
+    }
+    catch (error) { results.push({ name, status: 'failed', error: String(error).slice(0, 400) }) }
+  }
+  return results
+}

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
-import { captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
+import { captureAndroidNativeDiagnostics, captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
 
 const root = resolve(import.meta.dir, '../../..')
 const runner = join(import.meta.dir, 'test-checkpoint-interruption.ts')
@@ -234,4 +234,38 @@ test.each(['transport', 'unknown-output', 'invalid-tree', 'late-root'])('native 
       return label.endsWith('-dump') ? `UI hierchary dumped to: ${args.at(-1)}` : '<hierarchy>truncated'
     },
   })).rejects.toThrow()
+})
+
+test('failed native display diagnostics stay owned, read-only and within one eight-second budget', async () => {
+  let clock = 0
+  const calls: Array<{ label: string, args: string[], timeoutMs: number }> = []
+  const results = await captureAndroidNativeDiagnostics({
+    packageName: 'dev.craft.checkpointprobe', now: () => clock,
+    adb: (...args) => ['owned-adb', '-s', 'owned-device', ...args],
+    run: async (label, args, timeoutMs) => {
+      calls.push({ label, args, timeoutMs })
+      expect(timeoutMs).toBeLessThanOrEqual(2000)
+      clock += timeoutMs
+      if (label === 'display-surfaceflinger') throw new Error('display service did not answer')
+      return ''
+    },
+  })
+  expect(clock).toBe(8000)
+  expect(calls).toHaveLength(4)
+  for (const call of calls) expect(call.args.slice(0, 4)).toEqual(['owned-adb', '-s', 'owned-device', 'shell'])
+  expect(calls.map(call => call.args[4])).toEqual(['dumpsys', 'dumpsys', 'dumpsys', 'ps'])
+  expect(calls[1]!.args).toContain('dev.craft.checkpointprobe')
+  expect(results[0]).toEqual({ name: 'display-surfaceflinger', status: 'failed', error: 'Error: display service did not answer' })
+  expect(results.slice(1).every(result => result.status === 'captured')).toBe(true)
+})
+
+test('diagnostics cannot start another command after their total deadline', async () => {
+  let clock = 0
+  const results = await captureAndroidNativeDiagnostics({
+    packageName: 'dev.craft.checkpointprobe', now: () => clock,
+    adb: (...args) => ['owned-adb', ...args],
+    run: async () => { clock = 8000; throw new Error('original display fault') },
+  })
+  expect(results).toHaveLength(1)
+  expect(results[0]!.status).toBe('failed')
 })
