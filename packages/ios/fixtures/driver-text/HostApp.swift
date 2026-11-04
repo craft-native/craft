@@ -124,12 +124,26 @@ final class DriverTextController: UIViewController, UITextViewDelegate {
     }
 }
 
+// Read the receipt on demand. Recording an edit must not publish accessibility
+// changes of its own and accidentally refresh the field snapshot under test.
+final class DriverFocusEvidenceLabel: UILabel {
+    var readEvidence: (() -> String?)?
+    override var accessibilityValue: String? {
+        get { readEvidence?() ?? super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
+    }
+}
+
 // A real WebKit form makes text entry cross the same process boundary as a
 // system-browser checkout. The native field below also exercises delayed and
 // refused focus deterministically, independently of keyboard startup speed.
 final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate {
     private let delayed = UITextField()
     private let refused = UITextField()
+    private let focusEvidence = DriverFocusEvidenceLabel()
+    private var focusEvents: [[String: Any]] = []
+    private let startedAt = ProcessInfo.processInfo.systemUptime
+    private let discardInput = ProcessInfo.processInfo.arguments.contains("discard-input")
     private var scheduledFocus = false
     private var allowFocus = false
 
@@ -144,9 +158,19 @@ final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate 
         refused.accessibilityLabel = "Refused field"
         refused.borderStyle = .roundedRect
         refused.delegate = self
+        focusEvidence.text = "Focus evidence"
+        focusEvidence.accessibilityIdentifier = "focus-evidence"
+        focusEvidence.readEvidence = { [weak self] in
+            guard let self, let data = try? JSONSerialization.data(withJSONObject: self.focusEvents, options: [.sortedKeys]) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+        delayed.addTarget(self, action: #selector(focusTextChanged), for: .editingChanged)
+        for name in [UIResponder.keyboardWillShowNotification, UIResponder.keyboardDidShowNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)), name: name, object: nil)
+        }
         let web = WKWebView()
         web.accessibilityIdentifier = "browser-form"
-        let stack = UIStackView(arrangedSubviews: [delayed, refused, web])
+        let stack = UIStackView(arrangedSubviews: [delayed, refused, focusEvidence, web])
         stack.axis = .vertical
         stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -170,7 +194,24 @@ final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate 
             """, baseURL: nil)
     }
 
+    private func recordFocus(_ event: String, replacement: String? = nil, range: NSRange? = nil) {
+        var entry: [String: Any] = ["event": event, "at": ProcessInfo.processInfo.systemUptime - startedAt,
+                                  "focused": delayed.isFirstResponder, "text": delayed.text ?? ""]
+        if let replacement { entry["replacement"] = replacement }
+        if let range { entry["range"] = [range.location, range.length] }
+        focusEvents.append(entry)
+    }
+
+    @objc private func focusTextChanged() { recordFocus("editingChanged") }
+    @objc private func keyboardChanged(_ notification: Notification) { recordFocus(notification.name.rawValue) }
+    func textFieldDidBeginEditing(_ textField: UITextField) { recordFocus("didBeginEditing") }
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        recordFocus(discardInput ? "rejectedChange" : "shouldChangeCharacters", replacement: string, range: range)
+        return !discardInput
+    }
+
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
+        recordFocus(textField === delayed ? "delayedFocusRequested" : "refusedFocusRequested")
         guard textField === delayed else { return false }
         if allowFocus { return true }
         if !scheduledFocus {

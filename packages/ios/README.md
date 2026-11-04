@@ -1433,6 +1433,21 @@ The simulator driver requires a successful HTTP response from each control-serve
 
 `longpressid` establishes keyboard focus before holding a native text field or text view, so the gesture opens its edit menu. Typing into an already focused control preserves its current selection. Other elements keep their ordinary long-press behavior. The real native text-editing regression runs with `CRAFT_DRIVER_SIMULATOR=<owned-uuid> CRAFT_DRIVER_TEXT_RESULT=<retained-path>.xcresult bun packages/ios/scripts/test-driver-text.ts`; it uses the existing selection and typing commands to edit and clear Unicode values.
 
+The delayed-focus fixture observes the complete value with the existing bounded
+`valueid` check after one tap and one typing call. Cold runs reproduced empty
+and intermediate `"Gr"` accessibility values while native callbacks completed
+`"Grüße"`; an immediate equality assertion raced that propagation. The fixture
+also verifies that a focused field whose delegate rejects input fails the value
+check, so waiting cannot turn missing text into a pass.
+
+It retains `native-focus-after-type` and `native-rejected-input` XCTest attachments
+and prints `FOCUS_EVIDENCE` with the first observed value, native focus requests,
+keyboard notifications, replacement ranges, and editing callbacks. The event
+recorder stays in memory and is read on demand, without publishing accessibility
+updates during typing. These receipts distinguish focus, input delivery, and
+value observation; they do not establish the cause of the original external
+browser checkout failure.
+
 ### Constraining native path parameters
 
 `nativeScreenConstraints` keeps a parameter route from claiming paths owned by
