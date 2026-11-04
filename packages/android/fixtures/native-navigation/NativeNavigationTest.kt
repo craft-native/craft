@@ -2750,6 +2750,64 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun componentScopesKeepOverlaysOutOfFlowAcrossRootStyleMutations() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        lateinit var screen: Any
+        lateinit var originalPill: View
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            scenario.onActivity { current ->
+                activity = current
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }.get(activity) as List<*>
+                screen = requireNotNull(screens.last())
+                screen.javaClass.getDeclaredField("active").apply { isAccessible = true }.setBoolean(screen, false)
+                val document = JSONObject("""{"id":"scope-root","type":"View","props":{"testID":"scope-root"},"style":{"flex":1},"children":[
+                  {"id":"scope-content","type":"ScrollView","props":{"testID":"scope-content"},"style":{"flex":1},"children":[
+                    {"id":"scope-row","type":"View","props":{"testID":"scope-row"},"style":{"height":80},"children":[{"id":"scope-label","type":"Text","children":["Health content"]}]}
+                  ]},
+                  {"id":"scope-outer","type":"View","props":{"data-stx-component-wrapper":""},"children":[
+                    {"id":"scope-inner","type":"View","props":{"data-stx-component-wrapper":""},"children":[
+                      {"id":"scope-pill","type":"View","props":{"testID":"scope-pill"},"style":{"position":"absolute","right":16,"bottom":16,"width":120,"height":44},"children":[{"id":"scope-pill-label","type":"Text","children":["Resume workout"]}]}
+                    ]}
+                  ]}
+                ]}""")
+                MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                    .apply { isAccessible = true }.invoke(activity, screen, document)
+            }
+            instrumentation.waitForIdleSync()
+            fun verify(width: Int, bottom: Int) {
+                val root = requireNotNull(find(activity.window.decorView, "scope-root"))
+                val content = requireNotNull(find(root, "scope-content"))
+                val pill = requireNotNull(find(root, "scope-pill"))
+                val density = activity.resources.displayMetrics.density
+                assertEquals("An overlay consumed the scrolling screen's height", root.height, content.height)
+                assertEquals("The component scope changed its root's width", (width * density).roundToInt(), pill.width)
+                assertEquals("The component scope stretched its root's height", (44 * density).roundToInt(), pill.height)
+                val a = IntArray(2); val b = IntArray(2)
+                root.getLocationOnScreen(a); pill.getLocationOnScreen(b)
+                assertEquals("The scoped overlay lost its bottom anchor", (bottom * density).roundToInt(), a[1] + root.height - b[1] - pill.height)
+                assertEquals("The scoped overlay lost its right anchor", (16 * density).roundToInt(), a[0] + root.width - b[0] - pill.width)
+            }
+            scenario.onActivity {
+                verify(120, 16)
+                originalPill = requireNotNull(find(activity.window.decorView, "scope-pill"))
+                MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, JSONObject::class.java)
+                    .apply { isAccessible = true }.invoke(activity, screen, JSONObject("""{
+                      "version":1,"batchId":"scope-anchor","baseRevision":0,"revision":1,
+                      "operations":[{"op":"updateNode","id":"scope-pill","patch":{"style":{"width":160,"bottom":32}}}]
+                    }"""))
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                verify(160, 32)
+                assertSame("A style update replaced the component's native root", originalPill, find(activity.window.decorView, "scope-pill"))
+            }
+        } finally { scenario.close() }
+    }
+
+    @Test
     fun safeAreaInsetsPreserveAuthoredPaddingWhenRetained() {
         lateinit var layout: CraftNativeFlexLayout
         instrumentation.runOnMainSync {

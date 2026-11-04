@@ -286,6 +286,26 @@ private data class CraftNativeLayoutStyle(
     }
 }
 
+/** Component scope nodes preserve identity but lay out through their single non-modal root. */
+internal fun craftNativeComponentLayoutStyle(node: JSONObject): JSONObject {
+    val own = node.optJSONObject("style") ?: JSONObject()
+    if (node.optJSONObject("props")?.has("data-stx-component-wrapper") != true) return own
+    val children = node.optJSONArray("children") ?: return own
+    if (children.length() != 1) return own
+    val root = children.optJSONObject(0) ?: return own
+    if (root.optString("type").equals("Modal", ignoreCase = true)) return own
+    if (root.optJSONObject("style")?.optString("display") == "none") return own
+    val inner = craftNativeComponentLayoutStyle(root)
+    val merged = JSONObject(own.toString())
+    for (key in listOf("width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "aspectRatio",
+        "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "order", "position", "zIndex",
+        "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+        "marginHorizontal", "marginVertical")) {
+        if (!merged.has(key) && inner.has(key)) merged.put(key, inner.opt(key))
+    }
+    return merged
+}
+
 private fun craftNativeGridColumnCount(value: Any?): Int {
     if (value is Number) return max(1, value.toInt())
     val text = value as? String ?: return 1
@@ -1196,6 +1216,13 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private var applyingPadding = false
     private var safeAreaEdges = setOf("top", "right", "bottom", "left")
     private var overflowTouchTarget: View? = null
+    var componentScope = false
+
+    private fun componentRoot(): View? {
+        if (!componentScope || childCount != 1) return null
+        return getChildAt(0).takeIf { it !is CraftNativeModalView && it.visibility != View.GONE }
+    }
+
 
     private fun childEvent(child: View, event: MotionEvent): MotionEvent = MotionEvent.obtain(event).also {
         it.offsetLocation((scrollX - child.left).toFloat(), (scrollY - child.top).toFloat())
@@ -1877,6 +1904,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
     /** Flatten a flex or equal-track grid subtree for the shared ABI. */
     private fun sharedTreeChildren(width: Int, height: Int): List<Entry>? {
+        if (componentRoot() != null) return null
         if (grid) {
             val layout = gridLayout(width, height)
             if (layout.absolute.isNotEmpty()) return null
@@ -2229,6 +2257,11 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        componentRoot()?.let { root ->
+            root.measure(widthMeasureSpec, heightMeasureSpec)
+            setMeasuredDimension(root.measuredWidth, root.measuredHeight)
+            return
+        }
         pageViewport?.let { (pageWidth, pageHeight) ->
             val pages = (0 until childCount).map { getChildAt(it) }.filter { it.visibility != View.GONE }
             pages.forEach { it.measure(MeasureSpec.makeMeasureSpec(pageWidth, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(pageHeight, MeasureSpec.EXACTLY)) }
@@ -2271,6 +2304,11 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         celebration?.layout()
+        componentRoot()?.let { root ->
+            place(root, 0, 0, right - left, bottom - top)
+            onLayoutChanged?.invoke()
+            return
+        }
         pageViewport?.let { (pageWidth, pageHeight) ->
             val pages = (0 until childCount).map { getChildAt(it) }.filter { it.visibility != View.GONE }
             pages.forEachIndexed { index, child -> child.layout(index * pageWidth, 0, (index + 1) * pageWidth, pageHeight) }
@@ -6001,7 +6039,7 @@ class MainActivity : AppCompatActivity() {
             makeView(screen, document, path, screen.controls, inheritedFontFamily = screen.inheritedFontFamilies[target])
             val updated = screen.nodeViews[target] ?: return false
             screen.lastLayoutBounds.remove(updated)
-            if (!updateParentLayoutStyle(updated, document.optJSONObject("style") ?: JSONObject())) return false
+            if (!updateParentLayoutStyle(updated, craftNativeComponentLayoutStyle(document))) return false
         }
         if (applied.isNotEmpty()) {
             // Updating a modal's content may reattach its nested popups to
@@ -6017,7 +6055,20 @@ class MainActivity : AppCompatActivity() {
         var current: String? = id
         while (current != null) {
             val target = screen.flatListOwners[current] ?: current
-            if (screen.nodeViews[target] != null) return target
+            if (screen.nodeViews[target] != null) {
+                // A root style mutation also changes its scope's layout in the
+                // outer parent. Reconcile that owner, including nested scopes.
+                var owner = target
+                while (true) {
+                    val parentId = screen.mutations.parentId(owner) ?: break
+                    val parentNode = screen.mutations.node(parentId) ?: break
+                    if (parentNode.optJSONObject("props")?.has("data-stx-component-wrapper") != true) break
+                    val children = parentNode.optJSONArray("children") ?: break
+                    if (children.length() != 1 || parentNode.optJSONArray("children")?.optJSONObject(0)?.optString("type")?.equals("Modal", ignoreCase = true) == true) break
+                    owner = parentId
+                }
+                return owner
+            }
             current = screen.mutations.parentId(current)
         }
         return null
@@ -6097,7 +6148,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(retainedViews(screen))
         screen.view.setViewportChild(tree)
-        screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)
+        screen.view.setChildStyle(tree, craftNativeComponentLayoutStyle(document), resources.displayMetrics.density)
         promoteModalOverlays(screen)
         updateSafeAreaViews()
         // A full render can change a view's custom layout style without
@@ -6206,7 +6257,7 @@ class MainActivity : AppCompatActivity() {
     ): View {
         val type = canonicalType(node.optString("type", "View"))
         val props = node.optJSONObject("props") ?: JSONObject()
-        val style = craftNativeInheritFontFamily(node.optJSONObject("style") ?: JSONObject(), inheritedFontFamily)
+        val style = craftNativeInheritFontFamily(craftNativeComponentLayoutStyle(node), inheritedFontFamily)
         val events = node.optJSONObject("events") ?: JSONObject()
         val children = node.optJSONArray("children") ?: JSONArray()
         val protocolId = node.optString("id").takeIf { it.isNotBlank() }
@@ -6996,6 +7047,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileFlatList(screen, nativeList, children, identity, protocolId ?: identity, props, events, craftNativeInheritableFontFamily(style))
             }
             "View", "SafeAreaView" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
+                componentScope = props.has("data-stx-component-wrapper")
                 configureContainer(this, style)
                 if (type == "SafeAreaView") setSafeAreaEdges(props.optJSONArray("edges"))
                 else setWindowSafeInsets(0, 0, 0, 0)
@@ -7302,7 +7354,7 @@ class MainActivity : AppCompatActivity() {
             }
             if (childView != null) desired.add(childView)
             if (childView != null && child is JSONObject) {
-                val childStyle = child.optJSONObject("style") ?: JSONObject()
+                val childStyle = craftNativeComponentLayoutStyle(child)
                 layout.setChildStyle(childView, childStyle, resources.displayMetrics.density)
                 desiredOrder[childView] = craftNativeFiniteNumber(childStyle, "order", 0.0).toInt()
             }

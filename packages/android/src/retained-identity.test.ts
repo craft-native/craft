@@ -131,6 +131,7 @@ fun makeView(screen: Screen, document: JSONObject, path: String, controls: Mutab
     // Targeted parent reconciliation restores its logical child before promotion.
     if (document.id == "parent") (screen.nodeViews.getValue("parent") as CraftNativeModalView).content.addView(screen.nodeViews.getValue("nested"))
 }
+fun craftNativeComponentLayoutStyle(node: JSONObject): JSONObject = node.optJSONObject("style") ?: JSONObject()
 fun updateParentLayoutStyle(view: View, style: JSONObject): Boolean = true
 fun scheduleLayoutEvents(screen: Screen) { screen.layoutEvents++ }
 ${accessibility}
