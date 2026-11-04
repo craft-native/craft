@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.460...v0.0.461)
+
+## 🧪 Tests
+
+- **android**: retire checkpoint app with its owned guest storage ([dfcd6ee](https://github.com/craft-native/craft/commit/dfcd6ee)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.459...v0.0.460)
 
 ## 🐛 Bug Fixes
