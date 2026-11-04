@@ -7427,6 +7427,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 // DOM fallback even though this screen can present UIKit.
                 function installNativeDialog() {
                     var craft = globalThis.craft = globalThis.craft || {};
+                    craft.accessibility = {
+                        announce: function(text, options) { return request('Accessibility', 'announce', [text, options == null ? {} : options]).then(function() {}); }
+                    };
                     if (Array.isArray(bridge.capabilities) && bridge.capabilities.indexOf('dialog') >= 0) {
                         craft.dialog = {
                             alert: function(options) { return request('Dialog', 'alert', [options || {}], true).then(function() {}); },

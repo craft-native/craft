@@ -7,6 +7,47 @@ import XCTest
 
 @MainActor
 final class NativeAccessibilityUnitTests: XCTestCase {
+    func testAnnouncementsUseSpeechPriorityWithoutMovingFocus() throws {
+        for polite in [true, false] {
+            var delivered = 0
+            CraftNativeActions.announce("Nachricht gesendet", polite: polite) { notification, argument in
+                delivered += 1
+                XCTAssertEqual(notification, .announcement)
+                let spoken = argument as? NSAttributedString
+                XCTAssertEqual(spoken?.string, "Nachricht gesendet")
+                if #available(iOS 17.0, *) {
+                    XCTAssertEqual(spoken?.attribute(.accessibilitySpeechAnnouncementPriority, at: 0, effectiveRange: nil) as? UIAccessibilityPriority,
+                                   polite ? .low : .default)
+                } else {
+                    XCTAssertEqual(spoken?.attribute(.accessibilitySpeechQueueAnnouncement, at: 0, effectiveRange: nil) as? Bool, polite)
+                }
+            }
+            XCTAssertEqual(delivered, 1)
+        }
+    }
+
+    func testNativeAnnouncementNamespaceDispatchesAndValidatesArguments() async throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        defer { screen.viewDidDisappear(false) }
+        XCTAssertTrue(CraftNativeActions.capabilities(config: CraftConfig()).contains("accessibility"))
+        for (arguments, expected) in [("'Saved'", "ok"), ("'Gespeichert', {polite:false}", "ok"),
+                                     ("''", "INVALID_ARGUMENT"), ("42", "INVALID_ARGUMENT"),
+                                     ("'Saved', false", "INVALID_ARGUMENT"), ("'Saved', {polite:'yes'}", "INVALID_ARGUMENT"),
+                                     ("'Saved', {polite:1}", "INVALID_ARGUMENT")] {
+            screen.evaluateScript("""
+                globalThis.__announcementAnswer = null;
+                craft.accessibility.announce(\(arguments)).then(function() { __announcementAnswer = 'ok'; })
+                    .catch(function(error) { __announcementAnswer = error.code; });
+            """)
+            for _ in 0..<100 {
+                if screen.evaluateScript("__announcementAnswer !== null")?.toBool() == true { break }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(screen.evaluateScript("__announcementAnswer")?.toString(), expected)
+        }
+    }
+
     private func find(_ id: String, in view: UIView) -> UIView? {
         if view.accessibilityIdentifier == id { return view }
         return view.subviews.compactMap { find(id, in: $0) }.first

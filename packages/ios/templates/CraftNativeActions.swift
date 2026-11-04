@@ -57,6 +57,7 @@ enum CraftNativeActions {
         values.append("viewScroll")
         values.append("crypto")
         values.append("shortcuts")
+        values.append("accessibility")
         if config.enableBiometric { values.append("biometric") }
         if config.enableSecureStorage { values.append("secureStorage") }
         if config.enableLocalDatabase { values.append("database") }
@@ -189,6 +190,23 @@ enum CraftNativeActions {
 
         let sync: Result<Any, CraftNativeActionError>?
         switch (module, method) {
+        case ("Accessibility", "announce"):
+            guard let text = args.first as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                sync = failure("INVALID_ARGUMENT", "Accessibility.announce needs nonempty text")
+                break
+            }
+            let options = args.count > 1 ? args[1] : NSNull()
+            guard options is NSNull || options is [String: Any] else {
+                sync = failure("INVALID_ARGUMENT", "Accessibility.announce options must be an object")
+                break
+            }
+            let polite = (options as? [String: Any])?["polite"]
+            guard polite == nil || (polite as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true else {
+                sync = failure("INVALID_ARGUMENT", "Accessibility.announce polite must be a Boolean")
+                break
+            }
+            announce(text, polite: polite as? Bool ?? true)
+            sync = .success(true)
         case ("Crypto", "randomUUID"):
             sync = .success(UUID().uuidString.lowercased())
         case ("Device", "getInfo"):
@@ -1422,6 +1440,20 @@ enum CraftNativeActions {
 
     private static func error(_ code: String, _ message: String) -> CraftNativeActionError {
         CraftNativeActionError(code: code, message: message)
+    }
+
+    /// Announcements report a status without moving VoiceOver's current focus.
+    static func announce(_ text: String, polite: Bool,
+                         post: (UIAccessibility.Notification, Any?) -> Void = { UIAccessibility.post(notification: $0, argument: $1) }) {
+        let spoken: NSAttributedString
+        if #available(iOS 17.0, *) {
+            spoken = NSAttributedString(string: text, attributes: [
+                .accessibilitySpeechAnnouncementPriority: polite ? UIAccessibilityPriority.low : UIAccessibilityPriority.default,
+            ])
+        } else {
+            spoken = NSAttributedString(string: text, attributes: [.accessibilitySpeechQueueAnnouncement: polite])
+        }
+        post(.announcement, spoken)
     }
 
     private static func failure(_ code: String, _ message: String) -> Result<Any, CraftNativeActionError> {
