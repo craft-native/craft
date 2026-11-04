@@ -3377,6 +3377,52 @@ private fun craftNativeSpokenText(text: CharSequence?, language: Locale?): CharS
     }
 }
 
+internal data class CraftNativeMenuItem(val id: String, val title: String, val symbol: String = "", val destructive: Boolean = false, val disabled: Boolean = false)
+
+/** One anchored popup per retained view; a reconciled popup can never dispatch. */
+internal class CraftNativeContextMenu(private val anchor: View) {
+    private var popup: android.widget.PopupMenu? = null
+    private var revision = 0
+    private var items: List<CraftNativeMenuItem> = emptyList()
+    private var dispatch: ((String) -> Unit)? = null
+
+    fun update(next: List<CraftNativeMenuItem>, callback: (String) -> Unit) {
+        clear()
+        items = next.filter { it.id.isNotBlank() && it.title.isNotBlank() }.distinctBy { it.id }
+        dispatch = callback
+    }
+
+    fun clear() {
+        revision++
+        popup?.dismiss()
+        popup = null
+        items = emptyList()
+        dispatch = null
+    }
+
+    fun show(decorate: (android.view.MenuItem, CraftNativeMenuItem) -> Unit): Boolean {
+        if (items.isEmpty() || dispatch == null || !anchor.isEnabled) return false
+        popup?.dismiss()
+        val expected = revision
+        val shown = android.widget.PopupMenu(anchor.context, anchor)
+        popup = shown
+        items.forEachIndexed { index, item ->
+            shown.menu.add(0, index, index, item.title).also {
+                it.isEnabled = !item.disabled
+                decorate(it, item)
+            }
+        }
+        shown.setOnMenuItemClickListener { choice ->
+            val item = items.getOrNull(choice.itemId)
+            if (revision != expected || item == null || item.disabled || !anchor.isEnabled) false
+            else { dispatch?.invoke(item.id); true }
+        }
+        shown.setOnDismissListener { if (popup === shown) popup = null }
+        shown.show()
+        return true
+    }
+}
+
 private fun craftNativeAnnounce(args: JSONArray, announce: (String) -> Unit): CraftNativeCapabilityResult {
     val text = args.opt(0) as? String
     if (text.isNullOrBlank()) return CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "Accessibility.announce needs nonempty text")
@@ -4607,6 +4653,7 @@ class MainActivity : AppCompatActivity() {
         val pressUnderlayShowHandlers = mutableMapOf<View, String>()
         val pressUnderlayHideHandlers = mutableMapOf<View, String>()
         val longPressHandlers = mutableMapOf<View, String>()
+        val contextMenus = mutableMapOf<View, CraftNativeContextMenu>()
         val accessibilityActionHandlers = mutableMapOf<View, String>()
         // TalkBack actions are added by id, so removing them on a reconcile
         // needs the ids back; without this a renamed action stacks up beside
@@ -7050,6 +7097,32 @@ class MainActivity : AppCompatActivity() {
             control.setOnLongClickListener(null)
             control.isLongClickable = false
         }
+        val menuHandler = craftNativeEventName(events, "onContextMenuAction").takeUnless { longPressDisabled }.orEmpty()
+        val authoredMenu = props.optJSONArray("contextMenu")
+        val menuItems = (0 until (authoredMenu?.length() ?: 0)).mapNotNull { index ->
+            val item = authoredMenu?.optJSONObject(index) ?: return@mapNotNull null
+            val id = craftNativeOptionalString(item.opt("id"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val title = craftNativeOptionalString(item.opt("title"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            CraftNativeMenuItem(id, title, craftNativeOptionalString(item.opt("symbol")).orEmpty(),
+                craftNativeBoolean(item.opt("destructive")), craftNativeBoolean(item.opt("disabled")))
+        }
+        if (menuHandler.isNotBlank() && menuItems.isNotEmpty()) {
+            val menu = screen.contextMenus.getOrPut(control) { CraftNativeContextMenu(control) }
+            menu.update(menuItems) { id ->
+                send(screen, "EVENT", JSONObject().put("handlerName", menuHandler).put("nativeEvent", JSONObject().put("id", id)))
+            }
+            // A configured menu owns the hold, rather than firing onLongPress too.
+            control.setOnLongClickListener {
+                menu.show { nativeItem, item ->
+                    nativeItem.icon = CraftNativeIcons.drawable(this, "", item.symbol, defaultTextColor)
+                    if (item.destructive) nativeItem.title = SpannableString(item.title).apply {
+                        setSpan(android.text.style.ForegroundColorSpan(Color.RED), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
+        } else {
+            screen.contextMenus.remove(control)?.clear()
+        }
         CraftNativePointers.configure(control, props, style, control is CraftNativeFlexLayout || control is CraftNativeImageBackgroundView ||
             control is CraftNativeKeyboardAvoidingView || control is CraftNativeScrollView || control is CraftNativeRefreshableFlatList || control is CraftNativeModalView)
         applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
@@ -8914,6 +8987,7 @@ class MainActivity : AppCompatActivity() {
         screen.pressUnderlayHideHandlers.keys.removeAll(released)
         screen.pressUnderlayColors.keys.removeAll(released)
         screen.pressBaseBackgrounds.keys.removeAll(released)
+        released.forEach { screen.contextMenus.remove(it)?.clear() }
         screen.longPressHandlers.keys.removeAll(released)
         screen.layoutHandlers.keys.removeAll(released)
         screen.layoutListeners.forEach { (view, listener) ->

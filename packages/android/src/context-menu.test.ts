@@ -1,0 +1,55 @@
+import { expect, test } from 'bun:test'
+import { runKotlinFixture } from './testing'
+
+test('anchored menus reject disabled, duplicate and stale choices after updates or teardown', async () => {
+  const source = await Bun.file(new URL('../templates/MainActivityNative.kt.template', import.meta.url)).text()
+  const start = source.indexOf('internal data class CraftNativeMenuItem')
+  const end = source.indexOf('private fun craftNativeAnnounce(', start)
+  expect(start).toBeGreaterThan(0)
+  expect(end).toBeGreaterThan(start)
+  const implementation = source.slice(start, end).replaceAll('android.widget.PopupMenu', 'PopupMenu').replaceAll('android.view.MenuItem', 'MenuItem')
+  await runKotlinFixture(`
+class View { val context = Any(); var isEnabled = true }
+class MenuItem(val itemId: Int, val title: String) { var isEnabled = true }
+class Menu {
+    val items = mutableListOf<MenuItem>()
+    fun add(group: Int, id: Int, order: Int, title: String): MenuItem = MenuItem(id, title).also { items.add(it) }
+}
+class PopupMenu(val context: Any, val anchor: View) {
+    companion object { var last: PopupMenu? = null }
+    val menu = Menu()
+    var click: (MenuItem) -> Boolean = { false }
+    var dismissed = false
+    var onDismiss: (PopupMenu) -> Unit = {}
+    fun setOnMenuItemClickListener(callback: (MenuItem) -> Boolean) { click = callback }
+    fun setOnDismissListener(callback: (PopupMenu) -> Unit) { onDismiss = callback }
+    fun dismiss() { dismissed = true; onDismiss(this) }
+    fun show() { last = this }
+}
+${implementation}
+fun main() {
+    val anchor = View()
+    val host = CraftNativeContextMenu(anchor)
+    val selected = mutableListOf<String>()
+    host.update(listOf(CraftNativeMenuItem("copy", "Copy"), CraftNativeMenuItem("delete", "Delete", destructive = true),
+        CraftNativeMenuItem("blocked", "Blocked", disabled = true), CraftNativeMenuItem("copy", "Duplicate"), CraftNativeMenuItem("", "Bad"))) { selected.add(it) }
+    check(host.show { _, _ -> })
+    val old = requireNotNull(PopupMenu.last)
+    check(old.anchor === anchor && old.menu.items.size == 3)
+    check(old.click(old.menu.items[0]))
+    check(!old.menu.items[2].isEnabled && !old.click(old.menu.items[2]))
+    host.update(listOf(CraftNativeMenuItem("delete", "New delete"))) { selected.add("new:" + it) }
+    check(old.dismissed && !old.click(old.menu.items[1]))
+    check(host.show { _, _ -> })
+    val current = requireNotNull(PopupMenu.last)
+    check(current.click(current.menu.items[0]))
+    anchor.isEnabled = false
+    check(!current.click(current.menu.items[0]) && !host.show { _, _ -> })
+    host.clear()
+    anchor.isEnabled = true
+    check(current.dismissed && !current.click(current.menu.items[0]))
+    check(!host.show { _, _ -> })
+    check(selected == listOf("copy", "new:delete"))
+}
+`)
+}, 60_000)

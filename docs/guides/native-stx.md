@@ -2176,10 +2176,12 @@ device with Health Services and the declared sensor support.
 
 ### Native context menus
 
-On iOS, a node can declare `contextMenu: [{ id, title, symbol?, destructive?, disabled? }]`
+On iOS and Android, a node can declare `contextMenu: [{ id, title, symbol?, destructive?, disabled? }]`
 and an `onContextMenuAction` handler receiving `nativeEvent.id`. UIKit anchors the
 menu to that native view and supplies its standard lifted-view presentation; no
-page coordinates or custom preview controller are needed. A configured menu owns
+page coordinates or custom preview controller are needed. Android uses a native
+`PopupMenu` anchored to the same view, with disabled items and destructive titles;
+symbols use the app's `craft-icons.json` catalog where available. A configured menu owns
 the hold instead of also calling `onLongPress`. Removing or disabling the node
 removes the interaction, and reconciliation invalidates choices from an old menu.
 Use `accessibilityActions` / `onAccessibilityAction` for the corresponding

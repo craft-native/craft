@@ -60,6 +60,42 @@ class NativeNavigationTest {
     private var navigationSystemAppearance = "unchanged"
 
     @Test
+    fun contextMenuUsesNativePopupAndDispatchesOnlyTheSelectedItem() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        var menu: CraftNativeContextMenu? = null
+        val selected = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        try {
+            awaitText(activity, "navigation-home-state", "Home state: Ada/0")
+            instrumentation.runOnMainSync {
+                val anchor = requireNotNull(find(activity.window.decorView, "navigation-home-state"))
+                menu = CraftNativeContextMenu(anchor).also { host ->
+                    host.update(listOf(CraftNativeMenuItem("copy", "Copy fixture message"),
+                        CraftNativeMenuItem("disabled", "Unavailable fixture action", disabled = true))) { selected.set(it) }
+                    assertTrue(host.show { _, _ -> })
+                }
+            }
+            var chosen: android.view.accessibility.AccessibilityNodeInfo? = null
+            val deadline = SystemClock.uptimeMillis() + 5000
+            while (chosen == null && SystemClock.uptimeMillis() < deadline) {
+                chosen = instrumentation.uiAutomation.rootInActiveWindow
+                    ?.findAccessibilityNodeInfosByText("Copy fixture message")?.firstOrNull()
+                if (chosen == null) SystemClock.sleep(50)
+            }
+            var target = requireNotNull(chosen) { "Anchored native menu did not appear" }
+            while (!target.isClickable && target.parent != null) target = target.parent
+            assertTrue(target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
+            assertEquals("copy", selected.get())
+        } finally {
+            instrumentation.runOnMainSync { menu?.clear(); activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun announcementEmitsSpeechWithoutMovingInputFocus() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
