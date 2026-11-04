@@ -173,6 +173,12 @@ final class CraftMacRuntime {
         defer { JSGlobalContextRelease(created) }
         let context = ZigJSContext(jsGlobalContextRef: created)!
         self.context = context
+        // The bundle's parsed tree is kept between launches, in the app's own caches (entries are trusted,
+        // so never a shared folder): a screen's next start skips parsing its bundle.
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            let directory = caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.craft.native", isDirectory: true).appendingPathComponent("zig-js-scripts", isDirectory: true)
+            _ = ZJSContextSetScriptCacheDirectory(created, directory.path)
+        }
         context.exceptionHandler = { [weak self] _, value in
             let message = value?.objectForKeyedSubscript("message")?.toString() ?? "Native script failed"
             let stack = value?.objectForKeyedSubscript("stack")?.toString() ?? ""

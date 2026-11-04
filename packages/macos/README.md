@@ -186,6 +186,14 @@ desktop command `escape` (`craft.desktop.onCommand`), unless a ghost completion 
 showing. With `--titlebar-style transparent` the content runs under the title bar
 (full-size content view): leave room for the traffic lights.
 
+## Parsed bundle cache
+
+The host keeps each screen bundle's parsed tree in
+`~/Library/Caches/<bundle id>/zig-js-scripts`, so a launch after the first skips
+parsing the bundle. Entries are keyed on the bundle's SHA-256 and the host
+executable, so an app update or a new bundle misses once and rewrites its entry;
+a damaged entry is discarded. Deleting the folder is always safe.
+
 ## Timing a launch
 
 Set `CRAFT_TRACE=1` and the host writes its launch and render phases to
