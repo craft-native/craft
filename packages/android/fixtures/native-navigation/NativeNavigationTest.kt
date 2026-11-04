@@ -137,10 +137,11 @@ class NativeNavigationTest {
                     if (language != null) props.put("accessibilityLanguage", language)
                     apply.invoke(activity, text, props, "Text", "greeting")
                     val info = text.createAccessibilityNodeInfo()
-                    for (spoken in listOf(info.text, info.contentDescription, info.hintText)) {
+                    for ((field, spoken) in listOf("text" to info.text, "contentDescription" to info.contentDescription, "hintText" to info.hintText)) {
                         val spans = (spoken as? Spanned)?.let { it.getSpans(0, it.length, android.text.style.LocaleSpan::class.java) }
-                        if (language == null) assertTrue("Removed language left a stale speech span", spans.isNullOrEmpty())
-                        else assertEquals(language, spans?.singleOrNull()?.locale?.toLanguageTag())
+                        val diagnostic = "$field language=$language text=$spoken type=${spoken?.javaClass?.name} spans=${spans?.map { it.locales.toLanguageTags() }}"
+                        if (language == null) assertTrue("Removed language left a stale speech span: $diagnostic", spans.isNullOrEmpty())
+                        else assertEquals(diagnostic, language, spans?.singleOrNull()?.locale?.toLanguageTag())
                     }
                     assertEquals(language ?: activity.resources.configuration.locales[0].toLanguageTag(), text.textLocales[0].toLanguageTag())
                 }
