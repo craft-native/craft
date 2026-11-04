@@ -37,13 +37,32 @@ final class NotificationTapColdStartTests: XCTestCase {
     /// The page's reply below, never the tap itself, proves permission succeeded.
     private func permissionCoordinate(_ allow: XCUIElement, in springboard: XCUIApplication,
                                       timeout: TimeInterval) -> XCUICoordinate? {
-        guard allow.wait(for: \.isHittable, toEqual: true, timeout: timeout),
+        // Querying isHittable itself records an XCTest failure while SpringBoard
+        // is animating an otherwise valid Allow button (invalid activation point).
+        // Resolve an enabled snapshot instead, then validate its visible geometry.
+        guard allow.waitForExistence(timeout: timeout),
               let snapshot = try? allow.snapshot(), snapshot.isEnabled else { return nil }
         let frame = snapshot.frame
-        guard !frame.isEmpty, !frame.isNull, frame.midX.isFinite, frame.midY.isFinite else { return nil }
+        guard Self.permissionFrameIsVisible(frame, screen: springboard.frame) else { return nil }
         let origin = springboard.coordinate(withNormalizedOffset: .zero)
         let point = origin.screenPoint
         return origin.withOffset(CGVector(dx: frame.midX - point.x, dy: frame.midY - point.y))
+    }
+
+    private static func permissionFrameIsVisible(_ frame: CGRect, screen: CGRect) -> Bool {
+        !frame.isEmpty && !frame.isNull && !frame.isInfinite
+            && frame.midX.isFinite && frame.midY.isFinite
+            && !screen.isEmpty && screen.contains(CGPoint(x: frame.midX, y: frame.midY))
+    }
+
+    func testPermissionCoordinatesRejectMissingAndOffscreenFrames() {
+        let screen = CGRect(x: 0, y: 0, width: 402, height: 874)
+        XCTAssertTrue(Self.permissionFrameIsVisible(CGRect(x: 210, y: 420, width: 100, height: 44), screen: screen))
+        for frame in [CGRect.zero, CGRect.null, CGRect.infinite,
+                      CGRect(x: 500, y: 420, width: 100, height: 44),
+                      CGRect(x: 10, y: -100, width: 100, height: 44)] {
+            XCTAssertFalse(Self.permissionFrameIsVisible(frame, screen: screen))
+        }
     }
 
     /// The same deadline covers both waits; every unresolved iteration yields,
