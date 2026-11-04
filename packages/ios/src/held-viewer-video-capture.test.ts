@@ -62,7 +62,17 @@ for (const alteredAnchor of [false, true]) {
       const extractorManifest = await buildHeldViewerExtractor({ output }, { command, xcrun: '/usr/bin/xcrun' })
       const buildCallCount = calls.length
       const run = captureHeldViewerVideo({ output, log, done: join(dir, 'done'), ready, simulator, timeoutMs: 5000, extractorManifest }, {
-        prepare: async () => ({ simctl: '/synthetic/simctl', simctlSha256: 'verified-tool' }),
+        prepare: async (onResolved) => {
+          const tool = { simctl: '/synthetic/simctl', simctlSha256: 'verified-tool' }
+          onResolved(tool)
+          // The independent recorder must start while the screenshot control
+          // is still pending; public readiness must wait for both controls.
+          const deadline = performance.now() + 2000
+          while (!existsSync(join(output, 'recording-ready')) && performance.now() < deadline) await Bun.sleep(10)
+          expect(existsSync(join(output, 'recording-ready'))).toBe(true)
+          expect(existsSync(ready)).toBe(false)
+          return tool
+        },
         now: () => now, command,
       })
       const deadline = performance.now() + 2000

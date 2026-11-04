@@ -121,6 +121,8 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
   command?: typeof nativeFixtureCommand
   xcrun?: string
   monotonicNow?: () => number
+  deadline?: number
+  onResolved?: (tool: ResolvedScreenshotTool) => void
 } = {}): Promise<ResolvedScreenshotTool> {
   const ready = options.ready ?? join(options.output, 'preflight-ready')
   if (!isAbsolute(ready)) throw new Error('Viewer readiness path must be absolute')
@@ -131,7 +133,8 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
   const baseline = join(options.output, 'baseline.png')
   const xcrun = dependencies.xcrun ?? Bun.which('xcrun')
   const monotonicNow = dependencies.monotonicNow ?? (() => performance.now())
-  const deadline = monotonicNow() + 30_000
+  const deadline = Math.min(dependencies.deadline ?? Infinity, monotonicNow() + 30_000)
+  if (!Number.isFinite(deadline)) throw new Error('Invalid viewer setup deadline')
   let simctl: string | undefined, simctlSha256: string | undefined, sha256: string | undefined
   const receipt = (verified: boolean, error?: string) => ({
     verified, error, simulator: options.simulator, xcrun, simctl, simctlSha256,
@@ -158,6 +161,7 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
     simctl = resolved.stdout.trim()
     if (!isAbsolute(simctl)) throw new Error('xcrun did not resolve an absolute simctl executable')
     simctlSha256 = new Bun.CryptoHasher('sha256').update(await Bun.file(simctl).arrayBuffer()).digest('hex')
+    dependencies.onResolved?.({ simctl, simctlSha256 })
     await run([simctl, 'io', options.simulator, 'screenshot', baseline])
     sha256 = await pngHash(baseline)
     await Bun.write(join(options.output, 'preflight.json'), JSON.stringify(receipt(true), null, 2))
@@ -278,7 +282,7 @@ export async function captureHeldViewer(options: CaptureOptions, dependencies: {
  */
 export async function captureHeldViewerVideo(options: CaptureOptions, dependencies: {
   command?: typeof nativeFixtureCommand
-  prepare?: () => Promise<ResolvedScreenshotTool>
+  prepare?: (onResolved: (tool: ResolvedScreenshotTool) => void) => Promise<ResolvedScreenshotTool>
   now?: () => number
 } = {}): Promise<void> {
   if (![options.log, options.output, options.done].every(isAbsolute) || !/^[\da-f-]{36}$/i.test(options.simulator))
@@ -300,6 +304,14 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
   let recordingResult: Awaited<ReturnType<typeof nativeFixtureCommand>> | undefined
   let recordingFailure: unknown, recording: Promise<void> | undefined
   let tool: ResolvedScreenshotTool | undefined
+  const startRecording = (resolved: ResolvedScreenshotTool): void => {
+    if (recording) throw new Error('Viewer recording was started more than once')
+    tool = resolved
+    recording = command([process.execPath, join(import.meta.dir, 'held-viewer-record.ts'), resolved.simctl,
+      options.simulator, movie, recordReady, recordStop, recordReceipt], {
+      cwd: options.output, timeoutMs: Math.max(1, Math.floor(deadline - performance.now())), signal,
+    }).then(result => { recordingResult = result }, error => { recordingFailure = error })
+  }
   let remainder = '', doneAt: number | undefined
   const receipt = (verifiedDuringHold: boolean, error?: string) => ({
     verifiedDuringHold, error, method: 'public-simctl-recordVideo-decoded-frame', timing,
@@ -319,13 +331,18 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
       throw new Error('Viewer capture requires its verified fixture-build extractor manifest')
     extractorBuild = await verifyHeldViewerExtractor(options.extractorManifest, options.output)
     extractor = extractorBuild.path
-    // Keep the runner blocked until both the old positive control and actual
-    // recording first-frame acknowledgement succeed within the same setup budget.
-    tool = await (dependencies.prepare ?? (() => prepareHeldViewerCapture({ ...options, signal, ready: join(options.output, 'screenshot-control-ready') })))()
-    recording = command([process.execPath, join(import.meta.dir, 'held-viewer-record.ts'), tool.simctl,
-      options.simulator, movie, recordReady, recordStop, recordReceipt], {
-      cwd: options.output, timeoutMs: Math.max(1, Math.floor(deadline - performance.now())), signal,
-    }).then(result => { recordingResult = result }, error => { recordingFailure = error })
+    // Both independent controls share the original 30-second deadline. Start
+    // recording as soon as the verified tool is available, while the baseline
+    // screenshot runs; neither control releases XCTest until both have passed.
+    const prepared = await (dependencies.prepare
+      ? dependencies.prepare(startRecording)
+      : prepareHeldViewerCapture({ ...options, signal, ready: join(options.output, 'screenshot-control-ready') }, {
+          deadline: setupDeadline, onResolved: startRecording,
+        }))
+    if (!recording) startRecording(prepared)
+    else if (tool?.simctl !== prepared.simctl || tool.simctlSha256 !== prepared.simctlSha256)
+      throw new Error('Viewer preparation substituted the recording tool')
+    tool = prepared
     while (!existsSync(recordReady)) {
       signal.throwIfAborted()
       if (recordingFailure) throw recordingFailure

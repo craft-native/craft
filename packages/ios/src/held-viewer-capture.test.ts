@@ -103,6 +103,50 @@ describe('independent held viewer capture', () => {
     finally { removeTempDir(dir) }
   })
 
+  test('starts the recorder after tool resolution before waiting for the screenshot control', async () => {
+    const dir = createTempDir('craft-held-concurrent-controls-')
+    try {
+      const simctl = join(dir, 'simctl'), output = join(dir, 'evidence')
+      writeFileSync(simctl, 'synthetic tool')
+      let recorderStarted = false
+      const tool = await prepareHeldViewerCapture({ log: join(dir, 'log'), done: join(dir, 'done'), output, simulator }, {
+        xcrun: '/usr/bin/xcrun',
+        onResolved: (resolved) => { expect(resolved.simctl).toBe(simctl); recorderStarted = true },
+        command: async (args) => {
+          if (args.includes('screenshot')) {
+            expect(recorderStarted).toBe(true)
+            await Bun.write(args.at(-1)!, pixel)
+          }
+          return { code: 0, signal: null, stdout: args.includes('--find') ? simctl : '', stderr: '', timedOut: false, cancelled: false, processGroup: 123, groupDisposed: true }
+        },
+      })
+      expect(tool.simctl).toBe(simctl)
+      expect(existsSync(join(output, 'preflight-ready'))).toBe(true)
+    }
+    finally { removeTempDir(dir) }
+  })
+
+  test('keeps both controls inside the caller’s existing setup deadline', async () => {
+    const dir = createTempDir('craft-held-outer-deadline-')
+    try {
+      const simctl = join(dir, 'simctl')
+      writeFileSync(simctl, 'synthetic tool')
+      let now = 20_000
+      const budgets: number[] = []
+      await prepareHeldViewerCapture({ log: join(dir, 'log'), done: join(dir, 'done'), output: join(dir, 'evidence'), simulator }, {
+        xcrun: '/usr/bin/xcrun', deadline: 30_000, monotonicNow: () => now,
+        command: async (args, options) => {
+          budgets.push(options.timeoutMs)
+          if (args.includes('--find')) now += 6000
+          else await Bun.write(args.at(-1)!, pixel)
+          return { code: 0, signal: null, stdout: args.includes('--find') ? simctl : '', stderr: '', timedOut: false, cancelled: false, processGroup: 123, groupDisposed: true }
+        },
+      })
+      expect(budgets).toEqual([10_000, 4000])
+    }
+    finally { removeTempDir(dir) }
+  })
+
   test('tool resolution consumes the shared preflight budget instead of giving capture another 30 seconds', async () => {
     const dir = createTempDir('craft-held-capture-test-')
     try {
