@@ -132,12 +132,23 @@ internal object CraftNativeBundle {
  * ([CraftNativeHeadlessApp]) and closed when it answers. A silent push
  * (`craftSilentPush`) runs the same way, once.
  */
+/** WorkManager Data is capped at 10 KiB; keep replies in app-private storage. */
+internal object CraftNativeBackgroundPayload {
+    private fun storage(context: Context) = context.getSharedPreferences("craft-native-background-payloads", Context.MODE_PRIVATE)
+    fun write(context: Context, text: String): String? {
+        val id = UUID.randomUUID().toString()
+        return if (storage(context).edit().putString(id, text).commit()) id else null
+    }
+    fun read(context: Context, id: String): String? = storage(context).getString(id, null)
+    fun remove(context: Context, id: String) { storage(context).edit().remove(id).commit() }
+}
+
 internal object CraftNativeBackground {
     private const val PERIODIC = "craft-native-background-refresh"
     private const val ONCE = "craft-native-background-once"
 
     /** The running app's script, when the activity has one: delivers an event and hears its answer. */
-    @Volatile var foreground: ((event: String, id: String, done: (Boolean) -> Unit) -> Boolean)? = null
+    @Volatile var foreground: ((event: String, id: String, detail: JSONObject, done: (Boolean) -> Unit) -> Boolean)? = null
 
     fun schedule(context: Context, config: JSONObject) {
         val refresh = config.optJSONObject("backgroundRefresh")
@@ -154,35 +165,63 @@ internal object CraftNativeBackground {
         work.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
-    /** One run now (a silent push). */
-    fun runOnce(context: Context, event: String) {
-        val request = OneTimeWorkRequestBuilder<CraftNativeRefreshWorker>()
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInputData(workDataOf("event" to event))
-            .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(ONCE, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    /** Persist action payloads before scheduling; enqueue completion releases a receiver's goAsync hold. */
+    fun runOnce(context: Context, event: String, detail: JSONObject? = null, queued: (() -> Unit)? = null) {
+        val payload = detail?.let { CraftNativeBackgroundPayload.write(context, it.toString()) }
+        if (detail != null && payload == null) {
+            Log.e("CraftNativeAndroid", "Could not persist $event")
+            queued?.invoke()
+            return
+        }
+        val builder = OneTimeWorkRequestBuilder<CraftNativeRefreshWorker>()
+            .setInputData(workDataOf("event" to event, "payload" to payload))
+        // A local action may work without a network connection. Silent push
+        // keeps its existing connected-network constraint.
+        if (detail == null) builder.setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        try {
+            val operation = WorkManager.getInstance(context).enqueueUniqueWork(ONCE, ExistingWorkPolicy.APPEND_OR_REPLACE, builder.build())
+            operation.result.addListener({
+                try { operation.result.get() }
+                catch (failure: Exception) { Log.e("CraftNativeAndroid", "Could not enqueue $event", failure) }
+                finally { queued?.invoke() }
+            }, ContextCompat.getMainExecutor(context))
+        } catch (failure: Exception) {
+            Log.e("CraftNativeAndroid", "Could not enqueue $event", failure)
+            queued?.invoke()
+        }
     }
 }
 
 internal class CraftNativeRefreshWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         val event = inputData.getString("event") ?: "craftBackgroundRefresh"
-        val id = UUID.randomUUID().toString()
+        val payload = inputData.getString("payload")
+        val detail = if (payload == null) JSONObject() else {
+            val raw = CraftNativeBackgroundPayload.read(applicationContext, payload)
+                ?: return Result.failure()
+            runCatching { JSONObject(raw) }.getOrElse { return Result.failure() }
+        }
+        // Stable across retries so an app can deduplicate a side effect.
+        val id = payload ?: UUID.randomUUID().toString()
         val answer = CompletableDeferred<Boolean>()
-        val running = withContext(Dispatchers.Main) {
-            CraftNativeBackground.foreground?.invoke(event, id) { ok -> answer.complete(ok) } == true
-        }
-        Log.i("CraftNativeAndroid", "$event $id: ${if (running) "the running app script" else "a background app script"}")
         var headless: CraftNativeHeadlessApp? = null
-        if (!running) {
-            headless = withContext(Dispatchers.Main) { CraftNativeHeadlessApp(applicationContext, event, id) { ok -> answer.complete(ok) } }
-            withContext(Dispatchers.Main) { headless.start() }
+        try {
+            val running = withContext(Dispatchers.Main) {
+                CraftNativeBackground.foreground?.invoke(event, id, detail) { ok -> answer.complete(ok) } == true
+            }
+            if (!running) {
+                headless = withContext(Dispatchers.Main) { CraftNativeHeadlessApp(applicationContext, event, id, detail) { ok -> answer.complete(ok) } }
+                withContext(Dispatchers.Main) { headless?.start() }
+            }
+            val ok = withTimeoutOrNull(9 * 60 * 1000L) { answer.await() }
+            // An unacknowledged action keeps its payload for retry; refresh
+            // retains its original timeout behavior.
+            if (ok == false || (payload != null && ok == null)) return Result.retry()
+            if (payload != null) CraftNativeBackgroundPayload.remove(applicationContext, payload)
+            return Result.success()
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { headless?.close() }
         }
-        // WorkManager stops a worker at ten minutes; answer before that.
-        val ok = withTimeoutOrNull(9 * 60 * 1000L) { answer.await() }
-        Log.i("CraftNativeAndroid", "$event $id answered ${ok ?: "nothing in time"}")
-        headless?.let { withContext(Dispatchers.Main) { it.close() } }
-        return if (ok == false) Result.retry() else Result.success()
     }
 }
 
@@ -195,6 +234,7 @@ internal class CraftNativeHeadlessApp(
     private val context: Context,
     private val event: String,
     private val id: String,
+    private val detail: JSONObject,
     private val onDone: (Boolean) -> Unit,
 ) {
     private val config: JSONObject = runCatching {
@@ -218,13 +258,13 @@ internal class CraftNativeHeadlessApp(
 
     fun start() {
         val route = config.optString("nativeApp")
-        if (route.isBlank() || !JavaScriptSandbox.isSupported()) return finish(true)
-        val bundle = CraftNativeBundle.source(context, route) ?: return finish(true)
+        if (route.isBlank() || !JavaScriptSandbox.isSupported()) return finish(detail.length() == 0)
+        val bundle = CraftNativeBundle.source(context, route) ?: return finish(detail.length() == 0)
         CraftNativeSandbox.connect(context) { engine, error ->
             if (closed) return@connect
             if (engine == null || !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_CONSOLE_MESSAGING)) {
                 Log.w(TAG, "Background refresh has no JavaScript engine", error)
-                return@connect finish(true)
+                return@connect finish(detail.length() == 0)
             }
             val created = engine.createIsolate()
             isolate = created
@@ -264,7 +304,7 @@ internal class CraftNativeHeadlessApp(
                     load.addListener({
                         try {
                             load.get()
-                            send("CRAFT_EVENT", JSONObject().put("event", event).put("detail", JSONObject().put("id", id)))
+                            send("CRAFT_EVENT", JSONObject().put("event", event).put("detail", JSONObject(detail.toString()).put("id", id)))
                         } catch (failure: Exception) {
                             Log.e(TAG, "Background refresh script failed", failure)
                             finish(false)

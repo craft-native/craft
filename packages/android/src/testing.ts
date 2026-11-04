@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 /** Uses the Android builder's Kotlin version, including its transitive compiler dependencies. */
-export async function runKotlinFixture(source: string): Promise<void> {
+export async function runKotlinFixture(source: string, libraries: readonly string[] = []): Promise<void> {
   const gradle = Bun.which('gradle')
   if (!gradle) throw new Error('Gradle is required to run native Kotlin fixtures')
   const template = readFileSync(join(dirname(import.meta.dir), 'templates/build.gradle.kts.project.template'), 'utf8')
@@ -25,6 +25,7 @@ configurations {
 dependencies {
     kotlinCompiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:${version}'
     kotlinRuntime 'org.jetbrains.kotlin:kotlin-stdlib:${version}'
+${libraries.map(library => `    kotlinRuntime ${JSON.stringify(library)}`).join('\n')}
 }
 tasks.register('compileFixture', JavaExec) {
     classpath = configurations.kotlinCompiler

@@ -5521,12 +5521,12 @@ class MainActivity : AppCompatActivity() {
                             "if (typeof globalThis.__craftInstallNativeDialog === 'function') globalThis.__craftInstallNativeDialog();"
                         ).get()
                         if (activeScreen.headless) {
-                            CraftNativeBackground.foreground = { event, id, done ->
+                            CraftNativeBackground.foreground = { event, id, detail, done ->
                                 val app = appScreen
                                 if (app == null || !app.active) false
                                 else {
                                     backgroundWaiters[id] = done
-                                    send(app, "CRAFT_EVENT", JSONObject().put("event", event).put("detail", JSONObject().put("id", id)))
+                                    send(app, "CRAFT_EVENT", JSONObject().put("event", event).put("detail", JSONObject(detail.toString()).put("id", id)))
                                     true
                                 }
                             }
