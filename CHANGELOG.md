@@ -1,5 +1,30 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.461...v0.0.462)
+
+## 🚀 Features
+
+- **media**: add stable private cache identity and refreshed authorization ([ae061e6](https://github.com/craft-native/craft/commit/ae061e6)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **ios**: invalidate deferred native context menus ([e37a995](https://github.com/craft-native/craft/commit/e37a995)) _(by glennmichael123)_ ([#460](https://github.com/craft-native/craft/issues/460))
+
+## 🧪 Tests
+
+- **media**: cover signed source rotation and private cache lifetimes ([da61d2f](https://github.com/craft-native/craft/commit/da61d2f)) _(by Chris Breuer)_
+- **ios**: start viewer recording alongside its screenshot control ([f2ec2b8](https://github.com/craft-native/craft/commit/f2ec2b8)) _(by Chris Breuer)_
+- **ios**: observe completed values in focus regression ([0c959ba](https://github.com/craft-native/craft/commit/0c959ba)) _(by glennmichael123)_ ([#475](https://github.com/craft-native/craft/issues/475))
+
+## 🧹 Chores
+
+- integrate focus regression with upstream main ([0eede2f](https://github.com/craft-native/craft/commit/0eede2f)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.460...v0.0.461)
 
 ## 🧪 Tests
