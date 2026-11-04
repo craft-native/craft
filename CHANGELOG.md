@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.452...v0.0.453)
+
+## 🐛 Bug Fixes
+
+- **ios**: mirror native route constraint decoding in Zig ([ddc4e49](https://github.com/craft-native/craft/commit/ddc4e49)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.451...v0.0.452)
 
 ## 🚀 Features
