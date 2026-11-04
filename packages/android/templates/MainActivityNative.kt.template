@@ -3377,6 +3377,23 @@ private fun craftNativeSpokenText(text: CharSequence?, language: Locale?): CharS
     }
 }
 
+private fun craftNativeAnnounce(args: JSONArray, announce: (String) -> Unit): CraftNativeCapabilityResult {
+    val text = args.opt(0) as? String
+    if (text.isNullOrBlank()) return CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "Accessibility.announce needs nonempty text")
+    val options = args.opt(1)
+    if (options != null && options != JSONObject.NULL && options !is JSONObject) {
+        return CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "Accessibility.announce options must be an object")
+    }
+    val polite = (options as? JSONObject)?.opt("polite")
+    if (polite != null && polite !is Boolean) {
+        return CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "Accessibility.announce polite must be a Boolean")
+    }
+    // Android's announcement event has no queue-priority field. The service
+    // owns speech scheduling; never move focus to force it to speak.
+    announce(text)
+    return CraftNativeCapabilityResult(data = true)
+}
+
 private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
@@ -5617,6 +5634,7 @@ class MainActivity : AppCompatActivity() {
         put("viewNonModalPresentation")
         put("nativePlatformControls")
         put("nativePager")
+        put("accessibility")
     }
 
     private fun appVersion(): Pair<String, String> = runCatching {
@@ -8358,6 +8376,10 @@ class MainActivity : AppCompatActivity() {
 
     internal fun performImmediateCapability(module: String, method: String, args: JSONArray): CraftNativeCapabilityResult =
         when (module to method) {
+            "Accessibility" to "announce" -> craftNativeAnnounce(args) { text ->
+                @Suppress("DEPRECATION")
+                window.decorView.announceForAccessibility(text)
+            }
             "Device" to "getInfo" -> CraftNativeCapabilityResult(data = JSONObject()
                 .put("platform", "android")
                 .put("osVersion", Build.VERSION.RELEASE)

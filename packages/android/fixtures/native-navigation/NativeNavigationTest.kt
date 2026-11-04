@@ -60,6 +60,31 @@ class NativeNavigationTest {
     private var navigationSystemAppearance = "unchanged"
 
     @Test
+    fun announcementEmitsSpeechWithoutMovingInputFocus() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitText(activity, "navigation-home-state", "Home state: Ada/0")
+            var focus: View? = null
+            instrumentation.runOnMainSync { focus = activity.currentFocus }
+            @Suppress("DEPRECATION")
+            val event = instrumentation.uiAutomation.executeAndWaitForEvent({
+                instrumentation.runOnMainSync {
+                    val result = activity.performImmediateCapability("Accessibility", "announce", JSONArray().put("Message sent").put(JSONObject().put("polite", true)))
+                    assertEquals(true, result.data)
+                    assertSame(focus, activity.currentFocus)
+                }
+            }, { it.eventType == android.view.accessibility.AccessibilityEvent.TYPE_ANNOUNCEMENT && it.text.contains("Message sent") }, 5000)
+            assertEquals("Message sent", event.text.first().toString())
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun spokenLanguageUpdatesNativeTextAndItsAccessibilityDescription() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

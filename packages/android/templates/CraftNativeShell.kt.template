@@ -772,44 +772,48 @@ internal object CraftNativePrelude {
           // Native capability ownership wins over any browser-shaped dialog
           // object the bundle installed before the bridge ran. Otherwise an
           // action sheet silently falls back to the DOM renderer.
-          var nextDialogRequest = 0;
-          function dialogRequest(method, args) {
+          var nextCapabilityRequest = 0;
+          function nativeRequest(module, method, args, untimed) {
               return new Promise(function(resolve, reject) {
-                var id = 'craft-dialog-' + (++nextDialogRequest);
+                var id = 'craft-host-' + (++nextCapabilityRequest);
                 var remove = __stxNativeBridge.addMessageListener(function(raw) {
                   var message;
                   try { message = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (error) { return; }
                   var payload = message && message.payload;
                   if (!payload || payload.requestId !== id) return;
+                  if (message.type !== 'API_ERROR' && message.type !== 'API_RESPONSE') return;
                   remove();
                   if (message.type === 'API_ERROR') {
-                    var failure = new Error(payload.message || 'Native dialog failed');
+                    var failure = new Error(payload.message || 'Native capability failed');
                     failure.code = payload.code || 'NATIVE_CALL_FAILED';
                     reject(failure);
                   } else if (message.type === 'API_RESPONSE') {
                     resolve(payload.data === undefined ? null : payload.data);
                   }
                 });
-                __stxNativeBridge.postMessage(JSON.stringify({
+                try { __stxNativeBridge.postMessage(JSON.stringify({
                   type: 'API_REQUEST',
                   id: id,
                   payload: {
                     version: __stxNativeBridge.capabilityProtocolVersion || 1,
-                    module: 'Dialog',
+                    module: module,
                     method: method,
                     args: args,
-                    untimed: true,
+                    untimed: untimed === true,
                   },
-                }));
+                })); } catch (error) { remove(); reject(error); }
               });
           }
           function installNativeDialog() {
             var craft = globalThis.craft = globalThis.craft || {};
+            craft.accessibility = {
+              announce: function(text, options) { return nativeRequest('Accessibility', 'announce', [text, options == null ? {} : options], false).then(function() {}); },
+            };
             if (Array.isArray(__stxNativeBridge.capabilities) && __stxNativeBridge.capabilities.indexOf('dialog') >= 0) {
               craft.dialog = {
-                alert: function(options) { return dialogRequest('alert', [options || {}]).then(function() {}); },
-                confirm: function(options) { return dialogRequest('confirm', [options || {}]).then(Boolean); },
-                actionSheet: function(options) { return dialogRequest('actionSheet', [options || {}]).then(function(id) { return typeof id === 'string' ? id : null; }); },
+                alert: function(options) { return nativeRequest('Dialog', 'alert', [options || {}], true).then(function() {}); },
+                confirm: function(options) { return nativeRequest('Dialog', 'confirm', [options || {}], true).then(Boolean); },
+                actionSheet: function(options) { return nativeRequest('Dialog', 'actionSheet', [options || {}], true).then(function(id) { return typeof id === 'string' ? id : null; }); },
               };
             }
           }
