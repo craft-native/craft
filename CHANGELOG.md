@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.463...v0.0.464)
+
+## 🐛 Bug Fixes
+
+- **ios**: capture scene launch links before activation ([9552790](https://github.com/craft-native/craft/commit/9552790)) _(by Chris Breuer)_
+- **test**: resolve iOS notification permission snapshots ([3a75860](https://github.com/craft-native/craft/commit/3a75860)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.462...v0.0.463)
 
 ## 🐛 Bug Fixes
