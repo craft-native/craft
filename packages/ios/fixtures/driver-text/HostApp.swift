@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 
 @main
 final class DriverTextHost: UIResponder, UIApplicationDelegate {
@@ -6,7 +7,8 @@ final class DriverTextHost: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = DriverTextController()
+        window.rootViewController = ProcessInfo.processInfo.arguments.contains("browser-focus")
+            ? DriverBrowserFocusController() : DriverTextController()
         window.makeKeyAndVisible()
         self.window = window
         return true
@@ -77,5 +79,65 @@ final class DriverTextController: UIViewController, UITextViewDelegate {
     private func updateCounts() {
         transcriptCount.text = "Transcript characters: \(transcript.text.count)"
         nameCount.text = "Name characters: \(name.text?.count ?? 0)"
+    }
+}
+
+// A real WebKit form makes text entry cross the same process boundary as a
+// system-browser checkout. The native field below also exercises delayed and
+// refused focus deterministically, independently of keyboard startup speed.
+final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate {
+    private let delayed = UITextField()
+    private let refused = UITextField()
+    private var scheduledFocus = false
+    private var allowFocus = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        delayed.accessibilityIdentifier = "delayed-field"
+        delayed.accessibilityLabel = "Delayed field"
+        delayed.borderStyle = .roundedRect
+        delayed.delegate = self
+        refused.accessibilityIdentifier = "refused-field"
+        refused.accessibilityLabel = "Refused field"
+        refused.borderStyle = .roundedRect
+        refused.delegate = self
+        let web = WKWebView()
+        web.accessibilityIdentifier = "browser-form"
+        let stack = UIStackView(arrangedSubviews: [delayed, refused, web])
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            delayed.heightAnchor.constraint(equalToConstant: 44),
+            refused.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        web.loadHTMLString("""
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <p>Payment details</p>
+            <input id="card" aria-label="Card number" autocomplete="off" style="display:block;width:90%;height:44px;font-size:16px">
+            <output id="echo" aria-live="polite"></output>
+            <script>document.getElementById('card').addEventListener('input', event => {
+                document.getElementById('echo').textContent = 'Entered: ' + event.target.value
+            })</script>
+            """, baseURL: nil)
+    }
+
+    func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
+        guard textField === delayed else { return false }
+        if allowFocus { return true }
+        if !scheduledFocus {
+            scheduledFocus = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                self?.allowFocus = true
+                self?.delayed.becomeFirstResponder()
+            }
+        }
+        return false
     }
 }

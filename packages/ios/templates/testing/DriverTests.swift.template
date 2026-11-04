@@ -61,6 +61,7 @@ final class DriverTests: XCTestCase {
     let tabs: [String] = {{TABS}}
     let tabIdentifiers: [String: String] = {{TAB_IDENTIFIERS}}
     private var bundledJourney = false
+    private var lastTappedInput: XCUIElement?
 
     func get(_ path: String, timeout: Double = 15) -> Data? {
         var result: Data?
@@ -316,8 +317,15 @@ final class DriverTests: XCTestCase {
 
     /// Deliver one gesture; the command's observation determines success.
     func press(_ element: XCUIElement) {
+        // Resolve this before activation: a menu item can disappear as soon
+        // as its gesture completes (for example Select All).
+        let input = [.textField, .secureTextField, .textView, .searchField].contains(element.elementType)
+            ? element : nil
         if element.isHittable { element.tap() }
         else { element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        // A tap on a read-only text view need not open the keyboard. Only a
+        // following type command observes whether this target took focus.
+        lastTappedInput = input
     }
 
     func answerOpenPrompt() {
@@ -353,6 +361,11 @@ final class DriverTests: XCTestCase {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts[0]
         let arg = parts.count > 1 ? parts[1] : ""
+        // Context changes can move focus without going through press().
+        if ["launch", "activate", "terminate", "home", "background", "openurl", "universallink",
+            "back", "return", "tab", "tapxy", "edge", "notifications", "systemtap", "longpressid", "exec"].contains(command) {
+            lastTappedInput = nil
+        }
         if bundledJourney && ["net", "delay", "exec"].contains(command) {
             check(false, "\(command) requires a control-server journey")
             return
@@ -596,9 +609,20 @@ final class DriverTests: XCTestCase {
                 start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
                 note("back: edge swipe")
             }
-        case "type": app.typeText(arg)
+        case "type":
+            let target = lastTappedInput ?? app
+            lastTappedInput = nil
+            // A returned gesture is not proof of keyboard focus. Observe the
+            // one gesture before typing, including WebKit/cold-keyboard focus
+            // delivery. Never retap and conceal a dropped input event.
+            guard poll(15, { self.hasKeyboardFocus(target) ? target : nil }) != nil else {
+                check(false, "type into \(target.label) takes keyboard focus")
+                return
+            }
+            app.typeText(arg)
         case "return": app.typeText(XCUIKeyboardKey.return.rawValue); note("return")
         case "typeid":
+            lastTappedInput = nil
             let idParts = arg.split(separator: " ", maxSplits: 1).map(String.init)
             let target = identified(idParts[0])
             if target.waitForExistence(timeout: 10) {
@@ -627,6 +651,7 @@ final class DriverTests: XCTestCase {
             let target = XCUIApplication(bundleIdentifier: bundle)
             check(target.wait(for: .runningForeground, timeout: seconds), "expectapp \(bundle)")
         case "field":
+            lastTappedInput = nil
             let fieldParts = arg.split(separator: " ", maxSplits: 1).map(String.init)
             let index = Int(fieldParts[0]) ?? 0
             let fields = app.textFields.allElementsBoundByIndex + app.secureTextFields.allElementsBoundByIndex

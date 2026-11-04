@@ -61,27 +61,7 @@ ${renderer.slice(pointerStart, pointerEnd)}
 ${renderer.slice(solidStart, solidEnd)}`)
   // A successful physical tap alone cannot prove that the driver checked it.
   // Each disabled control must trigger precisely the missing-flip assertion.
-  appendFileSync(join(workspace, 'UITests/DriverTests.swift'), String.raw`
-extension DriverTests {
-    func testUnresponsiveSwitchesFailAcceptance() {
-        bundledJourney = true
-        app.launch()
-        XCTAssertTrue(identified("frozen-button").waitForExistence(timeout: 10))
-        XCTAssertEqual(identified("frozen-button").elementType, .button)
-        for id in ["frozen-native", "frozen-solid", "frozen-button"] {
-            XCTAssertTrue(identified(id).waitForExistence(timeout: 10))
-            XCTAssertEqual(identified(id).value as? String, "0")
-            let options = XCTExpectedFailure.Options()
-            options.isStrict = true
-            options.issueMatcher = { $0.compactDescription.contains("tapid \(id) flips the switch") }
-            XCTExpectFailure("An unresponsive toggle must fail tap acceptance", options: options) {
-                run("tapid \(id)")
-            }
-        }
-        app.terminate()
-    }
-}
-`)
+  appendFileSync(join(workspace, 'UITests/DriverTests.swift'), readFileSync(resolve(import.meta.dir, '../fixtures/driver-text/DriverAssertions.swift'), 'utf8'))
   run(['xcodegen', 'generate'])
   run(['xcodebuild', '-project', 'DriverText.xcodeproj', '-scheme', 'DriverText', '-configuration', 'Debug',
     '-destination', `id=${simulator}`, '-derivedDataPath', join(workspace, 'DerivedData'),
@@ -91,8 +71,8 @@ extension DriverTests {
   if (summary.exitCode !== 0) throw new Error(summary.stderr.toString())
   const counts = JSON.parse(summary.stdout.toString())
   // xcresult counts the negative test in expectedFailures, not passedTests.
-  if (counts.result !== 'Passed' || counts.totalTestCount !== 2 || counts.passedTests !== 1 || counts.expectedFailures !== 1 || counts.failedTests !== 0 || counts.skippedTests !== 0)
+  if (counts.result !== 'Passed' || counts.totalTestCount !== 3 || counts.passedTests !== 1 || counts.expectedFailures !== 2 || counts.failedTests !== 0 || counts.skippedTests !== 0)
     throw new Error(`Driver text acceptance failed: ${JSON.stringify(counts)}`)
-  console.log('Native driver verified real toggles, rejected unresponsive Boolean controls, and edited multiline and single-line Unicode text.')
+  console.log('Native driver verified toggles, rejected unresponsive controls and refused focus, edited Unicode text, and observed delayed/native WebKit input focus.')
 }
 finally { removeTempDir(workspace) }
