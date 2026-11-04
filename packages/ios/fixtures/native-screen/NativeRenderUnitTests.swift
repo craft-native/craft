@@ -8,6 +8,185 @@ import UserNotifications
 
 @MainActor
 final class NativeNotificationActionUnitTests: XCTestCase {
+    private func attachmentImage() throws -> URL {
+        let url = try CraftNativeFiles.newFile(named: "notification.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        try XCTUnwrap(image.pngData()).write(to: url)
+        return url
+    }
+
+    func testAttachmentsPreserveOriginalAndSurviveUntilSchedulingCompletes() throws {
+        let source = try attachmentImage()
+        defer { CraftNativeFiles.remove(source.path) }
+        let original = try Data(contentsOf: source)
+        for failed in [false, true] {
+            let staged = try CraftNotificationAttachments([["id": "photo", "path": source.path]])
+            let folder = try XCTUnwrap(staged.directory)
+            let attachment = try XCTUnwrap(staged.attachments.first)
+            XCTAssertEqual(attachment.identifier, "photo")
+            XCTAssertNotEqual(attachment.url, source)
+            XCTAssertEqual(try Data(contentsOf: attachment.url), original)
+            let content = UNMutableNotificationContent()
+            content.attachments = staged.attachments
+            let request = UNNotificationRequest(identifier: "photo-test", content: content, trigger: nil)
+            var answer: ((Error?) -> Void)?
+            var completed = false
+            staged.schedule(request, submit: { received, callback in
+                XCTAssertEqual(received.content.attachments.count, 1)
+                answer = callback
+            }) { error in
+                completed = true
+                XCTAssertEqual(error != nil, failed)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+            }
+            XCTAssertFalse(completed)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: attachment.url.path))
+            answer?(failed ? NSError(domain: "test", code: 1) : nil)
+            XCTAssertTrue(completed)
+            XCTAssertEqual(try Data(contentsOf: source), original)
+            staged.cleanup() // repeated cleanup cannot remove the source
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        }
+    }
+
+    func testAttachmentAbandonmentCleansOnlyStagingNotSystemOwnedCopy() throws {
+        let source = try attachmentImage()
+        defer { CraftNativeFiles.remove(source.path) }
+        var staged: CraftNotificationAttachments? = try CraftNotificationAttachments([["id": "photo", "path": source.path]])
+        let folder = try XCTUnwrap(staged?.directory)
+        let copy = try XCTUnwrap(staged?.attachments.first?.url)
+        let systemCopy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
+        defer { try? FileManager.default.removeItem(at: systemCopy) }
+        // Simulate the OS moving an accepted copy out of our staging folder.
+        try FileManager.default.moveItem(at: copy, to: systemCopy)
+        staged = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: systemCopy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testAttachmentValidationRejectsMalformedUnownedAndOversizedFiles() throws {
+        let source = try attachmentImage()
+        defer { CraftNativeFiles.remove(source.path) }
+        let entry = ["id": "photo", "path": source.path]
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
+        try FileManager.default.copyItem(at: source, to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let link = try CraftNativeFiles.newFile(named: "link.png")
+        defer { try? FileManager.default.removeItem(at: link.deletingLastPathComponent()) }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        let invalid: [Any] = [NSNull(), "photo", [7], [entry, entry], Array(repeating: entry, count: 11),
+                         [["id": " ", "path": source.path]], [["id": "photo", "path": outside.path]],
+                         [["id": "photo", "path": link.path]], [["id": "photo", "path": source.path + ".missing"]]]
+        for raw in invalid {
+            XCTAssertThrowsError(try CraftNotificationAttachments(raw))
+        }
+        let oversized = try CraftNativeFiles.newFile(named: "large.png")
+        FileManager.default.createFile(atPath: oversized.path, contents: nil)
+        defer { CraftNativeFiles.remove(oversized.path) }
+        let handle = try FileHandle(forWritingTo: oversized)
+        try handle.truncate(atOffset: 50 * 1024 * 1024 + 1)
+        try handle.close()
+        XCTAssertThrowsError(try CraftNotificationAttachments([["id": "large", "path": oversized.path]]))
+        XCTAssertNil(try CraftNotificationAttachments(nil).directory)
+        XCTAssertTrue(try CraftNotificationAttachments([]).attachments.isEmpty)
+    }
+
+    func testBadMediaRollsBackEarlierStagedAttachments() throws {
+        let source = try attachmentImage()
+        let bad = try CraftNativeFiles.newFile(named: "bad.unsupported")
+        try Data("not media".utf8).write(to: bad)
+        defer { CraftNativeFiles.remove(source.path); CraftNativeFiles.remove(bad.path) }
+        func folders() throws -> Set<String> {
+            Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+                .filter { $0.hasPrefix("craft-notification-") })
+        }
+        let before = try folders()
+        XCTAssertThrowsError(try CraftNotificationAttachments([
+            ["id": "photo", "path": source.path], ["id": "bad", "path": bad.path],
+        ]))
+        XCTAssertEqual(try folders(), before)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bad.path))
+    }
+
+    func testNativeScheduleRejectsBadAttachmentsBeforeRequestingPermission() async {
+        var config = CraftConfig()
+        config.enableLocalNotifications = true
+        let result = await withCheckedContinuation { next in
+            CraftNativeActions.perform(requestToken: UUID().uuidString, version: 1, module: "Notifications",
+                method: "schedule", args: [["title": "Photo", "attachments": "invalid"]], config: config) {
+                    next.resume(returning: $0)
+                }
+        }
+        switch result {
+        case .success: XCTFail("Malformed attachments must not silently schedule a text-only notification")
+        case .failure(let error): XCTAssertEqual(error.code, "INVALID_ARGUMENT")
+        }
+    }
+
+    func testNotificationPermissionAndAddFailuresCleanStagingAndPreserveOriginal() async throws {
+        let source = try attachmentImage()
+        defer { CraftNativeFiles.remove(source.path) }
+        let original = try Data(contentsOf: source)
+        func folders() throws -> Set<String> {
+            Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+                .filter { $0.hasPrefix("craft-notification-") })
+        }
+        let before = try folders()
+        for code in ["PERMISSION_DENIED", "NOTIFICATION_ERROR", "success"] {
+            var submissions = 0
+            let result = await withCheckedContinuation { next in
+                CraftNativeActions.notifications(requestToken: UUID().uuidString, method: "schedule",
+                    args: [["id": "photo-test", "title": "Photo", "attachments": [["id": "photo", "path": source.path]]]],
+                    completion: { next.resume(returning: $0) },
+                    authorize: { $0(code != "PERMISSION_DENIED", nil) },
+                    submit: { request, callback in
+                        submissions += 1
+                        XCTAssertEqual(request.content.title, "Photo")
+                        XCTAssertEqual(request.content.attachments.first?.identifier, "photo")
+                        XCTAssertTrue(FileManager.default.fileExists(atPath: request.content.attachments[0].url.path))
+                        callback(code == "NOTIFICATION_ERROR" ? NSError(domain: "test", code: 1) : nil)
+                    })
+            }
+            switch result {
+            case .success(let id): XCTAssertEqual(code, "success"); XCTAssertEqual(id as? String, "photo-test")
+            case .failure(let error): XCTAssertEqual(error.code, code)
+            }
+            XCTAssertEqual(submissions, code == "PERMISSION_DENIED" ? 0 : 1)
+            XCTAssertEqual(try folders(), before)
+            XCTAssertEqual(try Data(contentsOf: source), original)
+        }
+    }
+
+    func testCancelledNotificationWaitingForPermissionDiscardsCopiesWithoutScheduling() async throws {
+        let source = try attachmentImage()
+        defer { CraftNativeFiles.remove(source.path) }
+        let token = UUID().uuidString
+        var permission: ((Bool, Error?) -> Void)?
+        var stagedFolders: [URL] = []
+        CraftNativeActions.notifications(requestToken: token, method: "schedule",
+            args: [["title": "Photo", "attachments": [["id": "photo", "path": source.path]]]],
+            completion: { _ in XCTFail("Disposed request must not receive a callback") },
+            authorize: { callback in
+                permission = callback
+                stagedFolders = ((try? FileManager.default.contentsOfDirectory(
+                    at: FileManager.default.temporaryDirectory, includingPropertiesForKeys: nil)) ?? [])
+                    .filter { $0.lastPathComponent.hasPrefix("craft-notification-") }
+            }, submit: { _, _ in XCTFail("Cancelled request must not schedule") })
+        XCTAssertEqual(stagedFolders.count, 1)
+        CraftNativeActions.cancel(requestToken: token)
+        try XCTUnwrap(permission)(true, nil)
+        // `complete` consumes the cancellation on the main queue without calling JS.
+        await withCheckedContinuation { next in DispatchQueue.main.async { next.resume() } }
+        XCTAssertFalse(CraftNativeActions.isCancelled(token))
+        XCTAssertTrue(stagedFolders.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testLocalCategoriesAdvertiseBackgroundAcknowledgementWithoutPushOrRefresh() async throws {
         var config = CraftConfig()
         config.enableLocalNotifications = true

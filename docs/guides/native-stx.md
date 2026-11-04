@@ -2262,5 +2262,18 @@ requirements are enforced from API 31; those actions are omitted on older Androi
 versions rather than offered without authentication. The OS owns the reply send
 button's label on Android.
 
-Remote attachments still require a Notification Service Extension on iOS and
-remain outside this implementation; no attachment support is implied.
+On the iOS native renderer, `craft.notifications.schedule` also accepts
+`attachments: [{ id: 'photo', path: photo.path }]`, where `photo` is a file
+returned by `craft.files`. Enable `enableLocalNotifications` as usual. Supply
+at most ten entries with unique, nonempty ids and existing owned file paths;
+remote URLs and arbitrary filesystem paths are rejected. Craft copies the files
+before handing them to iOS, preserving your originals for reuse or removal.
+The copies live until scheduling finishes, then Craft clears its staging folder
+on success or failure. Cancelling a pending notification uses the existing
+`craft.notifications.cancel(id)` API; iOS owns the scheduled attachment's lifetime.
+
+Files must be nonempty and no larger than 50 MiB. iOS additionally validates
+supported image, audio, and video formats and their format-specific size limits;
+an invalid attachment rejects the entire schedule request. This does not add
+attachments to Android or the legacy WebView notification API. Remote attachments
+still require a Notification Service Extension on iOS and remain a follow-up.

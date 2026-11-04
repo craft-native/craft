@@ -708,7 +708,15 @@ enum CraftNativeActions {
                 complete(requestToken, failure("CAPABILITY_DISABLED", "Local notifications are disabled"), completion)
                 return
             }
-            notifications(requestToken: requestToken, method: method, args: args, completion: completion)
+            // Staging notification media can copy large files; keep it off the
+            // renderer/JavaScript thread. UserNotifications is thread-safe.
+            if method == "schedule" {
+                DispatchQueue.global(qos: .utility).async {
+                    notifications(requestToken: requestToken, method: method, args: args, completion: completion)
+                }
+            } else {
+                notifications(requestToken: requestToken, method: method, args: args, completion: completion)
+            }
             return
         default:
             sync = failure("UNKNOWN_ACTION", "Unsupported native API")
@@ -1323,11 +1331,17 @@ enum CraftNativeActions {
         return failure("DATABASE_ERROR", message)
     }
 
-    private static func notifications(
+    static func notifications(
         requestToken: String,
         method: String,
         args: [Any],
-        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void,
+        authorize: (@escaping (Bool, Error?) -> Void) -> Void = {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge], completionHandler: $0)
+        },
+        submit: @escaping (UNNotificationRequest, @escaping (Error?) -> Void) -> Void = {
+            UNUserNotificationCenter.current().add($0, withCompletionHandler: $1)
+        }
     ) {
         let center = UNUserNotificationCenter.current()
         switch method {
@@ -1348,19 +1362,33 @@ enum CraftNativeActions {
                 }), completion)
             }
         case "schedule":
+            guard !isCancelled(requestToken) else {
+                complete(requestToken, failure("CANCELLED", "Notification request cancelled"), completion)
+                return
+            }
             guard let value = args.first as? [String: Any], let title = value["title"] as? String, !title.isEmpty else {
                 complete(requestToken, failure("INVALID_ARGUMENT", "Notifications.schedule needs a title"), completion)
                 return
             }
-            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, authorizationError in
-                guard authorizationError == nil, granted else {
-                    complete(requestToken, failure("PERMISSION_DENIED", authorizationError?.localizedDescription ?? "Notification permission denied"), completion)
+            let content = UNMutableNotificationContent()
+            let files: CraftNotificationAttachments
+            do {
+                try CraftNotificationCategory.apply(value, to: content)
+                files = try CraftNotificationAttachments(value["attachments"])
+                content.attachments = files.attachments
+            } catch {
+                complete(requestToken, failure("INVALID_ARGUMENT", error.localizedDescription), completion)
+                return
+            }
+            authorize { granted, authorizationError in
+                guard !isCancelled(requestToken) else {
+                    files.cleanup()
+                    complete(requestToken, failure("CANCELLED", "Notification request cancelled"), completion)
                     return
                 }
-                let content = UNMutableNotificationContent()
-                do { try CraftNotificationCategory.apply(value, to: content) }
-                catch {
-                    complete(requestToken, failure("INVALID_ARGUMENT", error.localizedDescription), completion)
+                guard authorizationError == nil, granted else {
+                    files.cleanup()
+                    complete(requestToken, failure("PERMISSION_DENIED", authorizationError?.localizedDescription ?? "Notification permission denied"), completion)
                     return
                 }
                 content.title = title
@@ -1376,7 +1404,7 @@ enum CraftNativeActions {
                 let id = (value["id"] as? String).flatMap { validKey($0) } ?? UUID().uuidString
                 let delay = craftNativeNumber(value["delay"]).map { $0.doubleValue }.flatMap { $0.isFinite ? $0 : nil }
                 let trigger = delay.map { UNTimeIntervalNotificationTrigger(timeInterval: max($0 / 1_000, 1), repeats: false) }
-                center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger)) { addError in
+                files.schedule(UNNotificationRequest(identifier: id, content: content, trigger: trigger), submit: submit) { addError in
                     if let addError = addError {
                         complete(requestToken, failure("NOTIFICATION_ERROR", addError.localizedDescription), completion)
                     } else {

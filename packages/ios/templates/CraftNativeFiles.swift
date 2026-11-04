@@ -6,6 +6,72 @@ import Network
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
+import UserNotifications
+
+/// UserNotifications takes ownership of attachment files. Never give it a
+/// picker/download original: stage copies and retain them until `add` answers.
+final class CraftNotificationAttachments {
+    let attachments: [UNNotificationAttachment]
+    let directory: URL?
+
+    init(_ raw: Any?) throws {
+        guard let raw else { attachments = []; directory = nil; return }
+        func invalid(_ message: String) -> NSError {
+            NSError(domain: "CraftNotification", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        guard let entries = raw as? [[String: Any]], entries.count <= 10 else {
+            throw invalid("attachments must be an array of at most ten { id, path } entries")
+        }
+        var identifiers = Set<String>()
+        let sources: [(String, URL)] = try entries.map { entry in
+            guard let id = entry["id"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  identifiers.insert(id).inserted,
+                  let path = entry["path"] as? String, let url = CraftNativeFiles.owned(path) else {
+                throw invalid("Each attachment needs a unique nonempty id and an existing craft.files path")
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let size = attributes[.size] as? NSNumber, size.int64Value > 0, size.int64Value <= 50 * 1024 * 1024 else {
+                throw invalid("An attachment must be a nonempty regular file no larger than 50 MiB")
+            }
+            return (id, url)
+        }
+        guard !sources.isEmpty else { attachments = []; directory = nil; return }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("craft-notification-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        do {
+            attachments = try sources.map { id, source in
+                // Use generated names, keeping the extension for iOS type detection.
+                let copy = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(source.pathExtension)
+                try FileManager.default.copyItem(at: source, to: copy)
+                // iOS validates supported media, including the lower image/audio
+                // limits. A failure rejects the entire notification, never a subset.
+                return try UNNotificationAttachment(identifier: id, url: copy, options: nil)
+            }
+            directory = folder
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+    }
+
+    func cleanup() {
+        // Only our staging folder, never attachment.url (which iOS can move).
+        if let directory { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    func schedule(_ request: UNNotificationRequest,
+                  submit: (UNNotificationRequest, @escaping (Error?) -> Void) -> Void = { UNUserNotificationCenter.current().add($0, withCompletionHandler: $1) },
+                  completion: @escaping (Error?) -> Void) {
+        submit(request) { error in
+            self.cleanup()
+            completion(error)
+        }
+    }
+
+    deinit { cleanup() }
+}
 
 // `craft.files` on a native screen: a photo picked from the library (or taken
 // with the camera), a file downloaded for the share sheet, and those files
