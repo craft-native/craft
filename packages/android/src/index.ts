@@ -864,7 +864,7 @@ export function renderAndroidPermissions(config: CraftAndroidConfig): string {
     permissions.add('android.permission.FOREGROUND_SERVICE')
     permissions.add('android.permission.FOREGROUND_SERVICE_LOCATION')
   }
-  if (config.enablePushNotifications) permissions.add('android.permission.POST_NOTIFICATIONS')
+  if (config.enablePushNotifications || config.enableLocalNotifications) permissions.add('android.permission.POST_NOTIFICATIONS')
   if (config.enableKeepAwake || (config.enableBarometer && config.enableBackgroundLocation)) permissions.add('android.permission.WAKE_LOCK')
   if (config.enableHealthConnect) healthConnectPermissions(config).forEach(permission => permissions.add(permission))
   if (config.enablePedometer) permissions.add('android.permission.ACTIVITY_RECOGNITION')
