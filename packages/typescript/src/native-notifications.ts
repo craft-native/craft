@@ -12,7 +12,7 @@ export interface NativeNotificationCategory {
   }[]
 }
 
-export function nativeNotificationProblems(categories: unknown, nativeApp?: string): string[] {
+export function nativeNotificationProblems(categories: unknown, nativeApp?: string, renderer?: string): string[] {
   if (categories === undefined) return []
   if (!Array.isArray(categories)) return ['notificationCategories must be an array.']
   const problems: string[] = []
@@ -37,7 +37,7 @@ export function nativeNotificationProblems(categories: unknown, nativeApp?: stri
       for (const flag of ['destructive', 'foreground', 'authenticationRequired']) {
         if (action[flag] !== undefined && typeof action[flag] !== 'boolean') problems.push(`${path}.${flag} must be a boolean.`)
       }
-      if (action.foreground !== true && !nativeApp?.trim()) problems.push(`${path} requires nativeApp for background delivery, or foreground: true.`)
+      if (!nativeApp?.trim() && (action.foreground !== true || renderer === 'native')) problems.push(`${path} requires nativeApp to receive native/background action events.`)
       if (action.textInput !== undefined && (!object(action.textInput) || !text(action.textInput.buttonTitle)
         || (action.textInput.placeholder !== undefined && typeof action.textInput.placeholder !== 'string'))) {
         problems.push(`${path}.textInput needs a buttonTitle and an optional string placeholder.`)

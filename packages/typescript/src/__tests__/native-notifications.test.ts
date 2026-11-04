@@ -9,6 +9,7 @@ test('action config requires an executable background recipient and preserves ex
   expect(nativeNotificationProblems(categories, 'App')).toEqual([])
   expect(nativeNotificationProblems(categories)).toHaveLength(1)
   expect(nativeNotificationProblems([{ id: 'message', actions: [categories[0]!.actions[1]] }])).toEqual([])
+  expect(nativeNotificationProblems([{ id: 'message', actions: [categories[0]!.actions[1]] }], undefined, 'native')).toHaveLength(1)
   expect(nativeNotificationProblems(undefined)).toEqual([])
   expect(nativeNotificationProblems([])).toEqual([])
 })

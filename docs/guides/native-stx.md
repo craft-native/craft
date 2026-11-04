@@ -2203,3 +2203,49 @@ An empty menu or a missing menu handler leaves `onLongPress` available. Item ids
 must be nonempty and unique (the first duplicate wins); malformed items are
 omitted. Disabling an individual item keeps it visible but unselectable.
 Android shows catalog icons on API 29 and later; older versions retain the titles.
+
+### Notification actions and inline replies
+
+Declare `notificationCategories` in Craft config, before delivery. Native apps
+must also configure `nativeApp` so actions have a listener even without a screen.
+Each category has an `id` and one to three actions with `id`, `title`, and optional
+`foreground`, `destructive`, `authenticationRequired`, and
+`textInput: { buttonTitle, placeholder? }`. Foreground defaults to false.
+
+```ts
+notificationCategories: [{
+  id: 'message',
+  actions: [
+    { id: 'reply', title: 'Reply', textInput: { buttonTitle: 'Send', placeholder: 'Your reply' } },
+    { id: 'open', title: 'Open', foreground: true },
+  ],
+}]
+```
+
+Schedule with `categoryId: 'message'`. Local notifications also accept
+`threadIdentifier` and `interruptionLevel: 'passive' | 'active' | 'timeSensitive'`.
+For remote APNs, the server supplies `aps.category`, `aps.thread-id`, and
+`aps.interruption-level`; Craft registers the category actions at launch.
+
+The app script receives `craftNotificationAction` with
+`{ id, actionId, notificationId, categoryId, data, userText? }`. `data` contains
+the original payload; it cannot overwrite the action metadata. After handling,
+call `craft.background.complete(true, detail.id)` (false on failure). Ordinary
+notification taps keep the existing `craftNotificationResponse` payload shape.
+iOS bounds response completion to its existing 25-second host deadline. Android
+uses WorkManager and retries failed/unacknowledged actions, retaining a stable
+`id`; deduplicate side effects by that id. Delivery is not an exactly-once
+transaction with your server.
+
+Android support is for the native renderer. For remote action buttons, send an
+FCM **data-only** message with `categoryId`, `title`, and `body`; optional
+`notification_id`, `threadIdentifier`, and `interruptionLevel` are supported.
+An FCM `notification` block is rendered by Firebase while backgrounded, so it
+cannot receive Craft's action buttons. Android uses notification channels for
+interruption levels; the user controls their final alert behavior. Authentication
+requirements are enforced from API 31; those actions are omitted on older Android
+versions rather than offered without authentication. The OS owns the reply send
+button's label on Android.
+
+Remote attachments still require a Notification Service Extension on iOS and
+remain outside this implementation; no attachment support is implied.

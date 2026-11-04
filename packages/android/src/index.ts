@@ -766,7 +766,9 @@ function nativeStartPath(config: CraftAndroidConfig): string {
 
 function validateNativeRouteConfig(config: CraftAndroidConfig): void {
   const constraintProblems = [...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints),
-    ...nativeNotificationProblems(config.notificationCategories, config.nativeApp)]
+    ...nativeNotificationProblems(config.notificationCategories, config.nativeApp, config.renderer)]
+  if ((config.notificationCategories?.length ?? 0) > 0 && config.renderer !== 'native')
+    constraintProblems.push('notificationCategories currently requires the native Android renderer.')
   if (constraintProblems.length) throw new Error(constraintProblems.join('\n'))
   const screens = Object.entries(config.nativeScreens ?? {})
   for (const [pattern, screen] of screens) {

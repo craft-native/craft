@@ -460,7 +460,7 @@ export function nativeStartPath(config: Pick<CraftConfig, 'devServerURL'>): stri
 
 /** What is wrong with a config's hybrid and tab settings, one sentence each. */
 export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread' | 'notificationCategories'>): string[] {
-  const problems: string[] = nativeNotificationProblems(config.notificationCategories, config.nativeApp)
+  const problems: string[] = nativeNotificationProblems(config.notificationCategories, config.nativeApp, config.renderer)
   const screens = Object.entries(config.nativeScreens ?? {})
   problems.push(...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints))
   for (const [pattern, screen] of screens) {
