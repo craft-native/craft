@@ -1,5 +1,30 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.454...v0.0.455)
+
+## 🚀 Features
+
+- **android**: bridge native accessibility announcements ([02a5bb3](https://github.com/craft-native/craft/commit/02a5bb3)) _(by glennmichael123)_
+- **ios**: announce native status without moving focus ([803d0e5](https://github.com/craft-native/craft/commit/803d0e5)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: validate native normalization in the Zig decoder ([f0d088b](https://github.com/craft-native/craft/commit/f0d088b)) _(by Chris Breuer)_
+- **android**: apply explicit native parameter normalization ([39168c7](https://github.com/craft-native/craft/commit/39168c7)) _(by Chris Breuer)_
+- **native**: normalize parameters before case-sensitive validation ([37f85d9](https://github.com/craft-native/craft/commit/37f85d9)) _(by Chris Breuer)_
+- **android**: preserve modal accessibility and speech language ([1cf5bbd](https://github.com/craft-native/craft/commit/1cf5bbd)) _(by glennmichael123)_
+- **ios**: contain modal accessibility and honor text language ([71d5a1a](https://github.com/craft-native/craft/commit/71d5a1a)) _(by glennmichael123)_
+- **ios**: verify boolean controls after driver taps ([67ac7c7](https://github.com/craft-native/craft/commit/67ac7c7)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **native**: expose the accessibility speech contract ([2c9ebe2](https://github.com/craft-native/craft/commit/2c9ebe2)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.453...v0.0.454)
 
 ## 🐛 Bug Fixes
