@@ -6,3 +6,6 @@
  * which intentionally target Bun and must not enter a browser bundle.
  */
 export * from './api/mobile.js'
+
+export { matchNativePath, normalizeNativePath } from './native-routing.js'
+export type { NativePathMatch, NativeParameterConstraint, NativeRouteConstraints } from './native-routing.js'

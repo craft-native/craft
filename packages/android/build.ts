@@ -2,7 +2,7 @@
  * Build script for @craft-native/android
  */
 
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
 
 await rm('./dist', { recursive: true, force: true })
 
@@ -19,6 +19,8 @@ if (!result.success)
   throw new AggregateError(result.logs, 'Android builder compilation failed')
 
 // Use the locked compiler, as the SDK build does, rather than Pantry's PATH tsc.
-await Bun.$`bun ../typescript/scripts/tsc.ts src/index.ts --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --outDir dist`
+await Bun.$`bun ../typescript/scripts/tsc.ts src/index.ts --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --rootDir .. --outDir dist/internal`
 
 console.log('✅ Build complete')
+
+await writeFile('dist/index.d.ts', "export * from './internal/android/src/index.js'\n")

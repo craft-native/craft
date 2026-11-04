@@ -27,8 +27,8 @@ await build(['../ios/src/index.ts'], 'dist/ios/src')
 await build(['../android/src/index.ts'], 'dist/android/src')
 await build(['../macos/src/index.ts'], 'dist/macos/src')
 // scripts/tsc.ts, not `bunx tsc`: PATH is not trustworthy in CI. See that file.
-await Bun.$`bun ${resolve(root, "scripts/tsc.ts")} ${resolve(root, '../ios/src/index.ts')} --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --outDir ${resolve(dist, 'ios/src')}`
-await Bun.$`bun ${resolve(root, "scripts/tsc.ts")} ${resolve(root, '../android/src/index.ts')} --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --outDir ${resolve(dist, 'android/src')}`
+await Bun.$`bun ${resolve(root, "scripts/tsc.ts")} ${resolve(root, '../ios/src/index.ts')} --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --rootDir ${resolve(root, '..')} --outDir ${dist}`
+await Bun.$`bun ${resolve(root, "scripts/tsc.ts")} ${resolve(root, '../android/src/index.ts')} --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --rootDir ${resolve(root, '..')} --outDir ${dist}`
 await cp(resolve(root, '../ios/templates'), resolve(dist, 'ios/templates'), { recursive: true })
 await cp(resolve(root, '../android/templates'), resolve(dist, 'android/templates'), { recursive: true })
 await Bun.$`bun ${resolve(root, "scripts/tsc.ts")} ${resolve(root, '../macos/src/index.ts')} --declaration --emitDeclarationOnly --module esnext --target esnext --moduleResolution bundler --types bun --skipLibCheck --ignoreConfig --outDir ${resolve(dist, 'macos/src')}`
