@@ -65,6 +65,8 @@ describe('Android native runner failure evidence', () => {
       const calls = readFileSync(join(directory, 'adb-calls'), 'utf8').trim().split('\n')
       expect(calls.length).toBeGreaterThan(0)
       expect(calls.every(call => call.startsWith('-s emulator-5554 '))).toBe(true)
+      expect(calls).toContain('-s emulator-5554 shell dumpsys activity lastanr')
+      expect(calls).toContain('-s emulator-5554 shell dumpsys input')
       expect(readdirSync(join(directory, 'scratch'))).toEqual([])
     })
   })
@@ -116,15 +118,15 @@ describe('Android native runner failure evidence', () => {
         retainNativeNavigationEvidence({ project: directory, directory: join(directory, 'evidence'), serial: 'emulator-owned', adbPath: adb, timeoutMs: 500 })
         expect(performance.now() - before).toBeLessThan(4000)
         const report = JSON.parse(readFileSync(join(directory, 'evidence/diagnostics.json'), 'utf8'))
-        expect(report.commands).toHaveLength(3)
+        expect(report.commands).toHaveLength(5)
         expect(report.commands.every((command: { signalCode: string }) => command.signalCode === 'SIGKILL')).toBe(true)
         const reportedPids = report.commands.map((command: { pid: number }) => command.pid)
         expect(reportedPids.every((pid: number) => Number.isSafeInteger(pid) && pid > 0)).toBe(true)
         launchedPids = reportedPids
-        expect(new Set(launchedPids).size).toBe(3)
+        expect(new Set(launchedPids).size).toBe(5)
         for (const pid of launchedPids) expect(() => process.kill(pid, 0)).toThrow()
         // A cold client can be killed before it writes a startup receipt.
-        // Still require a running TERM-ignoring fixture, but prove all three
+        // Still require a running TERM-ignoring fixture, but prove all five
         // launches were reaped from the parent's OS process identities.
         const startedPids = readFileSync(pids, 'utf8').trim().split('\n').map(Number)
         expect(startedPids.length).toBeGreaterThan(0)

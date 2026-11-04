@@ -42,6 +42,8 @@ export function retainNativeNavigationEvidence(options: EvidenceOptions): void {
     for (const [file, args] of [
       ['logcat-all.txt', ['logcat', '-d', '-b', 'all', '-v', 'threadtime']],
       ['activity-processes.txt', ['shell', 'dumpsys', 'activity', 'processes']],
+      ['activity-last-anr.txt', ['shell', 'dumpsys', 'activity', 'lastanr']],
+      ['input.txt', ['shell', 'dumpsys', 'input']],
       ['activity-exit-info.txt', ['shell', 'dumpsys', 'activity', 'exit-info']],
     ] as const) {
       const command: typeof report.commands[number] = { args: [adbPath, '-s', serial, ...args] }

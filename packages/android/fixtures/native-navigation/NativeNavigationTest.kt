@@ -3027,7 +3027,7 @@ class NativePointerEventsTest {
     }
 
     @Test fun overlayModesRouteActualTouchStreamsWithoutChangingDisabledState() {
-        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
         lateinit var root: android.widget.FrameLayout
         lateinit var overlay: CraftNativeFlexLayout
         lateinit var child: CraftNativePointerButton
@@ -3064,7 +3064,7 @@ class NativePointerEventsTest {
     }
 
     @Test fun reactivePolicyCancelsTrackingAndNeverTurnsALateUpIntoAClick() {
-        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
         lateinit var root: android.widget.FrameLayout
         lateinit var child: CraftNativePointerButton
         var clicks = 0
@@ -3100,7 +3100,7 @@ class NativePointerEventsTest {
     }
 
     @Test fun scrollContainerAllowsItsChildButNotItsEmptyBoxInBoxNoneMode() {
-        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
         lateinit var root: android.widget.FrameLayout
         lateinit var scroll: CraftNativeScrollView
         var last = ""
@@ -3130,7 +3130,7 @@ class NativePointerEventsTest {
         } finally { scenario.close() }
     }
     @Test fun overflowingChildrenRespectClippingAndSiblingZOrder() {
-        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
         lateinit var root: CraftNativeFlexLayout
         lateinit var overlay: CraftNativeFlexLayout
         lateinit var child: CraftNativePointerButton
@@ -3223,7 +3223,7 @@ class NativePointerEventsTest {
     }
 
     @Test fun leafControlsHonorAllModesAndKeepAuthoredDisabledAndHiddenState() {
-        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
         val factories: List<(android.content.Context) -> View> = listOf(
             { CraftNativePointerButton(it) }, { CraftNativePointerTextView(it) }, { context -> Class.forName("dev.craft.navigationtest.CraftNativeTextField").getDeclaredConstructor(android.content.Context::class.java).apply { isAccessible = true }.newInstance(context) as View },
             { CraftNativePointerCheckBox(it) }, { CraftNativePointerSwitch(it) }, { CraftNativePointerSeekBar(it) },

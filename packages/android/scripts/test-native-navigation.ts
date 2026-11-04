@@ -80,8 +80,9 @@ try {
   const debugDirectory = join(output, 'app/src/debug/java', ...packageName.split('.'))
   mkdirSync(debugDirectory, { recursive: true })
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeSystemBarsReferenceActivity.kt'), join(debugDirectory, 'NativeSystemBarsReferenceActivity.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeViewTestActivity.kt'), join(debugDirectory, 'NativeViewTestActivity.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeImportProvider.kt'), join(debugDirectory, 'NativeImportProvider.kt'))
-  writeFileSync(join(output, 'app/src/debug/AndroidManifest.xml'), `<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name=".NativeSystemBarsReferenceActivity" android:exported="false" /><provider android:name=".NativeImportProvider" android:authorities="${packageName}.imports" android:exported="false" /></application></manifest>`)
+  writeFileSync(join(output, 'app/src/debug/AndroidManifest.xml'), `<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name=".NativeViewTestActivity" android:exported="false" /><activity android:name=".NativeSystemBarsReferenceActivity" android:exported="false" /><provider android:name=".NativeImportProvider" android:authorities="${packageName}.imports" android:exported="false" /></application></manifest>`)
 
   if (!process.argv.includes('--prepare-only')) {
     try {
