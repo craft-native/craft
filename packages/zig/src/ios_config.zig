@@ -184,6 +184,8 @@ const number_keys = [_][]const u8{ "splashMaxSeconds", "requestTimeoutSeconds" }
 /// Swift `[String: String]?`: an object whose every value is a string. A null
 /// value inside it throws; only a null at the top level is dropped.
 const optional_string_map_keys = [_][]const u8{ "nativeScreens", "shareStorage" };
+/// Swift route → parameter → strict `ParameterConstraint` objects.
+const optional_route_constraint_map_keys = [_][]const u8{"nativeScreenConstraints"};
 /// Swift `Codable` structs, whose fields are checked by `checkObject`.
 const optional_object_keys = [_]Nested{ .{ .key = "backgroundRefresh", .fields = &background_refresh_fields }, .{ .key = "crashReporting", .fields = &crash_reporting_fields }, .{ .key = "tabBar", .fields = &tab_bar_fields } };
 /// Swift arrays of `Codable` structs. Every element is checked.
@@ -292,6 +294,30 @@ fn checkObject(v: std.json.Value, fields: []const Field) bool {
     return true;
 }
 
+/// Match ParameterConstraint's custom decoder, including unknown/null rejection.
+fn checkRouteConstraints(value: std.json.Value) bool {
+    if (value != .object) return false;
+    for (value.object.values()) |parameters| {
+        if (parameters != .object) return false;
+        for (parameters.object.values()) |rule| {
+            if (rule != .object) return false;
+            var fields = rule.object.iterator();
+            while (fields.next()) |field| {
+                const name = field.key_ptr.*;
+                const item = field.value_ptr.*;
+                if (std.mem.eql(u8, name, "pattern")) {
+                    if (item != .string) return false;
+                } else if (std.mem.eql(u8, name, "exclude")) {
+                    if (!isStringArray(item)) return false;
+                } else if (std.mem.eql(u8, name, "ignoreCase")) {
+                    if (item != .bool) return false;
+                } else return false;
+            }
+        }
+    }
+    return true;
+}
+
 /// Decode `json` the way Swift decodes it.
 ///
 /// Missing or null keys retain the Swift defaults; invalid present values
@@ -364,6 +390,12 @@ pub fn parse(allocator: std.mem.Allocator, json: []const u8) Flags {
                     if (item != .string) return Flags.empty;
                 }
             }
+        }
+    }
+
+    inline for (optional_route_constraint_map_keys) |key| {
+        if (root.get(key)) |value| {
+            if (value != .null and !checkRouteConstraints(value)) return Flags.empty;
         }
     }
 
@@ -1029,4 +1061,31 @@ test "native sensor settings retain unrelated flags only when their types decode
     }
     try testing.expect(parse(testing.allocator, "{\"enableShare\":true,\"healthKitBackgroundTypes\":[1]}").eql(Flags.empty));
     try testing.expect(parse(testing.allocator, "{\"enableShare\":true,\"healthKitBackgroundFrequency\":1}").eql(Flags.empty));
+}
+
+test "native route constraints mirror Swift's strict dictionary decoder" {
+    inline for (.{
+        "\"nativeScreenConstraints\":null",
+        "\"nativeScreenConstraints\":{}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":\"[a-z]+\",\"exclude\":[\"terms\"],\"ignoreCase\":true}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{}}}",
+    }) |good| {
+        const json = try completeConfig(testing.allocator, good);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, json).count());
+    }
+    inline for (.{
+        "\"nativeScreenConstraints\":[]",
+        "\"nativeScreenConstraints\":{\"/:username\":null}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":null}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":null}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"pattern\":1}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"exclude\":[null]}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"ignoreCase\":\"yes\"}}}",
+        "\"nativeScreenConstraints\":{\"/:username\":{\"username\":{\"unknown\":true}}}",
+    }) |bad| {
+        const json = try completeConfig(testing.allocator, bad);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
 }

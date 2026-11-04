@@ -1001,7 +1001,7 @@ fn collectZigKnownKeys(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
     errdefer set.deinit();
 
-    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys", "const optional_string_keys", "const optional_bool_keys", "const number_keys", "const optional_string_map_keys", "const optional_object_keys", "const optional_array_of_object_keys" }) |decl| {
+    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys", "const optional_string_keys", "const optional_bool_keys", "const number_keys", "const optional_string_map_keys", "const optional_route_constraint_map_keys", "const optional_object_keys", "const optional_array_of_object_keys" }) |decl| {
         const at = std.mem.indexOf(u8, zig_config_source, decl) orelse return error.KeyListNotFound;
         const line_end = std.mem.indexOfScalarPos(u8, zig_config_source, at, '\n').?;
         const line = zig_config_source[at..line_end];
