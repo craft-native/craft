@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.448...v0.0.449)
+
+## ⚡ Performance Improvements
+
+- **macos**: keep each screen bundle's parsed tree between launches ([5a7cef4](https://github.com/craft-native/craft/commit/5a7cef4)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.447...v0.0.448)
 
 ## 🧪 Tests
