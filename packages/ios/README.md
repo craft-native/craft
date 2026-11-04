@@ -1457,3 +1457,17 @@ cannot replace a path parameter. Static routes still win. Unmatched paths retain
 the shell's normal website fallback. Invalid configuration is rejected when the
 project is generated. The browser-safe `craft-native/mobile` entry exports
 `matchNativePath(screens, path, constraints)` for the app's own resolver.
+
+### Boolean tap failure evidence
+
+The shared simulator driver's `tapid` emits a `BOOLEAN_TAP` JSON record for
+boolean-valued controls. It includes the enabled state and value before/after
+the single gesture, plus its initial frame and the flip verdict. The existing
+1.5-second observation deadline remains unchanged; disabled controls still fail
+instead of being retried or silently accepted.
+
+This matters for #449: the original HQ agreement source disables its switches
+while policy loading is pending, while the journey checks presence/scrolling.
+That is a hypothesis to verify against pre-tap state, not an established cause of
+the original dropped tap. The record distinguishes a disabled target from an
+enabled control whose value failed to change without altering either scenario.

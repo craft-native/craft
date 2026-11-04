@@ -62,6 +62,7 @@ final class DriverTests: XCTestCase {
     let tabIdentifiers: [String: String] = {{TAB_IDENTIFIERS}}
     private var bundledJourney = false
     private var lastTappedInput: XCUIElement?
+    private var lastBooleanTap: [String: Any]?
 
     func get(_ path: String, timeout: Double = 15) -> Data? {
         var result: Data?
@@ -483,12 +484,15 @@ final class DriverTests: XCTestCase {
             if let target = poll(10, { exact(arg) }) { press(target); note("tapexact \(arg): ok") }
             else { XCTFail("Element not found"); note("FAIL tapexact \(arg): NOT FOUND") }
         case "tapid":
+            lastBooleanTap = nil
             let target = identified(arg)
             if !target.waitForExistence(timeout: 10) { XCTFail("Element not found"); note("FAIL tapid \(arg): NOT FOUND") }
             else if target.elementType == .switch || ["0", "1"].contains(target.value as? String ?? "") {
                 // Observe one physical gesture. Retapping could conceal a
                 // renderer or hit-testing failure (HQ agreement job 7570).
                 let before = target.value as? String
+                let enabledBefore = target.isEnabled
+                let frameBefore = target.frame
                 press(target)
                 let settle = Date().addingTimeInterval(1.5)
                 var flipped = false
@@ -496,6 +500,15 @@ final class DriverTests: XCTestCase {
                     flipped = switchFlipped(from: before, to: target.value as? String)
                     if !flipped { Thread.sleep(forTimeInterval: 0.25) }
                 } while !flipped && Date() < settle
+                let observation: [String: Any] = [
+                    "id": arg, "gestures": 1, "flipped": flipped,
+                    "enabledBefore": enabledBefore, "enabledAfter": target.isEnabled,
+                    "valueBefore": before ?? "unknown", "valueAfter": target.value as? String ?? "unknown",
+                    "frameBefore": [frameBefore.origin.x, frameBefore.origin.y, frameBefore.width, frameBefore.height],
+                ]
+                lastBooleanTap = observation
+                if let data = try? JSONSerialization.data(withJSONObject: observation, options: [.sortedKeys]),
+                   let json = String(data: data, encoding: .utf8) { note("BOOLEAN_TAP \(json)") }
                 check(flipped, "tapid \(arg) flips the switch")
             }
             else { press(target); note("tapid \(arg): ok") }

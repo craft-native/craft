@@ -15,6 +15,13 @@ extension DriverTests {
             XCTExpectFailure("An unresponsive toggle must fail tap acceptance", options: options) {
                 run("tapid \(id)")
             }
+            XCTAssertEqual(lastBooleanTap?["id"] as? String, id)
+            XCTAssertEqual(lastBooleanTap?["gestures"] as? Int, 1)
+            XCTAssertEqual(lastBooleanTap?["enabledBefore"] as? Bool, false)
+            XCTAssertEqual(lastBooleanTap?["enabledAfter"] as? Bool, false)
+            XCTAssertEqual(lastBooleanTap?["valueBefore"] as? String, "0")
+            XCTAssertEqual(lastBooleanTap?["valueAfter"] as? String, "0")
+            XCTAssertEqual(lastBooleanTap?["flipped"] as? Bool, false)
         }
         app.terminate()
     }
