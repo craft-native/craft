@@ -79,11 +79,14 @@ test('preserves modal viewport promotion and ordering across targeted reconcilia
   const template = await Bun.file(new URL('../templates/MainActivityNative.kt.template', import.meta.url)).text()
   const promote = template.match(/    private fun promoteModalOverlays\(screen: Screen\) \{[\s\S]*?\n    \}/)?.[0]
   const targeted = template.match(/    private fun applyTargetedUpdates\(screen: Screen, ids: List<String>\): Boolean \{[\s\S]*?\n    \}/)?.[0]
-  if (!promote || !targeted) throw new Error('Native modal reconciliation implementation is missing')
+  const accessibility = template.match(/private fun craftNativeModalAccessibility\([\s\S]*?\n\}/)?.[0]
+  if (!promote || !targeted || !accessibility) throw new Error('Native modal reconciliation implementation is missing')
   await runKotlinFixture(`
 import kotlin.math.min
 
 open class View {
+    companion object { const val IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS = 4 }
+    var importantForAccessibility = 1
     var parent: ViewGroup? = null
     fun bringToFront() { val group = parent ?: return; group.children.remove(this); group.children.add(this) }
 }
@@ -97,6 +100,7 @@ open class ViewGroup : View() {
     fun addView(view: View) { view.parent?.removeView(view); children.add(view); view.parent = this }
 }
 class CraftNativeModalView : ViewGroup() {
+    var blocksBackground = true
     val content = ViewGroup().also(::addView)
     var viewportStyle = JSONObject("popup-frame")
     var declarationPath = ""
@@ -118,6 +122,7 @@ class Screen {
     val protocolIds = mutableMapOf<View, String>()
     val lastLayoutBounds = mutableMapOf<View, String>()
     val modalVisibility = mutableMapOf<View, Boolean>()
+    val modalAccessibility = mutableMapOf<View, Int>()
     val mutations = MutationDocument(mapOf("parent" to "root", "nested" to "parent", "standalone" to "root"))
     var layoutEvents = 0
 }
@@ -128,6 +133,7 @@ fun makeView(screen: Screen, document: JSONObject, path: String, controls: Mutab
 }
 fun updateParentLayoutStyle(view: View, style: JSONObject): Boolean = true
 fun scheduleLayoutEvents(screen: Screen) { screen.layoutEvents++ }
+${accessibility}
 ${promote}
 ${targeted}
 fun main() {
@@ -158,6 +164,8 @@ fun main() {
         val children = screen.view.children
         check(children.indexOf(parent) < children.indexOf(nested)) { "The parent scrim covered its nested popup" }
         check(children.indexOf(nested) < children.indexOf(standalone)) { "Sibling overlay order changed" }
+        check(root.importantForAccessibility == 4 && parent.importantForAccessibility == 4 && nested.importantForAccessibility == 4)
+        check(standalone.importantForAccessibility == 1) { "The top modal must stay reachable by TalkBack" }
     }
     promoteModalOverlays(screen)
     verify()

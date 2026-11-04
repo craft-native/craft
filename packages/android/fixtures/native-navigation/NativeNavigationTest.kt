@@ -59,6 +59,37 @@ class NativeNavigationTest {
     private var initialButtonNavigationSurface: Int? = null
     private var navigationSystemAppearance = "unchanged"
 
+    @Test
+    fun spokenLanguageUpdatesNativeTextAndItsAccessibilityDescription() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            instrumentation.runOnMainSync {
+                val text = TextView(activity).apply { this.text = "Guten Morgen" }
+                val apply = MainActivity::class.java.getDeclaredMethod(
+                    "applyAccessibility", View::class.java, JSONObject::class.java, String::class.java, String::class.java,
+                ).apply { isAccessible = true }
+                for (language in listOf("de-DE", "en-GB", null)) {
+                    val props = JSONObject().put("accessibilityLabel", "Greeting").put("accessibilityHint", "Read")
+                    if (language != null) props.put("accessibilityLanguage", language)
+                    apply.invoke(activity, text, props, "Text", "greeting")
+                    val info = text.createAccessibilityNodeInfo()
+                    for (spoken in listOf(info.text, info.contentDescription, info.hintText)) {
+                        val spans = (spoken as? Spanned)?.let { it.getSpans(0, it.length, android.text.style.LocaleSpan::class.java) }
+                        if (language == null) assertTrue("Removed language left a stale speech span", spans.isNullOrEmpty())
+                        else assertEquals(language, spans?.singleOrNull()?.locale?.toLanguageTag())
+                    }
+                    assertEquals(language ?: activity.resources.configuration.locales[0].toLanguageTag(), text.textLocales[0].toLanguageTag())
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     private fun find(view: View, id: String): View? {
         if (view.tag?.toString() == id || view.contentDescription?.toString() == id) return view
         if (view is ViewGroup) {
@@ -1943,6 +1974,9 @@ class NativeNavigationTest {
                 SystemClock.sleep(100)
             }
             assertEquals("modal should become visible", View.VISIBLE, modal.visibility)
+            assertEquals("TalkBack must not reach the page behind a modal", View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,
+                awaitView(activity, "root").importantForAccessibility)
+            assertTrue("The modal itself must remain accessible", modal.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
             awaitText(activity, "modal-content", "Modal content")
             // onShow is delivered after native reconciliation returns to the queue.
             awaitText(activity, "modal-status", "modal shown")
@@ -1952,6 +1986,8 @@ class NativeNavigationTest {
             assertEquals("visible modal opacity should update in place", 0.45f, modal.alpha, 0.01f)
             click(activity, "toggle-modal")
             awaitText(activity, "modal-status", "modal dismissed")
+            assertTrue("Closing the modal must restore the page to TalkBack",
+                awaitView(activity, "root").importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
             click(activity, "toggle-modal")
             awaitText(activity, "modal-status", "modal shown")
             instrumentation.runOnMainSync { activity.onBackPressed() }

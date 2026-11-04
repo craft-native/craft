@@ -3350,6 +3350,33 @@ private class CraftNativeTextField(context: Context) : EditText(context) {
     }
 }
 
+/** Hide only siblings behind the top blocking modal, restoring authored values on every update. */
+private fun craftNativeModalAccessibility(root: ViewGroup, saved: MutableMap<View, Int>, blocks: (View) -> Boolean) {
+    saved.forEach { (view, previous) ->
+        // Reconciliation may already have replaced the old value with a new role.
+        if (view.importantForAccessibility == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) {
+            view.importantForAccessibility = previous
+        }
+    }
+    saved.clear()
+    val top = (0 until root.childCount).lastOrNull { blocks(root.getChildAt(it)) } ?: return
+    for (index in 0 until top) {
+        val view = root.getChildAt(index)
+        saved[view] = view.importantForAccessibility
+        view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+    }
+}
+
+private fun craftNativeAccessibilityLanguage(value: Any?): Locale? =
+    (value as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let(Locale::forLanguageTag)?.takeIf { it.language.isNotEmpty() }
+
+private fun craftNativeSpokenText(text: CharSequence?, language: Locale?): CharSequence? {
+    if (text == null || language == null || text.isEmpty()) return text
+    return SpannableString(text).apply {
+        setSpan(android.text.style.LocaleSpan(language), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+}
+
 private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
@@ -4588,6 +4615,7 @@ class MainActivity : AppCompatActivity() {
         val pressUnderlayColors = mutableMapOf<View, Int>()
         val pressBaseBackgrounds = mutableMapOf<View, Drawable?>()
         val modalVisibility = mutableMapOf<View, Boolean>()
+        val modalAccessibility = mutableMapOf<View, Int>()
         val modalCloseHandlers = mutableMapOf<View, String>()
         val layoutHandlers = mutableMapOf<View, String>()
         val layoutListeners = mutableMapOf<View, View.OnLayoutChangeListener>()
@@ -6005,7 +6033,10 @@ class MainActivity : AppCompatActivity() {
 
     /** Keep Modal nodes in the screen viewport even when declared in a clipped subtree. */
     private fun promoteModalOverlays(screen: Screen) {
-        if (screen.modalVisibility.isEmpty()) return
+        if (screen.modalVisibility.isEmpty()) {
+            craftNativeModalAccessibility(screen.view, screen.modalAccessibility) { false }
+            return
+        }
         // Snapshot parent-before-child order before moving anything. The
         // controls map registers descendants first, which would place a
         // parent modal above its own popup when brought forward in that order.
@@ -6040,6 +6071,9 @@ class MainActivity : AppCompatActivity() {
             }
             modal.bringToFront()
         }
+        craftNativeModalAccessibility(screen.view, screen.modalAccessibility) {
+            it is CraftNativeModalView && it.blocksBackground && screen.modalVisibility[it] == true
+        }
     }
 
     private fun updateStatusBarProps(screen: Screen, props: JSONObject) {
@@ -6066,6 +6100,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun clearRenderedTree(screen: Screen) {
+        craftNativeModalAccessibility(screen.view, screen.modalAccessibility) { false }
         releaseViewState(screen, retainedViews(screen).toList())
         screen.view.removeAllViews()
         screen.controls.clear()
@@ -7952,6 +7987,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
+        val language = craftNativeAccessibilityLanguage(props.opt("accessibilityLanguage"))
+        if (view is TextView) {
+            view.textLocales = if (language == null) view.context.resources.configuration.locales else android.os.LocaleList(language)
+        }
         val testId = craftNativeOptionalString(props.opt("testID"))
         view.tag = testId?.takeIf { it.isNotBlank() } ?: fallbackLabel
         val label = craftNativeOptionalString(props.opt("accessibilityLabel"))
@@ -8020,6 +8059,9 @@ class MainActivity : AppCompatActivity() {
                 if (state?.has("checked") == true) {
                     info.isChecked = craftNativeBoolean(state.opt("checked"))
                 }
+                info.text = craftNativeSpokenText(info.text, language)
+                info.contentDescription = craftNativeSpokenText(info.contentDescription, language)
+                info.hintText = craftNativeSpokenText(info.hintText, language)
             }
         })
         ViewCompat.setImportantForAccessibility(
