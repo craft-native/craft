@@ -457,3 +457,32 @@ For #450, the original shim log identifies `NotificationShortLookView` and event
 synthesis, but lacks the target frame and immediate post-tap app state. Its later
 system-log capture cannot reconstruct that interval. A subsequent passing run
 qualifies the diagnostic fixture; it does not explain that original failure.
+
+## Native Metal acknowledgement evidence
+
+The Metal UI fixture matches the `metal-status` identifier and exact
+`Verified frame 60` label in one accessibility query, with a ten-second deadline
+starting after launch. It does not first accept mere element existence. The
+normal host still presents and verifies all 61 frames, and the UI test still
+compares displayed quadrant pixels before/after resize and background/resume.
+A separate negative control holds the real renderer at frame 59, proves that
+frame 60 is absent, then uses the existing resize action to submit frame 60.
+
+For [#452](https://github.com/craft-native/craft/issues/452), the original
+artifact `13201453877` has SHA-256
+`9117ce908f91c09330cefc10ce948fbd8a81cc5b4b8b23e0929d22c73f3cdf2d`.
+Its exported XCTest diagnostics establish the observation boundary:
+
+- At `03:24:12.225`, the runner received an accessibility snapshot containing
+  `metal-status`, label `Verified frame 60`.
+- At `03:24:12.227`, the separate ten-second label expectation started.
+- At `03:24:13.249`, its next snapshot queued work on the app's main run loop.
+  That work did not execute until `03:24:31.193`, after the waiter had interrupted
+  the query at `03:24:22.520`.
+
+These are timestamps from the original failed attempt, not a later screenshot
+or passing rerun. They establish that frame 60 was already acknowledged and the
+second accessibility query missed its deadline. They do not establish why the
+main run loop delayed that query. Keep the failed artifact unchanged; retain
+both the app's `StandardOutputAndStandardError-dev.craft.metal-fixture.txt` and
+the runner's `Session-MetalSurfaceUITests-*.log` when diagnosing a recurrence.

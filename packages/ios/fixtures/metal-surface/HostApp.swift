@@ -37,6 +37,9 @@ final class MetalController: UIViewController {
     private var frame: UInt32 = 0
     private var paused = false
     private var small = false
+    // Negative UI control only: prove the acknowledgement query rejects a
+    // real penultimate frame, then let the resize action submit frame 60.
+    private let holdPenultimate = ProcessInfo.processInfo.arguments.contains("--craft-metal-hold-penultimate")
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -80,7 +83,7 @@ final class MetalController: UIViewController {
             frame &+= 1
             // Match the finite macOS fixture: complete all 61 native frames,
             // then leave an idle app whose displayed pixels can be inspected.
-            if frame == 61 { timer?.invalidate() }
+            if frame == 61 || (holdPenultimate && frame == 60) { timer?.invalidate() }
         } catch {
             timer?.invalidate()
             status.text = "Native Metal failed: \(error)"

@@ -2,14 +2,35 @@ import CoreImage
 import XCTest
 
 final class MetalSurfaceUITests: XCTestCase {
+    private func verifiedFrame(_ frame: UInt32, in app: XCUIApplication) -> XCUIElement {
+        // Match identity and acknowledgement in the same remote snapshot. In
+        // #452 the existence query already returned frame 60; a second query
+        // stalled on the app's main run loop and lost that valid observation.
+        app.staticTexts.matching(identifier: "metal-status")
+            .matching(NSPredicate(format: "label == %@", "Verified frame \(frame)"))
+            .firstMatch
+    }
+
+    func testPenultimateFrameCannotSatisfyFinalAcknowledgement() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--craft-metal-hold-penultimate"]
+        app.launch()
+        XCTAssertTrue(verifiedFrame(59, in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(verifiedFrame(60, in: app).waitForExistence(timeout: 1),
+                       "An existing status element at frame 59 must not acknowledge frame 60")
+        // The existing resize action submits and verifies the next real frame.
+        app.buttons["metal-resize"].tap()
+        XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(verifiedFrame(59, in: app).exists)
+    }
+
     func testDisplayedPixelsResizeAndBackgroundResume() throws {
         let app = XCUIApplication()
         app.launch()
         let status = app.staticTexts["metal-status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 10))
         let verified = NSPredicate { _, _ in status.label.hasPrefix("Verified frame ") }
-        expectation(for: NSPredicate { _, _ in status.label == "Verified frame 60" }, evaluatedWith: status)
-        waitForExpectations(timeout: 10)
+        XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10),
+                      "The native surface must acknowledge exactly frame 60 within ten seconds")
         XCTAssertEqual(app.webViews.count, 0)
         let canvas = app.otherElements["metal-canvas"]
         XCTAssertTrue(canvas.exists)
