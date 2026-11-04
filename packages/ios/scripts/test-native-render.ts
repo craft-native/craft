@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
@@ -33,7 +33,7 @@ try {
     output,
     // These tests construct enabled service implementations (including injected
     // location managers and fake heart-rate straps), so compile those services.
-    config: { renderer: 'native', enableBarometer: true, enablePedometer: true, enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
+    config: { renderer: 'native', enablePushNotifications: true, enableNotificationAttachments: true, enableBarometer: true, enablePedometer: true, enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
     runtimeDir: null,
   })
   await build({
@@ -158,6 +158,23 @@ try {
   const counts = JSON.parse(summary.stdout.toString())
   if (counts.result !== 'Passed' || counts.totalTestCount < 1 || counts.passedTests !== counts.totalTestCount || counts.failedTests !== 0 || counts.skippedTests !== 0)
     throw new Error(`Expected passed native tests with no empty selection or skips: ${JSON.stringify(counts)}`)
+  const app = join(workspace, 'DerivedData', 'Build', 'Products', 'Debug-iphonesimulator', 'NativeRender.app')
+  const service = join(app, 'PlugIns', 'NativeRenderNotificationService.appex')
+  if (!existsSync(join(service, 'NativeRenderNotificationService')))
+    throw new Error('The generated app must embed the compiled notification service executable')
+  const plist = (path: string): any => {
+    const result = Bun.spawnSync(['plutil', '-convert', 'json', '-o', '-', join(path, 'Info.plist')], { stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+    return JSON.parse(result.stdout.toString())
+  }
+  const appInfo = plist(app)
+  const serviceInfo = plist(service)
+  if (serviceInfo.CFBundleIdentifier !== 'dev.craft.native-render.notificationservice'
+    || serviceInfo.NSExtension?.NSExtensionPointIdentifier !== 'com.apple.usernotifications.service'
+    || serviceInfo.NSExtension?.NSExtensionPrincipalClass !== 'NativeRenderNotificationService.CraftNotificationService'
+    || serviceInfo.CFBundleVersion !== appInfo.CFBundleVersion
+    || serviceInfo.CFBundleShortVersionString !== appInfo.CFBundleShortVersionString)
+    throw new Error('Embedded notification extension identity, entry point, or version is incorrect')
   console.log('Native renderer unit and simulator UI tests passed')
 }
 finally {

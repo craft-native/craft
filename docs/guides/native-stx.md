@@ -2275,5 +2275,57 @@ on success or failure. Cancelling a pending notification uses the existing
 Files must be nonempty and no larger than 50 MiB. iOS additionally validates
 supported image, audio, and video formats and their format-specific size limits;
 an invalid attachment rejects the entire schedule request. This does not add
-attachments to Android or the legacy WebView notification API. Remote attachments
-still require a Notification Service Extension on iOS and remain a follow-up.
+attachments to Android or the legacy WebView notification API.
+
+### Remote notification attachments (iOS)
+
+Set `enablePushNotifications: true` and `enableNotificationAttachments: true`
+in the iOS Craft config. Craft generates and embeds a separate
+`<AppName>NotificationService.appex` with bundle identifier
+`<app-bundle-id>.notificationservice`. This works with native, hybrid, and WebView
+apps; it does not load the app's JavaScript or Zig runtime. The extension inherits
+the project's version, build number, and signing team. Device distribution needs
+an extension App ID/provisioning profile as well as the app's profile (or Xcode
+automatic signing). No App Group is needed.
+
+Send an APNs **alert** with `mutable-content: 1` inside `aps`, and the media list
+in the top-level `craftAttachments` field:
+
+```json
+{
+  "aps": {
+    "alert": { "title": "New route", "body": "Your trail photo is ready" },
+    "mutable-content": 1,
+    "category": "message",
+    "thread-id": "trail-123"
+  },
+  "craftAttachments": [
+    { "id": "photo", "url": "https://media.example.com/trail.png" }
+  ],
+  "routeId": "123"
+}
+```
+
+Supply at most ten entries with unique nonempty ids (up to 128 UTF-8 bytes).
+URLs and redirects must use HTTPS without embedded credentials. Signed CDN URLs
+work; the extension sends no app cookies or stored credentials. The server must
+return HTTP 200 and a supported media Content-Type: JPEG/PNG/GIF, MP3/M4A/WAV/AIFF,
+or MP4/MPEG/AVI. Downloads stream to disk, with a **10 MiB total budget** per
+notification, including responses without Content-Length. iOS still applies its
+own media validation and lower audio limit.
+
+The extension has a 25-second overall deadline. Invalid input, a failed download,
+unsupported media, excess bytes, or expiration returns the original notification
+exactly once, preserving its alert, category, thread, and custom data. A failed
+batch discards all its staged files. Successful files remain available after the
+content handler returns because iOS validates and moves them afterward; later
+extension invocations sweep staging folders older than a day. Silent pushes do
+not invoke a Notification Service Extension. Apple documents the required
+[APNs payload and extension lifecycle](https://developer.apple.com/documentation/usernotifications/modifying-content-in-newly-delivered-notifications).
+
+Run `craft ios build` to regenerate the Xcode project after changing the flag.
+Existing generated projects gain a `CraftNotificationService.yml` include while
+preserving other targets/settings; disabling the flag empties that generated
+spec so the next build no longer embeds the extension. If a customized project
+uses an inline `include` value, add the generated spec to that include list first.
+This feature does not implement Android remote attachments.

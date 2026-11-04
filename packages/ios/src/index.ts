@@ -145,6 +145,8 @@ export interface CraftConfig {
   enableCamera?: boolean
   enableBiometric?: boolean
   enablePushNotifications?: boolean
+  /** Embed an iOS Notification Service Extension for HTTPS APNs media. Requires push notifications. */
+  enableNotificationAttachments?: boolean
   enableSecureStorage?: boolean
   enableGeolocation?: boolean
   enableClipboard?: boolean
@@ -910,6 +912,81 @@ function validateHealthKitBackground(config: CraftConfig): void {
     throw new Error('healthKitBackgroundFrequency must be immediate, hourly, daily or weekly')
 }
 
+function validateNotificationAttachments(config: CraftConfig): void {
+  if (config.enableNotificationAttachments !== undefined && typeof config.enableNotificationAttachments !== 'boolean')
+    throw new Error('enableNotificationAttachments must be a boolean')
+  if (config.enableNotificationAttachments && config.enablePushNotifications !== true)
+    throw new Error('enableNotificationAttachments requires enablePushNotifications')
+}
+
+const notificationServiceInclude = '  - path: CraftNotificationService.yml\n'
+
+function syncNotificationService(output: string, config: CraftConfig): void {
+  validateNotificationAttachments(config)
+  const spec = join(output, 'CraftNotificationService.yml')
+  if (!config.enableNotificationAttachments) {
+    writeFileSync(spec, '{}\n')
+    return
+  }
+  const name = productName(config.appName)
+  const folder = join(output, 'NotificationService')
+  mkdirSync(folder, { recursive: true })
+  const source = readFileSync(join(TEMPLATES_DIR, 'CraftNotificationService.swift'), 'utf8')
+  const destination = join(folder, 'CraftNotificationService.swift')
+  if (!existsSync(destination) || readFileSync(destination, 'utf8') !== source) writeFileSync(destination, source)
+  writeFileSync(join(folder, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>NSExtension</key><dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.usernotifications.service</string>
+    <key>NSExtensionPrincipalClass</key><string>$(PRODUCT_MODULE_NAME).CraftNotificationService</string>
+  </dict>
+</dict></plist>
+`)
+  writeFileSync(spec, `targets:
+  ${name}:
+    dependencies:
+      - target: ${name}NotificationService
+        embed: true
+  ${name}NotificationService:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "${config.iosVersion || '15.0'}"
+    sources:
+      - NotificationService
+    settings:
+      INFOPLIST_FILE: NotificationService/Info.plist
+      PRODUCT_NAME: "$(TARGET_NAME)"
+      PRODUCT_BUNDLE_IDENTIFIER: ${config.bundleId}.notificationservice
+      SWIFT_VERSION: "5.0"
+      APPLICATION_EXTENSION_API_ONLY: YES
+      SKIP_INSTALL: YES
+`)
+  // Older generated shells have no include slot. Add one without replacing
+  // custom targets, entitlements, schemes or build settings in their project.
+  const project = join(output, 'project.yml')
+  if (existsSync(project)) {
+    const text = readFileSync(project, 'utf8')
+    const include = (Bun.YAML.parse(text) as { include?: unknown }).include
+    const includes = Array.isArray(include) ? include : [include]
+    const present = includes.some(entry => entry === 'CraftNotificationService.yml'
+      || (entry && typeof entry === 'object' && 'path' in entry && entry.path === 'CraftNotificationService.yml'))
+    if (!present) {
+      if (/^include:/m.test(text) && !/^include:[ \t]*\r?\n[ \t]+-/m.test(text))
+        throw new Error('Add a CraftNotificationService.yml entry to the project.yml include list')
+      writeFileSync(project, /^include:/m.test(text)
+        ? text.replace(/^include:[ \t]*\r?\n/m, `include:\n${notificationServiceInclude}`)
+        : `include:\n${notificationServiceInclude}${text}`)
+    }
+  }
+}
+
 export function renderEntitlements(config: CraftConfig): string {
   validateHealthKitBackground(config)
   const entries: string[] = []
@@ -1483,6 +1560,7 @@ export function restoreShell(output: string): void {
 export { assertNoApplicationSwiftSources, findApplicationSwiftSources } from './source-audit.js'
 
 function writeShell(output: string, config: CraftConfig): void {
+  validateNotificationAttachments(config)
   if (!config.appName || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(config.bundleId))
     throw new Error('The iOS shell needs an appName and a valid bundleId in craft.config.json.')
   // Build calls this too: unchanged templates must not force a full Swift rebuild.
@@ -1541,6 +1619,7 @@ function writeShell(output: string, config: CraftConfig): void {
       .replace(/\{\{HEALTH_KIT_ENABLED\}\}/g, config.enableHealthKit ? 'true' : 'false')
     writeSource(join(output, folder, filename), source)
   }
+  syncNotificationService(output, config)
 }
 
 function refreshUsageDescriptions(output: string, config: CraftConfig): void {
@@ -1586,6 +1665,7 @@ export async function init(options: InitOptions): Promise<void> {
     ...given,
   }
   validateHealthKitBackground(config)
+  validateNotificationAttachments(config)
   if (config.renderer !== 'web' && config.renderer !== 'native') {
     throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
   }
@@ -1715,7 +1795,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{NATIVE_DEPENDENCIES\}\}/g, nativeDependencies.length ? `    dependencies:\n${nativeDependencies.join('\n')}` : '')
     .replace(/\{\{NATIVE_TARGETS\}\}/g, nativeTargets.join('\n'))
 
-  writeFileSync(join(output, 'project.yml'), projectYml)
+  writeFileSync(join(output, 'project.yml'), `include:\n${notificationServiceInclude}${projectYml}`)
   writeFileSync(join(output, 'Craft.entitlements'), renderEntitlements(config))
   writeFileSync(join(output, 'PrivacyInfo.xcprivacy'), renderPrivacyManifest(config))
   renderAssetCatalog(output, config)
@@ -1780,6 +1860,7 @@ export async function build(options: BuildOptions): Promise<void> {
   }
 
   const config: CraftConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+  validateNotificationAttachments(config)
   if (config.renderer !== undefined && config.renderer !== 'web' && config.renderer !== 'native') {
     throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
   }

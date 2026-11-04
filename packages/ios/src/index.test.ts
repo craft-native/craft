@@ -1647,6 +1647,68 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(swift).toContain('error: "Failed to process video: \\(error.localizedDescription)"')
   })
 
+  it('embeds a standalone notification service only when explicitly enabled', async () => {
+    const output = createTempDir('craft-ios-notification-service-')
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', teamId: 'TESTTEAM', output })
+    expect(readFileSync(join(output, 'CraftNotificationService.yml'), 'utf8').trim()).toBe('{}')
+    expect(existsSync(join(output, 'NotificationService'))).toBe(false)
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', teamId: 'TESTTEAM', output,
+      config: { enablePushNotifications: true, enableNotificationAttachments: true, version: '2.3.4', buildNumber: '42' } })
+    const project = readFileSync(join(output, 'project.yml'), 'utf8')
+    const service = readFileSync(join(output, 'CraftNotificationService.yml'), 'utf8')
+    expect(project).toContain('path: CraftNotificationService.yml')
+    expect(project).toContain('MARKETING_VERSION: "2.3.4"')
+    expect(project).toContain('CURRENT_PROJECT_VERSION: "42"')
+    expect(project).toContain('DEVELOPMENT_TEAM: "TESTTEAM"')
+    expect(service).toContain('target: WildLoopNotificationService\n        embed: true')
+    expect(service).toContain('type: app-extension')
+    expect(service).toContain('PRODUCT_BUNDLE_IDENTIFIER: org.wildloop.app.notificationservice')
+    expect(service).toContain('APPLICATION_EXTENSION_API_ONLY: YES')
+    expect(service).not.toContain('Sources')
+    expect(service).not.toContain('CODE_SIGN_ENTITLEMENTS')
+    const plist = readFileSync(join(output, 'NotificationService', 'Info.plist'), 'utf8')
+    expect(plist).toContain('com.apple.usernotifications.service')
+    expect(plist).toContain('$(PRODUCT_MODULE_NAME).CraftNotificationService')
+    expect(plist).toContain('$(MARKETING_VERSION)')
+    expect(plist).toContain('$(CURRENT_PROJECT_VERSION)')
+    expect(readFileSync(join(output, 'NotificationService', 'CraftNotificationService.swift'), 'utf8'))
+      .toBe(readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNotificationService.swift'), 'utf8'))
+  })
+
+  it('refreshes notification extension opt-in in an older shell without replacing custom project settings', async () => {
+    const output = createTempDir('craft-ios-notification-refresh-')
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: { enableLiveActivities: true } })
+    const projectPath = join(output, 'project.yml')
+    const original = readFileSync(projectPath, 'utf8').replace('include:\n  - path: CraftNotificationService.yml\n', '')
+    writeFileSync(projectPath, `${original}\n# Keep app-specific signing settings\n# path: CraftNotificationService.yml is not an actual include\n`)
+    const configPath = join(output, 'craft.config.json')
+    const config = { ...JSON.parse(readFileSync(configPath, 'utf8')), enablePushNotifications: true, enableNotificationAttachments: true }
+    writeFileSync(configPath, JSON.stringify(config))
+    await build({ output, runtimeDir: null, generateProject: false })
+    await build({ output, runtimeDir: null, generateProject: false })
+    const project = readFileSync(projectPath, 'utf8')
+    expect((Bun.YAML.parse(project) as any).include).toEqual([{ path: 'CraftNotificationService.yml' }])
+    expect(project).toContain('# Keep app-specific signing settings')
+    expect(project).toContain('target: WildLoopLiveActivity')
+    writeFileSync(join(output, 'NotificationService', 'CraftNotificationService.swift'), '// stale package source')
+    restoreShell(output)
+    expect(readFileSync(join(output, 'NotificationService', 'CraftNotificationService.swift'), 'utf8')).toContain('UNNotificationServiceExtension')
+    config.enableNotificationAttachments = false
+    writeFileSync(configPath, JSON.stringify(config))
+    await build({ output, runtimeDir: null, generateProject: false })
+    expect(readFileSync(join(output, 'CraftNotificationService.yml'), 'utf8').trim()).toBe('{}')
+    expect(readFileSync(projectPath, 'utf8')).toBe(project)
+  })
+
+  it('requires push notifications and a boolean attachment opt-in', async () => {
+    for (const config of [{ enableNotificationAttachments: true }, { enablePushNotifications: true, enableNotificationAttachments: 'yes' }]) {
+      const output = createTempDir('craft-ios-notification-invalid-')
+      await expect(init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: config as any }))
+        .rejects.toThrow('enableNotificationAttachments')
+      expect(existsSync(join(output, 'NotificationService'))).toBe(false)
+    }
+  })
+
   it('generates a native Live Activity extension when enabled', async () => {
     const output = createTempDir('craft-ios-live-activity-')
     await init({
