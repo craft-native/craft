@@ -38,7 +38,26 @@ final class DriverTextController: UIViewController, UITextViewDelegate {
         name.addTarget(self, action: #selector(nameChanged), for: .editingChanged)
         transcriptCount.accessibilityIdentifier = "transcript-count"
         nameCount.accessibilityIdentifier = "name-count"
-        let stack = UIStackView(arrangedSubviews: [transcript, transcriptCount, name, nameCount])
+        let native = UISwitch()
+        let solid = CraftNativeSolidSwitch(frame: .zero)
+        let frozenNative = UISwitch()
+        let frozenSolid = CraftNativeSolidSwitch(frame: .zero)
+        // XCTest on iOS 26 recognizes toggleButton as a Switch. Keep a plain
+        // boolean-valued Button to exercise the other accessibility shape too.
+        let frozenButton = UIButton(type: .system)
+        frozenButton.setTitle("Frozen", for: .normal)
+        frozenButton.accessibilityValue = "0"
+        frozenButton.isEnabled = false
+        let controls: [(UIControl, String)] = [(native, "native-switch"), (solid, "solid-switch"),
+                                             (frozenNative, "frozen-native"), (frozenSolid, "frozen-solid"),
+                                             (frozenButton, "frozen-button")]
+        for (control, id) in controls { control.accessibilityIdentifier = id }
+        frozenNative.isEnabled = false
+        frozenSolid.isEnabled = false
+        let toggles = UIStackView(arrangedSubviews: controls.map { $0.0 })
+        toggles.axis = .horizontal
+        toggles.distribution = .equalSpacing
+        let stack = UIStackView(arrangedSubviews: [toggles, transcript, transcriptCount, name, nameCount])
         stack.axis = .vertical
         stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false

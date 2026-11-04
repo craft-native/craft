@@ -293,8 +293,6 @@ final class DriverTests: XCTestCase {
         return (parts[0], parts.count > 1 ? Double(parts[1]) ?? 10 : 10)
     }
 
-    /// A switch reports "0" or "1". Any other value is not a switch state to
-    /// wait on, so the tap stands as it would for any other control.
     /// The switch answers `/exec` with 200 whatever the hook did, its first
     /// word the hook's exit code: only `exit 0` is a hook that worked.
     func hookSucceeded(_ answer: String) -> Bool {
@@ -308,6 +306,8 @@ final class DriverTests: XCTestCase {
         return fields.count >= 2 && fields[1] == "0"
     }
 
+    /// UIKit and Craft's solid toggle both publish "0" or "1", regardless
+    /// of the accessibility element type that XCTest assigns to them.
     func switchFlipped(from before: String?, to after: String?) -> Bool {
         let states: Set<String> = ["0", "1"]
         guard let before, let after, states.contains(before), states.contains(after) else { return true }
@@ -472,7 +472,7 @@ final class DriverTests: XCTestCase {
         case "tapid":
             let target = identified(arg)
             if !target.waitForExistence(timeout: 10) { XCTFail("Element not found"); note("FAIL tapid \(arg): NOT FOUND") }
-            else if target.elementType == .switch {
+            else if target.elementType == .switch || ["0", "1"].contains(target.value as? String ?? "") {
                 // Observe one physical gesture. Retapping could conceal a
                 // renderer or hit-testing failure (HQ agreement job 7570).
                 let before = target.value as? String

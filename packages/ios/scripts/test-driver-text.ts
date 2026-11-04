@@ -1,4 +1,4 @@
-import { copyFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
 import { nativeTestResultBundle } from './native-test-result'
@@ -18,6 +18,14 @@ try {
     output: workspace, projectName: 'DriverText', bundleId: 'dev.craft.driver-text.host', bundleIdPrefix: 'dev.craft.driver-text',
     script: serializeSimulatorSteps([
       { command: 'launch' },
+      { command: 'tapid', text: 'native-switch' },
+      { command: 'valueid', id: 'native-switch', text: '1' },
+      { command: 'tapid', text: 'native-switch' },
+      { command: 'valueid', id: 'native-switch', text: '0' },
+      { command: 'tapid', text: 'solid-switch' },
+      { command: 'valueid', id: 'solid-switch', text: '1' },
+      { command: 'tapid', text: 'solid-switch' },
+      { command: 'valueid', id: 'solid-switch', text: '0' },
       { command: 'expectid', text: 'transcript', seconds: 15 },
       { command: 'longpressid', text: 'transcript' },
       { command: 'tap', text: 'Select All' },
@@ -40,6 +48,40 @@ try {
     ]),
   })
   copyFileSync(resolve(import.meta.dir, '../fixtures/driver-text/HostApp.swift'), join(workspace, 'Host/HostApp.swift'))
+  // Compile the shipped solid control and its pointer helper unchanged.
+  const renderer = readFileSync(resolve(import.meta.dir, '../templates/CraftNativeScreen.swift'), 'utf8')
+  const solidStart = renderer.indexOf('final class CraftNativeSolidSwitch: UIControl {')
+  const solidEnd = renderer.indexOf('/// A native checkbox button.', solidStart)
+  const pointerStart = renderer.indexOf('enum CraftNativePointerEvents: String {')
+  const pointerEnd = renderer.indexOf('private var craftNativeLayoutStyleKey:', pointerStart)
+  if (solidStart < 0 || solidEnd < solidStart || pointerStart < 0 || pointerEnd < pointerStart)
+    throw new Error('Cannot locate the shipped solid switch and pointer helper')
+  writeFileSync(join(workspace, 'Host/SolidSwitch.swift'), `import UIKit
+${renderer.slice(pointerStart, pointerEnd)}
+${renderer.slice(solidStart, solidEnd)}`)
+  // A successful physical tap alone cannot prove that the driver checked it.
+  // Each disabled control must trigger precisely the missing-flip assertion.
+  appendFileSync(join(workspace, 'UITests/DriverTests.swift'), String.raw`
+extension DriverTests {
+    func testUnresponsiveSwitchesFailAcceptance() {
+        bundledJourney = true
+        app.launch()
+        XCTAssertTrue(identified("frozen-button").waitForExistence(timeout: 10))
+        XCTAssertEqual(identified("frozen-button").elementType, .button)
+        for id in ["frozen-native", "frozen-solid", "frozen-button"] {
+            XCTAssertTrue(identified(id).waitForExistence(timeout: 10))
+            XCTAssertEqual(identified(id).value as? String, "0")
+            let options = XCTExpectedFailure.Options()
+            options.isStrict = true
+            options.issueMatcher = { $0.compactDescription.contains("tapid \(id) flips the switch") }
+            XCTExpectFailure("An unresponsive toggle must fail tap acceptance", options: options) {
+                run("tapid \(id)")
+            }
+        }
+        app.terminate()
+    }
+}
+`)
   run(['xcodegen', 'generate'])
   run(['xcodebuild', '-project', 'DriverText.xcodeproj', '-scheme', 'DriverText', '-configuration', 'Debug',
     '-destination', `id=${simulator}`, '-derivedDataPath', join(workspace, 'DerivedData'),
@@ -48,8 +90,9 @@ try {
   const summary = Bun.spawnSync(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result])
   if (summary.exitCode !== 0) throw new Error(summary.stderr.toString())
   const counts = JSON.parse(summary.stdout.toString())
-  if (counts.result !== 'Passed' || counts.totalTestCount !== 1 || counts.passedTests !== 1 || counts.failedTests !== 0 || counts.skippedTests !== 0)
+  // xcresult counts the negative test in expectedFailures, not passedTests.
+  if (counts.result !== 'Passed' || counts.totalTestCount !== 2 || counts.passedTests !== 1 || counts.expectedFailures !== 1 || counts.failedTests !== 0 || counts.skippedTests !== 0)
     throw new Error(`Driver text acceptance failed: ${JSON.stringify(counts)}`)
-  console.log('Native driver focused, selected, edited and cleared multiline and single-line Unicode text through native UI events.')
+  console.log('Native driver verified real toggles, rejected unresponsive Boolean controls, and edited multiline and single-line Unicode text.')
 }
 finally { removeTempDir(workspace) }
