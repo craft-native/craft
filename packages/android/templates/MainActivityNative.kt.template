@@ -4656,6 +4656,7 @@ class MainActivity : AppCompatActivity() {
         val longPressHandlers = mutableMapOf<View, String>()
         val contextMenus = mutableMapOf<View, CraftNativeContextMenu>()
         val accessibilityActionHandlers = mutableMapOf<View, String>()
+        val accessibilityActionRevisions = mutableMapOf<View, Any>()
         // TalkBack actions are added by id, so removing them on a reconcile
         // needs the ids back; without this a renamed action stacks up beside
         // the old one every render.
@@ -8045,6 +8046,12 @@ class MainActivity : AppCompatActivity() {
      * Runs after applyAccessibility, which installs its own delegate and
      * would drop actions added before it.
      */
+    private fun clearAccessibilityActions(screen: Screen, control: View) {
+        screen.accessibilityActionIds.remove(control)?.forEach { ViewCompat.removeAccessibilityAction(control, it) }
+        screen.accessibilityActionHandlers.remove(control)
+        screen.accessibilityActionRevisions.remove(control)
+    }
+
     private fun applyAccessibilityActions(
         screen: Screen,
         control: View,
@@ -8052,7 +8059,7 @@ class MainActivity : AppCompatActivity() {
         events: JSONObject,
         disabled: Boolean,
     ) {
-        screen.accessibilityActionIds.remove(control)?.forEach { ViewCompat.removeAccessibilityAction(control, it) }
+        clearAccessibilityActions(screen, control)
         val handler = craftNativeEventName(events, "onAccessibilityAction").takeUnless { disabled } ?: ""
         val authored = props.optJSONArray("accessibilityActions")
         if (handler.isBlank() || authored == null || authored.length() == 0) {
@@ -8060,6 +8067,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         screen.accessibilityActionHandlers[control] = handler
+        val revision = Any()
+        screen.accessibilityActionRevisions[control] = revision
         val ids = mutableListOf<Int>()
         for (index in 0 until authored.length()) {
             val entry = authored.optJSONObject(index) ?: continue
@@ -8069,7 +8078,7 @@ class MainActivity : AppCompatActivity() {
                 // Read the handler at firing time: a reconcile can rename it
                 // while the action sits in TalkBack's menu.
                 val current = screen.accessibilityActionHandlers[control]
-                if (current.isNullOrBlank()) {
+                if (current.isNullOrBlank() || screen.accessibilityActionRevisions[control] !== revision) {
                     false
                 } else {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("actionName", name)))
@@ -8953,6 +8962,7 @@ class MainActivity : AppCompatActivity() {
         // released/recycled rows so a later identity cannot inherit a closure
         // that still captures the previous row's screen state.
         released.forEach {
+            clearAccessibilityActions(screen, it)
             // Modals are promoted out of their logical layout into the
             // screen overlay. Removing the logical node therefore does not
             // remove the native view through ordinary child reconciliation;

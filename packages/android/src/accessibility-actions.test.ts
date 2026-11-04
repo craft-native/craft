@@ -9,7 +9,9 @@ test('publishes a hold’s actions to TalkBack, names the one that ran, and remo
   if (!wiring) throw new Error('Native accessibility-action wiring is missing')
   // Runs the shipped body verbatim; only its visibility is relaxed so the
   // fixture can call it.
-  const callable = wiring.replace('private fun', 'fun')
+  const cleanup = source.match(/ {4}private fun clearAccessibilityActions\([\s\S]*?\n {4}\}\n/)?.[0]
+  if (!cleanup) throw new Error('Native accessibility cleanup is missing')
+  const callable = `${cleanup.replace('private fun', 'fun')}\n${wiring.replace('private fun', 'fun')}`
   await runKotlinFixture(`
 class View(val name: String)
 class JSONArray(private val items: List<Any?>) {
@@ -25,6 +27,7 @@ class JSONObject(initial: Map<String, Any?> = emptyMap()) {
 }
 class Screen {
     val accessibilityActionHandlers = mutableMapOf<View, String>()
+    val accessibilityActionRevisions = mutableMapOf<View, Any>()
     val accessibilityActionIds = mutableMapOf<View, List<Int>>()
 }
 val removed = mutableListOf<Int>()
@@ -77,6 +80,7 @@ fun main() {
     Host.applyAccessibilityActions(screen, bubble, JSONObject(mapOf("accessibilityActions" to actions(
         mapOf("name" to "report", "label" to "Report message"),
     ))), events, false)
+    for (id in firstIds) check(!commands[id]!!()) { "a replaced action still dispatched" }
     check(removed == firstIds) { "removed \$removed, added as \$firstIds" }
     check(added == listOf("Copy", "report", "Report message")) { "offered \$added" }
 
@@ -99,6 +103,12 @@ fun main() {
         mapOf("name" to "report"),
     ))), JSONObject(), false)
     check(added.size == 3) { "an unhandled node offered \$added" }
+
+    Host.applyAccessibilityActions(screen, bubble, JSONObject(mapOf("accessibilityActions" to actions(mapOf("name" to "copy")))), events, false)
+    val unmounted = screen.accessibilityActionIds[bubble].orEmpty()
+    Host.clearAccessibilityActions(screen, bubble)
+    for (id in unmounted) check(!commands[id]!!())
+    check(screen.accessibilityActionIds.isEmpty() && screen.accessibilityActionHandlers.isEmpty() && screen.accessibilityActionRevisions.isEmpty())
 
     println("PASS accessibility actions: labels, name fallback, dispatch, replacement, removal, disabled and unhandled")
 }

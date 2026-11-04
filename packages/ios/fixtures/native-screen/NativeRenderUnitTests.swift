@@ -90,6 +90,35 @@ final class NativeNotificationActionUnitTests: XCTestCase {
 
 @MainActor
 final class NativeContextMenuUnitTests: XCTestCase {
+    func testAccessibilityActionsRejectReplacedDisabledAndUnmountedSelections() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        func document(_ names: [String], disabled: Bool = false) -> [String: Any] {
+            ["type": "Text", "props": ["key": "bubble", "accessibilityLabel": "Message",
+                "accessibilityState": ["disabled": disabled],
+                "accessibilityActions": names.map { ["name": $0, "label": $0] }],
+             "events": ["onAccessibilityAction": "chosen"], "children": ["Message"]]
+        }
+        func find(_ view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "bubble" { return view }
+            return view.subviews.compactMap(find).first
+        }
+        screen.render(document(["copy", "report"]))
+        let bubble = try XCTUnwrap(find(screen.view))
+        let original = try XCTUnwrap(bubble.accessibilityCustomActions)
+        screen.render(document(["report"]))
+        for action in original { XCTAssertEqual(action.actionHandler?(action), false) }
+        let current = try XCTUnwrap(bubble.accessibilityCustomActions?.first)
+        screen.render(document(["report"], disabled: true))
+        XCTAssertNil(bubble.accessibilityCustomActions)
+        XCTAssertEqual(current.actionHandler?(current), false)
+        screen.render(document(["copy"]))
+        let removed = try XCTUnwrap(bubble.accessibilityCustomActions?.first)
+        screen.render(["type": "View", "children": []])
+        XCTAssertNil(bubble.accessibilityCustomActions)
+        XCTAssertEqual(removed.actionHandler?(removed), false)
+    }
+
     func testMenuAttributesAndStaleSelections() throws {
         let view = UIView()
         let host = CraftNativeContextMenu(view: view)

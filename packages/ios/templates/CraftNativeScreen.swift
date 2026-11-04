@@ -6481,6 +6481,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var longPressHandlers: [ObjectIdentifier: String] = [:]
     private var contextMenus: [ObjectIdentifier: CraftNativeContextMenu] = [:]
     private var accessibilityActionHandlers: [ObjectIdentifier: String] = [:]
+    private var accessibilityActionRevisions: [ObjectIdentifier: UUID] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
@@ -9731,7 +9732,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         applyAccessibility(props, type: type, to: result)
         // After applyAccessibility: it settles whether the view is an element
         // at all, and an action on a non-element is unreachable.
-        updateAccessibilityActions(props["accessibilityActions"], handler: props["disabled"] as? Bool == true ? nil : events["onAccessibilityAction"], for: result)
+        updateAccessibilityActions(props["accessibilityActions"], handler: menuDisabled ? nil : events["onAccessibilityAction"], for: result)
         let menuID = ObjectIdentifier(result)
         if hasMenu, let menuHandler {
             let menu = contextMenus[menuID] ?? CraftNativeContextMenu(view: result)
@@ -10227,6 +10228,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         longPressHandlers.removeValue(forKey: id)
         contextMenus.removeValue(forKey: id)?.detach()
         accessibilityActionHandlers.removeValue(forKey: id)
+        accessibilityActionRevisions.removeValue(forKey: id)
+        node.view.accessibilityCustomActions = nil
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
@@ -10464,15 +10467,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         guard let handler, !handler.isEmpty, !entries.isEmpty else {
             accessibilityActionHandlers.removeValue(forKey: id)
+            accessibilityActionRevisions.removeValue(forKey: id)
             view.accessibilityCustomActions = nil
             return
         }
         accessibilityActionHandlers[id] = handler
+        let revision = UUID()
+        accessibilityActionRevisions[id] = revision
         view.accessibilityCustomActions = entries.map { entry in
             UIAccessibilityCustomAction(name: entry.label) { [weak self, weak view] _ in
                 // Read the handler at firing time: a reconcile can rename it
                 // while the rotor sits on the element.
-                guard let self, let view, let current = self.accessibilityActionHandlers[ObjectIdentifier(view)] else { return false }
+                guard let self, let view, self.accessibilityActionRevisions[ObjectIdentifier(view)] == revision,
+                      let current = self.accessibilityActionHandlers[ObjectIdentifier(view)] else { return false }
                 self.send(type: "EVENT", payload: ["handlerName": current, "nativeEvent": ["actionName": entry.name]])
                 return true
             }
