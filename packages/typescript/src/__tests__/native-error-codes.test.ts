@@ -28,7 +28,14 @@ test('isolated mobile consumers accept native and legacy codes but reject misspe
   try {
     copyFileSync(declarations, join(root, 'craft.d.ts'))
     writeFileSync(join(root, 'consumer.ts'), `
-import type { CraftErrorCode, CraftError, NativeBridgeErrorCode } from './craft'
+import type { CraftErrorCode, CraftError, NativeBridgeErrorCode, CraftBridge } from './craft'
+declare const accessibility: NonNullable<CraftBridge['accessibility']>
+const spoken: Promise<void> = accessibility.announce('Saved', { polite: true })
+// @ts-expect-error Speech priority is a Boolean, not an arbitrary string.
+accessibility.announce('Saved', { polite: 'yes' })
+// @ts-expect-error Announcement text must be a string.
+accessibility.announce(42)
+void spoken
 const native: NativeBridgeErrorCode[] = ['BUSY', 'WEBVIEW_HANDLE_NOT_SET', 'INVALID_PARAMETER', 'NATIVE_CALL_FAILED', 'CAPABILITY_DISABLED']
 const compatible: CraftErrorCode[] = [...native, 'INVALID_PARAMS', 'NOT_AVAILABLE', 'STORAGE_FULL']
 const error: CraftError = { code: 'BUSY', message: 'Try later', timestamp: 0 }

@@ -19,6 +19,11 @@ export interface CraftBridge {
   /** Available capabilities on the current device */
   capabilities: CraftCapabilities;
   crypto?: { randomUUID(): Promise<string> };
+  /** Native STX hosts: request speech without moving screen-reader focus. */
+  accessibility?: {
+    /** iOS queues polite speech by default; Android's accessibility service owns scheduling. */
+    announce(text: string, options?: { polite?: boolean }): Promise<void>;
+  };
 
   // ==================== Debug & Error Handling ====================
 

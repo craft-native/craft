@@ -70,6 +70,7 @@ describe('Component System', () => {
   it('types native interaction and accessibility props', () => {
     const input: TextInputProps = {
       accessibilityValue: 'Ada',
+      accessibilityLanguage: 'de-DE',
       accessibilityState: { selected: true },
       accessibilityRole: 'tab',
       transitionID: 'profile-avatar',
@@ -95,6 +96,7 @@ describe('Component System', () => {
     }
     expect(input.accessibilityState?.selected).toBe(true)
     expect(input.accessibilityRole).toBe('tab')
+    expect(input.accessibilityLanguage).toBe('de-DE')
     expect(input.transitionID).toBe('profile-avatar')
     expect(scroll.onScroll).toBeDefined()
     expect(scroll.scrollTarget).toMatchObject({ id: 'today', animated: false })

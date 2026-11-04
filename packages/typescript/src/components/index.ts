@@ -421,6 +421,8 @@ export interface BaseProps {
   accessibilityLabel?: string
   /** Accessibility hint */
   accessibilityHint?: string
+  /** BCP 47 language tag used to speak this node, e.g. de-DE. */
+  accessibilityLanguage?: string
   /** Accessibility value announced by the native host */
   accessibilityValue?: string | number
   /** Accessibility state exposed to assistive technologies */

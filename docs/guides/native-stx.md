@@ -941,11 +941,29 @@ metadata and traits. The portable roles include `button`, `image`, `header`,
 and `alert`; unknown roles retain the platform control's native class.
 `accessibilityState` supports `disabled`, `selected`, and `checked`.
 
-On iOS, a visible blocking `Modal` contains VoiceOver navigation. Hiding it or
-changing it to `nonModal` restores access to the surrounding content; presented
-UIKit sheets retain the same containment. `accessibilityLanguage` accepts a
-BCP 47 language tag such as `de-DE`, choosing the voice for that node without
-changing the app's locale. Removing the prop restores the system's language.
+A visible blocking `Modal` contains screen-reader navigation: UIKit marks it
+modal, while Android hides the sibling content behind the top blocking modal
+from TalkBack. Hiding it or changing it to `nonModal` restores the surrounding
+content's authored accessibility roles. Non-modal overlays above it stay
+accessible; presented UIKit sheets retain containment too.
+`accessibilityLanguage` accepts a BCP 47 language tag such as `de-DE`, choosing
+the voice for that node without changing the app's locale. Android exposes the
+language through text locales and speech spans for text, labels and hints.
+Removing the prop restores the system's language.
+
+Native screens can request a spoken status without moving focus:
+
+```ts
+await craft.accessibility.announce('Message sent', { polite: true })
+```
+
+`polite` defaults to `true`. On iOS, polite messages queue behind current
+speech; `false` requests interruptible immediate speech. Android sends a native
+announcement event; the accessibility service controls whether and when it is
+spoken, so `polite` cannot guarantee Android queue priority. Resolution means
+the host accepted the request, not that a screen reader spoke it. Empty text
+or malformed options reject with `INVALID_ARGUMENT`. Keep meaningful labels
+and state on controls: an announcement does not replace those semantics.
 
 These fields are part of the exported `BaseProps`/`TextInputProps` types, so a
 shared screen can keep its accessibility and keyboard contract type-safe before
