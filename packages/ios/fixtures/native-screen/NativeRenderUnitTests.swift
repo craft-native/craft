@@ -6,6 +6,149 @@ import XCTest
 import UserNotifications
 @testable import NativeRender
 
+private final class NotificationMediaProtocol: URLProtocol {
+    private let lock = NSLock()
+    private var stopped = false
+    static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")!
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() { lock.lock(); stopped = true; lock.unlock() }
+    override func startLoading() {
+        let url = request.url!
+        if url.path == "/stall" { return }
+        let mime = url.path == "/html" ? "text/html" : "image/png"
+        var headers = ["Content-Type": mime]
+        if url.path == "/large-header" { headers["Content-Length"] = "10485761" }
+        let response = HTTPURLResponse(url: url, statusCode: url.path == "/missing" ? 404 : 200,
+                                       httpVersion: "HTTP/1.1", headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let chunks = url.path == "/chunked" ? 11 : 1
+        for _ in 0..<chunks {
+            lock.lock(); let cancelled = stopped; lock.unlock()
+            if cancelled { return }
+            let data = url.path == "/chunked" ? Data(repeating: 1, count: 1024 * 1024)
+                : url.path == "/corrupt" ? Data("not an image".utf8) : Self.png
+            client?.urlProtocol(self, didLoad: data)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+@MainActor
+final class RemoteNotificationAttachmentUnitTests: XCTestCase {
+    private var root: URL!
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("remote-test-\(UUID().uuidString)")
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
+
+    private func worker(timeout: TimeInterval = 5) -> CraftRemoteNotificationDelivery {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NotificationMediaProtocol.self]
+        return CraftRemoteNotificationDelivery(configuration: configuration, root: root, timeout: timeout)
+    }
+
+    private func content(_ paths: [String]) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = "New route"
+        content.body = "Trail photo"
+        content.categoryIdentifier = "message"
+        content.threadIdentifier = "trail-1"
+        content.userInfo = ["routeId": "123", "craftAttachments": paths.enumerated().map {
+            ["id": "media-\($0.offset)", "url": "https://media.example\($0.element)"]
+        }]
+        return content
+    }
+
+    private func deliver(_ content: UNNotificationContent, timeout: TimeInterval = 5) async -> UNNotificationContent {
+        let worker = worker(timeout: timeout)
+        return await withCheckedContinuation { next in worker.start(content) { next.resume(returning: $0) } }
+    }
+
+    func testDownloadsAllMediaPreservesPayloadAndKeepsFilesAfterHandoff() async throws {
+        let original = content(["/first", "/second"])
+        let worker = worker()
+        let delivered = await withCheckedContinuation { next in worker.start(original) { next.resume(returning: $0) } }
+        XCTAssertEqual(delivered.title, original.title)
+        XCTAssertEqual(delivered.body, original.body)
+        XCTAssertEqual(delivered.categoryIdentifier, original.categoryIdentifier)
+        XCTAssertEqual(delivered.threadIdentifier, original.threadIdentifier)
+        XCTAssertTrue(NSDictionary(dictionary: delivered.userInfo).isEqual(to: original.userInfo))
+        XCTAssertEqual(delivered.attachments.map(\.identifier), ["media-0", "media-1"])
+        worker.expire() // a late deadline cannot revoke already handed-off files
+        for attachment in delivered.attachments {
+            XCTAssertEqual(try Data(contentsOf: attachment.url), NotificationMediaProtocol.png)
+        }
+    }
+
+    func testMalformedPayloadsNeverDownloadAndReturnOriginal() async {
+        let entry = ["id": "photo", "url": "https://media.example/image"]
+        let invalid: [Any] = [NSNull(), "image", [], [7], [entry, entry], Array(repeating: entry, count: 11),
+                              [["id": " ", "url": "https://media.example/image"]],
+                              [["id": "photo", "url": "http://media.example/image"]],
+                              [["id": "photo", "url": "https://user:password@media.example/image"]],
+                              [["id": "photo", "url": "file:///tmp/image.png"]]]
+        for value in invalid {
+            let original = content([])
+            original.userInfo["craftAttachments"] = value
+            let delivered = await deliver(original)
+            XCTAssertTrue(delivered === original)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        }
+    }
+
+    func testHTTPTypeCorruptionAndBothSizeLimitsFallBackAndCleanPartialFiles() async throws {
+        for path in ["/missing", "/html", "/corrupt", "/large-header", "/chunked"] {
+            // The first valid attachment must also be discarded if the second fails.
+            let original = content(["/first", path])
+            let delivered = await deliver(original)
+            XCTAssertTrue(delivered === original, path)
+            XCTAssertTrue(delivered.attachments.isEmpty, path)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [], path)
+        }
+    }
+
+    func testDeadlineReturnsOriginalWithoutWaitingForNetwork() async throws {
+        let original = content(["/stall"])
+        let delivered = await deliver(original, timeout: 0.05)
+        XCTAssertTrue(delivered === original)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    func testExpiryAndLateNetworkCompletionOnlyDeliverOnce() async throws {
+        let original = content(["/stall"])
+        let worker = worker()
+        let done = expectation(description: "exactly one completion")
+        done.assertForOverFulfill = true
+        worker.start(original) { delivered in XCTAssertTrue(delivered === original); done.fulfill() }
+        worker.expire()
+        worker.expire()
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        worker.urlSession(session, task: session.dataTask(with: URL(string: "https://media.example/stall")!), didCompleteWithError: nil)
+        await fulfillment(of: [done], timeout: 3)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    func testRedirectCannotDowngradeHTTPS() async throws {
+        let worker = worker()
+        let original = content(["/stall"])
+        let done = expectation(description: "fallback")
+        let redirect = expectation(description: "redirect denied")
+        worker.start(original) { delivered in XCTAssertTrue(delivered === original); done.fulfill() }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = URL(string: "https://media.example/stall")!
+        worker.urlSession(session, task: session.dataTask(with: url),
+            willPerformHTTPRedirection: HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: nil)!,
+            newRequest: URLRequest(url: URL(string: "http://media.example/image")!)) { request in
+                XCTAssertNil(request); redirect.fulfill()
+            }
+        await fulfillment(of: [done, redirect], timeout: 3)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+}
+
 @MainActor
 final class NativeNotificationActionUnitTests: XCTestCase {
     private func attachmentImage() throws -> URL {

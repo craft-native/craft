@@ -63,6 +63,9 @@ try {
                 } else
 `))
   copyFileSync(join(fixture, 'NativeRenderUnitTests.swift'), join(output, 'UnitTests', 'NativeRenderUnitTests.swift'))
+  // Compile the extension's production worker into the unit-test module too;
+  // URLProtocol supplies deterministic network responses without APNs access.
+  copyFileSync(join(import.meta.dir, '..', 'templates', 'CraftNotificationService.swift'), join(output, 'UnitTests', 'CraftNotificationService.swift'))
   copyFileSync(join(fixture, 'NativeLayoutUnitTests.swift'), join(output, 'UnitTests', 'NativeLayoutUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeAudioUnitTests.swift'), join(output, 'UnitTests', 'NativeAudioUnitTests.swift'))
   copyFileSync(join(fixture, 'HeartRateUnitTests.swift'), join(output, 'UnitTests', 'HeartRateUnitTests.swift'))
