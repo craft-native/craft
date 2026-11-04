@@ -15,13 +15,14 @@ func wait(_ ready: () -> Bool) {
 }
 var latestTask: URLSessionTask?
 var latestErrorCode: String?
-func start(_ address: String, _ done: @escaping (Bool) -> Void) {
+func start(_ source: String, cacheKey: String? = nil, _ done: @escaping (Bool) -> Void) {
+    let address = CraftNativeMedia.identity(source, options: cacheKey.map { ["cacheKey": $0] } ?? [:])
     if let local = CraftNativeMedia.local(address) { done((CraftNativeMedia.describe(address, local)["size"] as? Int ?? 0) > 0); return }
     guard let flight = CraftNativeMedia.begin(address, { result in
         if case .success(let data) = result { done((data as? [String: Any])?["ok"] as? Bool == true) }
         else if case .failure(let error) = result { latestErrorCode = error.code; done(false) }
     }) else { return }
-    let task = URLSession.shared.downloadTask(with: URL(string: address)!) { location, response, error in
+    let task = URLSession.shared.downloadTask(with: URL(string: source)!) { location, response, error in
         let result: Result<Any, CraftNativeActionError>
         if error != nil { result = .failure(CraftNativeActionError(code: "NETWORK_ERROR", message: "Interrupted")) }
         else if let location, let response = response as? HTTPURLResponse { result = CraftNativeMedia.store(address, at: location, response: response, flight: flight) }
@@ -31,9 +32,9 @@ func start(_ address: String, _ done: @escaping (Bool) -> Void) {
     latestTask = task
     task.resume()
 }
-func keep(_ address: String) -> Bool {
+func keep(_ address: String, cacheKey: String? = nil) -> Bool {
     var result: Bool?
-    start(address) { result = $0 }
+    start(address, cacheKey: cacheKey) { result = $0 }
     wait { result != nil }
     return result!
 }
@@ -105,6 +106,19 @@ check(CraftNativeMedia.local(broken) == nil, "truncated transfer is not playable
 check(keep(broken), "same URL retries successfully")
 check(!keep(base + "/partial.mp4"), "unsolicited partial response is refused")
 check(!keep(base + "/empty.mp4"), "empty file is refused")
+let signed = base + "/keyed.mp4?token=first"
+let key = "account:one:lesson:7:version:a"
+check(keep(signed, cacheKey: key), "authorized signed URL downloads under account/version identity")
+let identity = CraftNativeMedia.identity(signed, options: ["cacheKey": key])
+let rotated = CraftNativeMedia.identity(base + "/keyed.mp4?token=second", options: ["cacheKey": key])
+check(identity == rotated && CraftNativeMedia.local(rotated) != nil, "renewing a signed URL reuses the complete cached file offline")
+check(keep(base + "/keyed.mp4?token=second", cacheKey: key), "renewed authorization does not redownload unchanged content")
+check(CraftNativeMedia.local(CraftNativeMedia.identity(signed, options: ["cacheKey": "account:two:lesson:7:version:a"])) == nil, "another account cannot address the private copy")
+check(CraftNativeMedia.local(CraftNativeMedia.identity(signed, options: ["cacheKey": "account:one:lesson:7:version:b"])) == nil, "a new prepared version invalidates the old copy")
+_ = CraftNativeMedia.prune(keep: [rotated])
+check(CraftNativeMedia.local(rotated) != nil, "key-aware prune retains the current authorized source")
+_ = CraftNativeMedia.prune(keep: [])
+check(CraftNativeMedia.local(rotated) == nil, "definitive revocation removes the keyed copy")
 let slow = base + "/slow.mp4"
 var answers = [Bool]()
 start(slow) { answers.append($0) }

@@ -23,10 +23,10 @@ class DownloadProbe : android.app.Instrumentation() {
         proof.append("PASS: ").append(message).append('\n')
         android.util.Log.i("CraftMediaProbe", "PASS: $message")
     }
-    private fun keep(address: String): Boolean {
+    private fun keep(address: String, cacheKey: String? = null): Boolean {
         val done = java.util.concurrent.CountDownLatch(1)
         var ok = false
-        CraftNativeMedia.keep(targetContext, address, JSONObject(), true) {
+        CraftNativeMedia.keep(targetContext, address, JSONObject(), true, cacheKey = cacheKey) {
             latestErrorCode = it.code
             ok = (it.data as? JSONObject)?.optBoolean("ok") == true
             done.countDown()
@@ -113,6 +113,32 @@ class DownloadProbe : android.app.Instrumentation() {
                 }
                 else -> {
                     CraftNativeMedia.prune(targetContext, emptyList())
+                    val queuedKey = "account:one:lesson:8:version:a"
+                    val expired = base + "/queued.mp4?token=expired"
+                    val renewed = base + "/queued.mp4?token=renewed"
+                    val queuedIdentity = CraftNativeMedia.identity(expired, JSONObject().put("cacheKey", queuedKey))
+                    val queuedGeneration = CraftNativeMedia.generation(targetContext)
+                    targetContext.getSharedPreferences("craft.media", Context.MODE_PRIVATE).edit().putString("source:${CraftNativeMedia.digest(queuedIdentity)}", CraftNativeMedia.digest(expired + "\n")).commit()
+                    val queuedWork = androidx.work.OneTimeWorkRequestBuilder<CraftNativeMediaWorker>()
+                        .setInputData(androidx.work.workDataOf("address" to queuedIdentity, "source" to expired, "headers" to "{}", "generation" to queuedGeneration))
+                        .setInitialDelay(1, java.util.concurrent.TimeUnit.DAYS)
+                        .addTag("craft-media:generation:$queuedGeneration")
+                        .build()
+                    androidx.work.WorkManager.getInstance(targetContext).enqueueUniqueWork("craft-media:${CraftNativeMedia.digest(queuedIdentity)}:any", androidx.work.ExistingWorkPolicy.REPLACE, queuedWork).result.get()
+                    check(keep(renewed, queuedKey), "a renewed authorized source replaces expired queued work immediately")
+                    val signed = base + "/keyed.mp4?token=first"
+                    val key = "account:one:lesson:7:version:a"
+                    check(keep(signed, key), "signed URL downloads under an account/version identity")
+                    val identity = CraftNativeMedia.identity(signed, JSONObject().put("cacheKey", key))
+                    val rotated = CraftNativeMedia.identity(base + "/keyed.mp4?token=second", JSONObject().put("cacheKey", key))
+                    check(identity == rotated && CraftNativeMedia.local(targetContext, rotated) != null, "renewed signed URLs reuse the complete copy offline")
+                    check(keep(base + "/keyed.mp4?token=second", key), "renewing authorization does not redownload unchanged content")
+                    check(CraftNativeMedia.local(targetContext, CraftNativeMedia.identity(signed, JSONObject().put("cacheKey", "account:two:lesson:7:version:a"))) == null, "another account cannot address the copy")
+                    check(CraftNativeMedia.local(targetContext, CraftNativeMedia.identity(signed, JSONObject().put("cacheKey", "account:one:lesson:7:version:b"))) == null, "a new version invalidates the copy")
+                    CraftNativeMedia.prune(targetContext, listOf(rotated))
+                    check(CraftNativeMedia.local(targetContext, rotated) != null, "key-aware prune retains the authorized source")
+                    CraftNativeMedia.prune(targetContext, emptyList())
+                    check(CraftNativeMedia.local(targetContext, rotated) == null, "revocation removes the keyed copy")
                     val broken = "$base/broken.mp4"
                     check(!keep(broken), "truncated transfer fails")
                     check(CraftNativeMedia.local(targetContext, broken) == null, "truncated transfer is not playable cache")
