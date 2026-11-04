@@ -415,6 +415,51 @@ final class NativeRenderUITests: XCTestCase {
         }
     }
 
+    func testScrolledAgreementDeliversExactlyOneChangePerConsentTap() {
+        for kind in ["native", "solid"] {
+            let app = XCUIApplication()
+            app.launch()
+            let open = app.buttons["open-agreement-\(kind)"]
+            XCTAssertTrue(open.waitForExistence(timeout: 15))
+            open.tap()
+            let scroll = app.scrollViews["agreement-scroll"]
+            let health = app.descendants(matching: .any).matching(identifier: "agree-health").firstMatch
+            let data = app.descendants(matching: .any).matching(identifier: "agree-data").firstMatch
+            XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+            XCTAssertFalse(scroll.frame.contains(health.frame), "fixture must actually require scrolling")
+            for _ in 0..<4 {
+                if scroll.frame.contains(health.frame) && scroll.frame.contains(data.frame) { break }
+                scroll.swipeUp()
+            }
+            XCTAssertTrue(scroll.frame.contains(health.frame))
+            XCTAssertTrue(scroll.frame.contains(data.frame))
+            XCTAssertTrue(health.isHittable && data.isHittable)
+            XCTAssertEqual(health.value as? String, "0")
+            XCTAssertEqual(data.value as? String, "0")
+            XCTAssertFalse(app.buttons["agreement-continue"].isEnabled)
+            health.tap() // Exactly one physical gesture; never retry a missing change.
+            waitForValue(health, "1", timeout: 1.5)
+            waitForLabel(app.staticTexts["agreement-events"], "Health: 1; Data: 0")
+            XCTAssertEqual(data.value as? String, "0")
+            XCTAssertFalse(app.buttons["agreement-continue"].isEnabled)
+            data.tap()
+            waitForValue(data, "1", timeout: 1.5)
+            waitForLabel(app.staticTexts["agreement-events"], "Health: 1; Data: 1")
+            XCTAssertTrue(app.buttons["agreement-continue"].isEnabled)
+            // A viewport change must neither toggle again nor reset the echo.
+            scroll.swipeDown()
+            scroll.swipeUp()
+            XCTAssertEqual(health.value as? String, "1")
+            XCTAssertEqual(data.value as? String, "1")
+            XCTAssertEqual(app.staticTexts["agreement-events"].label, "Health: 1; Data: 1")
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Scrolled agreement after single taps (\(kind))"
+            shot.lifetime = .keepAlways
+            add(shot)
+            app.terminate()
+        }
+    }
+
     /// A drag that starts on a button scrolls the page, and presses nothing.
     /// UIKit leaves a touch with the control it began on unless the scroll
     /// view cancels it, so on a page made of buttons - a trail page's map

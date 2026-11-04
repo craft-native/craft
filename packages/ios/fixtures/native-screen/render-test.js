@@ -11,6 +11,10 @@
   let revision = 0
   let pagerMode = false
   let solidMode = false
+  let agreementMode = false
+  let agreementSolid = false
+  const agreementValues = { health: false, data: false }
+  const agreementChanges = { health: 0, data: 0 }
   let solidChanges = 0
   let pageIndex = 0
   let checkpointMode = false
@@ -85,7 +89,29 @@
     }))
   }
 
+  function renderAgreement() {
+    globalThis.craftNativePostMessage(JSON.stringify({
+      id: `render-${++nextMessage}`, type: 'RENDER',
+      payload: { document: { type: 'View', style: { padding: 16 }, children: [
+        { type: 'ScrollView', props: { key: 'agreement-scroll' }, style: { height: 420 }, children: [
+          { type: 'Text', props: { key: 'agreement-heading' }, children: ['Before you continue'] },
+          { type: 'View', style: { height: 500 }, children: [{ type: 'Text', children: ['Read the health and data policies before confirming.'] }] },
+          { type: 'View', style: { overflow: 'hidden', borderRadius: 10 }, children: [
+            ...['health', 'data'].map(kind => ({ type: 'View', style: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 16 }, children: [
+              { type: 'Text', style: { flex: 1 }, children: [`I accept the ${kind} policy`] },
+              { id: `agree-${kind}`, type: 'Switch', props: { key: `agree-${kind}`, ios_solid: agreementSolid, value: false, accessibilityLabel: `${kind} consent` },
+                events: { onValueChange: `agree-${kind}` } },
+            ] })),
+          ] },
+          { id: 'agreement-events', type: 'Text', props: { key: 'agreement-events' }, children: ['Health: 0; Data: 0'] },
+          { id: 'agreement-continue', type: 'Button', props: { key: 'agreement-continue', disabled: true }, children: ['Continue'] },
+        ] },
+      ] } },
+    }))
+  }
+
   function render() {
+    if (agreementMode) { renderAgreement(); return }
     if (pickerMode) {
       globalThis.craftNativePostMessage(JSON.stringify({
         id: `render-${++nextMessage}`, type: 'RENDER',
@@ -168,7 +194,10 @@
             { id: 'native-switch', type: 'Switch', props: { key: 'native-switch', value: false }, events: { onValueChange: 'changeSwitch' } },
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
-            { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
+            { type: 'View', style: { flexDirection: 'row' }, children: [
+              { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
+              ...['native', 'solid'].map(kind => ({ type: 'Button', props: { key: `open-agreement-${kind}` }, events: { onPress: `open-agreement-${kind}` }, children: [`Agree ${kind}`] })),
+            ] },
             { type: 'Button', props: { key: 'open-checkpoint' }, events: { onPress: 'openCheckpoint' }, children: ['Checkpoint recovery'] },
             { type: 'Button', props: { key: 'open-picker' }, events: { onPress: 'openPicker' }, children: ['Document picker lifecycle'] },
           ],
@@ -198,6 +227,23 @@
       )
     }
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName.startsWith('open-agreement-')) {
+      agreementMode = true
+      agreementSolid = message.payload.handlerName.endsWith('-solid')
+      render()
+      return
+    }
+    if (['agree-health', 'agree-data'].includes(message.payload.handlerName)) {
+      const kind = message.payload.handlerName.slice(6)
+      agreementValues[kind] = message.payload.nativeEvent.value === true
+      agreementChanges[kind] += 1
+      mutate([
+        { op: 'updateNode', id: `agree-${kind}`, patch: { props: { value: agreementValues[kind] } } },
+        { op: 'updateNode', id: 'agreement-events', patch: { children: [`Health: ${agreementChanges.health}; Data: ${agreementChanges.data}`] } },
+        { op: 'updateNode', id: 'agreement-continue', patch: { props: { disabled: !(agreementValues.health && agreementValues.data) } } },
+      ])
+      return
+    }
     if (message.payload.handlerName === 'openPicker') { pickerMode = true; render(); return }
     if (message.payload.handlerName.startsWith('pick-')) {
       pickerInterruption = null

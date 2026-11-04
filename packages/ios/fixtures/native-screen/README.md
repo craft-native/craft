@@ -61,3 +61,18 @@ observes the value change for the existing 1.5-second bound, then fails if the
 value stayed unchanged. It does not repeat the gesture: doing so could hide a
 control-event or hit-testing defect. The scrolling Switch fixture likewise
 checks a single tap. See https://github.com/craft-native/craft/issues/449.
+
+`testScrolledAgreementDeliversExactlyOneChangePerConsentTap` models the agreement
+screen's clipped card, flexible labels, two independent consent switches and
+controlled Continue button. It first scrolls both controls fully into the native
+viewport, then performs exactly one tap on each, counts delivered events and
+checks that scrolling again preserves both values. It exercises UIKit and solid
+switches with the driver's existing 1.5-second value-change bound. A pass proves
+this representative host path, not the cause of HQ's original job 7570 failure;
+that original acceptance recording and result bundle remain separate evidence.
+
+The generated UIKit test target also compiles the shipped `DriverTests` template.
+Its `testScript` performs the same `scrollto agree-health` / `tapid agree-health`
+then data-consent sequence as HQ, for both native and solid switches. The final
+counter must be exactly one event for each switch; a second physical tap cannot
+make that assertion pass. This uses the public driver implementation unchanged.

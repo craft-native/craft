@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 import { nativeTestResultBundle } from './native-test-result'
+import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const cliArgs = process.argv.slice(2)
@@ -69,6 +70,28 @@ try {
   copyFileSync(join(fixture, 'ScriptThreadUnitTests.swift'), join(output, 'UnitTests', 'ScriptThreadUnitTests.swift'))
   copyFileSync(join(fixture, 'KeychainUnitTests.swift'), join(output, 'UnitTests', 'KeychainUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeRenderUITests.swift'), join(output, 'UITests', 'NativeRenderUITests.swift'))
+  // Exercise the shipped journey driver against the real renderer, including
+  // its viewport-aware scrollto and single-gesture tapid acceptance (#449).
+  const agreementDriver = join(workspace, 'agreement-driver')
+  initSimulatorDriver({
+    output: agreementDriver, projectName: 'AgreementDriver', bundleId: 'dev.craft.native-render',
+    bundleIdPrefix: 'dev.craft.agreement-driver',
+    script: serializeSimulatorSteps(['native', 'solid'].flatMap(kind => [
+      { command: 'launch' as const },
+      { command: 'tapid' as const, text: `open-agreement-${kind}` },
+      { command: 'scrollto' as const, text: 'agree-health' },
+      { command: 'tapid' as const, text: 'agree-health' },
+      { command: 'valueid' as const, id: 'agree-health', text: '1' },
+      { command: 'valueid' as const, id: 'agree-data', text: '0' },
+      { command: 'scrollto' as const, text: 'agree-data' },
+      { command: 'tapid' as const, text: 'agree-data' },
+      { command: 'valueid' as const, id: 'agree-data', text: '1' },
+      { command: 'valueid' as const, id: 'agree-health', text: '1' },
+      { command: 'labelid' as const, id: 'agreement-events', text: 'Health: 1; Data: 1' },
+    ])),
+  })
+  for (const source of ['DriverTests.swift', 'CraftTimedInput.h', 'CraftTimedInput.m', 'journey.txt'])
+    copyFileSync(join(agreementDriver, 'UITests', source), join(output, 'UITests', source))
   const project = join(output, 'project.yml')
   const projectWithTargets = insertProjectTargetsBeforeSchemes(readFileSync(project, 'utf8'), `
   NativeRenderUnitTests:
@@ -88,12 +111,14 @@ try {
   NativeRenderUITests:
     type: bundle.ui-testing
     platform: iOS
+    deploymentTarget: "17.0"
     sources:
       - UITests
     dependencies:
       - target: NativeRender
     settings:
       TEST_TARGET_NAME: NativeRender
+      SWIFT_OBJC_BRIDGING_HEADER: UITests/CraftTimedInput.h
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_NAME: "$(TARGET_NAME)"
       PRODUCT_BUNDLE_IDENTIFIER: dev.craft.native-render.uitests
