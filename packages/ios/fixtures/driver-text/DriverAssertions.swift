@@ -1,6 +1,22 @@
 import XCTest
 
 extension DriverTests {
+    private func retainFocusEvidence(_ name: String, immediateValue: String?) -> [[String: Any]] {
+        let evidence = identified("focus-evidence").value as? String ?? "missing focus evidence"
+        let receipt = "Immediate accessibility value: \(String(describing: immediateValue))\n\(evidence)"
+        print("FOCUS_EVIDENCE \(name) \(receipt)")
+        let attachment = XCTAttachment(string: receipt + "\n" + app.debugDescription)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        guard let data = evidence.data(using: .utf8),
+              let events = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            XCTFail("Missing native focus event receipt")
+            return []
+        }
+        return events
+    }
+
     func testUnresponsiveSwitchesFailAcceptance() {
         bundledJourney = true
         app.launch()
@@ -69,7 +85,15 @@ extension DriverTests {
         XCTAssertTrue(identified("delayed-field").waitForExistence(timeout: 10))
         run("tap Delayed field")
         run("type Grüße")
-        XCTAssertEqual(identified("delayed-field").value as? String, "Grüße")
+        let immediateValue = identified("delayed-field").value as? String
+        // typeText returning does not make the cross-process accessibility
+        // value atomic: a cold run observed "Gr" while UIKit received "Grüße".
+        // Observe completion without sending another gesture or text payload.
+        run("valueid delayed-field Grüße")
+        let events = retainFocusEvidence("native-focus-after-type", immediateValue: immediateValue)
+        let edits = events.filter { $0["event"] as? String == "editingChanged" }
+        XCTAssertEqual(edits.last?["text"] as? String, "Grüße")
+        XCTAssertTrue(edits.allSatisfy { $0["focused"] as? Bool == true })
         run("tap Card number")
         run("type 4242424242424242")
         run("expect Entered: 4242424242424242 | 10")
@@ -83,5 +107,27 @@ extension DriverTests {
         XCTAssertFalse(hasKeyboardFocus(identified("refused-field")))
         XCTAssertEqual(identified("refused-field").value as? String ?? "", "")
         app.terminate()
+
+        // A field can hold focus and receive the keyboard events while its
+        // delegate rejects the text. The bounded value check must still fail.
+        app.launchArguments = ["browser-focus", "discard-input"]
+        app.launch()
+        XCTAssertTrue(identified("delayed-field").waitForExistence(timeout: 10))
+        run("tap Delayed field")
+        run("type Grüße")
+        XCTAssertTrue(hasKeyboardFocus(identified("delayed-field")))
+        let rejectedValue = identified("delayed-field").value as? String
+        let rejected = XCTExpectedFailure.Options()
+        rejected.isStrict = true
+        rejected.issueMatcher = { $0.compactDescription.contains("valueid delayed-field Grüße") }
+        XCTExpectFailure("Focused input rejection must fail value acceptance", options: rejected) {
+            run("valueid delayed-field Grüße")
+        }
+        let rejectedEvents = retainFocusEvidence("native-rejected-input", immediateValue: rejectedValue)
+        let rejectedEdits = rejectedEvents.filter { $0["event"] as? String == "rejectedChange" }
+        XCTAssertFalse(rejectedEdits.isEmpty)
+        XCTAssertTrue(rejectedEdits.allSatisfy { $0["focused"] as? Bool == true })
+        XCTAssertFalse(rejectedEvents.contains { $0["event"] as? String == "editingChanged" })
+        XCTAssertEqual(identified("delayed-field").value as? String ?? "", "")
     }
 }
