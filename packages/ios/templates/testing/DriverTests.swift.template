@@ -312,7 +312,8 @@ final class DriverTests: XCTestCase {
     /// of the accessibility element type that XCTest assigns to them.
     func switchFlipped(from before: String?, to after: String?) -> Bool {
         let states: Set<String> = ["0", "1"]
-        guard let before, let after, states.contains(before), states.contains(after) else { return true }
+        // A lost accessibility value is missing evidence, not a successful tap.
+        guard let before, let after, states.contains(before), states.contains(after) else { return false }
         return before != after
     }
 

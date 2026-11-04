@@ -24,9 +24,13 @@ ${template.slice(start, end)}
 precondition(!switchFlipped(from: "0", to: "0"))
 precondition(switchFlipped(from: "0", to: "1"))
 precondition(switchFlipped(from: "1", to: "0"))
-// Not a switch state: nothing to wait for.
-precondition(switchFlipped(from: nil, to: "1"))
-precondition(switchFlipped(from: "On", to: "On"))
+// Missing/non-Boolean evidence cannot prove a flip, even if a tap was delivered.
+for before in [nil, "", "On", "unknown", "0", "1"] as [String?] {
+    for after in [nil, "", "On", "unknown", "0", "1"] as [String?] {
+        let expected = (before == "0" && after == "1") || (before == "1" && after == "0")
+        precondition(switchFlipped(from: before, to: after) == expected)
+    }
+}
 print("driver switch tap passed")
 `)
     const child = Bun.spawn(['swift', source], { stdout: 'pipe', stderr: 'pipe' })

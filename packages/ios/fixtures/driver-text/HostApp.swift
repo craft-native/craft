@@ -7,11 +7,53 @@ final class DriverTextHost: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = ProcessInfo.processInfo.arguments.contains("browser-focus")
-            ? DriverBrowserFocusController() : DriverTextController()
+        if ProcessInfo.processInfo.arguments.contains("browser-focus") {
+            window.rootViewController = DriverBrowserFocusController()
+        } else if ProcessInfo.processInfo.arguments.contains("invalid-toggle-evidence") {
+            window.rootViewController = DriverToggleEvidenceController()
+        } else {
+            window.rootViewController = DriverTextController()
+        }
         window.makeKeyAndVisible()
         self.window = window
         return true
+    }
+}
+
+/// Enabled buttons receive the gesture but stop reporting a Boolean value.
+/// Their independent action counters distinguish missing evidence from a lost tap.
+final class DriverToggleEvidenceController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (id, after) in [("missing-value", nil), ("unknown-value", "unavailable"), ("valid-value", "1")] as [(String, String?)] {
+            let button = UIButton(type: .system)
+            button.setTitle(id, for: .normal)
+            button.accessibilityIdentifier = id
+            button.accessibilityValue = "0"
+            let counter = UILabel()
+            counter.accessibilityIdentifier = "\(id)-count"
+            counter.text = "Taps: 0"
+            var taps = 0
+            button.addAction(UIAction { [weak button, weak counter] _ in
+                taps += 1
+                button?.accessibilityValue = after
+                counter?.text = "Taps: \(taps)"
+            }, for: .touchUpInside)
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            stack.addArrangedSubview(button)
+            stack.addArrangedSubview(counter)
+        }
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+        ])
     }
 }
 
