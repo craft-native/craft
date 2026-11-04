@@ -1,34 +1,37 @@
 /** Constraints on decoded named path parameters; query items cannot override them. */
 export interface NativeParameterConstraint {
-  /** A regular expression that must match the complete value. */
+  /** A case-sensitive regular expression for the complete normalized value. */
   pattern?: string
   exclude?: readonly string[]
-  ignoreCase?: boolean
+  /** Normalize decoded values and exclusions before case-sensitive grammar validation. */
+  normalize?: 'lowercase'
 }
 
 export type NativeRouteConstraints = Record<string, Record<string, NativeParameterConstraint>>
 
-export function nativeParametersAllowed(params: Record<string, string>, rules?: Record<string, NativeParameterConstraint>): boolean {
+/** Validate and normalize the decoded parameter map before query binding. */
+export function applyNativeParameterConstraints(params: Record<string, string>, rules?: Record<string, NativeParameterConstraint>): boolean {
   if (rules === undefined) return true
   if (!rules || typeof rules !== 'object' || Array.isArray(rules)) return false
   for (const [name, rule] of Object.entries(rules)) {
-    const value = params[name]
+    let value = params[name]
     if (typeof value !== 'string' || !rule || typeof rule !== 'object' || Array.isArray(rule)) return false
-    if (Object.keys(rule).some(key => !['pattern', 'exclude', 'ignoreCase'].includes(key))) return false
-    if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') return false
+    if (Object.keys(rule).some(key => !['pattern', 'exclude', 'normalize'].includes(key))) return false
+    if (rule.normalize !== undefined && rule.normalize !== 'lowercase') return false
+    if (rule.normalize === 'lowercase') value = value.toLowerCase()
     if (rule.exclude !== undefined) {
       if (!Array.isArray(rule.exclude) || rule.exclude.some(item => typeof item !== 'string')) return false
-      const folded = rule.ignoreCase ? value.toLowerCase() : value
-      if (rule.exclude.some(item => (rule.ignoreCase ? item.toLowerCase() : item) === folded)) return false
+      if (rule.exclude.some(item => (rule.normalize === 'lowercase' ? item.toLowerCase() : item) === value)) return false
     }
     if (rule.pattern !== undefined) {
       if (typeof rule.pattern !== 'string') return false
       try {
-        const matched = new RegExp(`^(?:${rule.pattern})$`, rule.ignoreCase ? 'i' : '').exec(value)
+        const matched = new RegExp(`^(?:${rule.pattern})$`).exec(value)
         if (!matched || matched[0] !== value) return false
       }
       catch { return false }
     }
+    params[name] = value
   }
   return true
 }
@@ -46,13 +49,13 @@ export function nativeRouteConstraintProblems(screens?: Record<string, string>, 
       const field = `${prefix}[${JSON.stringify(name)}]`
       if (!names.includes(name)) problems.push(`${field} names no path parameter.`)
       if (!rule || typeof rule !== 'object' || Array.isArray(rule)) { problems.push(`${field} must be a parameter constraint.`); continue }
-      if (Object.keys(rule).some(key => !['pattern', 'exclude', 'ignoreCase'].includes(key))) problems.push(`${field} has an unknown constraint field.`)
+      if (Object.keys(rule).some(key => !['pattern', 'exclude', 'normalize'].includes(key))) problems.push(`${field} has an unknown constraint field.`)
       if (rule.exclude !== undefined && (!Array.isArray(rule.exclude) || rule.exclude.some(value => typeof value !== 'string'))) problems.push(`${field}.exclude must contain strings.`)
-      if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') problems.push(`${field}.ignoreCase must be a boolean.`)
+      if (rule.normalize !== undefined && rule.normalize !== 'lowercase') problems.push(`${field}.normalize must be lowercase.`)
       if (rule.pattern !== undefined) {
         try {
           if (typeof rule.pattern !== 'string') throw new Error('not a string')
-          new RegExp(`^(?:${rule.pattern})$`, rule.ignoreCase ? 'i' : '')
+          new RegExp(`^(?:${rule.pattern})$`)
         }
         catch { problems.push(`${field}.pattern must be a valid regular expression.`) }
       }
@@ -129,7 +132,7 @@ export function matchNativePath(nativeScreens: Record<string, string> | undefine
     }
     if (!matched) continue
     if (route.segments.at(-1) !== '*' && route.segments.length !== parts.length) continue
-    if (!nativeParametersAllowed(params, constraints?.[route.key])) continue
+    if (!applyNativeParameterConstraints(params, constraints?.[route.key])) continue
     const query = raw.indexOf('?')
     if (query >= 0) {
       for (const item of raw.slice(query + 1).split('#')[0]!.split('&')) {

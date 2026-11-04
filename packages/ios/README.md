@@ -1433,14 +1433,17 @@ website pages. Rules use the exact `nativeScreens` route key and named parameter
 nativeScreens: { '/:username': 'Profile', '/me': 'Account' },
 nativeScreenConstraints: {
   '/:username': {
-    username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy'], ignoreCase: true },
+    username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy'], normalize: 'lowercase' },
   },
 },
 ```
 
-Patterns match the complete decoded value. Use regular expressions supported by
-JavaScript, Foundation and Kotlin; invalid patterns fail closed. Exclusions use
-`ignoreCase` too. Constraints run before query parameters are added, so a query
+Patterns match the complete decoded value case-sensitively. Optional
+`normalize: 'lowercase'` lowercases decoded parameters and excluded values before
+validation, independently of the device locale; matched parameters carry that
+normalized value. This avoids the incompatible Unicode case-folding behavior of
+regex engines. Use regular expressions supported by JavaScript, Foundation and
+Kotlin; invalid patterns fail closed. Constraints run before query parameters are added, so a query
 cannot replace a path parameter. Static routes still win. Unmatched paths retain
 the shell's normal website fallback. Invalid configuration is rejected when the
 project is generated. The browser-safe `craft-native/mobile` entry exports

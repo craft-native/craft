@@ -46,21 +46,28 @@ const CASES: Array<[string, [string, Record<string, string>] | null]> = [
   ['', null],
 ]
 
-const PROFILE_TABLE = { '/:username': 'Profile', '/me': 'Account', '/fold/:username': 'Profile' }
+const PROFILE_TABLE = { '/:username': 'Profile', '/me': 'Account', '/fold/:username': 'Profile', '/strict/:username': 'Profile', '/sharp/:username': 'Profile' }
 const PROFILE_CONSTRAINTS: NativeRouteConstraints = {
-  '/:username': { username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'privacy', 'health-safety'], ignoreCase: true } },
-  '/fold/:username': { username: { exclude: ['i', 'σ'], ignoreCase: true } },
+  '/:username': { username: { pattern: '[a-z0-9]+(?:-[a-z0-9]+)*', exclude: ['terms', 'Privacy', 'health-safety'], normalize: 'lowercase' } },
+  '/fold/:username': { username: { exclude: ['I', 'Σ'], normalize: 'lowercase' } },
+  '/strict/:username': { username: { pattern: '[a-z]+' } },
+  '/sharp/:username': { username: { pattern: 'ss', normalize: 'lowercase' } },
 }
 const PROFILE_CASES: Array<[string, [string, Record<string, string>] | null]> = [
   ['/terms', null], ['/TERMS?username=ava', null], ['/%74erms', null],
   ['/privacy', null], ['/health-safety', null], ['/-invalid', null],
   ['/ava%2Fsmith', null], ['/ava%0A', null], ['/ava_smith', null],
   ['/ava-smith', ['Profile', { username: 'ava-smith' }]],
-  ['/AVA?username=terms&view=week', ['Profile', { username: 'AVA', view: 'week' }]],
+  ['/AVA?username=terms&view=week', ['Profile', { username: 'ava', view: 'week' }]],
   ['/me', ['Account', {}]],
+  ['/ſ', null], ['/ß', null], ['/İ', null], ['/ı', null],
+  ['/K', ['Profile', { username: 'k' }]],
+  ['/strict/AVA', null], ['/strict/ſ', null], ['/strict/K', null],
+  ['/strict/ava', ['Profile', { username: 'ava' }]],
+  ['/sharp/ß', null], ['/sharp/SS', ['Profile', { username: 'ss' }]],
   ['/fold/i', null], ['/fold/I', null], ['/fold/%CF%83', null], ['/fold/%CE%A3', null],
   ['/fold/%C4%B1', ['Profile', { username: 'ı' }]],
-  ['/fold/%C4%B0', ['Profile', { username: 'İ' }]],
+  ['/fold/%C4%B0', ['Profile', { username: 'i̇' }]],
   ['/fold/%CF%82', ['Profile', { username: 'ς' }]],
 ]
 
@@ -196,7 +203,7 @@ describe('hybrid page script', () => {
   })
 
   it('keeps malformed parameter constraints outside the page route', () => {
-    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { ignoreCase: 'yes' }, { unknown: true }, []]) {
+    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { normalize: 'uppercase' }, { normalize: true }, { normalize: null }, { ignoreCase: true }, { unknown: true }, []]) {
       const page = loadPage({ routes: PROFILE_TABLE, constraints: { '/:username': { username: rule } } as NativeRouteConstraints })
       expect(page.window.__craftHybrid.match('/ava')).toBeNull()
     }
@@ -453,7 +460,7 @@ describe('hybrid paths in typescript', () => {
   })
 
   it('rejects malformed constraints instead of accepting broader routes', () => {
-    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { ignoreCase: 'yes' }, { unknown: true }, []]) {
+    for (const rule of [{ pattern: '[' }, { pattern: 1 }, { exclude: [1] }, { normalize: 'uppercase' }, { normalize: true }, { normalize: null }, { ignoreCase: true }, { unknown: true }, []]) {
       const constraints = { '/:username': { username: rule } } as NativeRouteConstraints
       expect(hybridConfigProblems({ nativeScreens: PROFILE_TABLE, nativeScreenConstraints: constraints }).length).toBeGreaterThan(0)
       expect(matchNativePath(PROFILE_TABLE, '/ava', constraints)).toBeNull()

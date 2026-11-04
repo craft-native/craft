@@ -48,9 +48,9 @@ struct CraftHybridRoutes {
     struct ParameterConstraint: Codable {
         var pattern: String? = nil
         var exclude: [String]? = nil
-        var ignoreCase: Bool? = nil
+        var normalize: String? = nil
 
-        private enum CodingKeys: String, CodingKey { case pattern, exclude, ignoreCase }
+        private enum CodingKeys: String, CodingKey { case pattern, exclude, normalize }
         private struct Field: CodingKey {
             let stringValue: String
             let intValue: Int? = nil
@@ -60,20 +60,27 @@ struct CraftHybridRoutes {
 
         init(from decoder: Decoder) throws {
             let fields = try decoder.container(keyedBy: Field.self)
-            guard fields.allKeys.allSatisfy({ ["pattern", "exclude", "ignoreCase"].contains($0.stringValue) }) else {
+            guard fields.allKeys.allSatisfy({ ["pattern", "exclude", "normalize"].contains($0.stringValue) }) else {
                 throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown native path parameter constraint"))
             }
             let values = try decoder.container(keyedBy: CodingKeys.self)
             pattern = values.contains(.pattern) ? try values.decode(String.self, forKey: .pattern) : nil
             exclude = values.contains(.exclude) ? try values.decode([String].self, forKey: .exclude) : nil
-            ignoreCase = values.contains(.ignoreCase) ? try values.decode(Bool.self, forKey: .ignoreCase) : nil
+            normalize = values.contains(.normalize) ? try values.decode(String.self, forKey: .normalize) : nil
+            guard normalize == nil || normalize == "lowercase" else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown native path parameter normalization"))
+            }
         }
 
-        func accepts(_ value: String) -> Bool {
-            if (exclude ?? []).contains(where: { ignoreCase == true ? $0.lowercased() == value.lowercased() : $0 == value }) { return false }
+        func normalized(_ value: String) -> String { normalize == "lowercase" ? value.lowercased() : value }
+
+        func accepts(_ raw: String) -> Bool {
+            guard normalize == nil || normalize == "lowercase" else { return false }
+            let value = normalized(raw)
+            if (exclude ?? []).contains(where: { normalized($0) == value }) { return false }
             if let pattern {
                 let range = NSRange(value.startIndex..<value.endIndex, in: value)
-                guard let expression = try? NSRegularExpression(pattern: "^(?:\(pattern))$", options: ignoreCase == true ? [.caseInsensitive] : []),
+                guard let expression = try? NSRegularExpression(pattern: "^(?:\(pattern))$"),
                       expression.firstMatch(in: value, range: range)?.range == range else { return false }
             }
             return true
@@ -137,6 +144,7 @@ struct CraftHybridRoutes {
         for route in routes {
             guard var params = Self.bind(route.segments, to: parts) else { continue }
             guard route.constraints.allSatisfy({ name, rule in params[name].map(rule.accepts) ?? false }) else { continue }
+            for (name, rule) in route.constraints { params[name] = params[name].map(rule.normalized) }
             if let query = raw.firstIndex(of: "?") {
                 let rest = raw[raw.index(after: query)...].split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
                 for item in rest.split(separator: "&") {
@@ -608,17 +616,19 @@ final class CraftHybrid: NSObject {
           var accepted = Object.keys(rules).every(function (name) {
             var rule = table[i].constraints[name], value = params[name];
             if (!rule || typeof rule !== 'object' || Array.isArray(rule) || typeof value !== 'string') return false;
-            if (Object.keys(rule).some(function (key) { return ['pattern', 'exclude', 'ignoreCase'].indexOf(key) < 0; })) return false;
-            if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') return false;
+            if (Object.keys(rule).some(function (key) { return ['pattern', 'exclude', 'normalize'].indexOf(key) < 0; })) return false;
+            if (rule.normalize !== undefined && rule.normalize !== 'lowercase') return false;
+            if (rule.normalize === 'lowercase') value = value.toLowerCase();
             if (rule.exclude !== undefined) {
               if (!Array.isArray(rule.exclude) || rule.exclude.some(function (item) { return typeof item !== 'string'; })) return false;
-              if (rule.exclude.some(function (item) { return rule.ignoreCase ? item.toLowerCase() === value.toLowerCase() : item === value; })) return false;
+              if (rule.exclude.some(function (item) { return (rule.normalize === 'lowercase' ? item.toLowerCase() : item) === value; })) return false;
             }
             if (rule.pattern !== undefined) {
               if (typeof rule.pattern !== 'string') return false;
-              try { var found = new RegExp('^(?:' + rule.pattern + ')$', rule.ignoreCase ? 'i' : '').exec(value); if (!found || found[0] !== value) return false; }
+              try { var found = new RegExp('^(?:' + rule.pattern + ')$').exec(value); if (!found || found[0] !== value) return false; }
               catch (e) { return false; }
             }
+            params[name] = value;
             return true;
           });
           if (!accepted) continue;
