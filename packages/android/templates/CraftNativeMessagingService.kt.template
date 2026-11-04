@@ -1,14 +1,5 @@
 package {{PACKAGE_NAME}}
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Context
-import android.content.Intent
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject
@@ -41,6 +32,10 @@ class CraftNativeMessagingService : FirebaseMessagingService() {
         if (notification == null) {
             if (message.data["content-available"] == "1" || message.data["contentAvailable"] == "true") {
                 CraftNativeBackground.runOnce(applicationContext, "craftSilentPush")
+            } else if (!message.data["categoryId"].isNullOrBlank()) {
+                // Use a data-only FCM payload for background action buttons;
+                // FCM owns notifications with a notification block itself.
+                show(message.data["title"].orEmpty(), message.data["body"].orEmpty(), message.data)
             }
             return
         }
@@ -49,26 +44,10 @@ class CraftNativeMessagingService : FirebaseMessagingService() {
     }
 
     private fun show(title: String, body: String, data: Map<String, String>) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(CHANNEL) == null) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL, applicationInfo.loadLabel(packageManager), NotificationManager.IMPORTANCE_DEFAULT))
-        }
-        val open = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra("craft.notification", true)
-        data.forEach { (key, value) -> open.putExtra(key, value) }
-        val id = (data["notification_id"]?.toIntOrNull() ?: System.currentTimeMillis().toInt())
-        val tap = PendingIntent.getActivity(this, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val built = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.craft_notification_icon)
-            .setColor(ContextCompat.getColor(this, R.color.craft_notification_color))
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
-            .setContentIntent(tap)
-            .build()
-        runCatching { NotificationManagerCompat.from(this).notify(id, built) }
+        val value = JSONObject().put("title", title).put("body", body).put("data", JSONObject(data))
+        for (key in listOf("categoryId", "threadIdentifier", "interruptionLevel")) data[key]?.let { value.put(key, it) }
+        val id = data["notification_id"] ?: java.util.UUID.randomUUID().toString()
+        CraftNativeNotifications.show(this, value, id, CHANNEL)
     }
 
     companion object {

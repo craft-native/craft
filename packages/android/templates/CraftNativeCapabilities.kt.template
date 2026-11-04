@@ -1297,6 +1297,7 @@ internal class CraftNativeCapabilities(
             }
             "cancelAll" -> {
                 notificationStorage.all.keys.forEach(::cancelNotification)
+                CraftNativeNotifications.revoke(context)
                 (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
                 complete(requestToken, success(true), completion)
             }
@@ -1317,6 +1318,7 @@ internal class CraftNativeCapabilities(
     private fun schedule(value: JSONObject?): CraftNativeCapabilityResult {
         val title = value?.optString("title").orEmpty()
         if (title.isEmpty()) return failure("INVALID_ARGUMENT", "Notifications.schedule needs a title")
+        CraftNativeNotifications.invalidOptions(value!!)?.let { return failure("INVALID_ARGUMENT", it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return failure("PERMISSION_DENIED", "Notification permission denied")
@@ -1347,6 +1349,7 @@ internal class CraftNativeCapabilities(
     }
 
     private fun cancelNotification(id: String) {
+        CraftNativeNotifications.revoke(context, id)
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = notificationIntent(id)
         alarm.cancel(intent)

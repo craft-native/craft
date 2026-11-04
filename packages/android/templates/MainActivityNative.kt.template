@@ -4842,7 +4842,9 @@ class MainActivity : AppCompatActivity() {
         initialDeepLink = savedInstanceState?.getString("craft.initialDeepLink")?.let(Uri::parse) ?: intent?.data
         initialDeepLinkClaimed = savedInstanceState?.getBoolean("craft.initialDeepLinkClaimed", false) ?: false
         deliveredInitialDeepLink = savedInstanceState?.getBoolean("craft.deliveredInitialDeepLink", false) ?: false
-        if (savedInstanceState == null) pendingNotificationTap = notificationTap(intent)
+        if (savedInstanceState == null && !CraftNativeNotifications.receiveAction(this, intent)) {
+            pendingNotificationTap = notificationTap(intent)
+        }
         setContentView(R.layout.activity_main)
         root = findViewById(R.id.native_root)
         root.foreground = navigationBarProtection
@@ -8583,7 +8585,8 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        notificationTap(intent)?.let { tap ->
+        val notificationAction = CraftNativeNotifications.receiveAction(this, intent)
+        (if (notificationAction) null else notificationTap(intent))?.let { tap ->
             val app = appScreen
             if (app != null && app.active) send(app, "CRAFT_EVENT", JSONObject().put("event", "craftNotificationResponse").put("detail", tap))
             else pendingNotificationTap = tap
@@ -8607,6 +8610,9 @@ class MainActivity : AppCompatActivity() {
     private fun notificationTap(intent: Intent?): JSONObject? {
         val extras = intent?.extras ?: return null
         if (!extras.containsKey("google.message_id") && !extras.containsKey("craft.notification")) return null
+        extras.getString("craft.notification.data")?.let { raw ->
+            return runCatching { JSONObject(raw) }.getOrNull()
+        }
         val detail = JSONObject()
         extras.keySet().forEach { key ->
             if (key.startsWith("google.") || key.startsWith("gcm.") || key == "from" || key == "collapse_key" || key == "craft.notification") return@forEach

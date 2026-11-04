@@ -209,7 +209,7 @@ describe('Craft Android builder', () => {
       // A background refresh has no activity: the capabilities take a Context.
       expect(nativeCapabilities).toContain('private val activity: MainActivity? get() = context as? MainActivity')
       expect(notificationReceiver).toContain('internal class CraftNativeNotificationReceiver : BroadcastReceiver()')
-      expect(notificationReceiver).toContain('manager.notify(id, 0, notification)')
+      expect(notificationReceiver).toContain('manager.notify(id, 0, notification.build())')
       expect(readFileSync(join(native, 'app/src/main/AndroidManifest.xml'), 'utf8'))
         .toContain('<receiver android:name=".CraftNativeNotificationReceiver" android:exported="false" />')
       expect(readFileSync(join(web, 'app/src/main/AndroidManifest.xml'), 'utf8'))
@@ -1882,7 +1882,8 @@ describe('Craft Android builder', () => {
       'app/src/main/java/dev/craft/glyph/CraftNativeNotificationReceiver.kt',
       'app/src/main/java/com/craft/runtime/LocationRecordingService.kt',
     ].map(path => readFileSync(join(defaults, path), 'utf8'))
-    for (const source of builders) {
+    expect(builders[0]).toContain('CraftNativeNotifications.show(this, value, id, CHANNEL)')
+    for (const source of builders.slice(1)) {
       expect(source).toContain('.setSmallIcon(R.drawable.craft_notification_icon)')
       expect(source).toContain('R.color.craft_notification_color')
       expect(source).not.toMatch(/setSmallIcon\((applicationInfo\.icon|android\.R\.drawable)/)

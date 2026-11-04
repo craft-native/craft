@@ -15,30 +15,172 @@ import org.json.JSONObject
 /** Delivers native-runtime notifications even when the app process has exited. */
 internal class CraftNativeNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        intent.getStringExtra("craft.dismissedId")?.let { CraftNativeNotifications.revoke(context, it); return }
+        if (intent.hasExtra("craft.actionToken")) {
+            val pending = goAsync()
+            CraftNativeNotifications.receiveAction(context, intent) { pending.finish() }
+            return
+        }
         val id = intent.getStringExtra("id").orEmpty()
         if (id.isEmpty()) return
         val storage = context.getSharedPreferences("craft-native-notifications", Context.MODE_PRIVATE)
         val value = storage.getString(id, null)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
         storage.edit().remove(id).commit()
+        CraftNativeNotifications.show(context, value, id, "craft_notifications")
+    }
+}
+
+/** Shared by scheduled locals and app-rendered FCM data messages. */
+internal object CraftNativeNotifications {
+    private const val REPLY = "craft.reply"
+
+    private fun config(context: Context): JSONObject = runCatching {
+        context.assets.open("craft.config.json").bufferedReader().use { JSONObject(it.readText()) }
+    }.getOrDefault(JSONObject())
+
+    internal fun actions(config: JSONObject, categoryId: String): List<JSONObject> {
+        val categories = config.optJSONArray("notificationCategories") ?: return emptyList()
+        for (index in 0 until categories.length()) {
+            val category = categories.optJSONObject(index) ?: continue
+            if (category.optString("id") != categoryId) continue
+            val entries = category.optJSONArray("actions") ?: return emptyList()
+            return (0 until entries.length()).mapNotNull { entries.optJSONObject(it) }
+        }
+        return emptyList()
+    }
+
+    internal fun actionDetail(config: JSONObject, value: JSONObject, actionId: String, reply: CharSequence?): JSONObject? {
+        val categoryId = value.optString("categoryId")
+        val action = actions(config, categoryId).firstOrNull { it.optString("id") == actionId } ?: return null
+        val detail = JSONObject().put("actionId", actionId).put("notificationId", value.optString("id"))
+            .put("categoryId", categoryId).put("data", value.optJSONObject("data") ?: JSONObject())
+        if (reply != null && action.optJSONObject("textInput") != null) detail.put("userText", reply.toString())
+        return detail
+    }
+
+    internal fun invalidOptions(value: JSONObject): String? {
+        for (key in listOf("categoryId", "threadIdentifier")) {
+            if (value.has(key) && value.opt(key) !is String) return "$key must be a string"
+        }
+        if (value.has("interruptionLevel") && value.opt("interruptionLevel") !in listOf("passive", "active", "timeSensitive")) {
+            return "interruptionLevel must be passive, active or timeSensitive"
+        }
+        return null
+    }
+
+    internal fun consumeAction(storage: android.content.SharedPreferences, token: String): JSONObject? {
+        val saved = storage.getString(token, null)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+        if (!storage.edit().remove(token).commit()) return null
+        return saved
+    }
+
+    @Synchronized
+    fun receiveAction(context: Context, intent: Intent?, queued: (() -> Unit)? = null): Boolean {
+        val token = intent?.getStringExtra("craft.actionToken") ?: return false.also { queued?.invoke() }
+        val storage = context.getSharedPreferences("craft-native-notification-actions", Context.MODE_PRIVATE)
+        // MainActivity is exported. Never turn arbitrary launch extras into
+        // an authenticated notification action: only a token we minted can
+        // name an action/payload. RemoteInput supplies just the reply text.
+        val saved = consumeAction(storage, token)
+        if (saved == null) { queued?.invoke(); return true }
+        intent.removeExtra("craft.actionToken")
+        val value = saved.optJSONObject("value") ?: return true.also { queued?.invoke() }
+        val actionId = saved.optString("actionId")
+        val detail = actionDetail(config(context), value, actionId,
+            androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(REPLY))
+        if (detail == null) { queued?.invoke(); return true }
+        revoke(context, detail.optString("notificationId"))
+        CraftNativeBackground.runOnce(context, "craftNotificationAction", detail, queued)
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(detail.optString("notificationId"), 0)
+        return true
+    }
+
+    @Synchronized
+    fun revoke(context: Context, notificationId: String? = null) {
+        val storage = context.getSharedPreferences("craft-native-notification-actions", Context.MODE_PRIVATE)
+        if (notificationId == null) { storage.edit().clear().commit(); return }
+        val tokens = storage.all.filter { (key, raw) ->
+            !key.startsWith("index:") && runCatching { JSONObject(raw as String).optJSONObject("value")?.optString("id") == notificationId }.getOrDefault(false)
+        }.keys
+        val edit = storage.edit()
+        storage.all.forEach { (key, value) -> if (key in tokens || (key.startsWith("index:") && value is String && value in tokens)) edit.remove(key) }
+        edit.commit()
+    }
+
+    private fun pending(context: Context, value: JSONObject, action: JSONObject?): android.app.PendingIntent? {
+        val foreground = action == null || action.optBoolean("foreground", false)
+        val target = if (foreground) Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        else Intent(context, CraftNativeNotificationReceiver::class.java)
+        target.action = "craft.notification:" + android.net.Uri.encode(value.optString("id")) + ":" +
+            android.net.Uri.encode(action?.optString("id") ?: "default")
+        target.putExtra("craft.notification", true)
+        if (action == null) target.putExtra("craft.notification.data", (value.optJSONObject("data") ?: JSONObject()).toString())
+        else {
+            val token = java.util.UUID.randomUUID().toString()
+            val storage = context.getSharedPreferences("craft-native-notification-actions", Context.MODE_PRIVATE)
+            val index = "index:" + target.action
+            val edit = storage.edit()
+            storage.getString(index, null)?.let { edit.remove(it) }
+            if (!edit.putString(index, token).putString(token, JSONObject().put("actionId", action.optString("id"))
+                .put("value", value).toString()).commit()) return null
+            target.putExtra("craft.actionToken", token)
+        }
+        val mutable = action?.optJSONObject("textInput") != null
+        val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (mutable) android.app.PendingIntent.FLAG_MUTABLE else android.app.PendingIntent.FLAG_IMMUTABLE)
+        return if (foreground) android.app.PendingIntent.getActivity(context, 0, target, flags)
+        else android.app.PendingIntent.getBroadcast(context, 0, target, flags)
+    }
+
+    fun show(context: Context, original: JSONObject, id: String, channel: String) {
+        if (invalidOptions(original) != null) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-
+        val value = JSONObject(original.toString()).put("id", id)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(
-                "craft_notifications",
-                "Craft Notifications",
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ))
+        val level = value.optString("interruptionLevel", "active")
+        val channelId = if (level == "active") channel else "$channel.$level"
+        val importance = when (level) {
+            "passive" -> NotificationManager.IMPORTANCE_LOW
+            "timeSensitive" -> NotificationManager.IMPORTANCE_HIGH
+            else -> NotificationManager.IMPORTANCE_DEFAULT
         }
-        val notification = NotificationCompat.Builder(context, "craft_notifications")
+        manager.createNotificationChannel(NotificationChannel(channelId, "${context.applicationInfo.loadLabel(context.packageManager)} ($level)", importance))
+        val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.craft_notification_icon)
             .setColor(ContextCompat.getColor(context, R.color.craft_notification_color))
-            .setContentTitle(value.optString("title"))
-            .setContentText(value.optString("body"))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .build()
-        manager.notify(id, 0, notification)
+            .setContentTitle(value.optString("title")).setContentText(value.optString("body"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(value.optString("body")))
+            .setContentIntent(pending(context, value, null)).setAutoCancel(true)
+        val thread = value.optString("threadIdentifier")
+        if (thread.isNotEmpty()) notification.setGroup(thread)
+        actions(config(context), value.optString("categoryId")).filter {
+            // API <31 cannot enforce action authentication. Omit the action
+            // instead of silently weakening the app's request.
+            !it.optBoolean("authenticationRequired", false) || Build.VERSION.SDK_INT >= 31
+        }.forEach { item ->
+            val target = pending(context, value, item) ?: return@forEach
+            val action = NotificationCompat.Action.Builder(0, item.optString("title"), target)
+                .setAuthenticationRequired(item.optBoolean("authenticationRequired", false))
+            if (item.optBoolean("destructive", false)) action.setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_DELETE)
+            item.optJSONObject("textInput")?.let { input ->
+                action.addRemoteInput(androidx.core.app.RemoteInput.Builder(REPLY)
+                    .setLabel(input.optString("placeholder", item.optString("title"))).build())
+                action.setAllowGeneratedReplies(true)
+            }
+            notification.addAction(action.build())
+        }
+        val dismissed = Intent(context, CraftNativeNotificationReceiver::class.java)
+            .setAction("craft.notification.dismiss:" + android.net.Uri.encode(id)).putExtra("craft.dismissedId", id)
+        notification.setDeleteIntent(android.app.PendingIntent.getBroadcast(context, 0, dismissed,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+        manager.notify(id, 0, notification.build())
+        if (thread.isNotEmpty()) {
+            manager.notify("craft.group:$thread", 1, NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.drawable.craft_notification_icon)
+                .setContentTitle(context.applicationInfo.loadLabel(context.packageManager))
+                .setContentIntent(pending(context, value, null)).setGroup(thread).setGroupSummary(true).setAutoCancel(true).build())
+        }
     }
 }
