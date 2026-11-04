@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.462...v0.0.463)
+
+## 🐛 Bug Fixes
+
+- **ci**: consume repeatable native toolchain materialization ([7c8f3ce](https://github.com/craft-native/craft/commit/7c8f3ce)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.461...v0.0.462)
 
 ## 🚀 Features
