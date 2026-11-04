@@ -189,7 +189,7 @@ const optional_route_constraint_map_keys = [_][]const u8{"nativeScreenConstraint
 /// Swift `Codable` structs, whose fields are checked by `checkObject`.
 const optional_object_keys = [_]Nested{ .{ .key = "backgroundRefresh", .fields = &background_refresh_fields }, .{ .key = "crashReporting", .fields = &crash_reporting_fields }, .{ .key = "tabBar", .fields = &tab_bar_fields } };
 /// Swift arrays of `Codable` structs. Every element is checked.
-const optional_array_of_object_keys = [_]Nested{ .{ .key = "tabs", .fields = &tab_fields }, .{ .key = "appShortcuts", .fields = &app_shortcut_fields } };
+const optional_array_of_object_keys = [_]Nested{ .{ .key = "tabs", .fields = &tab_fields }, .{ .key = "appShortcuts", .fields = &app_shortcut_fields }, .{ .key = "notificationCategories", .fields = &notification_category_fields } };
 
 /// A stored key whose value is one of `CraftConfig`'s nested types.
 const Nested = struct { key: []const u8, fields: []const Field };
@@ -202,7 +202,24 @@ const Nested = struct { key: []const u8, fields: []const Field };
 /// defaults to false, still throws when it is missing or null. An optional
 /// field may be missing or null. Both checked against `swiftc`.
 const Field = struct { name: []const u8, kind: Kind, required: bool, object_fields: []const Field = &.{} };
-const Kind = enum { string, bool, number, string_array, object };
+const Kind = enum { string, bool, number, string_array, object, object_array };
+
+const notification_text_input_fields = [_]Field{
+    .{ .name = "buttonTitle", .kind = .string, .required = true },
+    .{ .name = "placeholder", .kind = .string, .required = false },
+};
+const notification_action_fields = [_]Field{
+    .{ .name = "id", .kind = .string, .required = true },
+    .{ .name = "title", .kind = .string, .required = true },
+    .{ .name = "destructive", .kind = .bool, .required = false },
+    .{ .name = "foreground", .kind = .bool, .required = false },
+    .{ .name = "authenticationRequired", .kind = .bool, .required = false },
+    .{ .name = "textInput", .kind = .object, .required = false, .object_fields = &notification_text_input_fields },
+};
+const notification_category_fields = [_]Field{
+    .{ .name = "id", .kind = .string, .required = true },
+    .{ .name = "actions", .kind = .object_array, .required = true, .object_fields = &notification_action_fields },
+};
 
 /// `CraftConfig.BackgroundRefresh`.
 const background_refresh_fields = [_]Field{
@@ -272,6 +289,7 @@ fn isKind(v: std.json.Value, kind: Kind) bool {
         .number => isNumber(v),
         .string_array => isStringArray(v),
         .object => v == .object,
+        .object_array => v == .array,
     };
 }
 
@@ -290,6 +308,9 @@ fn checkObject(v: std.json.Value, fields: []const Field) bool {
         }
         if (!isKind(present, field.kind)) return false;
         if (field.kind == .object and !checkObject(present, field.object_fields)) return false;
+        if (field.kind == .object_array) {
+            for (present.array.items) |item| if (!checkObject(item, field.object_fields)) return false;
+        }
     }
     return true;
 }
@@ -1090,5 +1111,26 @@ test "native route constraints mirror Swift's strict dictionary decoder" {
         const json = try completeConfig(testing.allocator, bad);
         defer testing.allocator.free(json);
         try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
+}
+
+test "notification category decoder checks nested action and reply fields" {
+    inline for (.{
+        "{\"id\":\"message\",\"actions\":[{\"id\":\"reply\",\"title\":\"Reply\",\"textInput\":{\"buttonTitle\":\"Send\"}}]}",
+        "{\"id\":\"message\",\"actions\":[{\"id\":\"open\",\"title\":\"Open\",\"foreground\":true}]}",
+    }) |json| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        defer parsed.deinit();
+        try testing.expect(checkObject(parsed.value, &notification_category_fields));
+    }
+    inline for (.{
+        "{\"id\":\"message\"}",
+        "{\"id\":\"message\",\"actions\":[null]}",
+        "{\"id\":\"message\",\"actions\":[{\"id\":\"reply\",\"title\":\"Reply\",\"foreground\":1}]}",
+        "{\"id\":\"message\",\"actions\":[{\"id\":\"reply\",\"title\":\"Reply\",\"textInput\":{}}]}",
+    }) |json| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        defer parsed.deinit();
+        try testing.expect(!checkObject(parsed.value, &notification_category_fields));
     }
 }

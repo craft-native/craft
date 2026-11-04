@@ -1358,6 +1358,11 @@ enum CraftNativeActions {
                     return
                 }
                 let content = UNMutableNotificationContent()
+                do { try CraftNotificationCategory.apply(value, to: content) }
+                catch {
+                    complete(requestToken, failure("INVALID_ARGUMENT", error.localizedDescription), completion)
+                    return
+                }
                 content.title = title
                 content.body = value["body"] as? String ?? ""
                 content.sound = .default

@@ -1959,6 +1959,10 @@ export interface NewCalendarEvent {
 }
 
 export interface NotificationData {
+  /** Id registered in notificationCategories. */
+  categoryId?: string;
+  threadIdentifier?: string;
+  interruptionLevel?: 'passive' | 'active' | 'timeSensitive';
   id?: string;
   title: string;
   body: string;
@@ -2212,6 +2216,18 @@ export interface CraftNotificationResponseEvent extends CustomEvent {
   detail: Record<string, any>;
 }
 
+/** A registered action, including cold/background delivery. Acknowledge using background.complete. */
+export interface CraftNotificationActionEvent extends CustomEvent {
+  detail: {
+    id: string;
+    actionId: string;
+    notificationId: string;
+    categoryId: string;
+    userText?: string;
+    data: Record<string, any>;
+  };
+}
+
 /** A notification that arrived while the app was open, in the same shape as a tap. iOS. */
 export interface CraftNotificationReceivedEvent extends CustomEvent {
   detail: Record<string, any>;
@@ -2321,6 +2337,7 @@ declare global {
     craftNetworkChange: CraftNetworkChangeEvent;
     craftPushToken: CraftPushTokenEvent;
     craftNotificationResponse: CraftNotificationResponseEvent;
+    craftNotificationAction: CraftNotificationActionEvent;
     craftNotificationReceived: CraftNotificationReceivedEvent;
     craftWatchMessage: CraftWatchMessageEvent;
     craftWatchReachability: CraftWatchReachabilityEvent;

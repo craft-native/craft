@@ -292,6 +292,7 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         // First, so a crash anywhere in the rest of launch is reported too.
         CraftCrashReporter.shared.start(config)
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories(CraftNotificationCategory.registered(config.notificationCategories ?? []))
         // Before launch finishes, which is the only time iOS accepts it.
         CraftBackgroundWork.shared.registerRefresh(config)
         // The shell, the app script and an all-native app's services now,
@@ -382,8 +383,19 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         // rather than where the notification pointed. The manager exists from
         // process start and holds the tap until the page is ready, the way it
         // already does for a home-screen shortcut.
-        CraftEventManager.shared.handleNotificationResponse(response.notification.request.content.userInfo)
-        completionHandler()
+        DispatchQueue.main.async {
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+                CraftEventManager.shared.handleNotificationResponse(response.notification.request.content.userInfo)
+                completionHandler()
+            } else if response.actionIdentifier == UNNotificationDismissActionIdentifier {
+                completionHandler()
+            } else {
+                CraftEventManager.shared.handleNotificationAction(
+                    request: response.notification.request, action: response.actionIdentifier,
+                    userText: (response as? UNTextInputNotificationResponse)?.userText,
+                    completion: completionHandler)
+            }
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
@@ -479,6 +491,18 @@ class CraftEventManager {
     /// by anything else anyway.
     func handleNotificationResponse(_ userInfo: [AnyHashable: Any]) {
         sendToWeb("craftNotificationResponse", data: Self.pageData(userInfo))
+    }
+
+    /// Keep the response alive while the app script handles a background action.
+    /// The existing readiness queue also covers a cold launch; app code answers
+    /// craft.background.complete(ok, detail.id) and the normal deadline bounds it.
+    func handleNotificationAction(request: UNNotificationRequest, action: String, userText: String?, completion: @escaping () -> Void) {
+        let id = CraftBackgroundWork.shared.hold { _ in completion() }
+        var detail: [String: Any] = ["id": id, "actionId": action,
+            "notificationId": request.identifier, "categoryId": request.content.categoryIdentifier,
+            "data": Self.pageData(request.content.userInfo)]
+        if let userText { detail["userText"] = userText }
+        sendToWeb("craftNotificationAction", data: detail)
     }
 
     /// A notification that arrived while the app was in front, in the same
@@ -1788,7 +1812,59 @@ struct CraftConfiguredShortcut: Codable {
     var phrases: [String]
 }
 
+struct CraftNotificationCategory: Codable {
+    struct Action: Codable {
+        struct TextInput: Codable {
+            var buttonTitle: String
+            var placeholder: String?
+        }
+        var id: String
+        var title: String
+        var destructive: Bool?
+        var foreground: Bool?
+        var authenticationRequired: Bool?
+        var textInput: TextInput?
+
+        func native() -> UNNotificationAction {
+            var options: UNNotificationActionOptions = []
+            if destructive == true { options.insert(.destructive) }
+            if foreground == true { options.insert(.foreground) }
+            if authenticationRequired == true { options.insert(.authenticationRequired) }
+            if let textInput {
+                return UNTextInputNotificationAction(identifier: id, title: title, options: options,
+                    textInputButtonTitle: textInput.buttonTitle, textInputPlaceholder: textInput.placeholder ?? "")
+            }
+            return UNNotificationAction(identifier: id, title: title, options: options)
+        }
+    }
+    var id: String
+    var actions: [Action]
+
+    static func registered(_ categories: [Self]) -> Set<UNNotificationCategory> {
+        Set(categories.map { UNNotificationCategory(identifier: $0.id, actions: $0.actions.map { $0.native() }, intentIdentifiers: [], options: []) })
+    }
+
+    static func apply(_ value: [String: Any], to content: UNMutableNotificationContent) throws {
+        for key in ["categoryId", "threadIdentifier"] {
+            if let raw = value[key], !(raw is String) {
+                throw NSError(domain: "CraftNotification", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(key) must be a string"])
+            }
+        }
+        content.categoryIdentifier = value["categoryId"] as? String ?? ""
+        content.threadIdentifier = value["threadIdentifier"] as? String ?? ""
+        if let raw = value["interruptionLevel"] {
+            switch raw as? String {
+            case "passive": content.interruptionLevel = .passive
+            case "active": content.interruptionLevel = .active
+            case "timeSensitive": content.interruptionLevel = .timeSensitive
+            default: throw NSError(domain: "CraftNotification", code: 1, userInfo: [NSLocalizedDescriptionKey: "interruptionLevel must be passive, active or timeSensitive"])
+            }
+        }
+    }
+}
+
 struct CraftConfig: Codable {
+    var notificationCategories: [CraftNotificationCategory]? = nil
     var appShortcuts: [CraftConfiguredShortcut]? = nil
     var appName: String = "Craft App"
     var bundleId: String = "com.craft.app"
@@ -7943,6 +8019,8 @@ struct CraftWebView: UIViewRepresentable {
                 }
 
                 let content = UNMutableNotificationContent()
+                do { try CraftNotificationCategory.apply(data, to: content) }
+                catch { self?.rejectCallback(callbackId, error: error.localizedDescription); return }
                 content.title = data["title"] as? String ?? ""
                 content.body = data["body"] as? String ?? ""
                 if let subtitle = data["subtitle"] as? String { content.subtitle = subtitle }

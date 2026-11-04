@@ -3,7 +3,65 @@ import UIKit
 import MapKit
 import CoreLocation
 import XCTest
+import UserNotifications
 @testable import NativeRender
+
+@MainActor
+final class NativeNotificationActionUnitTests: XCTestCase {
+    func testCategoriesCarryActionFlagsAndInlineReply() throws {
+        let json = #"[{"id":"message","actions":[{"id":"reply","title":"Reply","textInput":{"buttonTitle":"Send","placeholder":"Your reply"}},{"id":"delete","title":"Delete","destructive":true,"foreground":true,"authenticationRequired":true}]}]"#
+        let categories = try JSONDecoder().decode([CraftNotificationCategory].self, from: Data(json.utf8))
+        let registered = try XCTUnwrap(CraftNotificationCategory.registered(categories).first)
+        XCTAssertEqual(registered.identifier, "message")
+        let reply = try XCTUnwrap(registered.actions.first as? UNTextInputNotificationAction)
+        XCTAssertEqual(reply.textInputButtonTitle, "Send")
+        XCTAssertEqual(reply.textInputPlaceholder, "Your reply")
+        XCTAssertFalse(reply.options.contains(.foreground))
+        XCTAssertEqual(registered.actions[1].options, [.destructive, .foreground, .authenticationRequired])
+    }
+
+    func testLocalNotificationGroupingAndInterruptionLevel() throws {
+        let content = UNMutableNotificationContent()
+        try CraftNotificationCategory.apply(["categoryId": "message", "threadIdentifier": "thread-1", "interruptionLevel": "timeSensitive"], to: content)
+        XCTAssertEqual(content.categoryIdentifier, "message")
+        XCTAssertEqual(content.threadIdentifier, "thread-1")
+        XCTAssertEqual(content.interruptionLevel, .timeSensitive)
+        XCTAssertThrowsError(try CraftNotificationCategory.apply(["interruptionLevel": "critical"], to: content))
+        XCTAssertThrowsError(try CraftNotificationCategory.apply(["threadIdentifier": 7], to: content))
+    }
+
+    func testColdActionQueuesReplyAndCompletesExactlyOnceAfterAcknowledgement() throws {
+        let manager = CraftEventManager()
+        manager.configure(appScript: true, page: false)
+        let content = UNMutableNotificationContent()
+        content.categoryIdentifier = "message"
+        content.userInfo = ["thread": "abc", "actionId": "payload-must-not-overwrite-metadata"]
+        let request = UNNotificationRequest(identifier: "notification-7", content: content, trigger: nil)
+        var completed = 0
+        manager.handleNotificationAction(request: request, action: "reply", userText: "Hello 👋", completion: { completed += 1 })
+        XCTAssertEqual(completed, 0)
+        var received = 0
+        manager.appScriptReady { event, detail in
+            received += 1
+            XCTAssertEqual(event, "craftNotificationAction")
+            XCTAssertEqual(detail["actionId"] as? String, "reply")
+            XCTAssertEqual(detail["notificationId"] as? String, "notification-7")
+            XCTAssertEqual(detail["categoryId"] as? String, "message")
+            XCTAssertEqual(detail["userText"] as? String, "Hello 👋")
+            XCTAssertEqual((detail["data"] as? [String: Any])?["thread"] as? String, "abc")
+            let id = detail["id"] as? String
+            XCTAssertNotNil(id)
+            CraftBackgroundWork.shared.complete(id: id, ok: true)
+            CraftBackgroundWork.shared.complete(id: id, ok: true)
+        }
+        XCTAssertEqual(received, 1)
+        XCTAssertEqual(completed, 1)
+        let noListener = CraftEventManager()
+        noListener.configure(appScript: false, page: false)
+        noListener.handleNotificationAction(request: request, action: "delete", userText: nil, completion: { completed += 1 })
+        XCTAssertEqual(completed, 2, "An unhandled action must release iOS immediately")
+    }
+}
 
 @MainActor
 final class NativeContextMenuUnitTests: XCTestCase {
