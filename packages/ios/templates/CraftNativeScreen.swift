@@ -4376,6 +4376,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
 
     private func configureSheet(_ controller: CraftNativeSheetController) {
         controller.isModalInPresentation = onRequestClose == nil
+        controller.view.accessibilityViewIsModal = true
         guard let sheet = controller.sheetPresentationController else { return }
         let choices = sheetDetents.filter { $0 == "medium" || $0 == "large" }
         let values = choices.isEmpty ? ["large"] : Array(Set(choices)).sorted { $0 == "medium" && $1 == "large" }
@@ -4432,6 +4433,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         guard let controller = presentationController.presentedViewController as? CraftNativeSheetController else { return }
         restoreSheetContent(controller)
         renderedVisible = false
+        accessibilityViewIsModal = false
         onRequestClose?("swipe")
     }
 
@@ -4443,7 +4445,10 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     /// screen-level overlay but lets hit testing fall through outside its
     /// interactive content.
     var blocksBackground = true {
-        didSet { blocker.isUserInteractionEnabled = blocksBackground }
+        didSet {
+            blocker.isUserInteractionEnabled = blocksBackground
+            accessibilityViewIsModal = blocksBackground && renderedVisible
+        }
     }
     /// An opt-in non-modal dismissal policy. The default popup remains
     /// pass-through; when enabled, an outside tap is consumed and routed to
@@ -4471,6 +4476,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     /// press bookkeeping once turned that off for a view with no handler of
     /// its own, and a shown modal let every tap through to the screen behind.
     func setVisible(_ visible: Bool, opacity: CGFloat, animationType: String?) {
+        accessibilityViewIsModal = blocksBackground && visible
         if blocksBackground && (presentationStyle == "pageSheet" || presentationStyle == "formSheet") {
             setSheetVisible(visible, animated: animationType != "none")
             return
@@ -4528,6 +4534,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
 
     func resetForTeardown() {
         renderedVisible = false
+        accessibilityViewIsModal = false
         sheetPresenter = nil
         if let controller = sheetController {
             controller.dismiss(animated: false)
@@ -11230,6 +11237,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.accessibilityLabel = (props["accessibilityLabel"] as? String)
             ?? ((type == "Image" || type == "ImageBackground") ? props["alt"] as? String : nil)
         view.accessibilityHint = props["accessibilityHint"] as? String
+        let language = (props["accessibilityLanguage"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        view.accessibilityLanguage = language?.isEmpty == false ? language : nil
         if let value = props["accessibilityValue"] {
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
             authoredAccessibilityValues.insert(id)

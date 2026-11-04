@@ -941,6 +941,12 @@ metadata and traits. The portable roles include `button`, `image`, `header`,
 and `alert`; unknown roles retain the platform control's native class.
 `accessibilityState` supports `disabled`, `selected`, and `checked`.
 
+On iOS, a visible blocking `Modal` contains VoiceOver navigation. Hiding it or
+changing it to `nonModal` restores access to the surrounding content; presented
+UIKit sheets retain the same containment. `accessibilityLanguage` accepts a
+BCP 47 language tag such as `de-DE`, choosing the voice for that node without
+changing the app's locale. Removing the prop restores the system's language.
+
 These fields are part of the exported `BaseProps`/`TextInputProps` types, so a
 shared screen can keep its accessibility and keyboard contract type-safe before
 it is compiled for either native host.

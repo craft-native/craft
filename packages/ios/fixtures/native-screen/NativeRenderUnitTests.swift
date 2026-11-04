@@ -6,6 +6,80 @@ import XCTest
 @testable import NativeRender
 
 @MainActor
+final class NativeAccessibilityUnitTests: XCTestCase {
+    private func find(_ id: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == id { return view }
+        return view.subviews.compactMap { find(id, in: $0) }.first
+    }
+
+    func testModalContainmentTracksVisibilityAndNonModalMutations() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        func document(_ visible: Bool, nonModal: Bool = false) -> [String: Any] {
+            ["type": "View", "children": [
+                ["type": "Button", "props": ["key": "behind"], "children": ["Background action"]],
+                ["type": "Modal", "props": ["key": "modal", "visible": visible, "nonModal": nonModal,
+                    "animationType": "none", "accessibilityLabel": "Dialog"], "children": [
+                    ["type": "Button", "props": ["key": "inside"], "children": ["Dialog action"]],
+                ]],
+            ]]
+        }
+        screen.render(document(true))
+        let modal = try XCTUnwrap(find("modal", in: screen.view))
+        let inside = try XCTUnwrap(find("inside", in: modal))
+        XCTAssertTrue(modal.accessibilityViewIsModal)
+        XCTAssertFalse(modal.isAccessibilityElement, "Containment must not flatten interactive children")
+        XCTAssertTrue(inside.isAccessibilityElement)
+        for (visible, nonModal) in [(false, false), (true, true), (true, false)] {
+            screen.render(document(visible, nonModal: nonModal))
+            XCTAssertTrue(find("modal", in: screen.view) === modal)
+            XCTAssertEqual(modal.accessibilityViewIsModal, visible && !nonModal)
+        }
+        screen.render(["type": "View", "children": []])
+        XCTAssertFalse(modal.accessibilityViewIsModal, "Removing a retained modal must release containment")
+    }
+
+    func testNestedModalsRetainContainmentWithoutHidingTheirChildren() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        func document(_ innerVisible: Bool) -> [String: Any] {
+            ["type": "Modal", "props": ["key": "outer", "visible": true, "animationType": "none"], "children": [
+                ["type": "Button", "props": ["key": "outer-action"], "children": ["Open"]],
+                ["type": "Modal", "props": ["key": "inner", "visible": innerVisible, "animationType": "none"], "children": [
+                    ["type": "Button", "props": ["key": "inner-action"], "children": ["Close"]],
+                ]],
+            ]]
+        }
+        screen.render(document(true))
+        let outer = try XCTUnwrap(find("outer", in: screen.view))
+        let inner = try XCTUnwrap(find("inner", in: screen.view))
+        XCTAssertTrue(outer.accessibilityViewIsModal)
+        XCTAssertTrue(inner.accessibilityViewIsModal)
+        XCTAssertTrue(inner.superview === screen.view, "Nested overlays are promoted above the root content")
+        XCTAssertTrue(try XCTUnwrap(find("inner-action", in: inner)).isAccessibilityElement)
+        screen.render(document(false))
+        XCTAssertTrue(outer.accessibilityViewIsModal)
+        XCTAssertFalse(inner.accessibilityViewIsModal)
+    }
+
+    func testTextLanguageUpdatesAndClearsOnTheRetainedView() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        var retained: UIView?
+        for language in ["de-DE", "en-GB", "", "   ", nil] as [String?] {
+            var props: [String: Any] = ["key": "greeting"]
+            if let language { props["accessibilityLanguage"] = language }
+            screen.render(["type": "Text", "props": props, "children": ["Guten Morgen"]])
+            let label = try XCTUnwrap(find("greeting", in: screen.view))
+            if let retained { XCTAssertTrue(retained === label) }
+            retained = label
+            XCTAssertEqual(label.accessibilityLanguage, language?.trimmingCharacters(in: .whitespaces).isEmpty == false ? language : nil)
+            XCTAssertTrue(label.isAccessibilityElement)
+        }
+    }
+}
+
+@MainActor
 final class NativeHealthDiscardUnitTests: XCTestCase {
     func testDiscardCompletionReturnsToMainFromABackgroundCaller() async {
         let health = CraftHealth()
@@ -5071,6 +5145,7 @@ final class NativePlatformControlTests: XCTestCase {
         XCTAssertEqual(sheet.selectedDetentIdentifier, .medium)
         XCTAssertTrue(sheet.prefersGrabberVisible)
         XCTAssertFalse(controller.isModalInPresentation)
+        XCTAssertTrue(controller.view.accessibilityViewIsModal)
         let input = try XCTUnwrap(find(UITextField.self, below: controller.view))
         XCTAssertEqual(input.text, "Hello")
         XCTAssertNotNil(input.craftScreenController, "Input services still resolve their owning screen inside the sheet")
