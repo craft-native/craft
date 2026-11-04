@@ -218,6 +218,15 @@ jobs:
           mkdir -p artifacts/mobile-e2e/ios-native
           bun packages/ios/scripts/test-native-render.ts 2>&1 | tee artifacts/mobile-e2e/ios-native/uikit.log
 
+      - name: Test native driver text editing
+        if: ${{ !cancelled() && matrix.suite == 'uikit' && inputs.scope != 'ios-checkpoints' }}
+        env:
+          CRAFT_DRIVER_TEXT_RESULT: ${{ github.workspace }}/artifacts/mobile-e2e/ios-native/driver-text.xcresult
+        run: |
+          # Reuse this disposable job's simulator after its UIKit fixture.
+          export CRAFT_DRIVER_SIMULATOR="$(xcrun simctl list devices booted --json | bun -e 'const payload=await Bun.stdin.json(); const devices=Object.values(payload.devices).flat().filter(device=>device.state === "Booted"); if(devices.length !== 1) throw new Error("Expected exactly one job-owned booted simulator"); console.log(devices[0].udid)')"
+          bun packages/ios/scripts/test-driver-text.ts 2>&1 | tee artifacts/mobile-e2e/ios-native/driver-text.log
+
       - name: Test native multi-screen navigation
         id: navigation
         # Reconciliation and navigation are independent suites. Keep the

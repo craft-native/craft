@@ -245,6 +245,9 @@ final class DriverTests: XCTestCase {
     /// nor any descendant has keyboard focus". A later tap lands once the app
     /// is idle again.
     func focus(_ target: XCUIElement, seconds: Double = 15) -> Bool {
+        // Retapping an already focused field can collapse its selection. A
+        // caller that just selected text must type into that same selection.
+        if hasKeyboardFocus(target) { return true }
         let end = Date().addingTimeInterval(seconds)
         repeat {
             target.tap()
@@ -488,6 +491,12 @@ final class DriverTests: XCTestCase {
             guard target.waitForExistence(timeout: 10), target.isHittable else {
                 check(false, "longpressid \(arg) is hittable")
                 return
+            }
+            if [.textField, .secureTextField, .textView].contains(target.elementType) {
+                guard focus(target) else {
+                    check(false, "longpressid \(arg) takes keyboard focus")
+                    return
+                }
             }
             target.press(forDuration: 1.2)
             note("longpressid \(arg): ok")
