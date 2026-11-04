@@ -284,6 +284,18 @@ struct CraftRecoveryBudget {
     }
 }
 
+/// Capture the scene's launch intent before activation and before SwiftUI's
+/// onOpenURL callback. Activation alone cannot say that a cold launch had no URL.
+final class CraftSceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        let urls = options.urlContexts.map { $0.url }
+            + options.userActivities.filter { $0.activityType == NSUserActivityTypeBrowsingWeb }.compactMap { $0.webpageURL }
+        if let url = urls.sorted(by: { $0.absoluteString < $1.absoluteString }).first {
+            DeepLinkManager.shared.captureLaunchURL(url)
+        }
+    }
+}
+
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let config = CraftConfig.bundled()
@@ -322,6 +334,13 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
             return false
         }
         return true
+    }
+
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
+        if session.role == .windowApplication { configuration.delegateClass = CraftSceneDelegate.self }
+        return configuration
     }
 
     func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
@@ -1575,9 +1594,9 @@ class DeepLinkManager {
     private var replayingNativeLinks = false
     private weak var webView: WKWebView?
     private var isReady = false
-    // Replay bookkeeping only. A native screen can become ready before UIKit
-    // delivers the launch URL; listener readiness cannot classify that URL.
-    private var hasBeenReady = false
+    // Startup classification is independent of listener readiness. The same
+    // URL opened again later is a warm link, even if it matches the launch URL.
+    private var initialURLDispatched = false
     private var nativeListeners: [UUID: (canReceive: () -> Bool, receive: (URL, Bool) -> Void)] = [:]
 
     private init() {
@@ -1602,7 +1621,6 @@ class DeepLinkManager {
 
     func setReady() {
         isReady = true
-        hasBeenReady = true
         let urls = pendingURLs
         pendingURLs.removeAll()
         for link in urls {
@@ -1610,31 +1628,37 @@ class DeepLinkManager {
         }
     }
 
+    func captureLaunchURL(_ url: URL) {
+        launch.receive(url)
+    }
+
     func handleURL(_ url: URL) {
         launch.receive(url)
+        let initial = !initialURLDispatched && url == initialURL
+        if initial { initialURLDispatched = true }
 
         // A hybrid app opens a native path's screen itself, and tells the
         // native screens that listen; every other link is the page's. An
         // all-native app has no page: its native screens hear every link.
         if CraftHybrid.shared.isEnabled {
             if CraftHybrid.shared.handleDeepLink(url) {
-                dispatchNative(url, initial: false)
+                dispatchNative(url, initial: initial)
             } else if !CraftHybrid.shared.hasWeb {
-                enqueueNative(url)
+                enqueueNative(url, initial: initial)
             } else if isReady && webView != nil {
-                dispatchDeepLink(url, initial: false)
+                dispatchDeepLink(url, initial: initial)
             } else {
-                pendingURLs.append((url, !hasBeenReady && url == initialURL))
+                pendingURLs.append((url, initial))
             }
             return
         }
 
         if !nativeListeners.isEmpty {
-            enqueueNative(url)
+            enqueueNative(url, initial: initial)
         } else if isReady && webView != nil {
-            dispatchDeepLink(url, initial: false)
+            dispatchDeepLink(url, initial: initial)
         } else {
-            pendingURLs.append((url, !hasBeenReady && url == initialURL))
+            pendingURLs.append((url, initial))
         }
     }
 
@@ -1669,8 +1693,8 @@ class DeepLinkManager {
         nativeListeners.removeValue(forKey: token)
     }
 
-    private func enqueueNative(_ url: URL) {
-        pendingURLs.append((url, !hasBeenReady && url == initialURL))
+    private func enqueueNative(_ url: URL, initial: Bool) {
+        pendingURLs.append((url, initial))
         replayNativeLinks()
     }
 
@@ -1684,7 +1708,6 @@ class DeepLinkManager {
             let receivers = nativeListeners.values.filter { $0.canReceive() }
             guard !receivers.isEmpty else { return }
             pendingURLs.removeFirst()
-            hasBeenReady = true
             for receiver in receivers { receiver.receive(link.url, link.initial) }
         }
     }

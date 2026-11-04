@@ -70,6 +70,12 @@ let second = URL(string: "https://hq.training/pawel")!
 var visible = false
 var delivered: [URL] = []
 var initialFlags: [Bool] = []
+// UIKit's scene connection knows the URL before activation; SwiftUI may
+// deliver onOpenURL only after the JavaScript bridge already became ready.
+links.captureLaunchURL(first)
+NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+links.setReady()
+links.resolveInitialURL { assert($0 == first, "activation must preserve the scene's captured launch intent") }
 links.handleURL(first)
 let hidden = links.addNativeListener(canReceive: { visible }) { url, initial in
     if visible { delivered.append(url); initialFlags.append(initial) }
