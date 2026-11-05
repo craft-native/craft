@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.471...v0.0.472)
+
+## 🐛 Bug Fixes
+
+- **packaging**: retain disk-image lifecycle failure evidence ([94cd39e](https://github.com/craft-native/craft/commit/94cd39e)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.470...v0.0.471)
 
 ## 🐛 Bug Fixes
