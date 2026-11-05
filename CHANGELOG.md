@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.470...v0.0.471)
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve the single-line input clipping viewport ([2230624](https://github.com/craft-native/craft/commit/2230624)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: observe consent values within their existing deadline ([e97d701](https://github.com/craft-native/craft/commit/e97d701)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.469...v0.0.470)
 
 ## 🧪 Tests
