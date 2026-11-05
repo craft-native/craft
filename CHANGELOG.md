@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.468...v0.0.469)
+
+## 🐛 Bug Fixes
+
+- **ios**: keep browser test gestures inside page content ([df43b8a](https://github.com/craft-native/craft/commit/df43b8a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.467...v0.0.468)
 
 ## 🐛 Bug Fixes
