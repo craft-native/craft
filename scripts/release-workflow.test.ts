@@ -509,24 +509,13 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
     for (const [name, job] of Object.entries(workflow.jobs)) {
       for (const step of job.steps ?? []) {
         if (step.uses?.startsWith('pantry-pm/pantry/packages/action@')) {
-          // Keep each workflow on the released Pantry version it declares.
-          // Source, release and their required mobile acceptance all use the
-          // provider with repeatable symlink materialization. The 0.11.120
-          // installer hit PathAlreadyExists on restored Git prefixes.
-          const version = ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'windows-managed-git.yml'].includes(file)
-            ? '0.11.166'
-            : file === 'windows-source-provenance.yml' || (file === 'ci.yml' && name === 'windows-multi-window')
-              ? '0.11.109'
-              : ['benchmarks.yml', 'binary-size.yml'].includes(file)
-                ? '0.11.106'
-                : '0.11.101'
-          const source = version === '0.11.166'
-            ? '530408c77647750a68877773a3ea6165e5dc6281'
-            : version === '0.11.109'
-              ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
-              : version === '0.11.106'
-                ? 'e62755c21d946ed0f8dc8e4af39f6ea5f084537a'
-                : 'ae59a7b7fc5f4e6f7b8041a75e6b5772680bebdf'
+          // One released installer everywhere (#482). This used to be a
+          // per-workflow ladder down to 0.11.101, which left benchmarks,
+          // binary-size and windows-source-provenance on installers whose
+          // repeat symlink materialization fails a restored cache with
+          // PathAlreadyExists. 0.11.166 carries the first-party fix.
+          const version = '0.11.166'
+          const source = '530408c77647750a68877773a3ea6165e5dc6281'
           expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
           expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
         }
@@ -979,4 +968,43 @@ test('macOS publishes, signs and verifies both webview distribution variants fro
   expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview:arm64-webview"')
   expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview-app-store:arm64-webview-app-store"')
   expect(steps(release.jobs['verify-macos-downloads'])).toContain('for RUNTIME in craft craft-app-store craft-webview craft-webview-app-store')
+})
+
+/**
+ * A pinned action's comment is the only readable record of which release the
+ * SHA is, so it has to be true.
+ *
+ * release.yml pinned 530408c7 — which is v0.11.166 — under a `# v0.11.147`
+ * comment while its own `version:` input asked for 0.11.166. Nothing failed:
+ * the pin was right and the label lied, so reading the workflow told you the
+ * wrong installer was in use. Five other workflows were genuinely still on
+ * 0.11.106 through 0.11.120, the installers whose repeat materialization over
+ * an existing symlink fails a restored cache with PathAlreadyExists (#482).
+ */
+test('every pinned Pantry installer pairs one version with one immutable commit', () => {
+  const pin = /pantry-pm\/pantry\/packages\/action@([0-9a-f]{40}) # v(\d+\.\d+\.\d+)/
+  const shas = new Map<string, Set<string>>()
+  const versions = new Map<string, Set<string>>()
+  const mismatched: string[] = []
+  for (const name of new Bun.Glob('*.yml').scanSync({ cwd: join(import.meta.dir, '../.github/workflows') })) {
+    const lines = readFileSync(join(import.meta.dir, '../.github/workflows', name), 'utf8').split('\n')
+    lines.forEach((line, index) => {
+      const found = pin.exec(line)
+      if (!found) return
+      const [, sha, version] = found as unknown as [string, string, string]
+      if (!shas.has(sha)) shas.set(sha, new Set())
+      shas.get(sha)!.add(version)
+      if (!versions.has(version)) versions.set(version, new Set())
+      versions.get(version)!.add(sha)
+      // The `with: version:` input it configures must ask for that same release.
+      const input = lines.slice(index + 1, index + 9).find(next => /^\s+version: '/.test(next))
+      const asked = input?.match(/version: '([^']+)'/)?.[1]
+      if (asked && asked !== version) mismatched.push(`${name}:${index + 1} pins v${version} but configures ${asked}`)
+    })
+  }
+  expect(shas.size).toBeGreaterThan(0)
+  expect(mismatched).toEqual([])
+  // One commit cannot be two releases, and one release is one commit.
+  expect([...shas].filter(([, seen]) => seen.size > 1).map(([sha, seen]) => `${sha}: ${[...seen].join(', ')}`)).toEqual([])
+  expect([...versions].filter(([, seen]) => seen.size > 1).map(([version, seen]) => `v${version}: ${[...seen].join(', ')}`)).toEqual([])
 })

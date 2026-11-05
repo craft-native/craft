@@ -565,7 +565,7 @@ jobs:
       # Use the publisher's transport diagnostics from the registry hashing
       # fix, while retaining the independently qualified installer below.
       - name: Publish Zig package
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.147
+        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
         with:
           version: '0.11.166'
           install: 'false'
