@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.464...v0.0.465)
+
+## 🚀 Features
+
+- **android**: retire individual offline media and durable workers ([724b84d](https://github.com/craft-native/craft/commit/724b84d)) _(by Chris Breuer)_
+- **ios**: revoke one media identity and retire stale transfers ([63db3f3](https://github.com/craft-native/craft/commit/63db3f3)) _(by Chris Breuer)_
+- **ios**: persist offline media ownership across launches ([ce44e97](https://github.com/craft-native/craft/commit/ce44e97)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **mobile**: verify selective media retirement across process restart ([9c9400a](https://github.com/craft-native/craft/commit/9c9400a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.463...v0.0.464)
 
 ## 🐛 Bug Fixes
