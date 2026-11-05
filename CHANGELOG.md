@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.472...v0.0.473)
+
+## 🐛 Bug Fixes
+
+- **ios**: reject a first-frame anchor no hold could contain ([9398606](https://github.com/craft-native/craft/commit/9398606)) _(by glennmichael123)_ ([#486](https://github.com/craft-native/craft/issues/486))
+- **ios**: publish a native switch value every reader can read ([793b648](https://github.com/craft-native/craft/commit/793b648)) _(by glennmichael123)_ ([#464](https://github.com/craft-native/craft/issues/464))
+
+## 🧪 Tests
+
+- **ios**: tap a system picker's Cancel once it can take the tap ([fcd0909](https://github.com/craft-native/craft/commit/fcd0909)) _(by glennmichael123)_
+
+## 🤖 Continuous Integration
+
+- make a pinned installer's version comment answerable ([f353b22](https://github.com/craft-native/craft/commit/f353b22)) _(by glennmichael123)_
+- take the released Pantry installer in every workflow ([5e57b60](https://github.com/craft-native/craft/commit/5e57b60)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.471...v0.0.472)
 
 ## 🐛 Bug Fixes
