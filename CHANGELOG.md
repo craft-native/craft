@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.469...v0.0.470)
+
+## 🧪 Tests
+
+- **ios**: defer skipped Swift probes until suite setup ([aca5e4a](https://github.com/craft-native/craft/commit/aca5e4a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.468...v0.0.469)
 
 ## 🐛 Bug Fixes
