@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.466...v0.0.467)
+
+## 🧪 Tests
+
+- **ios**: grant cache ownership before marker photo rendering ([dc6fe24](https://github.com/craft-native/craft/commit/dc6fe24)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.465...v0.0.466)
 
 ## 🐛 Bug Fixes
