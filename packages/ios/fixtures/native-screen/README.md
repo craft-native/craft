@@ -76,3 +76,10 @@ Its `testScript` performs the same `scrollto agree-health` / `tapid agree-health
 then data-consent sequence as HQ, for both native and solid switches. The final
 counter must be exactly one event for each switch; a second physical tap cannot
 make that assertion pass. This uses the public driver implementation unchanged.
+
+Media fixtures seed kept bytes through `CraftNativeMedia.begin` / `store` /
+`finish`, including the marker-photo crop fixture. Writing directly to the
+cache file does not establish ownership after a clear and must stay unreadable.
+The explicit unowned-byte regression verifies refusal followed by a fresh
+authorized store; visual fixtures retain their existing image deadlines.
+See https://github.com/craft-native/craft/issues/484.

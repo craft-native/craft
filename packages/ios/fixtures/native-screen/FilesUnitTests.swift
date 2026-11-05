@@ -969,6 +969,30 @@ final class FilesUnitTests: XCTestCase {
         XCTAssertNil(CraftNativeMedia.local(address))
     }
 
+    func testUnownedBytesAfterClearRemainHiddenUntilFreshAuthorizedStore() throws {
+        _ = try CraftNativeMedia.clear()
+        let address = "https://example.com/unowned-\(UUID().uuidString).bin"
+        let file = CraftNativeMedia.file(for: address)
+        let incoming = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: incoming)
+            _ = try? CraftNativeMedia.remove(address)
+        }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: file)
+        XCTAssertNil(CraftNativeMedia.local(address), "Bytes placed on disk cannot bypass cleared ownership")
+        let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "A fresh grant must discard unowned bytes")
+        let fresh = Data([9, 8, 7])
+        try fresh.write(to: incoming)
+        let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Length": String(fresh.count)]))
+        let stored = CraftNativeMedia.store(address, at: incoming, response: response, flight: flight)
+        CraftNativeMedia.finish(address, flight: flight, stored)
+        if case .failure(let error) = stored { return XCTFail("Fresh authorized store failed: \(error.message)") }
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(address))), fresh)
+    }
+
     func testRemovingOneIdentityPreservesAnotherAndNeverRevivesAnOldTransfer() throws {
         let first = "https://example.com/revoked-\(UUID().uuidString).mp4"
         let second = "https://example.com/retained-\(UUID().uuidString).mp4"

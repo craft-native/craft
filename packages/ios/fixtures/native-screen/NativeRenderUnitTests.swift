@@ -2522,13 +2522,22 @@ final class NativeRenderUnitTests: XCTestCase {
 
     func testMapMarkerPhotoCropsUpdatesAndFallsBackWithoutReplacingAnnotation() throws {
         let address = "https://marker-photo.invalid/\(UUID().uuidString).png"
-        let file = CraftNativeMedia.file(for: address)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: file) }
-        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 80, height: 40)).image { context in
+        let incoming = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: incoming)
+            _ = try? CraftNativeMedia.remove(address)
+        }
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 80, height: 40)).image { context in
             UIColor.red.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 80, height: 40))
-        }.pngData()).write(to: file)
+        }.pngData())
+        try png.write(to: incoming)
+        let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Length": String(png.count)]))
+        let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        let stored = CraftNativeMedia.store(address, at: incoming, response: response, flight: flight)
+        CraftNativeMedia.finish(address, flight: flight, stored)
+        if case .failure(let error) = stored { return XCTFail("Could not seed marker photo: \(error.message)") }
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
         func render(_ url: String, _ size: Double, _ shape: String, sizeKey: String = "imageSize", shapeKey: String = "imageShape") {
