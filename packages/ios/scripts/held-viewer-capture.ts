@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { nativeFixtureCommand } from './native-fixture-command'
-import { validateHeldVideoFrame } from './held-viewer-video'
+import { anchorCanQualify, HELD_GESTURE_SECONDS, validateHeldVideoFrame } from './held-viewer-video'
 import { verifyHeldViewerExtractor } from './held-viewer-extractor'
 
 export const heldViewerTest = 'NativeNavigationUITests/NativeNavigationUITests/testTabBarLargeContentViewerDuringAccessibilityHold'
@@ -353,6 +353,11 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
     const anchor = await Bun.file(recordReceipt).json()
     if (!Number.isFinite(anchor.spawnWall) || !Number.isFinite(anchor.readyWall) || anchor.spawnWall > anchor.readyWall)
       throw new Error('Public recording first-frame anchor is invalid')
+    // Every candidate frame's interval is as wide as this bracket, so a
+    // bracket no narrower than the hold cannot put one inside it. Say so now
+    // rather than after the gesture and a few hundred megabytes of recording.
+    if (!anchorCanQualify(anchor.spawnWall, anchor.readyWall))
+      throw new Error(`Public recording first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s, which no ${HELD_GESTURE_SECONDS}-second hold can contain; simulator I/O startup was too slow to anchor a frame`)
     await Bun.write(publicReady, 'Screenshot control and public recording first frame verified\n')
     while (performance.now() < deadline) {
       signal.throwIfAborted()

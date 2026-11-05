@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { selectHeldVideoFrame, validateHeldVideoFrame } from '../scripts/held-viewer-video'
+import { anchorCanQualify, HELD_GESTURE_SECONDS, selectHeldVideoFrame, validateHeldVideoFrame } from '../scripts/held-viewer-video'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const window = { recordSpawnWall: 100, recordingStartedObservedWall: 100.5, synthesisWall: 102, releasedWall: 108 }
@@ -188,3 +188,36 @@ guard writer.status == .completed else { fatalError("Synthetic movie incomplete"
   }
   finally { removeTempDir(dir) }
 }, 45_000)
+
+// Craft 468's navigation-ui-core failure (#486). Every candidate frame's wall
+// interval is exactly as wide as the first-frame bracket, so once that bracket
+// is wider than the hold there is nothing to select at any PTS.
+const impossible = {
+  recordSpawnWall: 1793853473.611,
+  recordingStartedObservedWall: 1793853481.376,
+  synthesisWall: 1793854651.760,
+  releasedWall: 1793854659.450077,
+}
+
+test('a first-frame bracket wider than the hold disqualifies every sample', () => {
+  const bracket = impossible.recordingStartedObservedWall - impossible.recordSpawnWall
+  const hold = impossible.releasedWall - impossible.synthesisWall
+  expect(bracket).toBeGreaterThan(hold)
+  expect(anchorCanQualify(impossible.recordSpawnWall, impossible.recordingStartedObservedWall)).toBe(false)
+  // Not a selection problem: no PTS anywhere in the recording can satisfy it.
+  const decoded = Array.from({ length: 240 }, (_, index) => ({ value: index * 600, timescale: 600 }))
+  expect(() => selectHeldVideoFrame(impossible, decoded)).toThrow('No decoded frame has its whole capture interval inside the hold')
+})
+
+test('the anchor check measures the bracket against the nominal gesture', () => {
+  expect(HELD_GESTURE_SECONDS).toBe(6)
+  // Strictly inside: a bracket equal to the hold still leaves no room.
+  expect(anchorCanQualify(100, 106)).toBe(false)
+  expect(anchorCanQualify(100, 105.999)).toBe(true)
+  expect(anchorCanQualify(100, 101.2)).toBe(true)
+  // An explicit hold overrides the nominal gesture.
+  expect(anchorCanQualify(100, 107, 8)).toBe(true)
+  expect(anchorCanQualify(100, 107, 6)).toBe(false)
+  expect(() => anchorCanQualify(106, 100)).toThrow('ordered first-frame bracket')
+  expect(() => anchorCanQualify(100, 106, 0)).toThrow('positive hold')
+})

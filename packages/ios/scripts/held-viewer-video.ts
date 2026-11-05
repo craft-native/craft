@@ -23,6 +23,31 @@ function seconds(time: VideoPTS): number {
   return time.value / time.timescale
 }
 
+/** The synthesized hold the fixture performs, before synthesis overhead. */
+export const HELD_GESTURE_SECONDS = 6
+
+/**
+ * Whether a first-frame anchor could ever place a frame inside the hold.
+ *
+ * `validateHeldVideoFrame` brackets every frame as `[spawn + offset,
+ * ready + offset]`, so each candidate's interval is exactly as wide as
+ * `ready - spawn`, whatever PTS is chosen. The whole interval has to sit
+ * strictly inside the hold, so unless that bracket is narrower than the hold
+ * itself, no sample can qualify - there is nothing to select.
+ *
+ * Checking it at readiness stops the run before it synthesizes a six-second
+ * gesture and records a few hundred megabytes that provably cannot answer the
+ * question. Measuring against the nominal gesture rather than the observed
+ * hold is deliberate: a bracket wider than the gesture can only be rescued by
+ * synthesis overhead stretching the hold past it, which is luck rather than
+ * evidence.
+ */
+export function anchorCanQualify(spawnWall: number, readyWall: number, holdSeconds: number = HELD_GESTURE_SECONDS): boolean {
+  if (![spawnWall, readyWall, holdSeconds].every(value => Number.isFinite(value) && value > 0) || spawnWall > readyWall)
+    throw new Error('Expected an ordered first-frame bracket and a positive hold')
+  return readyWall - spawnWall < holdSeconds
+}
+
 /** PNG encoding time does not determine when its source frame was captured. */
 export function validateHeldVideoFrame(input: HeldVideoFrameTiming): {
   frameWallEarliest: number
