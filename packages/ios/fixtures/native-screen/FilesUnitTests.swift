@@ -930,10 +930,12 @@ final class FilesUnitTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: location); try? FileManager.default.removeItem(at: CraftNativeMedia.file(for: address)) }
         try Data([1, 2]).write(to: location)
         let response = HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Length": "4"])!
-        guard case .failure = CraftNativeMedia.store(address, at: location, response: response) else { return XCTFail("truncated video was published") }
+        let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        defer { CraftNativeMedia.finish(address, flight: flight, .success(["ok": true])) }
+        guard case .failure = CraftNativeMedia.store(address, at: location, response: response, flight: flight) else { return XCTFail("truncated video was published") }
         XCTAssertNil(CraftNativeMedia.local(address))
         try Data([1, 2, 3, 4]).write(to: location)
-        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response) {
+        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response, flight: flight) {
             return XCTFail("retry failed: \(error.code): \(error.message)")
         }
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(address))), Data([1, 2, 3, 4]))
@@ -952,6 +954,8 @@ final class FilesUnitTests: XCTestCase {
 
     func testABackgroundTransferFromBeforeASignOutNeverLands() throws {
         let address = "https://example.com/before-sign-out-\(UUID().uuidString).mp4"
+        let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        let ownership = try XCTUnwrap(CraftNativeMedia.ownershipStamp(address, flight: flight))
         let started = CraftNativeMediaTransfers.shared.currentGeneration
         _ = try CraftNativeMedia.clear()
         XCTAssertFalse(CraftNativeMediaTransfers.shared.isCurrent(started))
@@ -959,10 +963,43 @@ final class FilesUnitTests: XCTestCase {
         try Data([1, 2, 3, 4]).write(to: location)
         defer { try? FileManager.default.removeItem(at: location) }
         let response = HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Length": "4"])!
-        let landed = CraftNativeMedia.store(address, at: location, response: response, stillWanted: { CraftNativeMediaTransfers.shared.isCurrent(started) })
+        let landed = CraftNativeMedia.store(address, at: location, response: response, stamp: ownership, stillWanted: { CraftNativeMediaTransfers.shared.isCurrent(started) })
         guard case .failure(let error) = landed else { return XCTFail("A signed-out account's video was kept") }
         XCTAssertEqual(error.code, "CANCELLED")
         XCTAssertNil(CraftNativeMedia.local(address))
+    }
+
+    func testRemovingOneIdentityPreservesAnotherAndNeverRevivesAnOldTransfer() throws {
+        let first = "https://example.com/revoked-\(UUID().uuidString).mp4"
+        let second = "https://example.com/retained-\(UUID().uuidString).mp4"
+        defer { _ = try? CraftNativeMedia.remove(first); _ = try? CraftNativeMedia.remove(second) }
+        func commit(_ address: String, _ bytes: [UInt8], stamp: CraftNativeMediaOwnership.Stamp) throws -> Result<Any, CraftNativeActionError> {
+            let incoming = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try Data(bytes).write(to: incoming)
+            defer { try? FileManager.default.removeItem(at: incoming) }
+            let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Length": String(bytes.count)]))
+            return CraftNativeMedia.store(address, at: incoming, response: response, stamp: stamp)
+        }
+        func seed(_ address: String, _ bytes: [UInt8]) throws -> CraftNativeMediaOwnership.Stamp {
+            let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+            let stamp = try XCTUnwrap(CraftNativeMedia.ownershipStamp(address, flight: flight))
+            let result = try commit(address, bytes, stamp: stamp)
+            CraftNativeMedia.finish(address, flight: flight, result)
+            if case .failure(let error) = result { XCTFail(error.message) }
+            return stamp
+        }
+        let old = try seed(first, [1, 2, 3])
+        _ = try seed(second, [9, 8, 7])
+        XCTAssertEqual(try CraftNativeMedia.remove(first), 1)
+        XCTAssertNil(CraftNativeMedia.local(first))
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(second))), Data([9, 8, 7]))
+        XCTAssertEqual(try CraftNativeMedia.remove(first), 0)
+        guard case .failure(let rejected) = try commit(first, [4, 5, 6], stamp: old) else { return XCTFail("Retired bytes returned") }
+        XCTAssertEqual(rejected.code, "CANCELLED")
+        _ = try seed(first, [6, 5, 4])
+        guard case .failure = try commit(first, [1, 1, 1], stamp: old) else { return XCTFail("A re-grant revived an old transfer") }
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(first))), Data([6, 5, 4]))
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(second))), Data([9, 8, 7]))
     }
 
     func testATransferWhoseKeepWasAnsweredEarlyStillLands() throws {
@@ -970,13 +1007,14 @@ final class FilesUnitTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: CraftNativeMedia.file(for: address)) }
         // Answered "waiting for Wi-Fi": the flight is gone, the transfer is not.
         let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        let ownership = try XCTUnwrap(CraftNativeMedia.ownershipStamp(address, flight: flight))
         CraftNativeMedia.finish(address, flight: flight, .success(["ok": false, "reason": "cellular", "queued": true]))
         XCTAssertFalse(CraftNativeMedia.isWaiting(address, flight: flight))
         let location = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data([9, 8, 7]).write(to: location)
         let response = HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Length": "3"])!
         let started = CraftNativeMediaTransfers.shared.currentGeneration
-        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response, stillWanted: { CraftNativeMediaTransfers.shared.isCurrent(started) }) {
+        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response, stamp: ownership, stillWanted: { CraftNativeMediaTransfers.shared.isCurrent(started) }) {
             return XCTFail("queued transfer was dropped: \(error.code)")
         }
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(CraftNativeMedia.local(address))), Data([9, 8, 7]))
@@ -991,8 +1029,9 @@ final class FilesUnitTests: XCTestCase {
         let answered = expectation(description: "the keep is answered")
         var answer: Result<Any, CraftNativeActionError>?
         let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { answer = $0; answered.fulfill() })
-        let task = CraftNativeMediaTransfers.shared.start(URLRequest(url: URL(string: address)!), address: address, flight: flight, wifiOnly: false)
-        XCTAssertEqual(task.taskDescription, address)
+        let ownership = try XCTUnwrap(CraftNativeMedia.ownershipStamp(address, flight: flight))
+        let task = CraftNativeMediaTransfers.shared.start(URLRequest(url: URL(string: address)!), address: address, flight: flight, ownership: ownership, wifiOnly: false)
+        XCTAssertEqual(task.originalRequest?.url?.absoluteString, address)
         wait(for: [answered], timeout: 30)
         guard case .success(let value)? = answer, let info = value as? [String: Any] else { return XCTFail("keep failed: \(String(describing: answer))") }
         XCTAssertEqual(info["ok"] as? Bool, true)
@@ -1034,7 +1073,9 @@ final class FilesUnitTests: XCTestCase {
             try Data().write(to: location)
             defer { try? FileManager.default.removeItem(at: location) }
             let response = HTTPURLResponse(url: URL(string: address)!, statusCode: status, httpVersion: nil, headerFields: ["Content-Length": "0"])!
-            _ = CraftNativeMedia.store(address, at: location, response: response)
+            let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+            let result = CraftNativeMedia.store(address, at: location, response: response, flight: flight)
+            CraftNativeMedia.finish(address, flight: flight, result)
             XCTAssertNil(CraftNativeMedia.local(address))
         }
     }

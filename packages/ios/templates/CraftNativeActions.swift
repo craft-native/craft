@@ -109,6 +109,7 @@ enum CraftNativeActions {
         // which the native Video element plays in place of the address.
         values.append("media")
         values.append("media-cache-key")
+        values.append("media-remove")
         if config.enableCamera { values.append("camera") }
         if config.enableAudioRecording { values.append("audioRecording") }
         // craft.crashReporter: the app's crash and error reporter (bughq).
@@ -333,6 +334,24 @@ enum CraftNativeActions {
             return
         case ("Media", "path"):
             sync = .success(CraftNativeMedia.local(CraftNativeMedia.identity(args.first as? String ?? "", options: args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]))?.path ?? NSNull())
+        case ("Media", "remove"):
+            let options = args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]
+            if let value = options["cacheKey"], !(value is NSNull) {
+                guard let key = value as? String, !key.isEmpty, key.utf8.count <= 1024 else {
+                    sync = failure("INVALID_ARGUMENT", "media.remove cacheKey must be a nonempty string of at most 1024 bytes")
+                    break
+                }
+            }
+            let address = CraftNativeMedia.identity(args.first as? String ?? "", options: options)
+            guard !address.isEmpty else {
+                sync = failure("INVALID_ARGUMENT", "media.remove needs a source or cache key")
+                break
+            }
+            DispatchQueue.global(qos: .utility).async {
+                do { complete(requestToken, .success(try CraftNativeMedia.remove(address)), completion) }
+                catch { complete(requestToken, failure("IO_ERROR", "The media copy could not be removed"), completion) }
+            }
+            return
         case ("Media", "prune"):
             let keep = (args.first as? [Any] ?? []).compactMap { value -> String? in
                 if let url = value as? String { return url }
@@ -1001,7 +1020,8 @@ enum CraftNativeActions {
         // On the app's background session (CraftNativeMediaTransfers): it
         // carries on while the app is suspended, and a keep the phone cannot
         // fetch now is answered at once while its transfer waits with iOS.
-        let task = CraftNativeMediaTransfers.shared.start(request, address: address, flight: flight, wifiOnly: wifiOnly)
+        guard let ownership = CraftNativeMedia.ownershipStamp(address, flight: flight) else { return }
+        let task = CraftNativeMediaTransfers.shared.start(request, address: address, flight: flight, ownership: ownership, wifiOnly: wifiOnly)
         cancellationLock.lock()
         // Unless it answered already (a queued transfer, or an instant failure).
         if CraftNativeMedia.isWaiting(address, flight: flight) { fetchTasks[requestToken] = task }

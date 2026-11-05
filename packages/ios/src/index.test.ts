@@ -2760,7 +2760,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // On a background session: it carries on while the app is suspended or
     // closed, a keep it cannot fetch now is answered as queued, and iOS's
     // relaunch for finished transfers reaches the session.
-    expect(actions).toContain('CraftNativeMediaTransfers.shared.start(request, address: address, flight: flight, wifiOnly: wifiOnly)')
+    expect(actions).toContain('CraftNativeMediaTransfers.shared.start(request, address: address, flight: flight, ownership: ownership, wifiOnly: wifiOnly)')
     expect(files).toContain('URLSessionConfiguration.background(withIdentifier: Self.identifier)')
     expect(files).toContain('configuration.sessionSendsLaunchEvents = true')
     expect(files).toContain('"reason": reason, "queued": true')

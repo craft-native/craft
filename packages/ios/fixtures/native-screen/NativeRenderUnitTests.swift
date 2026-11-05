@@ -2220,7 +2220,10 @@ final class NativeRenderUnitTests: XCTestCase {
         try png.write(to: location)
         let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil,
             headerFields: ["Content-Length": String(png.count)]))
-        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response) {
+        let flight = try XCTUnwrap(CraftNativeMedia.begin(address) { _ in })
+        let result = CraftNativeMedia.store(address, at: location, response: response, flight: flight)
+        CraftNativeMedia.finish(address, flight: flight, result)
+        if case .failure(let error) = result {
             return XCTFail("Could not seed kept image: \(error.message)")
         }
         let controller = CraftNativeScreenController(config: CraftConfig())

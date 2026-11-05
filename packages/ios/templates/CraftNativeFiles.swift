@@ -943,9 +943,40 @@ enum CraftNativeMedia {
     /// Addresses being fetched now, so a second `keep` waits for the first.
     private struct Flight {
         let id: UUID
+        let ownership: CraftNativeMediaOwnership.Stamp
         var waiting: [(Result<Any, CraftNativeActionError>) -> Void]
     }
     private static var inFlight: [String: Flight] = [:]
+    private static var owner: CraftNativeMediaOwnership?
+
+    /// Called under the same lock as cache commits. Keep the journal outside
+    /// the cache directory so clear/prune cannot erase revocation history.
+    private static func ownership() throws -> CraftNativeMediaOwnership {
+        if let owner { return owner }
+        let value = try CraftNativeMediaOwnership(url: root.deletingLastPathComponent().appendingPathComponent("craft-media-ownership.json"))
+        owner = value
+        return value
+    }
+
+    private static func ownerKey(_ address: String) -> String {
+        String(file(for: address).lastPathComponent.prefix(64))
+    }
+
+    /// Remove only this identity's complete and staging files. A failed
+    /// unlink remains observable; its durable tombstone still hides the copy.
+    private static func removeFiles(_ address: String) throws -> Int {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else { return 0 }
+        let prefix = ownerKey(address) + "."
+        var removed = 0
+        var failure: Error?
+        for url in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) where url.lastPathComponent.hasPrefix(prefix) {
+            do { try fm.removeItem(at: url); removed += 1 }
+            catch { failure = error }
+        }
+        if let failure { throw failure }
+        return removed
+    }
 
     /// Where `address`'s copy lives (whether or not it is there yet). The
     /// extension is the address's, because AVPlayer reads the type from it.
@@ -959,8 +990,12 @@ enum CraftNativeMedia {
     /// The copy of `address` on this phone, or nil.
     static func local(_ address: String) -> URL? {
         guard !address.isEmpty else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard (try? ownership().permitsLocal(ownerKey(address))) == true else { return nil }
         let url = file(for: address)
-        return ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 ? url : nil
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        return values?.isRegularFile == true && (values?.fileSize ?? 0) > 0 ? url : nil
     }
 
     static func describe(_ address: String, _ url: URL) -> [String: Any] {
@@ -971,14 +1006,35 @@ enum CraftNativeMedia {
     /// A new download's identity, or nil after joining an existing download.
     static func begin(_ address: String, _ done: @escaping (Result<Any, CraftNativeActionError>) -> Void) -> UUID? {
         lock.lock()
-        defer { lock.unlock() }
         if inFlight[address] != nil {
             inFlight[address]!.waiting.append(done)
+            lock.unlock()
             return nil
         }
-        let id = UUID()
-        inFlight[address] = Flight(id: id, waiting: [done])
-        return id
+        do {
+            let stamp = try ownership().activate(ownerKey(address)) { _ = try removeFiles(address) }
+            let id = UUID()
+            inFlight[address] = Flight(id: id, ownership: stamp, waiting: [done])
+            lock.unlock()
+            return id
+        } catch {
+            lock.unlock()
+            done(.failure(CraftNativeActionError(code: errorCode(error, fallback: "IO_ERROR"), message: "Media ownership could not be persisted")))
+            return nil
+        }
+    }
+
+    static func ownershipStamp(_ address: String, flight: UUID) -> CraftNativeMediaOwnership.Stamp? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let current = inFlight[address], current.id == flight else { return nil }
+        return current.ownership
+    }
+
+    static func acceptsTransfer(_ address: String, stamp: CraftNativeMediaOwnership.Stamp) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return (try? ownership().accepts(ownerKey(address), stamp: stamp)) == true
     }
 
     /// Whether `flight` is still the download `address`'s keeps wait for.
@@ -997,7 +1053,7 @@ enum CraftNativeMedia {
 
     /// A finished download moved into place (atomically, so a half-written
     /// file is never played), or a refusal with the server's status.
-    static func store(_ address: String, at location: URL, response: HTTPURLResponse, flight: UUID? = nil, stillWanted: (() -> Bool)? = nil) -> Result<Any, CraftNativeActionError> {
+    static func store(_ address: String, at location: URL, response: HTTPURLResponse, flight: UUID? = nil, stamp: CraftNativeMediaOwnership.Stamp? = nil, stillWanted: (() -> Bool)? = nil) -> Result<Any, CraftNativeActionError> {
         guard response.statusCode == 200 else {
             return .success(["ok": false, "url": address, "status": response.statusCode])
         }
@@ -1008,11 +1064,15 @@ enum CraftNativeMedia {
         if let flight, inFlight[address]?.id != flight {
             return .failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))
         }
+        let captured = stamp ?? flight.flatMap { inFlight[address]?.id == $0 ? inFlight[address]?.ownership : nil }
+        guard let captured, (try? ownership().accepts(ownerKey(address), stamp: captured)) == true else {
+            return .failure(CraftNativeActionError(code: "CANCELLED", message: "Media ownership was retired"))
+        }
         // A background transfer from before the cache was cleared (sign-out).
         if let stillWanted, !stillWanted() {
             return .failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))
         }
-        let staging = root.appendingPathComponent(UUID().uuidString + ".part")
+        let staging = root.appendingPathComponent(ownerKey(address) + "." + UUID().uuidString + ".part")
         defer { try? fm.removeItem(at: staging) }
         do {
             // URL resource values can retain a previous size when a retry
@@ -1045,21 +1105,44 @@ enum CraftNativeMedia {
     /// End an account's cache lifetime.
     static func clear() throws -> Int {
         lock.lock()
+        var failure: Error?
+        do { try ownership().clear() }
+        catch { failure = error }
         let waiting = inFlight.values.flatMap { $0.waiting }
         inFlight.removeAll()
         // Under the same lock a background transfer commits under: none
         // started before this lands after it.
         CraftNativeMediaTransfers.shared.cancelAll()
         let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        var files: [URL] = []
+        do {
+            if fm.fileExists(atPath: root.path) { files = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) }
+        } catch { failure = error }
         var removed = 0
-        var failure: Error?
         for url in files {
             do { try fm.removeItem(at: url); removed += 1 }
             catch { failure = error }
         }
         lock.unlock()
         for done in waiting { done(.failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))) }
+        if let failure { throw failure }
+        return removed
+    }
+
+    /// Revoke one cache identity without removing other authorized media.
+    static func remove(_ address: String) throws -> Int {
+        guard !address.isEmpty else { throw CraftNativeActionError(code: "INVALID_ARGUMENT", message: "media.remove needs a source or cache key") }
+        lock.lock()
+        var failure: Error?
+        do { try ownership().retire(ownerKey(address)) }
+        catch { failure = error }
+        let waiting = inFlight.removeValue(forKey: address)?.waiting ?? []
+        CraftNativeMediaTransfers.shared.cancelRetired(address: address)
+        var removed = 0
+        do { removed = try removeFiles(address) }
+        catch { failure = error }
+        lock.unlock()
+        for done in waiting { done(.failure(CraftNativeActionError(code: "CANCELLED", message: "Media ownership was retired"))) }
         if let failure { throw failure }
         return removed
     }
@@ -1120,6 +1203,24 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         let generation: Int
     }
 
+    private struct Description: Codable {
+        let address: String
+        let ownership: CraftNativeMediaOwnership.Stamp
+    }
+
+    private static func describe(_ address: String, ownership: CraftNativeMediaOwnership.Stamp) -> String {
+        // No network capability is added to the journal: only the task that
+        // already owns the authorized request carries its cache identity.
+        let data = try! JSONEncoder().encode(Description(address: address, ownership: ownership))
+        return "craft-media-v2:" + data.base64EncodedString()
+    }
+
+    private static func description(_ task: URLSessionTask) -> Description? {
+        guard let text = task.taskDescription, text.hasPrefix("craft-media-v2:"),
+              let data = Data(base64Encoded: String(text.dropFirst("craft-media-v2:".count))) else { return nil }
+        return try? JSONDecoder().decode(Description.self, from: data)
+    }
+
     private let lock = NSLock()
     private var transfers: [Int: Transfer] = [:]
     /// What each finished download came to, until its task completes.
@@ -1143,7 +1244,10 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
             guard let self else { return }
             self.lock.lock()
             for case let task as URLSessionDownloadTask in tasks where task.state == .running || task.state == .suspended {
-                if let address = task.taskDescription, self.transfers[task.taskIdentifier] == nil { self.restored[address] = task }
+                // A pre-upgrade address-only description cannot establish
+                // durable ownership. A new authorized keep can replace it.
+                guard let description = Self.description(task) else { task.cancel(); continue }
+                if self.transfers[task.taskIdentifier] == nil { self.restored[description.address] = task }
             }
             self.lock.unlock()
         }
@@ -1154,11 +1258,12 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
     }
 
     /// Fetches `request` into the copy for `address`, finishing `flight`.
-    func start(_ request: URLRequest, address: String, flight: UUID, wifiOnly: Bool) -> URLSessionTask {
+    func start(_ request: URLRequest, address: String, flight: UUID, ownership: CraftNativeMediaOwnership.Stamp, wifiOnly: Bool) -> URLSessionTask {
         lock.lock()
         let task: URLSessionDownloadTask
         if let earlier = restored.removeValue(forKey: address), earlier.state == .running || earlier.state == .suspended {
-            if earlier.originalRequest?.url == request.url && earlier.originalRequest?.allHTTPHeaderFields == request.allHTTPHeaderFields {
+            if Self.description(earlier)?.ownership == ownership,
+               earlier.originalRequest?.url == request.url && earlier.originalRequest?.allHTTPHeaderFields == request.allHTTPHeaderFields {
                 task = earlier
             }
             else {
@@ -1167,12 +1272,12 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
                 earlier.taskDescription = nil
                 earlier.cancel()
                 task = session.downloadTask(with: request)
-                task.taskDescription = address
+                task.taskDescription = Self.describe(address, ownership: ownership)
             }
         }
         else {
             task = session.downloadTask(with: request)
-            task.taskDescription = address
+            task.taskDescription = Self.describe(address, ownership: ownership)
         }
         transfers[task.taskIdentifier] = Transfer(address: address, flight: flight, wifiOnly: wifiOnly, generation: generation)
         lock.unlock()
@@ -1204,7 +1309,28 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         generation += 1
         restored.removeAll()
         lock.unlock()
-        session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+        // The asynchronous enumeration may run after a new authorized keep.
+        // Retire only obsolete stamps, never that new generation's task.
+        session.getAllTasks { tasks in
+            for task in tasks {
+                guard let description = Self.description(task), CraftNativeMedia.acceptsTransfer(description.address, stamp: description.ownership) else {
+                    task.cancel()
+                    continue
+                }
+            }
+        }
+    }
+
+    func cancelRetired(address: String) {
+        lock.lock()
+        restored.removeValue(forKey: address)
+        lock.unlock()
+        session.getAllTasks { tasks in
+            for task in tasks {
+                guard let description = Self.description(task) else { task.cancel(); continue }
+                if description.address == address && !CraftNativeMedia.acceptsTransfer(address, stamp: description.ownership) { task.cancel() }
+            }
+        }
     }
 
     /// Stops the transfers for addresses no longer wanted.
@@ -1214,7 +1340,7 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         restored = restored.filter { wanted.contains($0.key) }
         lock.unlock()
         session.getAllTasks { tasks in
-            for task in tasks where !wanted.contains(task.taskDescription ?? "") { task.cancel() }
+            for task in tasks where !wanted.contains(Self.description(task)?.address ?? "") { task.cancel() }
         }
     }
 
@@ -1224,7 +1350,11 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         lock.unlock()
         // One left by an earlier launch belongs to the generation this launch began with.
         let started = transfer?.generation ?? 0
-        guard let address = transfer?.address ?? downloadTask.taskDescription else { return }
+        guard let description = Self.description(downloadTask) else {
+            record(downloadTask, .failure(CraftNativeActionError(code: "CANCELLED", message: "The media transfer has no durable ownership")))
+            return
+        }
+        let address = description.address
         guard let http = downloadTask.response as? HTTPURLResponse else {
             record(downloadTask, .failure(CraftNativeActionError(code: "NETWORK_ERROR", message: "media.keep received a response that is not HTTP")))
             return
@@ -1232,7 +1362,7 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         // The system deletes `location` once this returns: move it now. It
         // lands whether its keep is still waiting or was answered early; only
         // a clear since it started (sign-out) keeps it out.
-        record(downloadTask, CraftNativeMedia.store(address, at: location, response: http, stillWanted: { [weak self] in self?.isCurrent(started) ?? false }))
+        record(downloadTask, CraftNativeMedia.store(address, at: location, response: http, stamp: description.ownership, stillWanted: { [weak self] in self?.isCurrent(started) ?? false }))
     }
 
     /// How many times the cache was cleared in this launch; a transfer started before the last clear does not land.
@@ -1256,7 +1386,7 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
         lock.lock()
         let transfer = transfers.removeValue(forKey: task.taskIdentifier)
         let result = finished.removeValue(forKey: task.taskIdentifier)
-        if let address = task.taskDescription, restored[address] === task { restored.removeValue(forKey: address) }
+        if let address = Self.description(task)?.address, restored[address] === task { restored.removeValue(forKey: address) }
         lock.unlock()
         guard let transfer, let flight = transfer.flight else { return }
         if let error {
