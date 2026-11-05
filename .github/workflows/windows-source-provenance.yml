@@ -23,9 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup the published Pantry runtime
-        uses: pantry-pm/pantry/packages/action@d160044a6fe4ad7e8463828f80dfbc55bcdc07d9 # v0.11.109
+        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
         with:
-          version: '0.11.109'
+          version: '0.11.166'
       - name: Verify workspace installation preserves tracked sources
         shell: pwsh
         run: |
