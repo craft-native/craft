@@ -58,7 +58,7 @@ class DownloadProbe : android.app.Instrumentation() {
                     check(keep(retained), "existing video is kept before storage pressure")
                     val original = CraftNativeMedia.local(targetContext, retained)!!.readBytes()
                     val fresh = "$base/storage.mp4"
-                    val staging = File(CraftNativeMedia.file(targetContext, fresh).absolutePath + ".part")
+                    val staging = CraftNativeMedia.part(targetContext, fresh)
                     val root = staging.parentFile!!
                     check(root.totalSpace in 1..(32L * 1024 * 1024), "storage pressure is confined to a bounded disposable volume")
                     val pressure = File(root, "pressure.mp4")
@@ -89,6 +89,44 @@ class DownloadProbe : android.app.Instrumentation() {
                     check(prefs.getString("progress", null) == progress && prefsDisk.readBytes().contentEquals(savedPrefs), "redownloading leaves workout progress and feedback unchanged on disk")
                     CraftNativeMedia.prune(targetContext, emptyList())
                     prefs.edit().clear().commit()
+                }
+                "retire" -> {
+                    val a = "$base/selective-a.mp4"
+                    val b = "$base/selective-b.mp4"
+                    check(keep(a) && keep(b), "two authorized videos are kept")
+                    val oldGeneration = CraftNativeMedia.generation(targetContext)
+                    check(targetContext.getSharedPreferences("media-probe", Context.MODE_PRIVATE).edit().putInt("old-generation", oldGeneration).commit(), "old worker generation is retained for restart verification")
+                    val cacheRoot = CraftNativeMedia.file(targetContext, a).parentFile!!
+                    android.system.Os.chmod(cacheRoot.absolutePath, 365) // 0555: read/search, no unlink
+                    var unlinkFailed = false
+                    try { CraftNativeMedia.remove(targetContext, a) } catch (error: java.io.IOException) { unlinkFailed = true }
+                    finally { android.system.Os.chmod(cacheRoot.absolutePath, 448) } // 0700
+                    check(unlinkFailed, "a real unlink failure is reported")
+                    check(CraftNativeMedia.local(targetContext, a) == null && CraftNativeMedia.local(targetContext, b) != null, "failed unlink hides revoked A and preserves authorized B")
+                    check(CraftNativeMedia.remove(targetContext, a) == 1, "removing A removes only its copy")
+                    check(CraftNativeMedia.local(targetContext, a) == null && CraftNativeMedia.local(targetContext, b) != null, "B stays available after A is revoked")
+                }
+                "retired-recover" -> {
+                    val a = "$base/selective-a.mp4"
+                    val b = "$base/selective-b.mp4"
+                    val oldGeneration = targetContext.getSharedPreferences("media-probe", Context.MODE_PRIVATE).getInt("old-generation", -1)
+                    check(CraftNativeMedia.local(targetContext, a) == null && CraftNativeMedia.local(targetContext, b) != null, "selective revocation survives a fresh Android process")
+                    fun obsoleteCompletion() {
+                        val result = CraftNativeMedia.transfer(targetContext, a, JSONObject(), oldGeneration, 0, ownerRevision = "") { false }
+                        check(result == CraftNativeMedia.Outcome.DONE, "obsolete worker retires without retry or publication")
+                    }
+                    obsoleteCompletion()
+                    check(keep(a), "a new authorized keep can re-grant A")
+                    val fresh = CraftNativeMedia.local(targetContext, a)!!.readBytes()
+                    obsoleteCompletion()
+                    check(CraftNativeMedia.local(targetContext, a)!!.readBytes().contentEquals(fresh), "obsolete worker cannot replace re-granted A")
+                    val decoder = android.media.MediaMetadataRetriever()
+                    try {
+                        decoder.setDataSource(CraftNativeMedia.local(targetContext, b)!!.absolutePath)
+                        check(decoder.getFrameAtTime(1000000) != null, "unrelated B still decodes offline after revocation and re-grant")
+                    } finally { decoder.release() }
+                    CraftNativeMedia.clear(targetContext)
+                    targetContext.getSharedPreferences("media-probe", Context.MODE_PRIVATE).edit().clear().commit()
                 }
                 "interrupt" -> {
                     CraftNativeMedia.prune(targetContext, emptyList())
@@ -155,7 +193,8 @@ class DownloadProbe : android.app.Instrumentation() {
                     val settledName = "craft-media:${CraftNativeMedia.digest(settled)}:any"
                     val settledRequest = androidx.work.OneTimeWorkRequestBuilder<SettledMediaAttemptWorker>()
                         .addTag("craft-media").addTag("craft-media:${CraftNativeMedia.digest(settled)}")
-                        .addTag("craft-media:generation:${CraftNativeMedia.generation(targetContext)}").build()
+                        .addTag("craft-media:generation:${CraftNativeMedia.generation(targetContext)}")
+                        .addTag("craft-media:identity:${CraftNativeMedia.digest(settled)}:legacy").build()
                     work.enqueueUniqueWork(settledName, androidx.work.ExistingWorkPolicy.KEEP, settledRequest).result.get()
                     val settledDeadline = System.currentTimeMillis() + 10000
                     var settledInfo = work.getWorkInfoById(settledRequest.id).get()!!
@@ -176,7 +215,8 @@ class DownloadProbe : android.app.Instrumentation() {
                         .setInitialDelay(10, java.util.concurrent.TimeUnit.SECONDS)
                         .setInputData(androidx.work.workDataOf("address" to queued, "headers" to "{}", "generation" to CraftNativeMedia.generation(targetContext)))
                         .addTag("craft-media").addTag("craft-media:${CraftNativeMedia.digest(queued)}")
-                        .addTag("craft-media:generation:${CraftNativeMedia.generation(targetContext)}").build()
+                        .addTag("craft-media:generation:${CraftNativeMedia.generation(targetContext)}")
+                        .addTag("craft-media:identity:${CraftNativeMedia.digest(queued)}:legacy").build()
                     work.enqueueUniqueWork(queuedName, androidx.work.ExistingWorkPolicy.KEEP, queuedRequest).result.get()
                     val beforeJoin = work.getWorkInfoById(queuedRequest.id).get()!!
                     check(beforeJoin.state == androidx.work.WorkInfo.State.ENQUEUED && beforeJoin.runAttemptCount == 0, "the coalescing regression starts with a fresh queued transfer")
@@ -217,6 +257,9 @@ class DownloadProbe : android.app.Instrumentation() {
                     check(currentDone.await(25, java.util.concurrent.TimeUnit.SECONDS) && currentOK, "an obsolete worker cannot cancel the next generation's waiters")
 
                     val inflight = "$base/inflight/slow.mp4"
+                    // This fixture starts the old worker directly rather than through keep.
+                    // Give it the same persisted grant keep records after a clear.
+                    check(targetContext.getSharedPreferences("craft.media", Context.MODE_PRIVATE).edit().putBoolean("authorized:${CraftNativeMedia.digest(inflight)}", true).commit(), "the direct worker starts with an explicit grant")
                     val inflightGeneration = CraftNativeMedia.generation(targetContext)
                     var obsoleteOutcome: CraftNativeMedia.Outcome? = null
                     val obsoleteWriter = Thread { obsoleteOutcome = CraftNativeMedia.transfer(targetContext, inflight, JSONObject(), inflightGeneration, 0) { false } }

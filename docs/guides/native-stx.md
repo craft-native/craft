@@ -1892,9 +1892,22 @@ entries to `prune`. Include the service, account, resource and prepared version
 in every private key. A URL renewal reuses a complete copy, while account or
 version changes get different files. The full URL and headers still go to the
 network. These calls do not revalidate cached authorization: applications must
-refresh access online, remove denied sources with `prune`, and `clear` on
-sign-out. Older hosts reject keyed operations through STX instead of silently
+refresh access online, remove denied sources, and `clear` on sign-out. Older hosts reject keyed operations through STX instead of silently
 falling back to a shared URL identity.
+
+Hosts advertising `media-remove` support durable selective revocation. Check
+`craft.media.selectiveRemoval`, then call `await craft.media.remove(url)` or
+`await craft.media.remove('', { cacheKey })`. It resolves the number of removed
+files and leaves other identities available offline. Removing an absent identity
+is safe. It retires that identity's queued and running transfers before deleting
+files, so an obsolete completion cannot restore a revoked copy after restart.
+An unlink or ownership-journal error rejects the call; the application must
+report or retry that failure. A persisted retirement hides the copy even if
+unlink fails. Only a new explicitly authorized `keep` may re-grant that identity;
+it first removes retired bytes, and old transfers remain obsolete. Applications
+still own entitlement checks. On older hosts, retain a safe whole-cache fallback
+for definitive revocation; do not claim that `prune` establishes durable transfer
+retirement.
 
 The `media` capability (iOS) keeps video and audio on the phone for offline,
 in Application Support rather than the temporary directory, left out of

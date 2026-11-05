@@ -79,6 +79,48 @@ if phase == "storage" {
     _ = CraftNativeMedia.prune(keep: [])
     exit(0)
 }
+if phase == "retire" || phase == "retired-recover" {
+    let a = base + "/selective-a.mp4"
+    let b = base + "/selective-b.mp4"
+    let saved = CraftNativeMedia.root.deletingLastPathComponent().appendingPathComponent("obsolete-stamp.json")
+    if phase == "retire" {
+        check(keep(a) && keep(b), "two authorized videos are kept")
+        let flight = CraftNativeMedia.begin(a) { _ in }!
+        let stamp = CraftNativeMedia.ownershipStamp(a, flight: flight)!
+        try JSONEncoder().encode(stamp).write(to: saved)
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: CraftNativeMedia.root.path)
+        var unlinkFailed = false
+        do { _ = try CraftNativeMedia.remove(a) } catch { unlinkFailed = true }
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: CraftNativeMedia.root.path)
+        check(unlinkFailed, "a real unlink failure is reported")
+        check(CraftNativeMedia.local(a) == nil && CraftNativeMedia.local(b) != nil, "failed unlink hides revoked A and preserves authorized B")
+        let removed = try CraftNativeMedia.remove(a)
+        check(removed == 1, "removing A removes only its copy")
+        check(CraftNativeMedia.local(a) == nil && CraftNativeMedia.local(b) != nil, "B stays available after A is revoked")
+    } else {
+        let stamp = try JSONDecoder().decode(CraftNativeMediaOwnership.Stamp.self, from: Data(contentsOf: saved))
+        check(CraftNativeMedia.local(a) == nil && CraftNativeMedia.local(b) != nil, "selective revocation survives a fresh simulator process")
+        func obsoleteCompletion() throws {
+            let payload = CraftNativeMedia.root.deletingLastPathComponent().appendingPathComponent("obsolete-download.mp4")
+            try Data(contentsOf: CraftNativeMedia.local(b)!).write(to: payload)
+            defer { try? fm.removeItem(at: payload) }
+            let response = HTTPURLResponse(url: URL(string: a)!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let result = CraftNativeMedia.store(a, at: payload, response: response, stamp: stamp)
+            if case .failure(let error) = result { check(error.code == "CANCELLED", "obsolete transfer cannot publish after process restart") }
+            else { check(false, "obsolete transfer was accepted") }
+        }
+        try obsoleteCompletion()
+        check(keep(a), "a new authorized keep can re-grant A")
+        try obsoleteCompletion()
+        check(CraftNativeMedia.local(a) != nil && CraftNativeMedia.local(b) != nil, "old completion cannot replace re-granted A or remove B")
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: CraftNativeMedia.local(b)!))
+        _ = try generator.copyCGImage(at: CMTime(seconds: 1, preferredTimescale: 600), actualTime: nil)
+        check(true, "unrelated B still decodes offline after revocation and re-grant")
+        _ = try CraftNativeMedia.clear()
+        try fm.removeItem(at: saved)
+    }
+    exit(0)
+}
 if phase == "interrupt" {
     _ = CraftNativeMedia.prune(keep: [])
     start(restart) { _ in }

@@ -135,14 +135,15 @@ export async function verifyMobileMediaCache(options: MobileMediaCacheTestOption
   try {
     if (options.platform === 'ios') {
       const files = await Bun.file(join(root, 'ios/templates/CraftNativeFiles.swift')).text()
+      const ownership = await Bun.file(join(root, 'ios/templates/CraftNativeMediaOwnership.swift')).text()
       const media = files.slice(files.indexOf('enum CraftNativeMedia {'))
       if (!media.startsWith('enum CraftNativeMedia')) throw new Error('iOS media implementation missing')
       const source = join(scratch, 'main.swift')
       // A CLI process has no app sandbox. Give only its cache root a private test
       // directory; all download/commit/prune logic is the production source.
       const isolated = media.replace(/static var root: URL \{[\s\S]*?\n    \}/, 'static var root: URL { CommandLine.arguments.count > 3 ? URL(fileURLWithPath: CommandLine.arguments[3]) : URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("hq-download-probe-media") }')
-      await Bun.write(source, `import Foundation\nimport CryptoKit\nstruct CraftNativeActionError: Error { let code: String;
-  let message: String }\n${isolated}\n${await Bun.file(join(fixtures, 'media-cache.swift.fixture')).text()}`)
+      await Bun.write(source, `import Foundation\nimport CryptoKit\nimport Network\nstruct CraftNativeActionError: Error { let code: String;
+  let message: String }\n${ownership}\n${isolated}\n${await Bun.file(join(fixtures, 'media-cache.swift.fixture')).text()}`)
       const iosSDK = (await run(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'])).trim()
       const executable = join(scratch, 'CraftMediaProbe')
       const architecture = process.arch === 'arm64' ? 'arm64' : 'x86_64'
@@ -159,6 +160,7 @@ export async function verifyMobileMediaCache(options: MobileMediaCacheTestOption
         await run(['xcrun', 'simctl', 'bootstatus', simulator, '-b'])
       }
       const base = `http://127.0.0.1:${server.port}/ios`
+      const mediaRoot = join(scratch, 'media')
       const image = join(scratch, 'cache-pressure.sparseimage')
       const volume = join(scratch, 'cache-volume')
       await mkdir(volume)
@@ -170,12 +172,13 @@ export async function verifyMobileMediaCache(options: MobileMediaCacheTestOption
       mountedVolume = ''
       print('PASS: iOS native ENOSPC, cache cleanup, progress preservation and video redownload')
       if (!storageOnly) {
-        print(await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'normal']))
-        const interrupted = await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'interrupt'], scratch, true)
+        print(await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'normal', mediaRoot]))
+        for (const phase of ['retire', 'retired-recover']) print(await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, phase, mediaRoot]))
+        const interrupted = await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'interrupt', mediaRoot], scratch, true)
         print(interrupted)
         if (!interrupted.includes('KILLING')) throw new Error('iOS probe did not reach process-death checkpoint')
         if (counts.get('/ios/restart.mp4') !== 1) throw new Error('iOS process did not start interrupted download')
-        print(await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'recover']))
+        print(await run(['xcrun', 'simctl', 'spawn', simulator, executable, base, 'recover', mediaRoot]))
         if (counts.get('/ios/slow.mp4') !== 1) throw new Error('iOS duplicate fetch: keep did not coalesce')
         if (counts.get('/ios/account/slow.mp4') !== 2) throw new Error('iOS account switch did not start a fresh transfer')
         print('PASS: iOS simulator interruption, restart, retry, prune and cached video decode')
@@ -232,6 +235,9 @@ dependencies { implementation("androidx.work:work-runtime-ktx:2.9.1") }`)
       print('PASS: Android native ENOSPC, cache cleanup, progress preservation and video redownload')
       if (!storageOnly) {
         await probe('normal')
+        await probe('retire')
+        await run([adb, '-s', serial, 'shell', 'am', 'force-stop', packageName])
+        await probe('retired-recover')
         await probe('interrupt', true)
         if (counts.get('/android/restart.mp4') !== 1) throw new Error('Android process did not start interrupted download')
         await probe('recover')
