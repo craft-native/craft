@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { build, hasNativeRoutes, hybridConfigProblems, init, isHybrid, matchNativePath, nativeStartPath, normalizeNativePath, usesNativeBundle } from './index'
 import type { NativeRouteConstraints } from '../../typescript/src/native-routing'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
@@ -705,11 +705,7 @@ out["messages"] = (input["messages"] as! [[String: Any]]).map { describe(CraftHy
 print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]), encoding: .utf8)!)
 `
   const mainPath = join(dir, 'main.swift')
-  writeFileSync(mainPath, main)
   const binary = join(dir, 'hybrid')
-  const compiled = Bun.spawnSync(['swiftc', '-o', binary, mainPath], { stderr: 'pipe' })
-  if (compiled.exitCode !== 0) throw new Error(`swiftc failed:\n${compiled.stderr.toString()}`)
-
   const messages = [
     { type: 'navigateNative', path: '/m/calendar' },
     { type: 'navigateNative', path: '/m', replace: true },
@@ -727,19 +723,27 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.s
     { type: 'shareStorage', key: 'auth_token', value: null },
     { type: 'whatever' },
   ]
-  const run = Bun.spawnSync([binary, JSON.stringify({
-    table: TABLE,
-    paths: CASES.map(([path]) => path),
-    urls: ['hqtraining://m', 'hqtraining://m/calendar?date=1', 'hqtraining:///m/x', 'https://hq.training/m/workout/4', 'https://hq.training', 'http://localhost:3100/m'],
-    tabPaths: ['/m', '/m/workout/4', '/m/calendar', '/m/calendar/day', '/me', '/x'],
-    tabIds: ['/m', '/m/calendar', '/me'],
-    site: 'https://hq.training/m?x=1#top',
-    opens: ['/terms', '/terms?a=1#b', 'https://example.com/x', 'http://hq.training/y', '//evil.example/x', 'terms', 'mailto:a@b.c'],
-    links: ['https://hq.training/terms', 'http://HQ.training/m', 'https://www.hq.training/', 'hqtraining://terms', 'https://example.com/', 'https://HQ.training/m', 'https://hq.training:9443/m'],
-    messages,
-  })], { stderr: 'pipe' })
-  if (run.exitCode !== 0) throw new Error(`the Swift probe failed:\n${run.stderr.toString()}`)
-  const result = JSON.parse(run.stdout.toString())
+  let result: ReturnType<typeof JSON.parse>
+  // Bun calls a skipped describe's registration body. Compile and execute the
+  // probe in its hook so only a host that can run the suite performs either.
+  beforeAll(() => {
+    writeFileSync(mainPath, main)
+    const compiled = Bun.spawnSync(['swiftc', '-o', binary, mainPath], { stderr: 'pipe' })
+    if (compiled.exitCode !== 0) throw new Error(`swiftc failed:\n${compiled.stderr.toString()}`)
+    const run = Bun.spawnSync([binary, JSON.stringify({
+      table: TABLE,
+      paths: CASES.map(([path]) => path),
+      urls: ['hqtraining://m', 'hqtraining://m/calendar?date=1', 'hqtraining:///m/x', 'https://hq.training/m/workout/4', 'https://hq.training', 'http://localhost:3100/m'],
+      tabPaths: ['/m', '/m/workout/4', '/m/calendar', '/m/calendar/day', '/me', '/x'],
+      tabIds: ['/m', '/m/calendar', '/me'],
+      site: 'https://hq.training/m?x=1#top',
+      opens: ['/terms', '/terms?a=1#b', 'https://example.com/x', 'http://hq.training/y', '//evil.example/x', 'terms', 'mailto:a@b.c'],
+      links: ['https://hq.training/terms', 'http://HQ.training/m', 'https://www.hq.training/', 'hqtraining://terms', 'https://example.com/', 'https://HQ.training/m', 'https://hq.training:9443/m'],
+      messages,
+    })], { stderr: 'pipe' })
+    if (run.exitCode !== 0) throw new Error(`the Swift probe failed:\n${run.stderr.toString()}`)
+    result = JSON.parse(run.stdout.toString())
+  })
 
   it('matches paths by the shared cases', () => {
     CASES.forEach(([path, expected], index) => {
