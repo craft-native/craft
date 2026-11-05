@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.473...v0.0.474)
+
+## 🚀 Features
+
+- **release**: record what the binaries registry actually serves ([9cc2c26](https://github.com/craft-native/craft/commit/9cc2c26)) _(by glennmichael123)_ ([#454](https://github.com/craft-native/craft/issues/454))
+
+## 🐛 Bug Fixes
+
+- **ios**: stop refusing anchors the real hold would have contained ([29746b8](https://github.com/craft-native/craft/commit/29746b8)) _(by glennmichael123)_
+- **ios**: keep a destructive sheet's Cancel on the phone ([5f8bd67](https://github.com/craft-native/craft/commit/5f8bd67)) _(by glennmichael123)_
+- **ios**: stop the baseline screenshot widening the first-frame bracket ([dd329a2](https://github.com/craft-native/craft/commit/dd329a2)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.472...v0.0.473)
 
 ## 🐛 Bug Fixes
