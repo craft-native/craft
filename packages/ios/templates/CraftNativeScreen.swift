@@ -11444,6 +11444,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // UISwitch also owns its native identity and enabled/on state.
         // Assigning .button changes its legacy AX type into a button while
         // modern XCTest still identifies its UIKit class as a switch.
+        // The solid variant publishes "1"/"0" as a string from
+        // refreshAccessibility(). A UISwitch left to UIKit does not: the value
+        // it hands XCTest arrives as a number, so every `value as? String`
+        // read finds nothing. The driver's flip check is one of those reads,
+        // which is why a switch that did flip was reported as never flipping,
+        // and only sometimes - it depends which representation the accessibility
+        // snapshot was built from. Publishing the string makes both variants
+        // answer the same way. An authored accessibilityValue still wins.
+        if let toggle = view as? UISwitch, !authoredAccessibilityValues.contains(id) {
+            view.accessibilityValue = toggle.isOn ? "1" : "0"
+        }
         if view is UITextView || view is UISwitch { return }
         if let toggle = view as? CraftNativeSolidSwitch { toggle.refreshAccessibility(); return }
         view.accessibilityTraits = traits
