@@ -547,7 +547,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('private func transformedText(_ text: String, style: [String: Any])')
     expect(nativeSwift).toContain('buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")')
     expect(nativeSwift).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
-    expect(nativeSwift).toContain('field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: 16), alignment: field.textAlignment)')
+    expect(nativeSwift).toContain('field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: 16), alignment: field.textAlignment, singleLine: true)')
     expect(nativeSwift).toContain('textView.typingAttributes = attributes')
     expect(nativeSwift).toContain('textView.selectedRange = selectedRange')
     expect(nativeSwift).toContain('updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)')

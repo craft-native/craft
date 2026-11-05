@@ -4371,6 +4371,24 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(input.placeholder)
     }
 
+    func testSingleLineInputClipsLongURLsWhileTextAreasStillWrap() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        let url = "https://example.com/exercise-videos/0123456789abcdef0123456789abcdef.mp4"
+        controller.render(document([
+            ["type": "TextInput", "props": ["key": "url", "value": url], "style": ["height": 44, "width": 200]],
+            ["type": "TextInput", "props": ["key": "notes", "value": url, "multiline": true], "style": ["height": 100, "width": 200]],
+        ]))
+        let field = try XCTUnwrap(find(UITextField.self, key: "url", below: controller.view))
+        let notes = try XCTUnwrap(find(UITextView.self, key: "notes", below: controller.view))
+        let line = try XCTUnwrap(field.defaultTextAttributes[.paragraphStyle] as? NSParagraphStyle)
+        let paragraph = try XCTUnwrap(notes.typingAttributes[.paragraphStyle] as? NSParagraphStyle)
+        XCTAssertEqual(line.lineBreakMode, .byClipping)
+        XCTAssertEqual(paragraph.lineBreakMode, .byWordWrapping)
+        XCTAssertEqual(field.text, url)
+        XCTAssertEqual(notes.text, url)
+    }
+
     func testTextInputsPadTheirTextAndAskForAutofill() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

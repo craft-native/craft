@@ -9301,7 +9301,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             field.textColor = color(style["color"]) ?? .label
             field.font = textFont(style, default: .systemFont(ofSize: 16))
             field.textAlignment = textAlignment(style["textAlign"])
-            field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: 16), alignment: field.textAlignment)
+            field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: 16), alignment: field.textAlignment, singleLine: true)
             let desiredKeyboardType = keyboardType(props["keyboardType"])
             if field.keyboardType != desiredKeyboardType { field.keyboardType = desiredKeyboardType }
             let desiredReturnKeyType = returnKeyType(props["returnKeyType"])
@@ -10930,7 +10930,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func inputTextAttributes(
         _ style: [String: Any],
         font: UIFont,
-        alignment: NSTextAlignment
+        alignment: NSTextAlignment,
+        singleLine: Bool = false
     ) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: color(style["color"]) ?? .label,
@@ -10940,6 +10941,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // UIKit otherwise resets the field's alignment to natural when these attributes are applied.
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment
+        // The default paragraph wraps even inside a UITextField. A long URL
+        // then paints a second line outside the field instead of scrolling.
+        if singleLine { paragraph.lineBreakMode = .byClipping }
         if let lineHeight = number(style["lineHeight"]) {
             paragraph.minimumLineHeight = lineHeight
             paragraph.maximumLineHeight = lineHeight
