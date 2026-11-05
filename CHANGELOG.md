@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.467...v0.0.468)
+
+## 🐛 Bug Fixes
+
+- **ios**: open frame traces in fresh cache directories ([504c622](https://github.com/craft-native/craft/commit/504c622)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.466...v0.0.467)
 
 ## 🧪 Tests
