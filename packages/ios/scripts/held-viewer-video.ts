@@ -35,12 +35,14 @@ export const HELD_GESTURE_SECONDS = 6
  * strictly inside the hold, so unless that bracket is narrower than the hold
  * itself, no sample can qualify - there is nothing to select.
  *
- * Checking it at readiness stops the run before it synthesizes a six-second
- * gesture and records a few hundred megabytes that provably cannot answer the
- * question. Measuring against the nominal gesture rather than the observed
- * hold is deliberate: a bracket wider than the gesture can only be rescued by
- * synthesis overhead stretching the hold past it, which is luck rather than
- * evidence.
+ * This is a sufficient condition, not a necessary one, and the distinction
+ * cost a release. The hold is the six-second gesture plus whatever synthesis
+ * costs — about 7.7s in practice — so a bracket under the nominal gesture
+ * certainly fits, while one over it may still fit the real hold. Reading a
+ * false answer as proof of impossibility failed v0.0.473 on a 6.337s bracket.
+ *
+ * So callers warn on false and let `validateHeldVideoFrame` decide, since it
+ * is the one that knows the hold that actually happened.
  */
 export function anchorCanQualify(spawnWall: number, readyWall: number, holdSeconds: number = HELD_GESTURE_SECONDS): boolean {
   if (![spawnWall, readyWall, holdSeconds].every(value => Number.isFinite(value) && value > 0) || spawnWall > readyWall)

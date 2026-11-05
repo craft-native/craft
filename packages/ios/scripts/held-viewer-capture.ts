@@ -313,6 +313,7 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
   const recordReady = join(options.output, 'recording-ready'), recordStop = join(options.output, 'recording-stop')
   const recordReceipt = join(options.output, 'recording.json'), frameReceipt = join(options.output, 'frame.json')
   let extractor: string | undefined, extractorBuild: Awaited<ReturnType<typeof verifyHeldViewerExtractor>> | undefined
+  let anchorRisk: string | undefined
   const setupDeadline = performance.now() + 30_000
   const deadline = performance.now() + (options.timeoutMs ?? 45 * 60_000)
   let recordingResult: Awaited<ReturnType<typeof nativeFixtureCommand>> | undefined
@@ -328,7 +329,7 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
   }
   let remainder = '', doneAt: number | undefined
   const receipt = (verifiedDuringHold: boolean, error?: string) => ({
-    verifiedDuringHold, error, method: 'public-simctl-recordVideo-decoded-frame', timing,
+    verifiedDuringHold, error, anchorRisk, method: 'public-simctl-recordVideo-decoded-frame', timing,
     simulator: options.simulator, screenshot: png, movie, recording: recordReceipt, frame: frameReceipt,
     recordingResult, resolvedTool: tool, extractorBuild, extractorManifest: options.extractorManifest,
     compositorStimulus: 'Opt-in native ActivityIndicator in the maintained test fixture; no system display override.',
@@ -381,10 +382,17 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
     if (!Number.isFinite(anchor.spawnWall) || !Number.isFinite(anchor.readyWall) || anchor.spawnWall > anchor.readyWall)
       throw new Error('Public recording first-frame anchor is invalid')
     // Every candidate frame's interval is as wide as this bracket, so a
-    // bracket no narrower than the hold cannot put one inside it. Say so now
-    // rather than after the gesture and a few hundred megabytes of recording.
-    if (!anchorCanQualify(anchor.spawnWall, anchor.readyWall))
-      throw new Error(`Public recording first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s, which no ${HELD_GESTURE_SECONDS}-second hold can contain; simulator I/O startup was too slow to anchor a frame`)
+    // bracket wider than the hold leaves nothing to select. Warn, do not
+    // refuse: the hold is the six-second gesture plus whatever synthesis
+    // costs, so it is reliably longer than the nominal gesture, and a bracket
+    // over six seconds can still land inside it. Treating the nominal gesture
+    // as the limit failed v0.0.473 on a 6.337s bracket that the real ~7.7s
+    // hold would have contained. The qualification below knows the actual
+    // hold and remains strict; this is the early reading, not the verdict.
+    anchorRisk = anchorCanQualify(anchor.spawnWall, anchor.readyWall)
+      ? undefined
+      : `first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s, wider than the nominal ${HELD_GESTURE_SECONDS}-second gesture; only synthesis overhead can leave room for a frame`
+    if (anchorRisk) console.warn(`::warning::Public recording ${anchorRisk}`)
     await Bun.write(publicReady, 'Screenshot control and public recording first frame verified\n')
     while (performance.now() < deadline) {
       signal.throwIfAborted()

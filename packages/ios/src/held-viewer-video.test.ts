@@ -221,3 +221,14 @@ test('the anchor check measures the bracket against the nominal gesture', () => 
   expect(() => anchorCanQualify(106, 100)).toThrow('ordered first-frame bracket')
   expect(() => anchorCanQualify(100, 106, 0)).toThrow('positive hold')
 })
+
+test('the anchor check is sufficient, never proof of impossibility', () => {
+  // v0.0.473: a 6.337s bracket was refused against the nominal 6s gesture,
+  // while the hold that actually happens is ~7.7s and would have contained it.
+  expect(anchorCanQualify(100, 106.337)).toBe(false)
+  // Hold starts 10s after spawn, so a frame at PTS ~10.5s lands inside it.
+  const hold = { recordSpawnWall: 100, recordingStartedObservedWall: 106.337, synthesisWall: 110, releasedWall: 117.69 }
+  const decoded = Array.from({ length: 60 }, (_, index) => ({ value: index * 600, timescale: 600 }))
+  // The real hold contains it, so refusing at readiness would have been wrong.
+  expect(() => selectHeldVideoFrame(hold, decoded)).not.toThrow()
+})
