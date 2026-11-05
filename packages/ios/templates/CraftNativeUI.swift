@@ -30,14 +30,22 @@ enum CraftPresenter {
     }
 
     /// Present over whatever is on screen. A controller that shows as a
-    /// popover on iPad (an action sheet, a share sheet) points at `anchor` in
-    /// `view`, or sits in the middle of it with no arrow; iPadOS raises an
-    /// exception for a popover with neither. False when nothing can present,
-    /// so the caller answers rather than waiting.
+    /// popover (an action sheet, a share sheet, on a regular-width screen)
+    /// points at `anchor` in `view`, or sits in the middle of it with no
+    /// arrow; iPadOS raises an exception for a popover with neither. False
+    /// when nothing can present, so the caller answers rather than waiting.
+    ///
+    /// Only where the presentation really is a popover. A `.actionSheet`
+    /// always carries a `popoverPresentationController`, phone included, and
+    /// from iOS 26 configuring it is enough to make the phone present the
+    /// sheet as a centred popover -- which silently drops its cancel action,
+    /// as UIKit never draws one in a popover. A compact screen is left alone
+    /// and gets the standard sheet, with its Cancel.
     @discardableResult
     static func present(_ controller: UIViewController, from view: UIView?, anchor: CGRect? = nil) -> Bool {
         guard let top = topViewController() else { return false }
-        if let popover = controller.popoverPresentationController {
+        let asPopover = (view ?? top.view)?.traitCollection.horizontalSizeClass == .regular
+        if asPopover, let popover = controller.popoverPresentationController {
             let source = view ?? top.view!
             popover.sourceView = source
             if let anchor {
