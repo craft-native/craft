@@ -621,6 +621,33 @@ jobs:
             cat /tmp/index.out || true
           fi
 
+      # Queue acknowledgement is not publication. Record what the binaries
+      # registry actually serves for this version, per platform, so a release
+      # that is green everywhere else cannot quietly leave `pantry install
+      # craft` on an older version (#454). Best effort by design: this reports,
+      # it does not gate. A strict adoption gate for this surface would be a
+      # documented policy decision, not a default invented here.
+      - name: Record native Pantry availability
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          bun scripts/pantry-availability.ts "${TAG#v}" pantry-availability.json
+          outcome=$(jq -r '.outcome' pantry-availability.json)
+          if [ "$outcome" != "available" ]; then
+            echo "::warning::Native Pantry availability for ${TAG#v} is '$outcome' — see the receipt artifact."
+          fi
+
+      - name: Retain the Pantry availability receipt
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.0
+        with:
+          name: pantry-availability
+          path: pantry-availability.json
+          if-no-files-found: warn
+
       - name: Announce only the complete public release
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
