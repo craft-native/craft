@@ -71,6 +71,9 @@ switches with the driver's existing 1.5-second value-change bound. A pass proves
 this representative host path, not the cause of HQ's original job 7570 failure;
 that original acceptance recording and result bundle remain separate evidence.
 
+Value readiness reads the control directly within that same deadline, so a
+coarse predicate timer cannot miss an already-committed value. No tap is retried.
+
 The generated UIKit test target also compiles the shipped `DriverTests` template.
 Its `testScript` performs the same `scrollto agree-health` / `tapid agree-health`
 then data-consent sequence as HQ, for both native and solid switches. The final

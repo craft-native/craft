@@ -284,7 +284,16 @@ final class NativeRenderUITests: XCTestCase {
     // commit. What is asserted is unchanged: the value must still become
     // exactly `expected`, and a control that never responds still fails.
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) -> Bool {
-        let matched = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)], timeout: timeout) == .completed
+        // Predicate expectations poll coarsely enough to miss a value already
+        // committed inside the 1.5-second consent deadline. Observe the actual
+        // value with that same deadline and exactly the original input gesture.
+        let deadline = Date().addingTimeInterval(timeout)
+        var matched = false
+        repeat {
+            matched = element.value as? String == expected
+            if matched { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        } while Date() < deadline
         XCTAssertTrue(matched, "\(element.identifier) reads \"\(String(describing: element.value))\", not \"\(expected)\", \(timeout)s after input", file: file, line: line)
         return matched
     }
