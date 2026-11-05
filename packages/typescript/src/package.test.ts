@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, statSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { candleArguments, codesignArguments, createDiskImage, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 import { createTempDir, removeAllTempDirs, removeTempDir } from './temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -259,8 +259,27 @@ describe('macOS packaging diagnostics', () => {
         return { success: false as const, error: 'hdiutil: detach failed - No such file or directory' }
       },
     })
-    expect(detached).toEqual({ success: false, error: 'hdiutil: detach failed - No such file or directory' })
+    expect(detached).toEqual({ success: false, error: 'hdiutil: detach failed - No such file or directory', attempts: [
+      { args: ['detach', '/tmp/mount'], error: 'hdiutil: detach failed - No such file or directory' },
+    ] })
     expect(attempts).toHaveLength(1)
+  })
+
+  it('retains the contention preceding a different eject failure without retrying the latter', async () => {
+    const busy = 'hdiutil: could not eject - Resource busy'
+    const absent = 'hdiutil: detach failed - No such file or directory'
+    const waits: number[] = []
+    let calls = 0
+    const detached = await detachDiskImage('/tmp/mount', {
+      wait: async ms => { waits.push(ms) },
+      run: async () => ({ success: false as const, error: ++calls === 1 ? busy : absent }),
+    })
+    expect(detached).toEqual({ success: false, error: absent, attempts: [
+      { args: ['detach', '/tmp/mount'], error: busy },
+      { args: ['detach', '/tmp/mount'], error: absent },
+    ] })
+    expect(calls).toBe(2)
+    expect(waits).toEqual([2000])
   })
 })
 
@@ -514,6 +533,24 @@ it('preserves the resources and metadata of a prebuilt macOS app', async () => {
     const invalid = await packageApp({ name: 'Invalid', version: '1.0.0', binaryPath: join(source, 'Contents', 'MacOS', 'App'), outDir: join(root, 'invalid'), platforms: ['macos'], macos: { appBundlePath: root, dmg: false } })
     expect(invalid[0].success).toBe(false)
     expect(invalid[0].error).toBe(`Invalid prebuilt macOS application: ${root}`)
+  }
+  finally { removeTempDir(root) }
+})
+
+it.skipIf(process.platform !== 'darwin')('retains the actual staging failure and its disk image lifecycle receipt', async () => {
+  const root = createTempDir('failed-dmg-stage')
+  try {
+    const outputPath = join(root, 'Missing.dmg')
+    const result = await createDiskImage({ appBundlePath: join(root, 'Missing.app'), outputPath, volumeName: 'Missing' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('ditto')
+    const receipt = JSON.parse(result.error!.split('\nDisk image lifecycle: ')[1]!)
+    expect(receipt.phase).toBe('stage')
+    expect(receipt.attachment).toBe('')
+    expect(receipt.detachAttempts).toEqual([])
+    expect(receipt.image).toEndWith('/installer.dmg')
+    expect(receipt.mount).toEndWith('/mount')
+    expect(existsSync(outputPath)).toBe(false)
   }
   finally { removeTempDir(root) }
 })

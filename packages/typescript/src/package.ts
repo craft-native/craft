@@ -1195,6 +1195,8 @@ export function shouldRetryHdiutil(error: string, attempt: number, maxAttempts: 
 /** What a packaging tool reports: its output, or the diagnostic it failed with. */
 export type PackagingToolResult = { success: true, stdout: string } | { success: false, error: string }
 
+interface DiskImageDetachAttempt { args: string[], error: string }
+
 /** Run a packaging tool, capturing output so failures carry the real diagnostic. */
 function runTool(tool: string, args: string[]): Promise<PackagingToolResult> {
   return new Promise((resolve) => {
@@ -1227,14 +1229,17 @@ const runHdiutil = (args: string[]): Promise<PackagingToolResult> => runTool('hd
 export async function detachDiskImage(
   mount: string,
   options: { run?: (args: string[]) => Promise<PackagingToolResult>, wait?: (ms: number) => Promise<void> } = {},
-): Promise<{ success: true } | { success: false, error: string }> {
+): Promise<{ success: true } | { success: false, error: string, attempts: DiskImageDetachAttempt[] }> {
   const run = options.run ?? runHdiutil
   const wait = options.wait ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) }))
+  const attempts: DiskImageDetachAttempt[] = []
   for (let attempt = 1; ; attempt++) {
     const forced = attempt >= HDIUTIL_MAX_ATTEMPTS
-    const result = await run(forced ? ['detach', mount, '-force'] : ['detach', mount])
+    const args = forced ? ['detach', mount, '-force'] : ['detach', mount]
+    const result = await run(args)
     if (result.success) return { success: true }
-    if (!shouldRetryHdiutil(result.error, attempt)) return { success: false, error: result.error }
+    attempts.push({ args, error: result.error })
+    if (!shouldRetryHdiutil(result.error, attempt)) return { success: false, error: result.error, attempts }
     await wait(attempt * 2000)
   }
 }
@@ -1254,6 +1259,9 @@ export async function createDiskImage(opts: {
   const mount = join(scratch, 'mount')
   const writable = join(scratch, 'installer.dmg')
   let mounted = false
+  let phase = 'stage'
+  let attachment = ''
+  let detachAttempts: DiskImageDetachAttempt[] = []
   const run = async (tool: string, args: string[]) => {
     const result = await runTool(tool, args)
     if (!result.success) throw new Error(result.error)
@@ -1269,6 +1277,7 @@ export async function createDiskImage(opts: {
     writeFileSync(join(payload, '.background', 'installer.png'), installerBackground)
     const args = dmgCreateArguments({ ...opts, appBundlePath: payload, outputPath: writable }, pathContentBytes(payload))
     args[args.indexOf('ULMO')] = 'UDRW'
+    phase = 'create'
     for (let attempt = 1; ; attempt++) {
       const result = await runHdiutil(args)
       if (result.success) break
@@ -1276,16 +1285,26 @@ export async function createDiskImage(opts: {
       rmSync(writable, { force: true })
       await new Promise(resolve => setTimeout(resolve, attempt * 2000))
     }
-    await run('hdiutil', ['attach', writable, '-nobrowse', '-mountpoint', mount])
+    phase = 'attach'
+    attachment = (await run('hdiutil', ['attach', writable, '-nobrowse', '-mountpoint', mount])).stdout
     mounted = true
+    phase = 'layout'
     writeInstallerLayout(mount, opts.volumeName, bundleName)
+    phase = 'detach'
     const detached = await detachDiskImage(mount)
-    if (!detached.success) throw new Error(detached.error)
+    if (!detached.success) {
+      detachAttempts = detached.attempts
+      throw new Error(detached.error)
+    }
     mounted = false
+    phase = 'convert'
     await run('hdiutil', ['convert', writable, '-format', 'ULMO', '-ov', '-o', opts.outputPath])
     return { success: true, outputPath: opts.outputPath }
   }
-  catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) } }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { success: false, error: `${message}\nDisk image lifecycle: ${JSON.stringify({ phase, image: writable, mount, attachment, detachAttempts })}` }
+  }
   finally {
     if (mounted) await runTool('hdiutil', ['detach', mount, '-force'])
     removeTempDir(scratch)
