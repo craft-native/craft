@@ -123,6 +123,19 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
   monotonicNow?: () => number
   deadline?: number
   onResolved?: (tool: ResolvedScreenshotTool) => void
+  /**
+   * Awaited between starting the recording and taking the baseline shot.
+   *
+   * Both controls share one simulator's I/O. Run them at the same time and
+   * the recording's first-frame bracket widens by however long the screenshot
+   * holds that I/O - the receipts for Craft 468 show a 7.765s bracket beside
+   * a 7.746s screenshot, and since every candidate frame's interval is
+   * exactly as wide as the bracket, nothing could sit inside a 7.690s hold.
+   * Letting the recording close its anchor first costs no extra budget: the
+   * two still share the same 30-second deadline, they just stop competing
+   * during the only window whose width is load-bearing.
+   */
+  beforeScreenshot?: () => Promise<void>
 } = {}): Promise<ResolvedScreenshotTool> {
   const ready = options.ready ?? join(options.output, 'preflight-ready')
   if (!isAbsolute(ready)) throw new Error('Viewer readiness path must be absolute')
@@ -162,6 +175,7 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
     if (!isAbsolute(simctl)) throw new Error('xcrun did not resolve an absolute simctl executable')
     simctlSha256 = new Bun.CryptoHasher('sha256').update(await Bun.file(simctl).arrayBuffer()).digest('hex')
     dependencies.onResolved?.({ simctl, simctlSha256 })
+    await dependencies.beforeScreenshot?.()
     await run([simctl, 'io', options.simulator, 'screenshot', baseline])
     sha256 = await pngHash(baseline)
     await Bun.write(join(options.output, 'preflight.json'), JSON.stringify(receipt(true), null, 2))
@@ -337,7 +351,20 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
     const prepared = await (dependencies.prepare
       ? dependencies.prepare(startRecording)
       : prepareHeldViewerCapture({ ...options, signal, ready: join(options.output, 'screenshot-control-ready') }, {
-          deadline: setupDeadline, onResolved: startRecording,
+          deadline: setupDeadline,
+          onResolved: startRecording,
+          // Let the recording close its first-frame bracket before the
+          // screenshot competes for the same simulator's I/O. Bounded by the
+          // shared deadline and deliberately silent on expiry: the wait below
+          // still reports a recording that never became ready, and a failed
+          // recording must not also cost the screenshot its receipt.
+          beforeScreenshot: async () => {
+            while (!existsSync(recordReady) && performance.now() < setupDeadline) {
+              if (recordingFailure || recordingResult) return
+              signal.throwIfAborted()
+              await Bun.sleep(25)
+            }
+          },
         }))
     if (!recording) startRecording(prepared)
     else if (tool?.simctl !== prepared.simctl || tool.simctlSha256 !== prepared.simctlSha256)

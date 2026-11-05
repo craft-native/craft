@@ -419,3 +419,41 @@ describe('independent held viewer capture', () => {
     finally { removeTempDir(dir) }
   })
 })
+
+/**
+ * The first-frame bracket is `readyWall - spawnWall`, and every candidate
+ * frame's wall interval is exactly that wide whichever PTS is chosen. Craft
+ * 468 produced a 7.765s bracket beside a 7.746s baseline screenshot and a
+ * 7.690s hold, so nothing could sit inside the hold (#486). Both controls
+ * share one simulator's I/O, so the screenshot must not run while the
+ * recording is still establishing that anchor.
+ */
+test.skipIf(process.platform !== 'darwin')('the baseline screenshot waits for the recording to close its first-frame bracket', async () => {
+  const dir = createTempDir('craft-anchor-order-')
+  try {
+    const order: string[] = []
+    // The hash step reads the resolved tool, so it has to be a real file.
+    const simctl = join(dir, 'simctl')
+    writeFileSync(simctl, '#!/bin/sh\nexit 0\n')
+    let releaseRecording: (() => void) | undefined
+    const anchored = new Promise<void>((resolve) => { releaseRecording = resolve })
+    const command: NonNullable<Parameters<typeof prepareHeldViewerCapture>[1]>['command'] = async (args) => {
+      order.push(args.includes('--find') ? 'resolve' : 'screenshot')
+      if (!args.includes('--find')) await Bun.write(args.at(-1)!, pixel)
+      return { code: 0, stdout: args.includes('--find') ? `${simctl}\n` : '', stderr: '', timedOut: false, cancelled: false }
+    }
+    const prepared = prepareHeldViewerCapture({ simulator, output: dir, log: join(dir, 'l'), done: join(dir, 'd'), ready: join(dir, 'r') } as never, {
+      command,
+      xcrun: '/usr/bin/xcrun',
+      onResolved: () => { order.push('recording-started') },
+      beforeScreenshot: async () => { order.push('anchor-wait'); await anchored },
+    })
+    // The screenshot must not have run while the recording is still anchoring.
+    await Bun.sleep(50)
+    expect(order).toEqual(['resolve', 'recording-started', 'anchor-wait'])
+    releaseRecording!()
+    await prepared
+    expect(order).toEqual(['resolve', 'recording-started', 'anchor-wait', 'screenshot'])
+  }
+  finally { removeTempDir(dir) }
+}, 30_000)
