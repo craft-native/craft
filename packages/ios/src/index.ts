@@ -1597,6 +1597,7 @@ function writeShell(output: string, config: CraftConfig): void {
   writeSource(join(output, 'Sources', 'CraftNativeUI.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeUI.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftNativeServices.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeServices.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftNativeFiles.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeFiles.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeMediaOwnership.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeMediaOwnership.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftVoiceRecording.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftVoiceRecording.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftWebAudio.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftWebAudio.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftHybrid.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHybrid.swift'), 'utf8'))
