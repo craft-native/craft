@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.465...v0.0.466)
+
+## 🐛 Bug Fixes
+
+- **ios**: keep long input values on a single line ([a9a45b3](https://github.com/craft-native/craft/commit/a9a45b3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.464...v0.0.465)
 
 ## 🚀 Features
