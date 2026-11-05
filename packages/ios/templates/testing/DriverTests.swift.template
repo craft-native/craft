@@ -182,6 +182,30 @@ final class DriverTests: XCTestCase {
         return nil
     }
 
+    /// Safari's web view extends behind its browser bars. Those regions accept
+    /// touches for the bars, not for page controls reported inside the web view.
+    func browserContentFrame(_ frame: CGRect, topBar: CGRect?, bottomBar: CGRect?) -> CGRect {
+        var top = frame.minY
+        var bottom = frame.maxY
+        if let bar = topBar, bar.contains(CGPoint(x: frame.midX, y: bar.midY)), bar.intersects(frame) {
+            top = max(top, bar.maxY)
+        }
+        if let bar = bottomBar, bar.contains(CGPoint(x: frame.midX, y: bar.midY)), bar.intersects(frame) {
+            bottom = min(bottom, bar.minY)
+        }
+        return CGRect(x: frame.minX, y: top, width: frame.width, height: max(0, bottom - top))
+    }
+
+    func scrollViewport() -> CGRect {
+        let webView = app.webViews.firstMatch
+        let topBar = app.otherElements["TopBrowserBar"]
+        let bottomBar = app.toolbars["BottomBrowserToolbar"]
+        guard webView.exists, topBar.exists || bottomBar.exists else { return app.frame }
+        return browserContentFrame(webView.frame.intersection(app.frame),
+            topBar: topBar.exists ? topBar.frame : nil,
+            bottomBar: bottomBar.exists ? bottomBar.frame : nil)
+    }
+
     /// A short target fits entirely; an oversized target fills the viewport.
     func visibleScrollFrame(_ target: CGRect, in viewport: CGRect) -> Bool {
         let visible = target.intersection(viewport)
@@ -192,7 +216,7 @@ final class DriverTests: XCTestCase {
 
     func scrollTargetVisible(_ target: XCUIElement?) -> Bool {
         guard let target, target.exists, target.isHittable,
-              visibleScrollFrame(target.frame, in: app.frame) else { return false }
+              visibleScrollFrame(target.frame, in: scrollViewport()) else { return false }
         // Hittable alone accepts controls clipped by the scroll view's edge.
         // Only an ancestor scroll view clips this target, not its siblings.
         // One that does not overlap the target is not its ancestor, whatever
@@ -220,7 +244,7 @@ final class DriverTests: XCTestCase {
     /// below the screen while drawing it over the lower half - and it stops
     /// short of a keyboard whose frame is known.
     func scrollPage(towardTop: Bool) {
-        let frame = app.frame
+        let frame = scrollViewport()
         var lower = frame.minY + frame.height * 0.55
         let keyboard = app.keyboards.firstMatch
         if keyboard.exists, !keyboard.frame.isEmpty, keyboard.frame.minY < frame.maxY {
@@ -719,7 +743,7 @@ final class DriverTests: XCTestCase {
             var found = element(containing: arg)
             var drags = 0
             while !scrollTargetVisible(found) && drags < 12 {
-                let towardTop = found.map { !$0.frame.isEmpty && $0.frame.midY < app.frame.midY } ?? false
+                let towardTop = found.map { !$0.frame.isEmpty && $0.frame.midY < scrollViewport().midY } ?? false
                 scrollPage(towardTop: towardTop)
                 drags += 1
                 found = element(containing: arg)
