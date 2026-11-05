@@ -42,7 +42,7 @@ final class NativeRenderUITests: XCTestCase {
             let cancel = app.buttons["Cancel"].firstMatch
             XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
             XCTAssertEqual(app.webViews.count, 0)
-            cancel.tap()
+            tapWhenHittable(cancel, "picker Cancel")
             waitForLabel(app.staticTexts["picker-status"], "Answer \(index + 1): null")
         }
     }
@@ -71,7 +71,7 @@ final class NativeRenderUITests: XCTestCase {
             if mode == "library-video-replace" { XCTAssertNotEqual(app.staticTexts["picker-session"].label, session) }
             app.buttons["picker-photo"].tap()
             XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
-            cancel.tap()
+            tapWhenHittable(cancel, "picker Cancel")
             waitForLabel(app.staticTexts["picker-status"], "Answer 1: null")
             app.terminate()
         }
@@ -89,7 +89,7 @@ final class NativeRenderUITests: XCTestCase {
             let cancel = app.buttons["Cancel"].firstMatch
             XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
             XCTAssertEqual(app.webViews.count, 0)
-            cancel.tap()
+            tapWhenHittable(cancel, "picker Cancel")
             waitForLabel(status, "Answer \(index + 1): \(mode == "video" ? "null" : "[]")")
         }
     }
@@ -111,7 +111,7 @@ final class NativeRenderUITests: XCTestCase {
         app.buttons["picker-file"].tap()
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
-        cancel.tap()
+        tapWhenHittable(cancel, "picker Cancel")
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
     }
 
@@ -131,7 +131,7 @@ final class NativeRenderUITests: XCTestCase {
         app.buttons["picker-file"].tap()
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
-        cancel.tap()
+        tapWhenHittable(cancel, "picker Cancel")
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Document picker retry after native screen disposal"
@@ -283,6 +283,23 @@ final class NativeRenderUITests: XCTestCase {
     // testUnmodifiedUIKitSwitchRespondsToTheSameTap on an otherwise sound
     // commit. What is asserted is unchanged: the value must still become
     // exactly `expected`, and a control that never responds still fails.
+    /// Tap a system sheet's button once it can actually take the tap.
+    ///
+    /// `waitForExistence` only says the element is in the hierarchy. A picker
+    /// still animating in is there and not yet hittable, and a tap synthesized
+    /// at that moment lands on nothing: XCTest reports the event as sent, the
+    /// sheet stays up, and the page never answers. The deadline is unchanged -
+    /// this waits for the condition that was always meant, inside the patience
+    /// the sheet already had.
+    private func tapWhenHittable(_ element: XCUIElement, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
+        let deadline = Date().addingTimeInterval(systemSheetTimeout)
+        while !element.isHittable && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertTrue(element.isHittable, "\(what) never became hittable", file: file, line: line)
+        element.tap()
+    }
+
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         // Predicate expectations poll coarsely enough to miss a value already
         // committed inside the 1.5-second consent deadline. Observe the actual
