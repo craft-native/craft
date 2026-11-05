@@ -2703,11 +2703,11 @@ final class CraftFramePacing: NSObject {
     private let output = DispatchQueue(label: "craft.frame-pacing", qos: .utility)
     private lazy var file: FileHandle? = {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        let url = caches.appendingPathComponent("craft-frame-pacing.log")
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
-        let handle = try? FileHandle(forWritingTo: url)
-        _ = try? handle?.seekToEnd()
-        return handle
+        do { return try CraftFramePacingLog.open(in: caches) }
+        catch {
+            NSLog("[craft frames] trace file unavailable: %@", String(describing: error))
+            return nil
+        }
     }()
 
     private func write(_ line: String) {

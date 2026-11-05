@@ -1601,6 +1601,7 @@ function writeShell(output: string, config: CraftConfig): void {
   writeSource(join(output, 'Sources', 'CraftVoiceRecording.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftVoiceRecording.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftWebAudio.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftWebAudio.swift'), 'utf8'))
   writeSource(join(output, 'Sources', 'CraftHybrid.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHybrid.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftFramePacingLog.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftFramePacingLog.swift'), 'utf8'))
   // Always copied: without `crashReporting` in the config it installs nothing.
   writeSource(
     join(output, 'Sources', 'CraftCrashReporter.swift'),

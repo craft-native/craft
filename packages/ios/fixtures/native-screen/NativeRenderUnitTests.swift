@@ -1190,6 +1190,25 @@ private final class UnitLocationManager: CLLocationManager {
 
 @MainActor
 final class NativeRenderUnitTests: XCTestCase {
+    func testFrameTraceCreatesFreshCacheAndRetainsEarlierLinesWhenReopened() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? manager.removeItem(at: root) }
+        let caches = root.appendingPathComponent("Library/Caches")
+        XCTAssertFalse(manager.fileExists(atPath: caches.path))
+        let first = try CraftFramePacingLog.open(in: caches)
+        try first.write(contentsOf: Data("first\n".utf8))
+        try first.close()
+        let second = try CraftFramePacingLog.open(in: caches)
+        try second.write(contentsOf: Data("second\n".utf8))
+        try second.close()
+        XCTAssertEqual(try String(contentsOf: caches.appendingPathComponent("craft-frame-pacing.log"), encoding: .utf8), "first\nsecond\n")
+        let blocked = root.appendingPathComponent("blocked")
+        try Data("keep".utf8).write(to: blocked)
+        XCTAssertThrowsError(try CraftFramePacingLog.open(in: blocked))
+        XCTAssertEqual(try String(contentsOf: blocked, encoding: .utf8), "keep")
+    }
+
     func testPresenterRectRejectsBooleanCoordinatesAndNonFiniteNumbers() {
         XCTAssertNil(CraftPresenter.rect(["x": true, "y": 20, "width": 30, "height": 40]))
         XCTAssertNil(CraftPresenter.rect(["x": 10, "y": false, "width": 30, "height": 40]))
