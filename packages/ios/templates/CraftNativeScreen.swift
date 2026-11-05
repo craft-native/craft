@@ -10779,6 +10779,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // beneath the screen's floating chrome.
         let overflow = style["overflow"] as? String
         view.clipsToBounds = overflow == "hidden"
+            // A single-line editor owns a text viewport. Its private label
+            // can be wider than the control while editing or showing a URL;
+            // inherited visible overflow must not open that viewport.
+            || view is UITextField
             || (view is UIScrollView && overflow != "visible")
             || (view is UILabel && (view.craftRequestedCornerRadius ?? 0) > 0)
             || ((view is UIImageView || view is CraftNativePositionedImageView) && (borderRadius > 0 || hasCornerRadii))

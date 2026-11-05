@@ -4413,6 +4413,8 @@ final class NativeRenderUnitTests: XCTestCase {
         let paragraph = try XCTUnwrap(notes.typingAttributes[.paragraphStyle] as? NSParagraphStyle)
         XCTAssertEqual(line.lineBreakMode, .byClipping)
         XCTAssertEqual(paragraph.lineBreakMode, .byWordWrapping)
+        XCTAssertTrue(field.clipsToBounds, "A single-line input owns its text viewport even when its parent allows overflow")
+        XCTAssertTrue(field.layer.masksToBounds, "The native text sublayers must not paint outside the input")
         XCTAssertEqual(field.text, url)
         XCTAssertEqual(notes.text, url)
     }

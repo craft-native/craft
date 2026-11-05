@@ -28,6 +28,10 @@ To select a case, use the full XCTest target/class/method identifier, for exampl
 The runner checks the result bundle and rejects zero tests or skipped cases,
 including Xcode's successful exit for an unmatched selection.
 
+Single-line input coverage checks both its non-wrapping paragraph and its native
+clipping viewport. A long URL stays editable without painting outside the field;
+multiline notes retain their wrapping behavior.
+
 Picker interruption tests first assert that the actual document/photo/video
 picker is visible. XCTest then backgrounds the app, whose fixture receives the
 public `APP_STATE` event and sends `API_CANCEL` or `NAVIGATE_REPLACE` once. On
