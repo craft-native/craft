@@ -1850,7 +1850,7 @@ describe('Craft Android builder', () => {
     expect(shell).toContain('internal class CraftNativeMediaWorker(')
     expect(shell).toContain('(it.state == androidx.work.WorkInfo.State.ENQUEUED && it.runAttemptCount == 0)')
     expect(shell).toContain('"$TAG:generation:$started" in it.tags &&')
-    expect(shell).toContain('val matching = pending.filter { it.generation == started }')
+    expect(shell).toContain('val matching = pending.filter { it.generation == started && it.revision == ownerRevision }')
     expect(shell).toContain('work.enqueueUniqueWork(name, if (pending) androidx.work.ExistingWorkPolicy.KEEP else androidx.work.ExistingWorkPolicy.REPLACE, request).result.get()')
     // A prune never stops the transfer a keep still waits on; a 206 nobody asked for is refused.
     expect(shell).toContain('owner !in active && (owner !in wanted || stale)')
@@ -1862,8 +1862,8 @@ describe('Craft Android builder', () => {
     // Answered at once when it cannot run now, in the shape iOS answers.
     expect(shell).toContain('.put("reason", reason).put("queued", true)')
     // A clear (sign-out) is persisted before the files go, and stops every job.
-    expect(shell).toContain('prefs(context).edit().putInt("generation", generation(context) + 1).commit()')
-    expect(shell).toContain('cancelAllWorkByTag(TAG)')
+    expect(shell).toContain('prefs(context).edit().clear().putInt("generation", previous + 1).putBoolean("cleared", true).commit()')
+    expect(shell).toContain('cancelAllWorkByTag("$TAG:generation:$previous")')
   })
 
   it('gives every notification a white glyph instead of the launcher icon', async () => {

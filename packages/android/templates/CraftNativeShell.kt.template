@@ -1381,7 +1381,7 @@ internal object CraftNativeMedia {
     private const val PREFS = "craft.media"
     private val lock = Any()
     /** Keeps waiting in this process for an address's transfer. */
-    private data class Waiting(val generation: Int, val answer: (CraftNativeCapabilityResult) -> Unit)
+    private data class Waiting(val generation: Int, val revision: String, val answer: (CraftNativeCapabilityResult) -> Unit)
     private val waiting = HashMap<String, MutableList<Waiting>>()
     /** One transfer writes an address's part file at a time. */
     private val writers = ConcurrentHashMap<String, Any>()
@@ -1400,10 +1400,12 @@ internal object CraftNativeMedia {
     }
 
     /** Where an address's transfer writes until the file is whole; kept between attempts to resume. */
-    fun part(context: Context, address: String): File = File(root(context), "${file(context, address).name}.part")
+    fun part(context: Context, address: String, started: Int = generation(context), ownerRevision: String = revision(context, address)): File =
+        File(root(context), "${file(context, address).name}.g$started.r${ownerRevision.ifEmpty { "legacy" }}.part")
 
-    fun local(context: Context, address: String): File? =
-        address.takeIf { it.isNotBlank() }?.let { file(context, it) }?.takeIf { it.isFile && it.length() > 0 }
+    fun local(context: Context, address: String): File? = synchronized(lock) {
+        address.takeIf { it.isNotBlank() && permitted(context, it) }?.let { file(context, it) }?.takeIf { it.isFile && it.length() > 0 }
+    }
 
     private fun describe(address: String, file: File) = JSONObject().put("ok", true).put("url", address).put("path", file.absolutePath).put("size", file.length())
 
@@ -1411,6 +1413,46 @@ internal object CraftNativeMedia {
 
     /** How many times the cache was cleared; a transfer started before the last clear does not land. */
     fun generation(context: Context): Int = prefs(context).getInt("generation", 0)
+
+    private fun revision(context: Context, address: String): String = prefs(context).getString("revision:${digest(address)}", "").orEmpty()
+
+    private fun permitted(context: Context, address: String): Boolean {
+        val store = prefs(context)
+        val key = digest(address)
+        return !store.getBoolean("revoked:$key", false) && (!store.getBoolean("cleared", false) || store.getBoolean("authorized:$key", false))
+    }
+
+    private fun current(context: Context, address: String, started: Int, ownerRevision: String): Boolean =
+        generation(context) == started && revision(context, address) == ownerRevision && permitted(context, address)
+
+    private fun mediaFiles(context: Context): Array<File> {
+        val directory = root(context)
+        if (!directory.exists()) return emptyArray()
+        return directory.listFiles() ?: throw java.io.IOException("The media cache could not be read")
+    }
+
+    private fun removeFiles(context: Context, address: String): Int {
+        val prefix = digest(address) + "."
+        var removed = 0
+        var failure: java.io.IOException? = null
+        mediaFiles(context).filter { it.name.startsWith(prefix) }.forEach { file ->
+            if (file.delete()) removed++ else failure = java.io.IOException("The media copy could not be removed")
+        }
+        failure?.let { throw it }
+        return removed
+    }
+
+    /** A new explicit authorized keep may lift a durable tombstone, after removing retired bytes. */
+    private fun activate(context: Context, address: String) {
+        if (permitted(context, address)) return
+        removeFiles(context, address)
+        val key = digest(address)
+        if (!prefs(context).edit().putBoolean("revoked:$key", false).putBoolean("authorized:$key", true).commit()) {
+            throw java.io.IOException("Media authorization could not be persisted")
+        }
+    }
+
+    private fun revisionTag(address: String, revision: String) = "$TAG:identity:${digest(address)}:${revision.ifEmpty { "legacy" }}"
 
     /** The unique job for an address and connection rule: `any` or `wifi`. */
     private fun workName(address: String, wifiOnly: Boolean) = "$TAG:${digest(address)}:${if (wifiOnly) "wifi" else "any"}"
@@ -1423,7 +1465,10 @@ internal object CraftNativeMedia {
         }
         val app = context.applicationContext
         var sourceChanged = false
+        var ownerRevision = ""
         val started = synchronized(lock) {
+            try { activate(app, address) }
+            catch (error: java.io.IOException) { return done(CraftNativeCapabilityResult(code = "IO_ERROR", message = error.message ?: "Media authorization could not be persisted")) }
             local(app, address)?.let { return done(CraftNativeCapabilityResult(data = describe(address, it))) }
             if (cacheKey != null) {
                 val sourceKey = "source:${digest(address)}"
@@ -1431,7 +1476,8 @@ internal object CraftNativeMedia {
                 sourceChanged = prefs(app).getString(sourceKey, null) != authorization
                 if (!prefs(app).edit().putString(sourceKey, authorization).commit()) return done(CraftNativeCapabilityResult(code = "IO_ERROR", message = "Could not persist media authorization"))
             }
-            generation(app).also { waiting.getOrPut(address) { mutableListOf() }.add(Waiting(it, done)) }
+            ownerRevision = revision(app, address)
+            generation(app).also { waiting.getOrPut(address) { mutableListOf() }.add(Waiting(it, ownerRevision, done)) }
         }
         val wifiOnly = !cellular
         val work = androidx.work.WorkManager.getInstance(app)
@@ -1439,20 +1485,22 @@ internal object CraftNativeMedia {
         work.cancelUniqueWork(workName(address, !wifiOnly))
         val request = androidx.work.OneTimeWorkRequestBuilder<CraftNativeMediaWorker>()
             .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED).build())
-            .setInputData(androidx.work.workDataOf("address" to address, "source" to source, "headers" to headers.toString(), "generation" to started))
+            .setInputData(androidx.work.workDataOf("address" to address, "source" to source, "headers" to headers.toString(), "generation" to started, "revision" to ownerRevision))
             .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
             .addTag(TAG)
             .addTag("$TAG:generation:$started")
             .addTag("$TAG:${digest(address)}")
+            .addTag(revisionTag(address, ownerRevision))
             .build()
         // Join a running or freshly queued transfer. Only a failed attempt's
         // backoff is replaced so an explicit retry can resume immediately.
         val name = workName(address, wifiOnly)
         background.execute {
             try {
-                if (generation(app) == started) {
+                if (current(app, address, started, ownerRevision)) {
                     val pending = work.getWorkInfosForUniqueWork(name).get().any {
                         "$TAG:generation:$started" in it.tags &&
+                            revisionTag(address, ownerRevision) in it.tags &&
                             !sourceChanged && !it.progress.getBoolean(ATTEMPT_SETTLED, false) &&
                             (it.state == androidx.work.WorkInfo.State.RUNNING ||
                                 (it.state == androidx.work.WorkInfo.State.ENQUEUED && it.runAttemptCount == 0))
@@ -1462,8 +1510,8 @@ internal object CraftNativeMedia {
                 }
             } catch (error: Exception) {
                 if (error is InterruptedException) Thread.currentThread().interrupt()
-                if (generation(app) == started) {
-                    deliver(context, address, started, CraftNativeCapabilityResult(code = "IO_ERROR", message = "media.keep could not schedule the download"))
+                if (current(app, address, started, ownerRevision)) {
+                    deliver(context, address, started, CraftNativeCapabilityResult(code = "IO_ERROR", message = "media.keep could not schedule the download"), ownerRevision)
                 }
             }
         }
@@ -1472,25 +1520,25 @@ internal object CraftNativeMedia {
             wifiOnly && metered(app) -> "cellular"
             else -> null
         }
-        if (reason != null) deliver(context, address, started, queued(address, reason))
+        if (reason != null) deliver(context, address, started, queued(address, reason), ownerRevision)
     }
 
     private fun queued(address: String, reason: String) =
         CraftNativeCapabilityResult(data = JSONObject().put("ok", false).put("url", address).put("reason", reason).put("queued", true))
 
     /** Answers only keeps belonging to this transfer's cache generation. */
-    fun deliver(context: Context, address: String, started: Int, result: CraftNativeCapabilityResult) {
+    fun deliver(context: Context, address: String, started: Int, result: CraftNativeCapabilityResult, ownerRevision: String = "") {
         val answered = synchronized(lock) {
             val pending = waiting[address].orEmpty()
-            val matching = pending.filter { it.generation == started }
-            val remaining = pending.filter { it.generation != started }.toMutableList()
+            val matching = pending.filter { it.generation == started && it.revision == ownerRevision }
+            val remaining = pending.filter { it.generation != started || it.revision != ownerRevision }.toMutableList()
             if (remaining.isEmpty()) waiting.remove(address) else waiting[address] = remaining
             matching
         }
         if (answered.isNotEmpty()) main.post {
-            val current = if (generation(context) == started) result else
+            val answer = if (current(context, address, started, ownerRevision)) result else
                 CraftNativeCapabilityResult(code = "CANCELLED", message = "The video cache was cleared")
-            answered.forEach { it.answer(current) }
+            answered.forEach { it.answer(answer) }
         }
     }
 
@@ -1501,7 +1549,7 @@ internal object CraftNativeMedia {
      * file where it stopped, moves it into place whole, and answers whoever
      * waits. RETRY leaves the part file for the next attempt.
      */
-    fun transfer(context: Context, address: String, headers: JSONObject, started: Int, attempt: Int, source: String = address, beforeAnswer: () -> Unit = {}, stopped: () -> Boolean): Outcome {
+    fun transfer(context: Context, address: String, headers: JSONObject, started: Int, attempt: Int, source: String = address, beforeAnswer: () -> Unit = {}, ownerRevision: String = "", stopped: () -> Boolean): Outcome {
         fun answer(result: CraftNativeCapabilityResult) {
             // The callback can immediately call keep again. Publish completion
             // before that callback, while WorkManager may still say RUNNING.
@@ -1509,12 +1557,15 @@ internal object CraftNativeMedia {
                 // A keep registered after this marker belongs to the next
                 // attempt; it must not enter the old callback batch.
                 beforeAnswer()
-                deliver(context, address, started, result)
+                deliver(context, address, started, result, ownerRevision)
             }
         }
         // clear() already answered the old generation's waiters. Never answer
         // a new athlete's waiters from an obsolete worker for the same URL.
-        if (generation(context) != started) return Outcome.DONE
+        if (!current(context, address, started, ownerRevision)) {
+            part(context, address, started, ownerRevision).delete()
+            return Outcome.DONE
+        }
         local(context, address)?.let {
             answer(CraftNativeCapabilityResult(data = describe(address, it)))
             return Outcome.DONE
@@ -1523,21 +1574,25 @@ internal object CraftNativeMedia {
         synchronized(writer) {
             // Another worker can finish, or sign-out can clear the cache, while
             // this worker waits for the address's writer.
-            if (generation(context) != started) return Outcome.DONE
+            if (!current(context, address, started, ownerRevision)) {
+                part(context, address, started, ownerRevision).delete()
+                return Outcome.DONE
+            }
             if (stopped()) return Outcome.RETRY
             local(context, address)?.let {
                 answer(CraftNativeCapabilityResult(data = describe(address, it)))
                 return Outcome.DONE
             }
             val target = file(context, address)
-            val staging = part(context, address)
+            val staging = part(context, address, started, ownerRevision)
             target.parentFile?.mkdirs()
             val download = CraftResumableDownload()
             val asked = headers.keys().asSequence().associateWith { headers.optString(it) }
             val fetched = try {
                 // A part that no longer lines up was dropped: the whole file, now, not after a backoff.
-                download.fetch(source, asked, staging, stopped).let { first ->
-                    if (first is CraftResumableDownload.Fetched.Restart) download.fetch(source, asked, staging, stopped) else first
+                val retired = { stopped() || !current(context, address, started, ownerRevision) }
+                download.fetch(source, asked, staging, retired).let { first ->
+                    if (first is CraftResumableDownload.Fetched.Restart) download.fetch(source, asked, staging, retired) else first
                 }
             } catch (error: Exception) {
                 val full = generateSequence<Throwable>(error) { it.cause }.take(16).any {
@@ -1548,13 +1603,17 @@ internal object CraftNativeMedia {
                     answer(CraftNativeCapabilityResult(code = "NO_SPACE", message = error.message ?: "The phone is out of space"))
                     return Outcome.DONE
                 }
+                if (!current(context, address, started, ownerRevision)) { staging.delete(); return Outcome.DONE }
                 if (stopped()) return Outcome.RETRY
                 // Lost the connection part way: the part waits for the next attempt.
                 answer(if (!online(context)) queued(address, "offline") else CraftNativeCapabilityResult(code = if (error is java.net.SocketTimeoutException) "TIMEOUT" else "NETWORK_ERROR", message = error.message ?: "media.keep failed"))
                 return if (attempt < 8) Outcome.RETRY else Outcome.DONE.also { staging.delete() }
             }
             when (fetched) {
-                is CraftResumableDownload.Fetched.Stopped, is CraftResumableDownload.Fetched.Restart -> return Outcome.RETRY
+                is CraftResumableDownload.Fetched.Stopped, is CraftResumableDownload.Fetched.Restart -> {
+                    if (!current(context, address, started, ownerRevision)) { staging.delete(); return Outcome.DONE }
+                    return Outcome.RETRY
+                }
                 is CraftResumableDownload.Fetched.Refused -> {
                     answer(CraftNativeCapabilityResult(data = JSONObject().put("ok", false).put("url", address).put("status", fetched.status)))
                     return Outcome.DONE
@@ -1566,7 +1625,7 @@ internal object CraftNativeMedia {
                 is CraftResumableDownload.Fetched.Complete -> Unit
             }
             synchronized(lock) {
-                if (generation(context) != started) {
+                if (!current(context, address, started, ownerRevision)) {
                     staging.delete()
                     return Outcome.DONE
                 }
@@ -1603,8 +1662,8 @@ internal object CraftNativeMedia {
             val active = waiting.keys.map { digest(it) }.toSet()
             root(context).listFiles()?.forEach { file ->
                 val owner = file.name.substringBefore('.')
-                // Part files from before transfers resumed (`<sha>.<ext>.<id>.part`) are never picked up again.
-                val stale = file.name.endsWith(".part") && file.name.count { it == '.' } > 2
+                val ownerRevision = prefs(context).getString("revision:$owner", "").orEmpty().ifEmpty { "legacy" }
+                val stale = file.name.endsWith(".part") && !file.name.endsWith(".g${generation(context)}.r$ownerRevision.part")
                 if (owner !in active && (owner !in wanted || stale) && file.delete()) removed++
             }
         }
@@ -1628,20 +1687,60 @@ internal object CraftNativeMedia {
         return removed
     }
 
+    /** Revoke one identity before cancelling its work or unlinking its bytes. */
+    fun remove(context: Context, address: String): Int {
+        require(address.isNotBlank()) { "media.remove needs a source or cache key" }
+        var removed = 0
+        var failure: java.io.IOException? = null
+        val key = digest(address)
+        val answered = synchronized(lock) {
+            if (!prefs(context).edit().putString("revision:$key", java.util.UUID.randomUUID().toString()).putBoolean("revoked:$key", true).commit()) {
+                failure = java.io.IOException("Media retirement could not be persisted")
+            }
+            val callbacks = waiting.remove(address).orEmpty()
+            try { removed = removeFiles(context, address) }
+            catch (error: java.io.IOException) { failure = error }
+            callbacks
+        }
+        main.post { answered.forEach { it.answer(CraftNativeCapabilityResult(code = "CANCELLED", message = "Media ownership was retired")) } }
+        val app = context.applicationContext
+        background.execute {
+            runCatching {
+                val work = androidx.work.WorkManager.getInstance(app)
+                work.getWorkInfosByTag("$TAG:$key").get().filter { !it.state.isFinished }.forEach { info ->
+                    synchronized(lock) {
+                        // A delayed enumeration must preserve a later explicit
+                        // re-grant, including one made after another remove.
+                        if (!permitted(app, address) || "$TAG:generation:${generation(app)}" !in info.tags || revisionTag(address, revision(app, address)) !in info.tags) {
+                            work.cancelWorkById(info.id)
+                        }
+                    }
+                }
+            }
+        }
+        failure?.let { throw it }
+        return removed
+    }
+
     /** Stops every transfer and deletes every copy; none started before this lands after it. */
     fun clear(context: Context): Int {
         var removed = 0
         var failure: java.io.IOException? = null
         val answered = synchronized(lock) {
             // Persisted before the files go: a transfer that outlives the process checks it too.
-            prefs(context).edit().putInt("generation", generation(context) + 1).commit()
+            val previous = generation(context)
+            if (!prefs(context).edit().clear().putInt("generation", previous + 1).putBoolean("cleared", true).commit()) {
+                failure = java.io.IOException("Media retirement could not be persisted")
+            }
             val callbacks = waiting.values.flatten()
             waiting.clear()
-            root(context).listFiles()?.forEach { file ->
-                if (file.delete()) removed++ else failure = java.io.IOException("The video cache could not be cleared")
-            }
+            try {
+                mediaFiles(context).forEach { file ->
+                    if (file.delete()) removed++ else failure = java.io.IOException("The video cache could not be cleared")
+                }
+            } catch (error: java.io.IOException) { failure = error }
             // Schedule cancellation before a new generation can enqueue its work.
-            androidx.work.WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(TAG)
+            androidx.work.WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag("$TAG:generation:$previous")
             callbacks
         }
         main.post { answered.forEach { it.answer(CraftNativeCapabilityResult(code = "CANCELLED", message = "The video cache was cleared")) } }
@@ -1733,10 +1832,11 @@ internal class CraftNativeMediaWorker(context: Context, parameters: androidx.wor
         val address = inputData.getString("address") ?: return Result.failure()
         val headers = runCatching { JSONObject(inputData.getString("headers") ?: "{}") }.getOrDefault(JSONObject())
         val started = inputData.getInt("generation", 0)
+        val ownerRevision = inputData.getString("revision").orEmpty()
         return try {
             setProgressAsync(androidx.work.workDataOf(CraftNativeMedia.ATTEMPT_SETTLED to false)).get()
             val outcome = CraftNativeMedia.transfer(applicationContext, address, headers, started, runAttemptCount, source = inputData.getString("source") ?: address,
-                beforeAnswer = { setProgressAsync(androidx.work.workDataOf(CraftNativeMedia.ATTEMPT_SETTLED to true)).get() }
+                beforeAnswer = { setProgressAsync(androidx.work.workDataOf(CraftNativeMedia.ATTEMPT_SETTLED to true)).get() }, ownerRevision = ownerRevision
             ) { isStopped }
             if (outcome == CraftNativeMedia.Outcome.RETRY) Result.retry() else Result.success()
         } catch (error: Exception) {
@@ -1744,7 +1844,7 @@ internal class CraftNativeMediaWorker(context: Context, parameters: androidx.wor
             // A replacement owns the address's new waiters. A real progress
             // storage failure still needs an answer instead of a lost callback.
             if (!isStopped) CraftNativeMedia.deliver(applicationContext, address, started,
-                CraftNativeCapabilityResult(code = "IO_ERROR", message = error.message ?: "media.keep could not store worker progress"))
+                CraftNativeCapabilityResult(code = "IO_ERROR", message = error.message ?: "media.keep could not store worker progress"), ownerRevision)
             if (isStopped) Result.retry() else Result.failure()
         }
     }

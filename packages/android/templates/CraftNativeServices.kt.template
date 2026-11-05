@@ -120,6 +120,7 @@ internal class CraftNativeServices(
         // Videos kept on the phone for offline (CraftNativeMedia).
         add("media")
         add("media-cache-key")
+        add("media-remove")
         if (config.optBoolean("enableShare")) add("share")
         if (config.optBoolean("enablePushNotifications")) add("push")
         if (health != null || healthServices != null) {
@@ -188,7 +189,22 @@ internal class CraftNativeServices(
                         done(success(CraftNativeMedia.prune(context, (0 until keep.length()).map { index -> keep.optJSONObject(index)?.let { CraftNativeMedia.identity(it.optString("url"), it) } ?: keep.optString(index) })))
                     }
                     "usage" -> done(success(CraftNativeMedia.usage(context)))
-                    "clear" -> done(success(CraftNativeMedia.clear(context)))
+                    "clear" -> {
+                        try { done(success(CraftNativeMedia.clear(context))) }
+                        catch (error: java.io.IOException) { done(failure("IO_ERROR", error.message ?: "The media cache could not be cleared")) }
+                    }
+                    "remove" -> {
+                        val options = args.optJSONObject(1)
+                        val key = options?.opt("cacheKey")
+                        if (key != null && key != JSONObject.NULL && (key !is String || key.isEmpty() || key.toByteArray().size > 1024)) {
+                            done(failure("INVALID_ARGUMENT", "media.remove cacheKey must be a nonempty string of at most 1024 bytes"))
+                        } else {
+                            val address = CraftNativeMedia.identity(args.optString(0), options)
+                            if (address.isBlank()) done(failure("INVALID_ARGUMENT", "media.remove needs a source or cache key"))
+                            else try { done(success(CraftNativeMedia.remove(context, address))) }
+                            catch (error: java.io.IOException) { done(failure("IO_ERROR", error.message ?: "The media copy could not be removed")) }
+                        }
+                    }
                     else -> done(failure("UNKNOWN_ACTION", "Unsupported Media method"))
                 }
                 "Background" -> {
