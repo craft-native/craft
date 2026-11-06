@@ -677,6 +677,38 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(link.waitForExistence(timeout: 10))
     }
 
+    func testFloatingCompanionMenuDismissesWithoutNavigationAndOpensOnlyItsChoice() {
+        let app = XCUIApplication()
+        app.launch()
+        let details = app.buttons["navigation-open-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 15))
+        details.tap()
+        app.buttons["details-add-menu"].tap()
+        let add = app.buttons["craft-tab-companion:/add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        XCTAssertTrue(app.buttons["Habit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Nutrition"].exists)
+        XCTAssertTrue(app.buttons["Workout"].exists)
+        XCTAssertLessThan(app.buttons["Habit"].frame.minY, app.buttons["Nutrition"].frame.minY)
+        XCTAssertLessThan(app.buttons["Nutrition"].frame.minY, app.buttons["Workout"].frame.minY)
+        XCTAssertTrue(app.staticTexts["details-title"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Compact Add popup anchored to floating button"
+        shot.lifetime = .keepAlways
+        self.add(shot)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.3)).tap()
+        XCTAssertFalse(app.buttons["Nutrition"].exists)
+        XCTAssertTrue(app.staticTexts["details-title"].exists)
+        add.tap()
+        app.buttons["Nutrition"].tap()
+        XCTAssertTrue(app.staticTexts["capabilities-title"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Nutrition"].exists)
+        XCTAssertFalse(app.webViews.firstMatch.exists)
+    }
+
     func testPushedScreenTabAccessoryOpensNativeRouteAndClearsOnBack() {
         let app = XCUIApplication()
         app.launch()

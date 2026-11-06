@@ -2704,6 +2704,46 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun floatingCompanionMenuDismissesWithoutNavigationAndOpensOnlyItsChoice() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        ) as MainActivity
+        fun menuChoice(label: String): AccessibilityNodeInfo {
+            val deadline = SystemClock.uptimeMillis() + 5000
+            while (SystemClock.uptimeMillis() < deadline) {
+                instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(label)?.firstOrNull()?.let { return it }
+                SystemClock.sleep(50)
+            }
+            throw AssertionError("Popup choice missing: $label")
+        }
+        try {
+            click(activity, "navigation-open-details")
+            val details = awaitText(activity, "details-title", "Details for Ada")
+            click(activity, "details-add-menu")
+            val add = awaitView(activity, "Add")
+            instrumentation.runOnMainSync { add.performClick() }
+            menuChoice("Habit")
+            menuChoice("Nutrition")
+            menuChoice("Workout")
+            assertSame(details, awaitText(activity, "details-title", "Details for Ada"))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            instrumentation.waitForIdleSync()
+            assertSame(details, awaitText(activity, "details-title", "Details for Ada"))
+            instrumentation.runOnMainSync { add.performClick() }
+            var choice = menuChoice("Nutrition")
+            while (!choice.isClickable && choice.parent != null) choice = choice.parent
+            assertTrue("Nutrition menu row did not accept the tap", choice.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            awaitView(activity, "capabilities-title")
+            instrumentation.runOnMainSync { activity.onBackPressedDispatcher.onBackPressed() }
+            assertSame(details, awaitText(activity, "details-title", "Details for Ada"))
+        } finally {
+            activity.finishAndRemoveTask()
+        }
+    }
+
+    @Test
     fun pushedScreenTabAccessoryOpensNativeRouteAndClearsOnBack() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

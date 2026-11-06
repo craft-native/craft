@@ -71,6 +71,17 @@ function incrementDetails() {
   count.update(value => value + 1)
 }
 
+function useAddMenu() {
+  globalThis.craft.navigation.setOptions({ tabAccessory: {
+    path: '/capabilities', title: 'Messages', symbol: 'message', iconOnly: true,
+    companions: [{ path: '/add', title: 'Add', symbol: 'plus', menu: [
+      { path: '/identity', title: 'Habit', symbol: 'checkmark.circle' },
+      { path: '/capabilities', title: 'Nutrition', symbol: 'fork.knife' },
+      { path: '/linked-details', title: 'Workout', symbol: 'dumbbell' },
+    ] }],
+  } })
+}
+
 onDestroy(() => globalThis.craft.storage.setSync('native-navigation-details-destroyed', `${name}/${count()}`))
 
 globalThis.craft.navigation.setOptions({
@@ -89,6 +100,7 @@ globalThis.craft.navigation.setOptions({
     <Text testID="details-title" :text="'Details for ' + name" />
     <Text testID="details-count" :text="'Count: ' + count" />
     <Button testID="details-increment" @click="incrementDetails()">Increment details state</Button>
+    <Button testID="details-add-menu" @click="useAddMenu()">Use compact Add menu</Button>
     <Text testID="people-count" :text="'People: ' + people().length + '; events: ' + listEvents" />
     <ScrollView
       testID="people-list"
