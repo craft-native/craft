@@ -805,6 +805,13 @@ jobs:
       - name: Test failure-safe vulnerability scanning
         run: bun test ./scripts/scan-sbom.test.ts ./scripts/scan-release-artifacts.test.ts ./scripts/sbom-scope.test.ts
 
+      # These ran nowhere. A scripts test executes only where it is named, and
+      # these three were in no workflow and no package.json script — including
+      # the one covering `decide()`, which is what accepts or refuses every
+      # release commit.
+      - name: Test release acceptance and lifecycle planning
+        run: bun test ./scripts/release-acceptance.test.ts ./scripts/native-lifecycle-plan.test.ts ./scripts/sync-release-version.test.ts
+
       - name: Audit Zig C imports
         run: bun run verify:cimports
 

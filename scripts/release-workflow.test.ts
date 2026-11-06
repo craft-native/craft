@@ -1014,3 +1014,23 @@ test('every pinned Pantry installer pairs one version with one immutable commit'
   expect([...shas].filter(([, seen]) => seen.size > 1).map(([sha, seen]) => `${sha}: ${[...seen].join(', ')}`)).toEqual([])
   expect([...versions].filter(([, seen]) => seen.size > 1).map(([version, seen]) => `v${version}: ${[...seen].join(', ')}`)).toEqual([])
 })
+
+/**
+ * A scripts test runs only where it is named.
+ *
+ * Nothing globs `scripts/*.test.ts`, so a file not mentioned in a workflow or
+ * a package.json script executes nowhere and its subject can regress in
+ * silence. Three were in that state — including `release-acceptance.test.ts`,
+ * which covers the `decide()` that accepts or refuses every release commit.
+ */
+test('every scripts test is named somewhere that runs it', () => {
+  const root = join(import.meta.dir, '..')
+  const manifest = readFileSync(join(root, 'package.json'), 'utf8')
+  const workflows = [...new Bun.Glob('*.yml').scanSync({ cwd: join(root, '.github/workflows') })]
+    .map(file => readFileSync(join(root, '.github/workflows', file), 'utf8'))
+    .join('\n')
+  const orphans = [...new Bun.Glob('*.test.ts').scanSync({ cwd: join(root, 'scripts') })]
+    .filter(name => !manifest.includes(name) && !workflows.includes(name))
+    .sort()
+  expect(orphans, 'these scripts tests are named in no workflow and no package.json script, so they never run').toEqual([])
+})
