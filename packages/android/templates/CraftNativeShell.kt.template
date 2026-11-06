@@ -844,6 +844,9 @@ internal class CraftNativeChrome(
     private val tabBar = LinearLayout(context)
     private val tabRow = LinearLayout(context)
     private val accessory = FrameLayout(context)
+    private val companionRow = LinearLayout(context)
+    private val companionViews = mutableListOf<Pair<FrameLayout, JSONObject>>()
+    private var renderedCompanionSpecs = ""
     private val accessoryIcon = ImageView(context)
     private val accessoryBadge = TextView(context)
     private var accessorySpec: JSONObject? = null
@@ -868,7 +871,11 @@ internal class CraftNativeChrome(
     private var tabBarHiddenByScreen = false
     private var visiblePath: String? = null
     private val accessorySelected: Boolean
-        get() = accessorySpec?.optString("path")?.let { path -> visiblePath == path || visiblePath?.startsWith(path + "/") == true } == true
+        get() = accessorySpec?.let { isAccessorySelected(it) } == true || companionViews.any { isAccessorySelected(it.second) }
+    private fun isAccessorySelected(item: JSONObject): Boolean {
+        val path = item.optString("path")
+        return visiblePath == path || visiblePath?.startsWith(path + "/") == true
+    }
     private var swipeTracking = false
     private var swipeIntercepted = false
     private var horizontalScrollDeferred = false
@@ -965,6 +972,9 @@ internal class CraftNativeChrome(
         tabRow.gravity = Gravity.CENTER_VERTICAL
         tabRow.setPadding(dp(12), dp(4), dp(12), dp(4))
         tabRow.addView(tabBar, LayoutParams(0, dp(64), 1f))
+        companionRow.orientation = HORIZONTAL
+        companionRow.gravity = Gravity.CENTER_VERTICAL
+        tabRow.addView(companionRow, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(64)))
         accessory.addView(accessoryIcon, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
         accessoryBadge.textSize = 10f
         accessoryBadge.gravity = Gravity.CENTER
@@ -1087,6 +1097,24 @@ internal class CraftNativeChrome(
             path.startsWith("/") && !path.startsWith("//") && it.has("title")
         }
         accessory.visibility = if (accessorySpec == null) View.GONE else View.VISIBLE
+        val companions = accessorySpec?.optJSONArray("companions")
+        val companionSpecs = companions?.toString().orEmpty()
+        if (companionSpecs != renderedCompanionSpecs) {
+            renderedCompanionSpecs = companionSpecs
+            companionRow.removeAllViews()
+            companionViews.clear()
+            for (index in 0 until minOf(companions?.length() ?: 0, 2)) {
+                val item = companions?.optJSONObject(index) ?: continue
+                val path = item.optString("path")
+                if (!path.startsWith("/") || path.startsWith("//") || path == accessorySpec?.optString("path") || !item.has("title")) continue
+                val action = FrameLayout(context)
+                action.contentDescription = item.optString("accessibilityLabel").ifBlank { item.optString("title") }
+                action.addView(ImageView(context), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+                action.setOnClickListener { onAccessory?.invoke(path) }
+                companionRow.addView(action, LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
+                companionViews.add(action to item)
+            }
+        }
         accessorySpec?.let {
             accessory.contentDescription = it.optString("accessibilityLabel").ifBlank { it.optString("title") } + it.optString("badge").takeIf { badge -> badge.isNotBlank() && badge != "null" }?.let { badge -> ", $badge" }.orEmpty()
             accessoryBadge.text = it.optString("badge").takeUnless { badge -> badge == "null" }.orEmpty().take(8)
@@ -1191,9 +1219,16 @@ internal class CraftNativeChrome(
         backButton.imageTintList = ColorStateList.valueOf(accent)
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
         tabBar.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
-        accessory.isSelected = accessorySelected
-        accessory.background = GradientDrawable().apply { setColor(if (accessorySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
-        accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), if (accessorySelected) accent else text)) }
+        val primarySelected = accessorySpec?.let { isAccessorySelected(it) } == true
+        accessory.isSelected = primarySelected
+        companionViews.forEach { (action, item) ->
+            val selected = isAccessorySelected(item)
+            action.isSelected = selected
+            action.background = GradientDrawable().apply { setColor(if (selected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
+            (action.getChildAt(0) as ImageView).setImageDrawable(CraftNativeIcons.drawable(context, null, item.optString("symbol"), if (selected) accent else text))
+        }
+        accessory.background = GradientDrawable().apply { setColor(if (primarySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
+        accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), if (primarySelected) accent else text)) }
         tabViews.forEachIndexed { index, (icon, label) ->
             tabBar.getChildAt(index).isSelected = index == selectedTab && !accessorySelected
             tabBar.getChildAt(index).background = tabCellBackground(index, dark)

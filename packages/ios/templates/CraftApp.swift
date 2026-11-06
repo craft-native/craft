@@ -819,6 +819,7 @@ final class CraftChrome: ObservableObject {
         var image: String? = nil
         /// A compact floating icon, instead of the system full-width accessory shelf.
         var iconOnly = false
+        var companions: [Tab] = []
     }
 
     @Published var tabs: [Tab] = []
@@ -828,8 +829,12 @@ final class CraftChrome: ObservableObject {
     /// The visible destination may be the accessory, independently of its owning stack.
     @Published var visiblePath: String?
     var accessorySelected: Bool {
-        guard let path = visiblePath, let accessory = tabAccessory?.id else { return false }
-        return path == accessory || path.hasPrefix(accessory + "/")
+        guard let accessory = tabAccessory else { return false }
+        return ([accessory] + accessory.companions).contains { accessorySelected($0) }
+    }
+    func accessorySelected(_ accessory: Tab) -> Bool {
+        guard let path = visiblePath else { return false }
+        return path == accessory.id || path.hasPrefix(accessory.id + "/")
     }
     var highlightedTab: String? { accessorySelected ? nil : selected }
     let tabSwipeProgress = CraftTabSwipeProgress()
@@ -954,7 +959,14 @@ final class CraftChrome: ObservableObject {
             next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "message",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
                 accessibilityLabel: item["accessibilityLabel"] as? String,
-                iconOnly: item["iconOnly"] as? Bool ?? false)
+                iconOnly: item["iconOnly"] as? Bool ?? false,
+                companions: ((item["companions"] as? [[String: Any]]) ?? []).prefix(2).compactMap { action in
+                    guard let companionPath = action["path"] as? String,
+                          companionPath.hasPrefix("/"), !companionPath.hasPrefix("//"), companionPath != path,
+                          let companionTitle = action["title"] as? String else { return nil }
+                    return Tab(id: companionPath, title: companionTitle, symbol: action["symbol"] as? String ?? "circle",
+                        accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true)
+                })
         } else {
             next = nil
         }
@@ -1265,43 +1277,45 @@ private struct CraftTabBarContent: View {
         if !chrome.tabs.isEmpty {
             HStack(spacing: 8) {
                 bar
-                if let accessory = chrome.tabAccessory {
-                    Button { CraftHybrid.shared.open(accessory.id) } label: {
-                        surface {
-                            Image(systemName: accessory.symbol)
-                                .font(.system(size: iconSize))
-                                .foregroundStyle(chrome.accessorySelected ? selectedColor : Color.primary)
-                                .frame(width: 62, height: 62)
-                                .background {
-                                    if chrome.accessorySelected {
-                                        Circle().fill(selectedColor.opacity(0.14)).padding(4)
+                if let primary = chrome.tabAccessory {
+                    ForEach(primary.companions + [primary]) { accessory in
+                        Button { CraftHybrid.shared.open(accessory.id) } label: {
+                            surface {
+                                Image(systemName: accessory.symbol)
+                                    .font(.system(size: iconSize))
+                                    .foregroundStyle(chrome.accessorySelected(accessory) ? selectedColor : Color.primary)
+                                    .frame(width: 62, height: 62)
+                                    .background {
+                                        if chrome.accessorySelected(accessory) {
+                                            Circle().fill(selectedColor.opacity(0.14)).padding(4)
+                                        }
+                                    }
+                            }
+                                .contentShape(Rectangle())
+                                .overlay(alignment: .topTrailing) {
+                                    if let badge = accessory.badge {
+                                        Text(badge)
+                                            .font(.system(size: badgeSize, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 4)
+                                            .frame(minWidth: 18, minHeight: 18)
+                                            .background(Capsule().fill(Color.red))
                                     }
                                 }
                         }
-                            .contentShape(Rectangle())
-                            .overlay(alignment: .topTrailing) {
-                                if let badge = accessory.badge {
-                                    Text(badge)
-                                        .font(.system(size: badgeSize, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 4)
-                                        .frame(minWidth: 18, minHeight: 18)
-                                        .background(Capsule().fill(Color.red))
-                                }
-                            }
+                        .buttonStyle(.plain)
+                        .accessibilityShowsLargeContentViewer {
+                            Image(systemName: accessory.symbol)
+                            Text(accessory.accessibilityLabel ?? accessory.title)
+                        }
+                        // Keep accessibility intent for the viewer; displayed
+                        // sizes come from the bounded metrics owned above.
+                        .environment(\.dynamicTypeSize, viewerTextSize)
+                        .accessibilityLabel(accessory.accessibilityLabel ?? accessory.title)
+                        .accessibilityValue(accessory.badge ?? "")
+                        .accessibilityIdentifier("craft-tab-accessory")
+                        .accessibilityAddTraits(chrome.accessorySelected(accessory) ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityShowsLargeContentViewer {
-                        Image(systemName: accessory.symbol)
-                        Text(accessory.accessibilityLabel ?? accessory.title)
-                    }
-                    // Keep accessibility intent for the viewer; displayed
-                    // sizes come from the bounded metrics owned above.
-                    .environment(\.dynamicTypeSize, viewerTextSize)
-                    .accessibilityLabel(accessory.accessibilityLabel ?? accessory.title)
-                    .accessibilityValue(accessory.badge ?? "")
-                    .accessibilityIdentifier("craft-tab-accessory")
-                    .accessibilityAddTraits(chrome.accessorySelected ? .isSelected : [])
                 }
             }
                 .padding(.horizontal, 16)

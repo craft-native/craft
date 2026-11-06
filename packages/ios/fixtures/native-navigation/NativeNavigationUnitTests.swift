@@ -882,7 +882,7 @@ final class NativeNavigationUnitTests: XCTestCase {
         let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
         shell.view.layoutIfNeeded()
         let originalSafeArea = screen.view.safeAreaInsets.bottom
-        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true}})")
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true,companions:[{path:'/linked-details',title:'Nutrition',symbol:'fork.knife',accessibilityLabel:'Food log'}]}})")
         await displayWait("compact accessory appears") { CraftChrome.shared.tabAccessory?.iconOnly == true }
         shell.view.layoutIfNeeded()
         func accessory(_ view: UIView) -> UIButton? {
@@ -896,6 +896,23 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertNil(button.configuration?.subtitle)
         XCTAssertEqual(button.accessibilityLabel, "Messages")
         XCTAssertEqual(button.accessibilityValue, "3")
+        func companion(_ view: UIView) -> UIButton? {
+            if let button = view as? UIButton, button.accessibilityIdentifier == "craft-tab-companion:/linked-details" { return button }
+            return view.subviews.compactMap { companion($0) }.first
+        }
+        let food = try XCTUnwrap(companion(shell.view))
+        XCTAssertEqual(food.accessibilityLabel, "Food log")
+        XCTAssertEqual(food.frame.width, 48, accuracy: 0.5)
+        XCTAssertLessThan(food.frame.maxX, button.frame.minX)
+        XCTAssertEqual(food.frame.minY, button.frame.minY, accuracy: 0.5)
+        XCTAssertEqual(CraftChrome.shared.tabAccessory?.companions.first?.id, "/linked-details")
+        food.sendActions(for: .touchUpInside)
+        await displayWait("companion opens its own destination") {
+            home.transitionCoordinator == nil
+                && (home.topViewController as? CraftNativeScreenController)?.routeParams["path"] as? String == "/linked-details"
+        }
+        home.popViewController(animated: false)
+        await displayWait("return restores both floating actions") { companion(self.shell.view) != nil }
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0, "a floating action must not reserve a full-width shelf")
         XCTAssertEqual(screen.view.safeAreaInsets.bottom, originalSafeArea, accuracy: 0.5)
         XCTAssertEqual(shell.viewControllers?.count, 5)

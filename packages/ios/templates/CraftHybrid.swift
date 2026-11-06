@@ -1192,6 +1192,9 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var synchronizingTabs = false
     private var accessoryModel: CraftChrome.Tab?
     private let accessoryButton = UIButton(type: .system)
+    private var companionButtons: [UIButton] = []
+    private var companionModels: [CraftChrome.Tab] = []
+    private var companionGlasses: [UIVisualEffectView] = []
     private let accessoryBadge = UILabel()
     private let accessoryGlass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
     private static let tabPictures = NSCache<NSURL, UIImage>()
@@ -1410,6 +1413,40 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private func updateSystemAccessory(hidden: Bool) {
         let chrome = CraftChrome.shared
         let model = hidden ? nil : chrome.tabAccessory
+        // Keep controls when only the selected destination or unread badge changes.
+        let companions = model?.iconOnly == true ? model?.companions ?? [] : []
+        if companionModels != companions {
+            companionModels = companions
+            for button in companionButtons { button.removeFromSuperview() }
+            for glass in companionGlasses { glass.removeFromSuperview() }
+            companionButtons.removeAll()
+            companionGlasses.removeAll()
+            for action in companions {
+                let button = UIButton(type: .system)
+                var configuration = UIButton.Configuration.plain()
+                configuration.image = UIImage(systemName: action.symbol)
+                button.configuration = configuration
+                button.accessibilityIdentifier = "craft-tab-companion:" + action.id
+                button.accessibilityLabel = action.accessibilityLabel ?? action.title
+                button.accessibilityValue = action.badge
+                button.accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
+                button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id) }, for: .touchUpInside)
+                let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+#if compiler(>=6.2)
+                if #available(iOS 26.0, *) { glass.effect = UIGlassEffect() }
+#endif
+                glass.layer.cornerRadius = 24
+                glass.clipsToBounds = true
+                glass.isUserInteractionEnabled = false
+                view.addSubview(glass)
+                view.addSubview(button)
+                companionGlasses.append(glass)
+                companionButtons.append(button)
+            }
+        }
+        for (index, action) in companionModels.enumerated() {
+            companionButtons[index].accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
+        }
         if let model {
             var configuration = UIButton.Configuration.plain()
             configuration.image = UIImage(systemName: model.symbol)
@@ -1419,7 +1456,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             accessoryButton.configuration = configuration
             accessoryButton.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
             accessoryButton.accessibilityValue = model.badge
-            accessoryButton.accessibilityTraits = chrome.accessorySelected ? [.button, .selected] : [.button]
+            accessoryButton.accessibilityTraits = chrome.accessorySelected(model) ? [.button, .selected] : [.button]
         }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *), model?.iconOnly != true {
@@ -1493,6 +1530,11 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let x = iconOnly ? view.bounds.maxX - view.safeAreaInsets.right - width - 20 : 16
         accessoryButton.frame = CGRect(x: x, y: tabBar.frame.minY - height - (iconOnly ? 8 : 0), width: width, height: height)
         accessoryGlass.frame = accessoryButton.frame
+        for (index, button) in companionButtons.enumerated() {
+            // Array order reads left to right, ending at the primary action.
+            button.frame = accessoryButton.frame.offsetBy(dx: -CGFloat(companionButtons.count - index) * (width + 12), dy: 0)
+            companionGlasses[index].frame = button.frame
+        }
         let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
         accessoryBadge.frame = CGRect(x: accessoryButton.frame.maxX - badgeWidth + 4, y: accessoryButton.frame.minY - 3, width: badgeWidth, height: 18)
         // A compact action floats over the page, not across its whole width.
