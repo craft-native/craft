@@ -7359,10 +7359,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     ///   for every screen.
     /// - `craft.secureStorage.getSync(key)`: the Keychain item the web page's
     ///   `craft.secureStorage.set` wrote.
-    /// - `craft.navigation.setOptions({ title, largeTitle, hidden, backTitle,
-    ///   tabBarHidden, swipeBack, contentSwipeBack, tabSwipeEnabled,
-    ///   backgroundColor, navigationBarSolid, rightButtons, tabAccessory })`;
-    ///   a right button's tap is the event `navButton`.
+    /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
+    ///   backTitle, tabBarHidden, tabItem, swipeBack, contentSwipeBack,
+    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, leftButtons,
+    ///   rightButtons, tabAccessory })`; a button's tap is the event
+    ///   `navButton`. `craft.d.ts` types no navigation surface, so this list
+    ///   is the public description of it — keep it in step with the keys
+    ///   `setOptions` reads, which is how `leftButtons`, `tabItem` and
+    ///   `titleColor` came to ship undocumented.
     ///
     /// A runtime that assigns `craft.storage` (or the others) afterwards keeps
     /// these: each namespace is a property whose setter adds them back to the
