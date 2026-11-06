@@ -1,5 +1,53 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.475...v0.0.480)
+
+## 🚀 Features
+
+- open compact menus from floating companion actions ([e3c120a](https://github.com/craft-native/craft/commit/e3c120a)) _(by Chris Breuer)_
+- **android**: report progress for native multipart uploads ([fae87f4](https://github.com/craft-native/craft/commit/fae87f4)) _(by Chris Breuer)_
+- **ios**: report upload bytes and cancel owned transfers ([35bf6bb](https://github.com/craft-native/craft/commit/35bf6bb)) _(by Chris Breuer)_
+- **fixtures**: tell a starved command apart from a stalled one ([d0a978c](https://github.com/craft-native/craft/commit/d0a978c)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490), [#447](https://github.com/craft-native/craft/issues/447))
+- **android**: identify what the vendor sent when provisioning rejects it ([6530c6d](https://github.com/craft-native/craft/commit/6530c6d)) _(by glennmichael123)_ ([#451](https://github.com/craft-native/craft/issues/451))
+- **android**: keep branded navigation titles readable per screen ([d8acd5b](https://github.com/craft-native/craft/commit/d8acd5b)) _(by Chris Breuer)_
+- **ios**: support per-screen navigation title contrast ([a70709e](https://github.com/craft-native/craft/commit/a70709e)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **android**: preserve trailing completion callbacks ([ec52e9e](https://github.com/craft-native/craft/commit/ec52e9e)) _(by Chris Breuer)_
+- **test**: check the documented option list by membership, not wording ([76f0933](https://github.com/craft-native/craft/commit/76f0933)) _(by glennmichael123)_
+- **android**: keep the cancellation reason when cleanup also fails ([6a836b6](https://github.com/craft-native/craft/commit/6a836b6)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **ios**: name every navigation option the bridge actually accepts ([9cafe06](https://github.com/craft-native/craft/commit/9cafe06)) _(by glennmichael123)_ ([#489](https://github.com/craft-native/craft/issues/489))
+
+## 🧪 Tests
+
+- exercise floating menus on both native hosts ([b0100ae](https://github.com/craft-native/craft/commit/b0100ae)) _(by Chris Breuer)_
+- **ios**: stop pinning explanatory comments that code already proves ([15be601](https://github.com/craft-native/craft/commit/15be601)) _(by glennmichael123)_
+- align native upload and navigation capability contracts ([afb485d](https://github.com/craft-native/craft/commit/afb485d)) _(by Chris Breuer)_
+- **ci**: derive the gate coverage checks instead of spot-checking them ([ecc1524](https://github.com/craft-native/craft/commit/ecc1524)) _(by glennmichael123)_
+
+## 🤖 Continuous Integration
+
+- run each action at one major version, and keep it that way ([f33fffb](https://github.com/craft-native/craft/commit/f33fffb)) _(by glennmichael123)_
+- ask Pantry for the declared Bun, not the one left behind ([e17771e](https://github.com/craft-native/craft/commit/e17771e)) _(by glennmichael123)_
+- run the three scripts tests that ran nowhere ([b58d243](https://github.com/craft-native/craft/commit/b58d243)) _(by glennmichael123)_
+- pin every setup-bun step, not the five the contract listed ([f3248d1](https://github.com/craft-native/craft/commit/f3248d1)) _(by glennmichael123)_
+
+## 🧹 Chores
+
+- release v0.0.479 ([e9a9668](https://github.com/craft-native/craft/commit/e9a9668)) _(by Chris Breuer)_
+- release v0.0.478 ([c5967d8](https://github.com/craft-native/craft/commit/c5967d8)) _(by Chris Breuer)_
+- release v0.0.477 ([e9a4c0f](https://github.com/craft-native/craft/commit/e9a4c0f)) _(by glennmichael123)_
+- release v0.0.476 ([6102074](https://github.com/craft-native/craft/commit/6102074)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.478...v0.0.479)
 
 ## 🐛 Bug Fixes
