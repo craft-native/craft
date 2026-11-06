@@ -1115,7 +1115,23 @@ internal class CraftNativeChrome(
                 val action = FrameLayout(context)
                 action.contentDescription = item.optString("accessibilityLabel").ifBlank { item.optString("title") }
                 action.addView(ImageView(context), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-                action.setOnClickListener { onAccessory?.invoke(path) }
+                action.setOnClickListener {
+                    val choices = item.optJSONArray("menu")
+                    val destinations = (0 until minOf(choices?.length() ?: 0, 12)).mapNotNull { choiceIndex ->
+                        val choice = choices?.optJSONObject(choiceIndex) ?: return@mapNotNull null
+                        val destination = choice.optString("path")
+                        if (!destination.startsWith("/") || destination.startsWith("//") || choice.optString("title").isBlank()) null else choice
+                    }
+                    if (destinations.isEmpty()) onAccessory?.invoke(path)
+                    else android.widget.PopupMenu(context, action).apply {
+                        destinations.forEachIndexed { index, choice -> menu.add(0, index, index, choice.optString("title")) }
+                        setOnMenuItemClickListener { selected ->
+                            destinations.getOrNull(selected.itemId)?.let { onAccessory?.invoke(it.optString("path")) }
+                            true
+                        }
+                        show()
+                    }
+                }
                 companionRow.addView(action, LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
                 companionViews.add(action to item)
             }

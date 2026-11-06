@@ -820,6 +820,14 @@ final class CraftChrome: ObservableObject {
         /// A compact floating icon, instead of the system full-width accessory shelf.
         var iconOnly = false
         var companions: [Tab] = []
+        /// A tap opens these destinations in a compact menu instead of navigating.
+        var menu: [TabMenuItem] = []
+    }
+
+    struct TabMenuItem: Equatable, Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
     }
 
     @Published var tabs: [Tab] = []
@@ -965,7 +973,13 @@ final class CraftChrome: ObservableObject {
                           companionPath.hasPrefix("/"), !companionPath.hasPrefix("//"), companionPath != path,
                           let companionTitle = action["title"] as? String else { return nil }
                     return Tab(id: companionPath, title: companionTitle, symbol: action["symbol"] as? String ?? "circle",
-                        accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true)
+                        accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true,
+                        menu: ((action["menu"] as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
+                            guard let destination = choice["path"] as? String,
+                                  destination.hasPrefix("/"), !destination.hasPrefix("//"),
+                                  let label = choice["title"] as? String, !label.isEmpty else { return nil }
+                            return TabMenuItem(id: destination, title: label, symbol: choice["symbol"] as? String ?? "circle")
+                        })
                 })
         } else {
             next = nil
@@ -1273,35 +1287,46 @@ private struct CraftTabBarContent: View {
     @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
     @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
 
+    private func accessoryLabel(_ accessory: CraftChrome.Tab) -> some View {
+        surface {
+            Image(systemName: accessory.symbol)
+                .font(.system(size: iconSize))
+                .foregroundStyle(chrome.accessorySelected(accessory) ? selectedColor : Color.primary)
+                .frame(width: 62, height: 62)
+                .background {
+                    if chrome.accessorySelected(accessory) {
+                        Circle().fill(selectedColor.opacity(0.14)).padding(4)
+                    }
+                }
+        }
+            .contentShape(Rectangle())
+            .overlay(alignment: .topTrailing) {
+                if let badge = accessory.badge {
+                    Text(badge)
+                        .font(.system(size: badgeSize, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Capsule().fill(Color.red))
+                }
+            }
+    }
     var body: some View {
         if !chrome.tabs.isEmpty {
             HStack(spacing: 8) {
                 bar
                 if let primary = chrome.tabAccessory {
                     ForEach(primary.companions + [primary]) { accessory in
-                        Button { CraftHybrid.shared.open(accessory.id) } label: {
-                            surface {
-                                Image(systemName: accessory.symbol)
-                                    .font(.system(size: iconSize))
-                                    .foregroundStyle(chrome.accessorySelected(accessory) ? selectedColor : Color.primary)
-                                    .frame(width: 62, height: 62)
-                                    .background {
-                                        if chrome.accessorySelected(accessory) {
-                                            Circle().fill(selectedColor.opacity(0.14)).padding(4)
-                                        }
+                        Group {
+                            if accessory.menu.isEmpty {
+                                Button { CraftHybrid.shared.open(accessory.id) } label: { accessoryLabel(accessory) }
+                            } else {
+                                Menu {
+                                    ForEach(accessory.menu) { choice in
+                                        Button { CraftHybrid.shared.open(choice.id) } label: { Label(choice.title, systemImage: choice.symbol) }
                                     }
+                                } label: { accessoryLabel(accessory) }
                             }
-                                .contentShape(Rectangle())
-                                .overlay(alignment: .topTrailing) {
-                                    if let badge = accessory.badge {
-                                        Text(badge)
-                                            .font(.system(size: badgeSize, weight: .bold))
-                                            .foregroundStyle(.white)
-                                            .padding(.horizontal, 4)
-                                            .frame(minWidth: 18, minHeight: 18)
-                                            .background(Capsule().fill(Color.red))
-                                    }
-                                }
                         }
                         .buttonStyle(.plain)
                         .accessibilityShowsLargeContentViewer {

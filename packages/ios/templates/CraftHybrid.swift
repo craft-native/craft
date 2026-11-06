@@ -1430,7 +1430,17 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 button.accessibilityLabel = action.accessibilityLabel ?? action.title
                 button.accessibilityValue = action.badge
                 button.accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
-                button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id) }, for: .touchUpInside)
+                if action.menu.isEmpty {
+                    button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id) }, for: .touchUpInside)
+                } else {
+                    button.menu = UIMenu(children: action.menu.map { choice in
+                        UIAction(title: choice.title, image: UIImage(systemName: choice.symbol)) { [weak self] _ in
+                            self?.hybrid.open(choice.id)
+                        }
+                    })
+                    button.showsMenuAsPrimaryAction = true
+                    if #available(iOS 16.0, *) { button.preferredMenuElementOrder = .fixed }
+                }
                 let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
 #if compiler(>=6.2)
                 if #available(iOS 26.0, *) { glass.effect = UIGlassEffect() }
