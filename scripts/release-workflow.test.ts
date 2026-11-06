@@ -1049,3 +1049,41 @@ test('every scripts test is named somewhere that runs it', () => {
     .sort()
   expect(orphans, 'these scripts tests are named in no workflow and no package.json script, so they never run').toEqual([])
 })
+
+/**
+ * A gate that lists what it waits for silently stops covering anything added
+ * afterwards. Both aggregates here are written that way, so both are derived
+ * rather than spot-checked: add a job and this fails until the job is either
+ * required or named as a deliberate exception.
+ */
+test('publish-commit waits for every CI job except the ones it deliberately does not', () => {
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  // Declared exceptions, each with its reason:
+  //  - the cold-provisioning diagnostic is not release acceptance and says so
+  //    in its own job name, and is gated by the same workflow input.
+  //  - vulkan-abi predates this check. It is recorded here rather than quietly
+  //    omitted: `publish:commit` publishes packages/typescript, which does not
+  //    carry the Vulkan surface, but nothing in the workflow states that.
+  const exempt = new Set(['android-software-cold-provisioning-diagnostic', 'vulkan-abi'])
+  const required = new Set((ci.jobs['publish-commit']?.needs ?? []) as string[])
+  const uncovered = Object.keys(ci.jobs)
+    .filter(name => name !== 'publish-commit' && !required.has(name) && !exempt.has(name))
+    .sort()
+  expect(uncovered, 'these CI jobs can fail without stopping publish-commit; require them or add them to `exempt` with a reason').toEqual([])
+  // An exemption that no longer names a real job is stale, not harmless.
+  expect([...exempt].filter(name => !ci.jobs[name]).sort(), 'these exemptions name jobs that no longer exist').toEqual([])
+})
+
+test('the mobile E2E summary fails when any leg it waits for fails', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const summary = workflow.jobs['mobile-summary']
+  const needs = (summary?.needs ?? []) as string[]
+  const legs = Object.keys(workflow.jobs).filter(name => name !== 'mobile-summary')
+  // Every leg is waited for, so a new one cannot be added without the gate.
+  expect(legs.filter(name => !needs.includes(name)).sort(), 'these mobile E2E legs are not in mobile-summary.needs, so their failure never reaches the gate').toEqual([])
+  // And every leg waited for is actually examined by the failing condition.
+  const condition = String(summary?.steps?.find(step => step.name === 'Fail if any leg failed')?.if ?? '')
+  expect(condition.length).toBeGreaterThan(20)
+  expect(needs.filter(name => !condition.includes(`needs.${name}.result`)).sort(),
+    'these legs are waited for but never checked, so their failure is silently tolerated').toEqual([])
+})
