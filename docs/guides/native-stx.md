@@ -1,5 +1,18 @@
 # Native STX on iOS and Android
 
+## Upload transfers
+
+Hosts advertising `uploadProgress` accept `fetch(url, { method: 'POST', body,
+signal, onUploadProgress })`. The observer receives `{ loaded, total }` byte
+counts from the native transfer, including multipart framing. Reaching the
+total means the request body was sent; continue waiting for the HTTP response
+before treating the upload as saved. An aborted signal cancels the owned task,
+and progress events are delivered only to the requesting screen.
+
+For code shared with a browser, STX exports `uploadFetch` and `UploadFetchInit`
+from `@stacksjs/stx/media/client/upload-fetch`. It uses XHR upload events on the
+web and the same native fetch contract in an installed app.
+
 Craft's experimental `native` mobile renderer runs a compiled STX route bundle
 without a browser view. iOS evaluates the bundle with JavaScriptCore and creates
 UIKit controls. Android evaluates the same bundle with JavaScriptSandbox and

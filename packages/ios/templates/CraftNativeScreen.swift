@@ -8728,6 +8728,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 method: method,
                 args: args,
                 config: config,
+                onUploadProgress: { [weak self] progress in
+                    DispatchQueue.main.async {
+                        guard let self, self.pendingCapabilityRequests.contains(requestToken), !self.runtimeDisposed else { return }
+                        self.send(type: "NETWORK_UPLOAD_PROGRESS", payload: progress)
+                    }
+                },
                 completion: reply
             )
         case "API_CANCEL":

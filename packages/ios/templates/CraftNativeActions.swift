@@ -36,6 +36,7 @@ enum CraftNativeActions {
     private static var biometricContexts = [String: LAContext]()
     #endif
     private static var fetchTasks = [String: URLSessionTask]()
+    private static var fetchProgress = [String: NSKeyValueObservation]()
     private static let fetchSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = craftNativeFetchTimeoutSeconds
@@ -50,6 +51,7 @@ enum CraftNativeActions {
         // `speech`, `audio` (background sound) and `eventStream` (a fetch read
         // as it arrives) need nothing the app has to declare.
         var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "dialog", "speech", "audio", "eventStream", "linking", "badge", "animation", "viewFocus", "viewMeasure", "viewReparent", "viewNonModalPresentation", "nativePlatformControls"]
+        values.append("uploadProgress")
         values.append("network")
         values.append("nativePager")
         values.append("storageCompareAndSet")
@@ -180,6 +182,7 @@ enum CraftNativeActions {
         method: String,
         args: [Any],
         config: CraftConfig,
+        onUploadProgress: (([String: Any]) -> Void)? = nil,
         completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
     ) {
         cancellationLock.lock()
@@ -293,7 +296,9 @@ enum CraftNativeActions {
             CraftWebServices.perform(action: "getNetworkStatus", body: [:]) { complete(requestToken, $0, completion) }
             return
         case ("Network", "fetch"):
-            fetch(requestToken: requestToken, args: args, completion: completion)
+            DispatchQueue.global(qos: .utility).async {
+                fetch(requestToken: requestToken, args: args, onUploadProgress: onUploadProgress, completion: completion)
+            }
             return
         case ("Files", "pickImage"):
             // A person picks, so the bridge never times it out.
@@ -783,6 +788,7 @@ enum CraftNativeActions {
         let context = biometricContexts.removeValue(forKey: requestToken)
         #endif
         let task = fetchTasks.removeValue(forKey: requestToken)
+        fetchProgress.removeValue(forKey: requestToken)
         cancellationLock.unlock()
         #if CRAFT_PERMISSION_BIOMETRIC
         context?.invalidate()
@@ -798,8 +804,13 @@ enum CraftNativeActions {
     private static func fetch(
         requestToken: String,
         args: [Any],
+        onUploadProgress: (([String: Any]) -> Void)?,
         completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
     ) {
+        guard !isCancelled(requestToken) else {
+            complete(requestToken, failure("CANCELLED", "Upload cancelled"), completion)
+            return
+        }
         guard let options = args.first as? [String: Any],
               let address = options["url"] as? String,
               let url = URL(string: address),
@@ -855,6 +866,7 @@ enum CraftNativeActions {
             if let uploadFile { CraftNativeFiles.remove(uploadFile.path) }
             cancellationLock.lock()
             fetchTasks.removeValue(forKey: requestToken)
+            fetchProgress.removeValue(forKey: requestToken)
             cancellationLock.unlock()
             if let error = error {
                 let code = (error as? URLError)?.code == .timedOut ? "TIMEOUT" : "NETWORK_ERROR"
@@ -891,12 +903,22 @@ enum CraftNativeActions {
         }
         let task: URLSessionTask = uploadFile.map { fetchSession.uploadTask(with: request, fromFile: $0, completionHandler: responseHandler) }
             ?? fetchSession.dataTask(with: request, completionHandler: responseHandler)
+        let uploadID = options["uploadProgressId"] as? String ?? ""
+        let expectedBytes = uploadFile.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.map { Int64($0) } ?? Int64(request.httpBody?.count ?? 0)
+        let observation = !uploadID.isEmpty && onUploadProgress != nil ? task.observe(\.countOfBytesSent, options: [.initial, .new]) { task, _ in
+            let total = max(task.countOfBytesExpectedToSend, expectedBytes)
+            guard total > 0 else { return }
+            onUploadProgress?(["id": uploadID, "loaded": min(max(0, task.countOfBytesSent), total), "total": total])
+        } : nil
         cancellationLock.lock()
         let alreadyCancelled = cancelledRequests.contains(requestToken)
-        if !alreadyCancelled { fetchTasks[requestToken] = task }
+        if !alreadyCancelled { fetchTasks[requestToken] = task; fetchProgress[requestToken] = observation }
         cancellationLock.unlock()
         if !alreadyCancelled { task.resume() }
-        else if let uploadFile { CraftNativeFiles.remove(uploadFile.path) }
+        else {
+            if let uploadFile { CraftNativeFiles.remove(uploadFile.path) }
+            complete(requestToken, failure("CANCELLED", "Upload cancelled"), completion)
+        }
     }
 
     /// `craft.files.download`: a GET straight to a file made here (for the
