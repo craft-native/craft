@@ -8391,6 +8391,9 @@ class MainActivity : AppCompatActivity() {
                     method,
                     args,
                     completion,
+                    onUploadProgress = { progress -> capabilityHandler.post {
+                        if (screen.active && screen.pendingCapabilities.contains(token)) send(screen, "NETWORK_UPLOAD_PROGRESS", progress)
+                    } },
                 )
             }
         }

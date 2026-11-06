@@ -366,7 +366,8 @@ internal class CraftNativeHeadlessApp(
             send(if (result.code == null) "API_RESPONSE" else "API_ERROR", response, requestId)
         }
         if (services.handles(module)) services.perform(module, method, args, reply)
-        else capabilities.perform("$scope/$requestId", payload.optInt("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION), module, method, args, reply)
+        else capabilities.perform("$scope/$requestId", payload.optInt("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION), module, method, args, reply,
+            onUploadProgress = { progress -> main.post { if (!closed) send("NETWORK_UPLOAD_PROGRESS", progress) } })
     }
 
     private fun send(type: String, payload: JSONObject, correlationId: String? = null) {

@@ -192,7 +192,7 @@ describe('Craft Android builder', () => {
       expect(nativeCapabilities).toContain('val answer = runCatching { storage(method, args) }')
       expect(nativeCapabilities).toContain('"Database" -> {')
       expect(nativeCapabilities).toContain('"Notifications" -> notifications(requestToken, method, args, completion)')
-      expect(nativeCapabilities).toContain('listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files")')
+      expect(nativeCapabilities).toContain('listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files", "uploadProgress")')
       expect(nativeCapabilities).toContain('"Network" -> {')
       expect(nativeCapabilities).toContain('CRAFT_NATIVE_FETCH_MAX_RESPONSE_BYTES')
       expect(nativeCapabilities).toContain('fetchConnections.remove(requestToken)?.disconnect()')

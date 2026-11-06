@@ -185,7 +185,7 @@ internal class CraftNativeCapabilities(
     }
 
     fun names(): JSONArray = JSONArray().apply {
-        listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files").forEach(::put)
+        listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files", "uploadProgress").forEach(::put)
         put("network")
         put("storageCompareAndSet")
         put("storageSetIfAbsent")
@@ -205,6 +205,7 @@ internal class CraftNativeCapabilities(
         method: String,
         args: JSONArray,
         completion: (CraftNativeCapabilityResult) -> Unit,
+        onUploadProgress: ((JSONObject) -> Unit)? = null,
     ) {
         if (closed.get()) {
             mainHandler.post { completion(failure("HOST_CLOSED", "The native capability host is closed")) }
@@ -276,7 +277,7 @@ internal class CraftNativeCapabilities(
                 } else if (method != "fetch") {
                     complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Network method"), completion)
                 } else networkExecutor.execute {
-                    complete(requestToken, fetch(requestToken, args), completion)
+                    complete(requestToken, fetch(requestToken, args, onUploadProgress), completion)
                 }
             }
             "Files" -> when (method) {
@@ -362,7 +363,7 @@ internal class CraftNativeCapabilities(
     }
 
     /** The same bounded text-only fetch contract as the maintained iOS host. */
-    private fun fetch(requestToken: String, args: JSONArray): CraftNativeCapabilityResult {
+    private fun fetch(requestToken: String, args: JSONArray, onUploadProgress: ((JSONObject) -> Unit)?): CraftNativeCapabilityResult {
         val options = args.optJSONObject(0)
             ?: return failure("INVALID_ARGUMENT", "fetch needs an options object")
         val address = options.optString("url").trim()
@@ -424,7 +425,25 @@ internal class CraftNativeCapabilities(
         }
         return try {
             if (body != null) connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            if (multipart is FileResult.Multipart) connection.outputStream.use { output -> multipart.body.inputStream().use { it.copyTo(output, 64 * 1024) } }
+            if (multipart is FileResult.Multipart) connection.outputStream.use { output -> multipart.body.inputStream().use { input ->
+                val id = options.optString("uploadProgressId")
+                val total = multipart.body.length()
+                var loaded = 0L
+                var lastSent = 0L
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    if (cancelled.contains(requestToken) || closed.get()) throw java.io.IOException("Upload cancelled")
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    loaded += count
+                    val now = System.nanoTime()
+                    if (id.isNotEmpty() && (loaded == total || now - lastSent >= 100_000_000)) {
+                        lastSent = now
+                        onUploadProgress?.invoke(JSONObject().put("id", id).put("loaded", loaded).put("total", total))
+                    }
+                }
+            } }
             val status = connection.responseCode
             val input = if (status >= 400) connection.errorStream else connection.inputStream
             val output = ByteArrayOutputStream()
