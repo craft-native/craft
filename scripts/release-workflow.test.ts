@@ -534,15 +534,21 @@ test('jobs that only run Bun get Bun alone, not the pinned Zig they cannot alway
   const lock = JSON.parse(readFileSync(join(import.meta.dir, '../pantry.lock'), 'utf8'))
   expect(lock.workspaces[''].system['bun.sh']).toBe(bunVersion)
   expect(lock.packages[`bun.sh@${bunVersion}`].version).toBe(bunVersion)
-  for (const file of ['mobile-e2e.yml', 'native-lifecycle.yml', 'release.yml', 'sbom.yml', 'media-cache.yml']) {
-    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as { jobs: Record<string, Job> }
-    for (const [name, job] of Object.entries(workflow.jobs)) {
+  // Every workflow, not a hand-kept list. The list missed benchmarks.yml,
+  // which floated on `bun-version: latest` while measuring a candidate
+  // against main on one runner, and buddy-bot.yml, whose four setup-bun
+  // steps named no version at all and so took whatever was newest.
+  const unpinned: string[] = []
+  for (const file of new Bun.Glob('*.yml').scanSync({ cwd: join(import.meta.dir, '../.github/workflows') })) {
+    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as { jobs?: Record<string, Job> }
+    for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
       for (const step of job.steps ?? []) {
-        if (step.uses === 'oven-sh/setup-bun@v2')
-          expect(step.with?.['bun-version'], `${file} ${name} must pin the declared Bun toolchain`).toBe(bunVersion)
+        if (step.uses === 'oven-sh/setup-bun@v2' && step.with?.['bun-version'] !== bunVersion)
+          unpinned.push(`${file} ${name}: ${step.with?.['bun-version'] ?? '(none)'}`)
       }
     }
   }
+  expect(unpinned, 'every setup-bun step must pin the declared Bun toolchain').toEqual([])
   const lifecycle = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/native-lifecycle.yml'), 'utf8')) as { jobs: Record<string, Job> }
   for (const [file, job] of [['release.yml verify-macos-downloads', release.jobs['verify-macos-downloads']], ['native-lifecycle.yml lifecycle', lifecycle.jobs.lifecycle]] as const) {
     const uses = (job.steps ?? []).map(step => step.uses ?? '')

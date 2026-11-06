@@ -59,7 +59,10 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # The declared toolchain, not whatever is newest: this job measures
+          # a candidate against main on one runner, and a Bun that can differ
+          # between the two halves makes the comparison meaningless.
+          bun-version: '1.4.3'
 
       # ---------------------------------------------------------------------
       # Binary load time, A/B against main on this runner
