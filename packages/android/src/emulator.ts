@@ -1,4 +1,5 @@
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { availableParallelism, cpus, tmpdir, totalmem } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -32,6 +33,70 @@ export interface AndroidEmulatorSession {
   dispose: () => Promise<void>
   /** First disposal result, including cancellation. A failure stays recorded even if dispose() later retries successfully. */
   closed: Promise<void>
+}
+
+export interface DownloadedArchiveIdentity {
+  path: string
+  bytes: number
+  sha256: string
+  leadingHex: string
+  looksLike: 'zip' | 'gzip' | 'markup' | 'empty' | 'unknown'
+}
+
+/**
+ * Identify what the vendor actually sent when SDK provisioning rejects it.
+ *
+ * `sdkmanager` reports `java.util.zip.ZipException: Archive is not a ZIP
+ * archive` and says nothing about the bytes it read, so a truncated download,
+ * an HTML error page served with a .zip name and a genuinely corrupt archive
+ * are indistinguishable after the fact (#451). The leading bytes separate them
+ * immediately: a ZIP opens `50 4b`, gzip `1f 8b`, and an error page `<`.
+ *
+ * Reads only the owned SDK root's staging directory, and only enough of each
+ * file to classify it; the archive contents are never retained.
+ */
+export function describeDownloadedArchives(sdkRoot: string, limit = 20): DownloadedArchiveIdentity[] {
+  const staging = join(sdkRoot, '.temp')
+  if (!existsSync(staging)) return []
+  const found: DownloadedArchiveIdentity[] = []
+  const walk = (directory: string): void => {
+    if (found.length >= limit) return
+    let entries: string[]
+    try { entries = readdirSync(directory) }
+    catch { return }
+    for (const entry of entries) {
+      if (found.length >= limit) return
+      const path = join(directory, entry)
+      let stats: ReturnType<typeof statSync>
+      try { stats = statSync(path) }
+      catch { continue }
+      if (stats.isDirectory()) { walk(path); continue }
+      if (!stats.isFile()) continue
+      try {
+        const bytes = readFileSync(path)
+        const lead = bytes.subarray(0, 8)
+        const looksLike = bytes.length === 0
+          ? 'empty' as const
+          : lead[0] === 0x50 && lead[1] === 0x4B
+            ? 'zip' as const
+            : lead[0] === 0x1F && lead[1] === 0x8B
+              ? 'gzip' as const
+              : [0x3C, 0x20, 0x0A, 0x0D, 0x09].includes(lead[0]!)
+                ? 'markup' as const
+                : 'unknown' as const
+        found.push({
+          path: path.slice(sdkRoot.length + 1),
+          bytes: stats.size,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          leadingHex: lead.toString('hex'),
+          looksLike,
+        })
+      }
+      catch { /* An unreadable staging file is itself not evidence. */ }
+    }
+  }
+  walk(staging)
+  return found
 }
 
 /** Provision and own a real Android emulator on a macOS or Linux SDK host. */
@@ -338,6 +403,14 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     const failure = timerAborted ? options.signal!.reason : options.signal?.aborted && error !== options.signal.reason
       ? new AggregateError([options.signal.reason, error], `Android emulator setup failed: ${String(options.signal.reason)}`)
       : error
+    // Provisioning fails before any emulator exists, so this runs first and
+    // unconditionally: by the time a caller sees the ZipException the staging
+    // directory is the only record of what the vendor actually sent.
+    try {
+      const archives = describeDownloadedArchives(sdk)
+      if (archives.length) await Bun.write(join(artifacts, 'android-sdk-downloads.json'), `${JSON.stringify(archives, null, 2)}\n`)
+    }
+    catch (diagnostic) { console.error(`Could not retain SDK download identity: ${diagnostic}`) }
     if (child) {
       try { await recordBootResult('failed') }
       catch (diagnostic) { console.error(`Could not retain emulator boot timing: ${diagnostic}`) }
