@@ -468,7 +468,6 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).not.toContain('guard gridAutoRows == nil else { return nil }')
     expect(nativeSwift).toContain('offset.x - parentFrame.x')
     expect(nativeSwift).toContain('let maxContent = label.sizeThatFits(CGSize(width: unbounded, height: unbounded))')
-    expect(nativeSwift).toContain('collapses shrink-to-fit bubbles and pills')
     expect(nativeSwift).toContain('UIImage(systemName: indeterminate ? "minus.square" : "checkmark.square.fill")')
     expect(nativeSwift).toContain('self.textContainer.lineFragmentPadding = 0')
     expect(nativeSwift).toContain('required init(coder: NSCoder)')
@@ -752,7 +751,6 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(native).toContain('storageLifetime.access(closedValue: nil) { CraftSnapshots.read(name) }')
     expect(native).toContain('storageLifetime.access(closedValue: ()) {\n                CraftSnapshots.write(name, json: json)')
     expect(native).toContain('storageLifetime.access(closedValue: ()) {\n                CraftSnapshots.clear(keeping: Set(names))')
-    expect(native).toContain('never as a successful write into a dead runtime')
     expect(native).toContain('lifecycleObservers.forEach(NotificationCenter.default.removeObserver)')
     expect(native).not.toContain('WKWebView')
   })
@@ -1289,7 +1287,6 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(source).toContain('CraftNativeGridBridge.frames')
     expect(source).toContain('UnsafeRawPointer')
     expect(source).toContain('let maxContent = label.sizeThatFits(CGSize(width: unbounded, height: unbounded))')
-    expect(source).toContain('collapses shrink-to-fit bubbles and pills')
   })
 
   it('keeps an absolute root sibling pinned to the viewport beside a ScrollView', async () => {
@@ -1300,7 +1297,6 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(source).toContain('func setViewportChild(_ view: UIView?, fillsHeight: Bool)')
     expect(source).toContain('rootStack.setViewportChild(next.view, fillsHeight: rootStyle["height"] == nil)')
     expect(source).toContain('viewportFrame.size.height = bounds.height')
-    expect(source).toContain('absolute sibling is positioned against the scroll content')
   })
 
   it('sizes intrinsic native grids from flow children only', async () => {

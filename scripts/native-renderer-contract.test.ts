@@ -1458,7 +1458,6 @@ describe('native renderer component contract', () => {
     expect(android).toContain('longest-word (min-content) width')
     expect(ios).toContain('let maxContent = label.sizeThatFits(CGSize(width: unbounded, height: unbounded))')
     expect(ios).toContain('let resolvedWidth = width ?? min(ceil(maxContent.width), limit)')
-    expect(ios).toContain('collapses shrink-to-fit bubbles and pills')
     expect(navigationHome).toContain('testID="max-content-bubble"')
     expect(navigationHome).toContain('testID="max-content-bubble-text"')
     expect(iosNavigationTest).toContain('text took min-content width and wrapped unexpectedly')
@@ -2455,7 +2454,6 @@ describe('native renderer component contract', () => {
   })
 
   it('ignores boolean values in numeric native layout styles on both hosts', () => {
-    expect(ios).toContain('// JavaScript booleans can bridge to NSNumber on Apple platforms;')
     expect(ios).toContain('guard let number = craftNativeNumber(value) else { return nil }')
     expect(android).toContain('if (value is Number)')
     expect(navigationHome).toContain('testID="boolean-width-text"')
