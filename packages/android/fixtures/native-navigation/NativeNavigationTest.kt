@@ -1076,6 +1076,41 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun navigationTitleColorsBelongToTheCurrentScreenAndCanReset() {
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            instrumentation.runOnMainSync {
+                val chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                fun labels(view: View): List<TextView> =
+                    (if (view is TextView && view.text.toString() == "Branded") listOf(view) else emptyList()) +
+                        (if (view is ViewGroup) (0 until view.childCount).flatMap { labels(view.getChildAt(it)) } else emptyList())
+                val options = org.json.JSONObject().put("title", "Branded")
+                chrome.apply(options, 0, "Branded")
+                val baseline = labels(chrome).first().currentTextColor
+                options.put("titleColor", "#e5f4e8").put("backgroundColor", "#0b1b16")
+                for (large in listOf(true, false)) {
+                    chrome.apply(options.put("largeTitle", large), 0, "Branded")
+                    assertTrue("native title labels did not mount", labels(chrome).isNotEmpty())
+                    for (label in labels(chrome)) assertEquals(Color.parseColor("#e5f4e8"), label.currentTextColor)
+                }
+                options.put("titleColor", org.json.JSONObject.NULL).put("backgroundColor", org.json.JSONObject.NULL)
+                chrome.apply(options, 0, "Branded")
+                for (label in labels(chrome)) assertEquals(baseline, label.currentTextColor)
+                chrome.apply(org.json.JSONObject().put("title", "Branded"), 0, "Branded")
+                for (label in labels(chrome)) assertEquals(baseline, label.currentTextColor)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun liveTabUpdatesRetainToolbarViewsAndActionsUntilTheirSpecsChange() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

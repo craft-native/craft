@@ -867,6 +867,7 @@ internal class CraftNativeChrome(
     private var renderedButtonSpecs: Pair<String, String>? = null
     private val density = resources.displayMetrics.density
     private var screenBackgroundColor: Int? = null
+    private var navigationTitleColor: Int? = null
     private var selectedTab = 0
     private var tabBarHiddenByScreen = false
     private var visiblePath: String? = null
@@ -1049,6 +1050,10 @@ internal class CraftNativeChrome(
             ?.takeUnless { it == JSONObject.NULL }
             ?.let { craftNativeOptionalString(it) }
             ?.let { runCatching { craftNativeColor(it) }.getOrNull() }
+        navigationTitleColor = options.opt("titleColor")
+            ?.takeUnless { it == JSONObject.NULL }
+            ?.let { craftNativeOptionalString(it) }
+            ?.let { runCatching { craftNativeColor(it) }.getOrNull() }
         options.optJSONObject("tabItem")?.let(::updateTab)
         val hidden = options.optBoolean("hidden", false)
         val large = options.optBoolean("largeTitle", false) && depth == 0
@@ -1214,8 +1219,8 @@ internal class CraftNativeChrome(
         setBackgroundColor(background)
         bar.setBackgroundColor(background)
         largeTitleView.setBackgroundColor(background)
-        titleView.setTextColor(text)
-        largeTitleView.setTextColor(text)
+        titleView.setTextColor(navigationTitleColor ?: text)
+        largeTitleView.setTextColor(navigationTitleColor ?: text)
         backButton.imageTintList = ColorStateList.valueOf(accent)
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
         tabBar.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
