@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.477...v0.0.478)
+
+## 🚀 Features
+
+- **android**: report progress for native multipart uploads ([fae87f4](https://github.com/craft-native/craft/commit/fae87f4)) _(by Chris Breuer)_
+- **ios**: report upload bytes and cancel owned transfers ([35bf6bb](https://github.com/craft-native/craft/commit/35bf6bb)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- align native upload and navigation capability contracts ([afb485d](https://github.com/craft-native/craft/commit/afb485d)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.476...v0.0.477)
 
 ## 🚀 Features
