@@ -137,11 +137,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            tools: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+            tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
           - os: macos-latest
-            tools: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+            tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
           - os: windows-latest
-            tools: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+            tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -468,7 +468,7 @@ jobs:
         with:
           version: '0.11.166'
           install: 'false'
-          packages: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+          packages: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
 
       - name: Compile the first-party Windows Job Object owner
         shell: pwsh

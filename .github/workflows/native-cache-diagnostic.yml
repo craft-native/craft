@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 8
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
-      NATIVE_DIAGNOSTIC_CACHE_KEY: pantry-v4-0.11.113-darwin-arm64-98164eb4591c9bbeef1daea138be64cb22a7b38254d41073bd933b9b9cc86923-2578f74743fd738840746ab4bfed0548fe092a9d8802ef8ff5400fcc022db98c-d105178aaea0807b4c81818a43ae2c64efe72af8d1a072cb659aad4ddb6b85cb-bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e github.com/yonaskolb/XcodeGen@2.46.0
+      NATIVE_DIAGNOSTIC_CACHE_KEY: pantry-v4-0.11.113-darwin-arm64-98164eb4591c9bbeef1daea138be64cb22a7b38254d41073bd933b9b9cc86923-2578f74743fd738840746ab4bfed0548fe092a9d8802ef8ff5400fcc022db98c-d105178aaea0807b4c81818a43ae2c64efe72af8d1a072cb659aad4ddb6b85cb-bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e github.com/yonaskolb/XcodeGen@2.46.0
     steps:
       - uses: actions/checkout@v6
       - name: Obtain the original Pantry CLI
@@ -49,7 +49,7 @@ jobs:
         with:
           version: '0.11.166'
           install: 'false'
-          packages: bun.com@1.4.2 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e github.com/yonaskolb/XcodeGen@2.46.0
+          packages: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e github.com/yonaskolb/XcodeGen@2.46.0
       - name: Retain bounded provisioning evidence
         if: always()
         uses: actions/upload-artifact@v4

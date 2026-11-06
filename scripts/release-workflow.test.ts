@@ -184,9 +184,13 @@ test('the Vulkan ABI matrix requires managed Git on every platform and still run
   const job = ci.jobs['vulkan-abi']
   const platforms = job.strategy.matrix.include as Array<{ os: string, tools: string }>
   expect(platforms.map(platform => platform.os)).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest'])
+  // Derived, not literal: this assertion held `bun.com@1.4.2` after the
+  // declared toolchain moved to 1.4.3, so it froze the drift instead of
+  // catching it.
+  const declared = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../deps.yaml'), 'utf8')) as { dependencies: Record<string, string> }
   for (const platform of platforms) {
-    expect(platform.tools).toContain('bun.com@1.4.2')
-    expect(platform.tools).toContain('ziglang.org@0.18.0-dev.146+35accc06e')
+    expect(platform.tools).toContain(`bun.com@${declared.dependencies['bun.sh']}`)
+    expect(platform.tools).toContain(`ziglang.org@${declared.dependencies['ziglang.org']}`)
     expect(platform.tools).toContain('git-scm.org@2.53.0')
   }
   expect(job.steps.find((step: any) => step.name === 'Install the pinned ABI toolchain').with.packages).toBe('${{ matrix.tools }}')
@@ -549,6 +553,17 @@ test('jobs that only run Bun get Bun alone, not the pinned Zig they cannot alway
     }
   }
   expect(unpinned, 'every setup-bun step must pin the declared Bun toolchain').toEqual([])
+
+  // Pantry installs Bun too, through `tools:`/`packages:` strings that the
+  // check above never sees. Eight of those sat on 1.4.2 after the declared
+  // toolchain moved to 1.4.3, so CI ran two Bun versions depending on the job.
+  const stale: string[] = []
+  for (const file of new Bun.Glob('*.yml').scanSync({ cwd: join(import.meta.dir, '../.github/workflows') })) {
+    const text = readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')
+    for (const found of text.matchAll(/bun\.com@([0-9][0-9a-zA-Z.+-]*)/g))
+      if (found[1] !== bunVersion) stale.push(`${file}: bun.com@${found[1]}`)
+  }
+  expect(stale, 'every Pantry package list must request the declared Bun toolchain').toEqual([])
   const lifecycle = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/native-lifecycle.yml'), 'utf8')) as { jobs: Record<string, Job> }
   for (const [file, job] of [['release.yml verify-macos-downloads', release.jobs['verify-macos-downloads']], ['native-lifecycle.yml lifecycle', lifecycle.jobs.lifecycle]] as const) {
     const uses = (job.steps ?? []).map(step => step.uses ?? '')
