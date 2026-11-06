@@ -66,12 +66,25 @@ export async function nativeFixtureCommand(args: string[], options: NativeFixtur
   cancelled: boolean
   processGroup: number
   groupDisposed: true
+  /** Wall time the command actually ran, whether it exited or was killed. */
+  elapsedMs: number
+  /**
+   * How long the command had been silent when it ended.
+   *
+   * `timedOut` alone cannot tell a starved command from a stalled one: both
+   * report the same boolean after the same deadline. A command still writing
+   * when the timer fired was making progress too slowly, which is a host
+   * problem; one silent for most of its budget was stuck, which is not
+   * (#490). Equal to `elapsedMs` when it never wrote anything.
+   */
+  msSinceLastOutput: number
 }> {
   if (process.platform === 'win32') throw new Error('Native fixture command ownership requires POSIX process groups')
   if (!args.length || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) throw new Error('Expected a command and a positive integer timeout')
   options.signal?.throwIfAborted()
   const descriptor = options.logPath ? openSync(options.logPath, 'wx', 0o600) : undefined
   try {
+    const startedAt = performance.now()
     const child = Bun.spawn(args, { cwd: options.cwd, detached: true, stdin: 'ignore', stdout: descriptor ?? 'pipe', stderr: descriptor ?? 'pipe' })
     let timedOut = false, cancelled = false
     let forceKill: ReturnType<typeof setTimeout> | undefined
@@ -84,17 +97,29 @@ export async function nativeFixtureCommand(args: string[], options: NativeFixtur
     const timer = setTimeout(() => { timedOut = true; stop() }, options.timeoutMs)
     options.signal?.addEventListener('abort', onAbort, { once: true })
     process.once('exit', onExit)
-    const output = Promise.all([
-      typeof child.stdout === 'number' ? '' : new Response(child.stdout).text(),
-      typeof child.stderr === 'number' ? '' : new Response(child.stderr).text(),
-    ])
+    // Read incrementally rather than with Response().text(): the arrival time
+    // of the last chunk is what separates slow progress from no progress.
+    let lastOutputAt: number | undefined
+    const decoder = new TextDecoder()
+    const drain = async (stream: ReadableStream<Uint8Array> | number | undefined): Promise<string> => {
+      if (typeof stream === 'number' || !stream) return ''
+      let text = ''
+      for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+        lastOutputAt = performance.now()
+        text += decoder.decode(chunk, { stream: true })
+      }
+      return text + decoder.decode()
+    }
+    const output = Promise.all([drain(child.stdout as never), drain(child.stderr as never)])
     try {
       const code = await child.exited
       // A child can outlive an already reaped parent and keep its pipe open.
       // Dispose the group before awaiting EOF or releasing the workspace.
       await disposeGroup(child.pid)
       const [stdout, stderr] = await output
-      return { code, signal: child.signalCode, stdout, stderr, timedOut, cancelled, processGroup: child.pid, groupDisposed: true }
+      const endedAt = performance.now()
+      return { code, signal: child.signalCode, stdout, stderr, timedOut, cancelled, processGroup: child.pid, groupDisposed: true,
+        elapsedMs: endedAt - startedAt, msSinceLastOutput: endedAt - (lastOutputAt ?? startedAt) }
     }
     finally {
       clearTimeout(timer)
