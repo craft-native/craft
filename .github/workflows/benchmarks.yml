@@ -94,7 +94,7 @@ jobs:
       - name: Restore main's binary
         if: github.event_name == 'pull_request'
         id: baseline
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: baseline-binary
           key: benchmarks-baseline-binary-${{ github.base_ref }}
@@ -153,7 +153,7 @@ jobs:
 
       - name: Cache main's binary
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: baseline-binary
           key: benchmarks-baseline-binary-main-${{ github.sha }}

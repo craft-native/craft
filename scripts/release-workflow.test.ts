@@ -1087,3 +1087,37 @@ test('the mobile E2E summary fails when any leg it waits for fails', () => {
   expect(needs.filter(name => !condition.includes(`needs.${name}.result`)).sort(),
     'these legs are waited for but never checked, so their failure is silently tolerated').toEqual([])
 })
+
+/**
+ * One action, one major, across the whole repository.
+ *
+ * `actions/upload-artifact` ran at `@v4` in twenty-six places and `@v7` in
+ * two, which is not a tidiness problem: artifact overwrite and repeated-name
+ * behaviour differ across those majors, so two jobs could answer the same
+ * situation differently depending on which workflow they sat in (#492).
+ *
+ * A SHA pin counts by the major in its trailing comment, which is the only
+ * readable statement of what that commit is.
+ */
+test('no action is used at two different major versions', () => {
+  const majors = new Map<string, Map<string, string[]>>()
+  for (const file of new Bun.Glob('*.yml').scanSync({ cwd: join(import.meta.dir, '../.github/workflows') })) {
+    const text = readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')
+    for (const line of text.split('\n')) {
+      const tagged = /uses:\s*([\w.-]+\/[\w./-]+)@v(\d+)/.exec(line)
+      const pinned = /uses:\s*([\w.-]+\/[\w./-]+)@[0-9a-f]{40}\s*#\s*v(\d+)/.exec(line)
+      const found = pinned ?? tagged
+      if (!found) continue
+      const [, action, major] = found as unknown as [string, string, string]
+      if (!majors.has(action)) majors.set(action, new Map())
+      const seen = majors.get(action)!
+      seen.set(major, [...(seen.get(major) ?? []), file])
+    }
+  }
+  expect(majors.size).toBeGreaterThan(5)
+  const split = [...majors]
+    .filter(([, seen]) => seen.size > 1)
+    .map(([action, seen]) => `${action}: ${[...seen].map(([major, files]) => `v${major} in ${[...new Set(files)].join('/')}`).join(' vs ')}`)
+    .sort()
+  expect(split, 'these actions run at more than one major version, so their behaviour differs by workflow').toEqual([])
+})

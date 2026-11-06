@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p artifacts/media-cache
           bun scripts/media-cache.ts ios 2>&1 | tee artifacts/media-cache/ios.log
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ios-media-cache
@@ -84,7 +84,7 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools platforms;android-36 build-tools;36.0.0
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
       - run: bun install --frozen-lockfile
@@ -104,7 +104,7 @@ jobs:
           script: |
             mkdir -p artifacts/media-cache
             bash -o pipefail -c 'bun scripts/media-cache.ts android 2>&1 | tee artifacts/media-cache/android.log'
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-media-cache
