@@ -1,5 +1,41 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.471...v0.0.475)
+
+## 🚀 Features
+
+- **mobile**: render companion actions beside the floating inbox ([80dabad](https://github.com/craft-native/craft/commit/80dabad)) _(by Chris Breuer)_
+- **release**: record what the binaries registry actually serves ([9cc2c26](https://github.com/craft-native/craft/commit/9cc2c26)) _(by glennmichael123)_ ([#454](https://github.com/craft-native/craft/issues/454))
+
+## 🐛 Bug Fixes
+
+- **ios**: stop refusing anchors the real hold would have contained ([29746b8](https://github.com/craft-native/craft/commit/29746b8)) _(by glennmichael123)_
+- **ios**: keep a destructive sheet's Cancel on the phone ([5f8bd67](https://github.com/craft-native/craft/commit/5f8bd67)) _(by glennmichael123)_
+- **ios**: stop the baseline screenshot widening the first-frame bracket ([dd329a2](https://github.com/craft-native/craft/commit/dd329a2)) _(by glennmichael123)_
+- **ios**: reject a first-frame anchor no hold could contain ([9398606](https://github.com/craft-native/craft/commit/9398606)) _(by glennmichael123)_ ([#486](https://github.com/craft-native/craft/issues/486))
+- **ios**: publish a native switch value every reader can read ([793b648](https://github.com/craft-native/craft/commit/793b648)) _(by glennmichael123)_ ([#464](https://github.com/craft-native/craft/issues/464))
+- **packaging**: retain disk-image lifecycle failure evidence ([94cd39e](https://github.com/craft-native/craft/commit/94cd39e)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: tap a system picker's Cancel once it can take the tap ([fcd0909](https://github.com/craft-native/craft/commit/fcd0909)) _(by glennmichael123)_
+
+## 🤖 Continuous Integration
+
+- make a pinned installer's version comment answerable ([f353b22](https://github.com/craft-native/craft/commit/f353b22)) _(by glennmichael123)_
+- take the released Pantry installer in every workflow ([5e57b60](https://github.com/craft-native/craft/commit/5e57b60)) _(by glennmichael123)_
+
+## 🧹 Chores
+
+- release v0.0.474 ([23f4385](https://github.com/craft-native/craft/commit/23f4385)) _(by glennmichael123)_
+- release v0.0.473 ([137fee4](https://github.com/craft-native/craft/commit/137fee4)) _(by glennmichael123)_
+- release v0.0.472 ([b36c52c](https://github.com/craft-native/craft/commit/b36c52c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.473...v0.0.474)
 
 ## 🚀 Features
