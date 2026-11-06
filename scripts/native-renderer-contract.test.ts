@@ -4263,7 +4263,7 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps Android native file uploads on the owned-file multipart path', () => {
-    expect(androidCapabilities).toContain('listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files")')
+    expect(androidCapabilities).toContain('listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files", "uploadProgress")')
     expect(androidCapabilities).toContain('private fun multipart(parts: JSONArray): FileResult')
     expect(androidCapabilities).toContain('A form file must be one craft.files made, and still there')
     expect(androidCapabilities).not.toContain('form files are limited to $CRAFT_NATIVE_FETCH_MAX_RESPONSE_BYTES bytes')
