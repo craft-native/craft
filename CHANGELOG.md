@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.480...v0.0.481)
+
+## 🐛 Bug Fixes
+
+- preserve directory space in the floating menu fixture ([f1ba650](https://github.com/craft-native/craft/commit/f1ba650)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.475...v0.0.480)
 
 ## 🚀 Features
