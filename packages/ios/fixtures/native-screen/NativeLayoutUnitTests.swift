@@ -988,6 +988,34 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(controller.navigationItem.title, "Today")
     }
 
+    func testNavigationTitleColourPreservesMaterialAndResetsPerScreen() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.loadViewIfNeeded()
+        controller.loadViewIfNeeded()
+        let original = navigation.navigationBar.standardAppearance
+
+        controller.evaluateScript("craft.navigation.setOptions({ title: 'Branded', largeTitle: true, titleColor: '#eef7f0' })")
+        let appearance = try XCTUnwrap(controller.navigationItem.standardAppearance)
+        XCTAssertEqual(appearance.backgroundColor, original.backgroundColor)
+        XCTAssertEqual(appearance.backgroundEffect, original.backgroundEffect)
+        for value in [controller.navigationItem.standardAppearance, controller.navigationItem.scrollEdgeAppearance,
+                      controller.navigationItem.compactAppearance, controller.navigationItem.compactScrollEdgeAppearance] {
+            let styled = try XCTUnwrap(value)
+            try assertColor(styled.titleTextAttributes[.foregroundColor] as? UIColor, red: 0xee / 255, green: 0xf7 / 255, blue: 0xf0 / 255)
+            try assertColor(styled.largeTitleTextAttributes[.foregroundColor] as? UIColor, red: 0xee / 255, green: 0xf7 / 255, blue: 0xf0 / 255)
+        }
+        controller.evaluateScript("craft.navigation.setOptions({ title: 'Updated' })")
+        XCTAssertNotNil(controller.navigationItem.standardAppearance)
+        XCTAssertNil(CraftNativeScreenController(config: CraftConfig()).navigationItem.standardAppearance)
+
+        controller.evaluateScript("craft.navigation.setOptions({ titleColor: null })")
+        XCTAssertNil(controller.navigationItem.standardAppearance)
+        XCTAssertNil(controller.navigationItem.scrollEdgeAppearance)
+        XCTAssertNil(controller.navigationItem.compactAppearance)
+        XCTAssertNil(controller.navigationItem.compactScrollEdgeAppearance)
+    }
+
     func testNavigationBarSolidUsesTheScreenColourAndCanReset() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let navigation = UINavigationController(rootViewController: controller)

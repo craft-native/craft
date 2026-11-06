@@ -4179,10 +4179,11 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps every iOS navigation appearance slot opaque when requested', () => {
-    expect(ios).toContain('navigationItem.standardAppearance = appearance')
-    expect(ios).toContain('navigationItem.scrollEdgeAppearance = appearance')
-    expect(ios).toContain('navigationItem.compactAppearance = appearance')
-    expect(ios).toContain('navigationItem.compactScrollEdgeAppearance = appearance')
+    expect(ios).toContain('navigationItem.standardAppearance = styled(standard)')
+    expect(ios).toContain('navigationItem.scrollEdgeAppearance = styled(scrollEdge)')
+    expect(ios).toContain('navigationItem.compactAppearance = styled(bar?.compactAppearance ?? standard)')
+    expect(ios).toContain('navigationItem.compactScrollEdgeAppearance = styled(bar?.compactScrollEdgeAppearance ?? scrollEdge)')
+    expect(ios).toContain('if navigationBarSolid {\n                appearance.configureWithOpaqueBackground()')
     expect(iosLayoutUnitTests).toContain('for appearance in appearances')
     expect(iosLayoutUnitTests).toContain('XCTAssertNil(appearance.backgroundEffect)')
     expect(iosLayoutUnitTests).toContain('try assertColor(appearance.backgroundColor')

@@ -7856,6 +7856,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// the home indicator too, where its content never reaches: a black
     /// full-screen timer is black edge to edge. nil is the app's.
     private var screenBackgroundColor: UIColor?
+    /// Title contrast belongs to this screen, independently of the bar material.
+    private var navigationTitleColor: UIColor?
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
         statusBarStyleOverride ?? .default
@@ -7926,6 +7928,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let solid = options["navigationBarSolid"] as? Bool {
             navigationBarSolid = solid
         }
+        if options.keys.contains("titleColor") {
+            navigationTitleColor = color(options["titleColor"])
+        }
         if let hidden = options["hidden"] as? Bool {
             navigationBarHidden = hidden
             if navigationController?.topViewController === self {
@@ -7941,7 +7946,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let buttons = (options["rightButtons"] as? [[String: Any]]) ?? []
             navigationItem.rightBarButtonItems = buttons.compactMap(navigationButton).reversed()
         }
-        if options.keys.contains("backgroundColor") || options.keys.contains("navigationBarSolid") {
+        if options.keys.contains("backgroundColor") || options.keys.contains("navigationBarSolid") || options.keys.contains("titleColor") {
             applyNavigationBarAppearance()
             trackContentScrollView()
         }
@@ -7952,25 +7957,44 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
     }
 
-    /// Applies the screen's optional opaque bar without changing the default
-    /// UIKit material when the screen did not opt in.
+    /// Per-item appearances preserve each UIKit bar state and never recolour a
+    /// sibling controller's title or opt a material bar into an opaque fill.
     private func applyNavigationBarAppearance() {
-        guard navigationBarSolid else {
+        guard navigationBarSolid || navigationTitleColor != nil else {
             navigationItem.standardAppearance = nil
             navigationItem.scrollEdgeAppearance = nil
             navigationItem.compactAppearance = nil
             navigationItem.compactScrollEdgeAppearance = nil
             return
         }
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
-        appearance.shadowColor = .clear
-        CraftChromeFonts.apply(to: appearance)
-        navigationItem.standardAppearance = appearance
-        navigationItem.scrollEdgeAppearance = appearance
-        navigationItem.compactAppearance = appearance
-        navigationItem.compactScrollEdgeAppearance = appearance
+        let bar = navigationController?.navigationBar
+        let standard = bar?.standardAppearance ?? UINavigationBarAppearance()
+        // UIKit's unspecified scroll-edge appearance uses a transparent
+        // background. Copy its standard text/button attributes before applying
+        // that background so adding title contrast preserves the same states.
+        let scrollEdge = bar?.scrollEdgeAppearance ?? {
+            let appearance = UINavigationBarAppearance(barAppearance: standard)
+            appearance.configureWithTransparentBackground()
+            return appearance
+        }()
+        func styled(_ base: UINavigationBarAppearance) -> UINavigationBarAppearance {
+            let appearance = UINavigationBarAppearance(barAppearance: base)
+            if navigationBarSolid {
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
+                appearance.shadowColor = .clear
+            }
+            CraftChromeFonts.apply(to: appearance)
+            if let navigationTitleColor {
+                appearance.titleTextAttributes[.foregroundColor] = navigationTitleColor
+                appearance.largeTitleTextAttributes[.foregroundColor] = navigationTitleColor
+            }
+            return appearance
+        }
+        navigationItem.standardAppearance = styled(standard)
+        navigationItem.scrollEdgeAppearance = styled(scrollEdge)
+        navigationItem.compactAppearance = styled(bar?.compactAppearance ?? standard)
+        navigationItem.compactScrollEdgeAppearance = styled(bar?.compactScrollEdgeAppearance ?? scrollEdge)
     }
 
     private func applyStatusBar(_ props: [String: Any]) {
