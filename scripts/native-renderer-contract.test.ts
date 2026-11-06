@@ -3655,7 +3655,13 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`tabAccessory` adds one destination button beside the tab pill')
     expect(iosReadme).toContain('`tabAccessory` destination beside the tab pill')
     expect(androidReadme).toContain('right buttons with badges, `tabAccessory`, `tabBarHidden`')
-    expect(ios).toContain('backgroundColor, navigationBarSolid, rightButtons, tabAccessory })')
+    // `tabAccessory` must stay in the documented option list, without pinning
+    // the list's exact wording: spelling the whole line here is what broke
+    // when titleColor, leftButtons and tabItem were added to it (9cafe066).
+    const documented = ios.slice(ios.indexOf('`craft.navigation.setOptions({'), ios.indexOf('})`', ios.indexOf('`craft.navigation.setOptions({')))
+    expect(documented).toContain('tabAccessory')
+    expect(documented).toContain('rightButtons')
+    expect(documented).toContain('navigationBarSolid')
     expect(androidShell).toContain('rightButtons,\n * tabAccessory, tabBarHidden')
   })
 
