@@ -586,6 +586,43 @@ test('failed guest disposal retains the private registry until its process group
   }
 }, 15000)
 
+/**
+ * A cleanup error is the second thing that went wrong, never the reason the
+ * caller asked for. Reporting only "setup and cleanup failed" buried the
+ * cancellation under whatever the dispose happened to hit, which is how a
+ * loaded macOS runner turned `Boot cancelled` into an unrelated message and
+ * failed v0.0.474's `accept exact release source` gate.
+ */
+test('a failing cleanup still names the cancellation that caused it', async () => {
+  const { root, options } = fixture(true)
+  writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\necho $$ > "$ANDROID_HOME/provision.pid"\ntrap "" TERM INT\nwhile :; do sleep 1; done\n', { mode: 0o755 })
+  const originalKill = process.kill
+  let pid = 0
+  const controller = new AbortController()
+  try {
+    const outcome = createAndroidEmulator({ ...options, signal: controller.signal }).then(() => undefined, (error: unknown) => error)
+    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
+    pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    // Deny signalling so disposal fails while the cancellation is the cause.
+    process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
+      if (selected === -pid && signal !== 0) throw Object.assign(new Error('Fixture provisioning signal denied'), { code: 'EPERM' })
+      return originalKill(selected, signal)
+    }) as typeof process.kill
+    controller.abort(new Error('Boot cancelled'))
+    const error = await outcome
+    expect(error).toBeInstanceOf(AggregateError)
+    // The reason the caller gave must be readable without unwrapping.
+    expect(String((error as AggregateError).message)).toContain('Boot cancelled')
+    // And the cleanup failure is still retained alongside it.
+    expect((error as AggregateError).errors).toHaveLength(2)
+  }
+  finally {
+    process.kill = originalKill
+    if (pid) { try { originalKill(-pid, 'SIGKILL') } catch { /* already reaped */ } }
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
 test('failed provisioning cancellation retains its registry and reports signaling errors through the setup promise', async () => {
   const { root, options } = fixture(true)
   writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\necho $$ > "$ANDROID_HOME/provision.pid"\ntrap "" TERM INT\nwhile :; do sleep 1; done\n', { mode: 0o755 })

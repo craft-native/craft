@@ -347,7 +347,12 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
       }
     }
     try { await dispose() }
-    catch (cleanup) { throw new AggregateError([failure, cleanup], 'Android emulator setup and cleanup failed') }
+    // Name the setup failure in the message, as the abort branch above does.
+    // A cleanup error is the second thing that went wrong, never the reason
+    // the caller asked for: reporting only "setup and cleanup failed" buried
+    // a cancellation under whatever the dispose happened to hit, which is how
+    // a loaded runner turned `Boot cancelled` into an unrelated message.
+    catch (cleanup) { throw new AggregateError([failure, cleanup], `Android emulator setup and cleanup failed: ${String(failure)}`) }
     throw failure
   }
 }
