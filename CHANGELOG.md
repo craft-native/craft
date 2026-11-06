@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.478...v0.0.479)
+
+## 🐛 Bug Fixes
+
+- **android**: preserve trailing completion callbacks ([ec52e9e](https://github.com/craft-native/craft/commit/ec52e9e)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.477...v0.0.478)
 
 ## 🚀 Features
