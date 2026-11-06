@@ -198,6 +198,7 @@ internal class CraftNativeCapabilities(
         if (config.optBoolean("enableLocalNotifications")) put("notifications")
     }
 
+    // Keep completion as the last argument for callers using Kotlin's trailing lambda.
     fun perform(
         requestToken: String,
         version: Int,
@@ -205,7 +206,16 @@ internal class CraftNativeCapabilities(
         method: String,
         args: JSONArray,
         completion: (CraftNativeCapabilityResult) -> Unit,
-        onUploadProgress: ((JSONObject) -> Unit)? = null,
+    ) = perform(requestToken, version, module, method, args, completion, null)
+
+    fun perform(
+        requestToken: String,
+        version: Int,
+        module: String,
+        method: String,
+        args: JSONArray,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+        onUploadProgress: ((JSONObject) -> Unit)?,
     ) {
         if (closed.get()) {
             mainHandler.post { completion(failure("HOST_CLOSED", "The native capability host is closed")) }
