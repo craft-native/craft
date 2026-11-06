@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.475...v0.0.476)
+
+## 🚀 Features
+
+- **android**: keep branded navigation titles readable per screen ([d8acd5b](https://github.com/craft-native/craft/commit/d8acd5b)) _(by Chris Breuer)_
+- **ios**: support per-screen navigation title contrast ([a70709e](https://github.com/craft-native/craft/commit/a70709e)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.471...v0.0.475)
 
 ## 🚀 Features
