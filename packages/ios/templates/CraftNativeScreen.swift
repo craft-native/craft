@@ -3157,13 +3157,12 @@ private class CraftNativeFlowView: UIStackView {
 
     /// UIKit omits empty layout wrappers from its automatic accessibility walk,
     /// including controls drawn in their visible overflow. Keep normal native
-    /// containers intact, but lift children of transparent empty wrappers into
+    /// containers explicit, and lift children of transparent empty wrappers into
     /// the nearest nonempty container's list. No proxy replaces a real control.
     override var accessibilityElements: [Any]? {
         get {
             if let authored = super.accessibilityElements { return authored }
             guard !isAccessibilityElement else { return nil }
-            guard subviews.contains(where: { $0 is CraftNativeFlowView && $0.bounds.isEmpty }) else { return nil }
             return subviews.flatMap { Self.accessibilityChildrenThroughEmptyWrappers($0) }
         }
         set { super.accessibilityElements = newValue }

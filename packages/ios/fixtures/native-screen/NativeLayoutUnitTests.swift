@@ -708,7 +708,7 @@ final class NativeLayoutUnitTests: XCTestCase {
 
     func testEmptyOverflowWrappersExposeRealControlsWithoutChangingLayout() async throws {
         let controller = screen(box("root", style: ["height": 240], [
-            box("body", style: ["height": 240]),
+            box("body", style: ["height": 240], [text("result", "Not resumed")]),
             box("wrapper", style: ["height": 0], [box("nested", style: [:], [
                 ["id": "floating", "type": "TouchableOpacity", "props": ["testID": "floating", "accessibilityLabel": "Resume"],
                  "style": ["position": "absolute", "right": 16, "bottom": 16, "width": 160, "height": 64]],
@@ -722,6 +722,10 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(nested.bounds.height, 0)
         let root = try XCTUnwrap(find("root", below: controller.view))
         let exposed = try XCTUnwrap(root.accessibilityElements)
+        let body = try XCTUnwrap(find("body", below: controller.view))
+        let result = try XCTUnwrap(find("result", below: controller.view))
+        XCTAssertTrue(exposed.contains { ($0 as? UIView) === body }, "Keep ordinary container identity")
+        XCTAssertTrue(try XCTUnwrap(body.accessibilityElements).contains { ($0 as? UIView) === result }, "Keep ordinary content accessible beside floating controls")
         XCTAssertTrue(exposed.contains { ($0 as? UIView) === action })
         XCTAssertFalse(exposed.contains { ($0 as? UIView) === wrapper })
         XCTAssertTrue(try XCTUnwrap(wrapper.accessibilityElements).contains { ($0 as? UIView) === action })
