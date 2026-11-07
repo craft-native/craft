@@ -3178,6 +3178,9 @@ private class CraftNativeFlowView: UIStackView {
               flow.accessibilityContainerType == .none else { return [view] }
         guard !flow.bounds.isEmpty || !flow.clipsToBounds else { return [] }
         if let authored = flow.authoredAccessibilityElements { return authored }
+        // Preserve UIKit's visible leaf Views, including identified decorative
+        // overlays, without turning them into VoiceOver elements.
+        if flow.subviews.isEmpty { return flow.bounds.isEmpty ? [] : [flow] }
         // A transparent View is not an accessibility element. Putting it in
         // an explicit element array loses its ordinary labels and controls too.
         return flow.subviews.flatMap { accessibleDescendants($0) }

@@ -727,6 +727,7 @@ final class NativeLayoutUnitTests: XCTestCase {
     func testEmptyOverflowWrappersExposeRealControlsWithoutChangingLayout() async throws {
         let controller = screen(box("root", style: ["height": 240], [
             box("body", style: ["height": 240], [text("result", "Not resumed")]),
+            box("decoration", style: ["position": "absolute", "top": 8, "right": 8, "width": 24, "height": 24]),
             box("wrapper", style: ["height": 0], [box("nested", style: [:], [
                 ["id": "floating", "type": "TouchableOpacity", "props": ["testID": "floating", "accessibilityLabel": "Resume"],
                  "style": ["position": "absolute", "right": 16, "bottom": 16, "width": 160, "height": 64]],
@@ -745,6 +746,9 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertTrue(exposed.contains { ($0 as? UIView) === result }, "Ordinary labels remain real accessibility elements beside floating controls")
         XCTAssertNil(body.accessibilityElements, "Ordinary subtrees keep UIKit automatic traversal")
         XCTAssertTrue(exposed.contains { ($0 as? UIView) === action })
+        let decoration = try XCTUnwrap(find("decoration", below: controller.view))
+        XCTAssertTrue(exposed.contains { ($0 as? UIView) === decoration }, "Visible native leaf Views must retain their identity and geometry")
+        XCTAssertFalse(decoration.isAccessibilityElement, "A decorative view must not become a VoiceOver stop")
         XCTAssertFalse(exposed.contains { ($0 as? UIView) === wrapper })
         XCTAssertTrue(try XCTUnwrap(wrapper.accessibilityElements).contains { ($0 as? UIView) === action })
         wrapper.clipsToBounds = true

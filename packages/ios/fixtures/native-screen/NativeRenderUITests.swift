@@ -24,6 +24,7 @@ final class NativeRenderUITests: XCTestCase {
         app.buttons["open-overflow"].tap()
         XCTAssertTrue(app.staticTexts["overflow-result"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["clip-overflow"].exists, app.debugDescription)
+        XCTAssertTrue(app.otherElements["overflow-decoration"].exists, app.debugDescription)
         let action = app.buttons["overflow-action"]
         XCTAssertTrue(action.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(action.label, "Resume saved workout")

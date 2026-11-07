@@ -123,6 +123,7 @@
             { type: 'Button', props: { testID: 'clip-overflow' }, events: { onPress: 'clipOverflow' }, children: ['Clip wrapper'] },
             { type: 'Button', props: { testID: 'reveal-overflow' }, events: { onPress: 'revealOverflow' }, children: ['Reveal wrapper'] },
           ] },
+          { type: 'View', props: { testID: 'overflow-decoration' }, style: { position: 'absolute', top: 8, right: 8, width: 24, height: 24, backgroundColor: '#ef4444' } },
           // Component wrappers have no in-flow children. Their floating action
           // is visible outside their zero-height bounds, as in a recovery pill.
           { id: 'overflow-wrapper', type: 'View', style: { height: 0 }, children: [
