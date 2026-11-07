@@ -19,6 +19,8 @@ final class NativeRenderUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
+        XCTAssertTrue(app.buttons["open-overflow"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["open-picker"].exists, app.debugDescription)
         app.buttons["open-overflow"].tap()
         XCTAssertTrue(app.staticTexts["overflow-result"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["clip-overflow"].exists, app.debugDescription)
