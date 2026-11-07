@@ -143,9 +143,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install System Dependencies
         if: matrix.platform.deps != ''
@@ -469,9 +469,9 @@ jobs:
       # publish the Zig package here: a failed second leg would otherwise make
       # an incomplete version visible in the pantry registry.
       - name: Stage draft release
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
           release: 'true'
           release-draft: 'true'
@@ -565,9 +565,9 @@ jobs:
       # Use the publisher's transport diagnostics from the registry hashing
       # fix, while retaining the independently qualified installer below.
       - name: Publish Zig package
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
           publish: 'zig'
           package-dir: packages/zig
@@ -812,9 +812,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install Dependencies
         run: bun install --frozen-lockfile
@@ -902,9 +902,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
