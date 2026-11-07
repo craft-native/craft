@@ -4182,15 +4182,17 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('overlayRightBeforeScroll')
   })
 
-  it('keeps every iOS navigation appearance slot opaque when requested', () => {
+  it('preserves solid navigation across iOS appearance states without covering content titles', () => {
     expect(ios).toContain('navigationItem.standardAppearance = styled(standard)')
     expect(ios).toContain('navigationItem.scrollEdgeAppearance = styled(scrollEdge)')
     expect(ios).toContain('navigationItem.compactAppearance = styled(bar?.compactAppearance ?? standard)')
     expect(ios).toContain('navigationItem.compactScrollEdgeAppearance = styled(bar?.compactScrollEdgeAppearance ?? scrollEdge)')
-    expect(ios).toContain('if navigationBarSolid {\n                appearance.configureWithOpaqueBackground()')
+    expect(ios).toContain('if #available(iOS 26.0, *) {\n                    appearance.configureWithTransparentBackground()\n                } else {\n                    appearance.configureWithOpaqueBackground()')
+    expect(ios).toContain('scroll?.topEdgeEffect.style = topEdgeToEdge ? (navigationBarSolid ? .hard : .soft) : .automatic')
     expect(iosLayoutUnitTests).toContain('for appearance in appearances')
     expect(iosLayoutUnitTests).toContain('XCTAssertNil(appearance.backgroundEffect)')
-    expect(iosLayoutUnitTests).toContain('try assertColor(appearance.backgroundColor')
+    expect(iosLayoutUnitTests).toContain('try assertColor(solidNavigationBackground(appearance, controller: controller)')
+    expect(iosLayoutUnitTests).toContain('XCTAssertEqual(current.topEdgeEffect.style, .hard)')
   })
 
   it('keeps the outgoing hybrid web page visible during navigation transitions', () => {

@@ -1075,6 +1075,15 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertNil(controller.navigationItem.compactScrollEdgeAppearance)
     }
 
+    private func solidNavigationBackground(_ appearance: UINavigationBarAppearance, controller: UIViewController) throws -> UIColor {
+        XCTAssertNil(appearance.backgroundEffect)
+        if #available(iOS 26.0, *) {
+            XCTAssertEqual(appearance.backgroundColor?.cgColor.alpha ?? 0, 0, "The expanded title lives below the bar on iOS 26")
+            return try XCTUnwrap(controller.view.backgroundColor)
+        }
+        return try XCTUnwrap(appearance.backgroundColor)
+    }
+
     func testNavigationBarSolidUsesTheScreenColourAndCanReset() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let navigation = UINavigationController(rootViewController: controller)
@@ -1096,12 +1105,11 @@ final class NativeLayoutUnitTests: XCTestCase {
             // UIKit may normalize clear to nil; both mean no shadow.
             XCTAssertEqual(appearance.shadowColor?.cgColor.alpha ?? 0, 0)
             XCTAssertNil(appearance.shadowImage)
-            try assertColor(appearance.backgroundColor, red: 0x12 / 255, green: 0x34 / 255, blue: 0x56 / 255)
+            try assertColor(solidNavigationBackground(appearance, controller: controller), red: 0x12 / 255, green: 0x34 / 255, blue: 0x56 / 255)
         }
 
-        // The same fill remains attached when a screen opts out of the large
-        // title layout; UIKit must not fall back to its translucent scroll-edge
-        // material just because the title collapsed.
+        // The solid treatment remains attached when a screen opts out of the
+        // large title layout; changing title size must retain its appearance.
         controller.evaluateScript("craft.navigation.setOptions({ largeTitle: false })")
         XCTAssertEqual(controller.navigationItem.largeTitleDisplayMode, .never)
         XCTAssertNotNil(controller.navigationItem.scrollEdgeAppearance)
@@ -1124,8 +1132,8 @@ final class NativeLayoutUnitTests: XCTestCase {
 
         controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: true })")
         let appearance = try XCTUnwrap(controller.navigationItem.standardAppearance)
-        let light = try XCTUnwrap(appearance.backgroundColor).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
-        let dark = try XCTUnwrap(appearance.backgroundColor).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let light = try solidNavigationBackground(appearance, controller: controller).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        let dark = try solidNavigationBackground(appearance, controller: controller).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
         try assertColor(light, red: 1, green: 1, blue: 1)
         try assertColor(dark, red: 0x10 / 255, green: 0x18 / 255, blue: 0x20 / 255)
     }
@@ -1145,7 +1153,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         controller.traitCollectionDidChange(UITraitCollection(userInterfaceStyle: .light))
 
         let appearance = try XCTUnwrap(controller.navigationItem.standardAppearance)
-        let dark = try XCTUnwrap(appearance.backgroundColor).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let dark = try solidNavigationBackground(appearance, controller: controller).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
         try assertColor(dark, red: 0x10 / 255, green: 0x18 / 255, blue: 0x20 / 255)
     }
 
@@ -1174,7 +1182,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         for appearance in appearances {
             XCTAssertNil(appearance.backgroundEffect)
             XCTAssertEqual(appearance.shadowColor?.cgColor.alpha ?? 0, 0)
-            try assertColor(appearance.backgroundColor, red: 0x12 / 255, green: 0x34 / 255, blue: 0x56 / 255)
+            try assertColor(solidNavigationBackground(appearance, controller: controller), red: 0x12 / 255, green: 0x34 / 255, blue: 0x56 / 255)
         }
     }
 
@@ -1590,7 +1598,7 @@ final class NativeLayoutUnitTests: XCTestCase {
                 controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: true, backgroundColor: '#f2f2f7' })")
                 await settle(controller)
                 XCTAssertFalse(current.topEdgeEffect.isHidden, "an explicit solid-bar request remains supported")
-                XCTAssertEqual(current.topEdgeEffect.style, .automatic)
+                XCTAssertEqual(current.topEdgeEffect.style, .hard)
                 XCTAssertTrue(current.bottomEdgeEffect.isHidden)
                 XCTAssertNotNil(controller.navigationItem.standardAppearance)
                 controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: false })")
