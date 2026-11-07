@@ -83,11 +83,11 @@ jobs:
           test -r /dev/kvm
           test -w /dev/kvm
       - name: Install the managed Android toolchain
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
-          packages: bun.com@1.4.3 git-scm.org@2.53.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
+          packages: bun.com@1.4.3 git-scm.org@2.56.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
       - name: Boot and dispose the stock Play image through the SDK
         run: bun scripts/verify-android-emulator.ts
       - name: Retain emulator diagnostics
@@ -109,11 +109,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/prepare-android-disk
       - name: Install the identical managed Android toolchain
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
-          packages: bun.com@1.4.3 git-scm.org@2.53.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
+          packages: bun.com@1.4.3 git-scm.org@2.56.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
       - name: Verify bounded budget validation and normal readiness contracts
         run: bun test ./packages/typescript/src/__tests__/android-emulator.test.ts
       - name: Measure actual stock Play software cold provisioning
@@ -137,9 +137,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+            tools: bun.com@1.4.3 git-scm.org@2.56.0 ziglang.org@0.18.0-dev.146+35accc06e
           - os: macos-latest
-            tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
+            tools: bun.com@1.4.3 git-scm.org@2.56.0 ziglang.org@0.18.0-dev.146+35accc06e
           - os: windows-latest
             tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
     runs-on: ${{ matrix.os }}
@@ -150,11 +150,11 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install the pinned ABI toolchain
         id: abi-toolchain
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
           packages: ${{ matrix.tools }}
       # Preserve the failing tree before a diagnostic install can change it.
@@ -186,7 +186,7 @@ jobs:
           writeFileSync(join(output, 'before-install.json'), JSON.stringify({ entries, truncated: entries.length >= 50000 }, null, 2))
           const binary = process.env.PANTRY_DIAGNOSTIC_BIN
           if (!binary) throw new Error('Failed toolchain setup did not retain its Pantry executable path')
-          const result = spawnSync(resolve(binary), ['install', 'git-scm.org@2.53.0', '--no-save', '--verbose'], { encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 })
+          const result = spawnSync(resolve(binary), ['install', `git-scm.org@${process.platform === 'win32' ? '2.53.0' : '2.56.0'}`, '--no-save', '--verbose'], { encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 })
           writeFileSync(join(output, 'native-install.log'), `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
           writeFileSync(join(output, 'diagnostic-result.json'), JSON.stringify({ exitCode: result.status, signal: result.signal, error: result.error?.message }, null, 2))
           NODE
@@ -246,9 +246,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Verify Zig installation
         run: zig version
@@ -367,9 +367,9 @@ jobs:
 
       - name: Install the pinned native display fixture generator
         if: matrix.os == 'macos-latest'
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
           packages: github.com/yonaskolb/XcodeGen@2.46.0
 
@@ -398,9 +398,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun and Zig)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -462,11 +462,11 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup the pinned native toolchain
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          version: '0.11.166'
+          version: '0.11.184'
           install: 'false'
           packages: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
 
@@ -572,9 +572,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -618,9 +618,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -645,9 +645,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -691,9 +691,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -742,9 +742,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -761,9 +761,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -788,9 +788,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -887,9 +887,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install dependencies
         run: bun install
@@ -945,9 +945,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@530408c77647750a68877773a3ea6165e5dc6281 # v0.11.166
+        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
-          version: '0.11.166'
+          version: '0.11.184'
 
       - name: Install Dependencies
         run: bun install

@@ -191,7 +191,7 @@ test('the Vulkan ABI matrix requires managed Git on every platform and still run
   for (const platform of platforms) {
     expect(platform.tools).toContain(`bun.com@${declared.dependencies['bun.sh']}`)
     expect(platform.tools).toContain(`ziglang.org@${declared.dependencies['ziglang.org']}`)
-    expect(platform.tools).toContain('git-scm.org@2.53.0')
+    expect(platform.tools).toContain(`git-scm.org@${platform.os === 'windows-latest' ? '2.53.0' : '2.56.0'}`)
   }
   expect(job.steps.find((step: any) => step.name === 'Install the pinned ABI toolchain').with.packages).toBe('${{ matrix.tools }}')
   expect(steps(job)).toContain('zig build test:vulkan-abi')
@@ -513,13 +513,10 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
     for (const [name, job] of Object.entries(workflow.jobs)) {
       for (const step of job.steps ?? []) {
         if (step.uses?.startsWith('pantry-pm/pantry/packages/action@')) {
-          // One released installer everywhere (#482). This used to be a
-          // per-workflow ladder down to 0.11.101, which left benchmarks,
-          // binary-size and windows-source-provenance on installers whose
-          // repeat symlink materialization fails a restored cache with
-          // PathAlreadyExists. 0.11.166 carries the first-party fix.
-          const version = '0.11.166'
-          const source = '530408c77647750a68877773a3ea6165e5dc6281'
+          // Release gates use one published installer with frozen provider
+          // replay and alias closure, including the macOS HTTPS dependencies.
+          const version = '0.11.184'
+          const source = '624cd6674f8c5c2d4e4204c11ece62a00d7fac0a'
           expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
           expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
         }
@@ -757,7 +754,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(release.jobs.npm.if).toContain("needs.prepare-npm.result == 'success'")
   expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
-  expect(zigPublish?.with).toMatchObject({ version: '0.11.166', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
+  expect(zigPublish?.with).toMatchObject({ version: '0.11.184', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
   expect(zigPublish?.with?.release).toBeUndefined()
   expect(Object.entries(release.jobs).flatMap(([name, job]) =>
     (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])

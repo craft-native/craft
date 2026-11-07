@@ -19,7 +19,7 @@ test.skipIf(process.platform === 'win32')('uses the declared executable for down
     mkdirSync(bin, { recursive: true })
     mkdirSync(ambient)
     const git = join(bin, 'git')
-    writeFileSync(git, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.53.0"; else echo "managed:$*"; fi\n')
+    writeFileSync(git, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.56.0"; else echo "managed:$*"; fi\n')
     writeFileSync(join(ambient, 'git'), '#!/bin/sh\nexit 91\n')
     chmodSync(git, 0o755)
     chmodSync(join(ambient, 'git'), 0o755)
@@ -34,7 +34,7 @@ test.skipIf(process.platform === 'win32')('uses the declared executable for down
     expect(readFileSync(output, 'utf8')).toBe(`executable=${realpathSync(git)}\n`)
     // A misleading .bin link must not weaken provider ownership.
     const outside = join(root, 'outside-git')
-    writeFileSync(outside, '#!/bin/sh\necho "git version 2.53.0"\n')
+    writeFileSync(outside, '#!/bin/sh\necho "git version 2.56.0"\n')
     chmodSync(outside, 0o755)
     symlinkSync(outside, join(bin, 'escaped-git'))
     expect(insideManagedRoot(realpathSync(join(root, 'pantry')), realpathSync(join(bin, 'escaped-git')))).toBe(false)

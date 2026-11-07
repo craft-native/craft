@@ -15,7 +15,7 @@ export function verifyManagedGit(cwd = process.cwd()): { executable: string, pro
   if (!found) throw new Error('The declared Git executable is missing')
   const provider = realpathSync(found)
   if (!insideManagedRoot(root, provider)) throw new Error(`Git must resolve inside the declared Pantry toolchain: ${JSON.stringify({ root, provider })}`)
-  const version = process.platform === 'win32' ? 'git version 2.53.0.windows.1' : 'git version 2.53.0'
+  const version = process.platform === 'win32' ? 'git version 2.53.0.windows.1' : 'git version 2.56.0'
   const result = Bun.spawnSync([provider, '--version'], { stdout: 'pipe', stderr: 'pipe' })
   if (result.exitCode !== 0 || result.stdout.toString().trim() !== version) throw new Error('The declared Git version did not execute')
   return { executable: provider, provider, version }
