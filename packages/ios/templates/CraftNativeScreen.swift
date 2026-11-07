@@ -4442,6 +4442,9 @@ private final class CraftNativeSegmentedControl: UISegmentedControl {
         if segments.count != items.count { segments = items.indices.map { CraftNativeSegmentElement(control: self, index: $0) } }
         for (index, item) in items.enumerated() {
             segments[index].accessibilityLabel = item["spoken"] as? String ?? item["label"] as? String ?? values[index]
+            // Match the shared component's <group testID>-<value> identity.
+            // UIKit's private segment views do not inherit identifiers.
+            segments[index].accessibilityIdentifier = accessibilityIdentifier.map { "\($0)-\(values[index])" }
         }
         refreshAccessibilityState()
         setNeedsLayout()

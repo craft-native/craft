@@ -36,6 +36,25 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0)
     }
 
+    func testSegmentOptionsExposeStableIdentityAndSelectedState() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["open-overflow"].tap()
+        let all = app.buttons["library-source-all"]
+        let own = app.buttons["library-source-own"]
+        let coach = app.buttons["library-source-coach"]
+        XCTAssertTrue(own.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(all.isSelected)
+        XCTAssertFalse(own.isSelected)
+        XCTAssertFalse(coach.isEnabled)
+        tapWhenHittable(own, "own source segment")
+        waitForLabel(app.staticTexts["source-result"], "Source own")
+        XCTAssertTrue(own.isSelected)
+        XCTAssertFalse(all.isSelected)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+
     private func waitForBackground(_ app: XCUIApplication) {
         let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             app.state == .runningBackground || app.state == .runningBackgroundSuspended

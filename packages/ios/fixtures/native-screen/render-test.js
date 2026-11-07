@@ -118,6 +118,8 @@
         payload: { document: { type: 'View', style: { flex: 1 }, children: [
           { type: 'View', style: { flex: 1, padding: 16 }, children: [
             { id: 'overflow-result', type: 'Text', props: { testID: 'overflow-result' }, children: ['Not resumed'] },
+            { id: 'source-filter', type: 'SegmentedControl', props: { testID: 'library-source', value: 'all', items: [{ value: 'all', label: 'All' }, { value: 'own', label: 'Mine' }, { value: 'coach', label: 'Coach', disabled: true }] }, events: { onChange: 'changeSource' } },
+            { id: 'source-result', type: 'Text', props: { testID: 'source-result' }, children: ['Source all'] },
             { type: 'Button', props: { testID: 'clip-overflow' }, events: { onPress: 'clipOverflow' }, children: ['Clip wrapper'] },
             { type: 'Button', props: { testID: 'reveal-overflow' }, events: { onPress: 'revealOverflow' }, children: ['Reveal wrapper'] },
           ] },
@@ -367,6 +369,13 @@
     if (message.payload.handlerName === 'changeName') {
       name = message.payload.nativeEvent.text
       mutate([{ op: 'updateNode', id: 'name', patch: { children: [`Hello ${name}`] } }])
+    }
+    if (message.payload.handlerName === 'changeSource') {
+      const value = message.payload.nativeEvent.value
+      mutate([
+        { op: 'updateNode', id: 'source-filter', patch: { props: { value } } },
+        { op: 'updateNode', id: 'source-result', patch: { children: [`Source ${value}`] } },
+      ])
     }
     if (message.payload.handlerName === 'changeSwitch' || message.payload.handlerName === 'changeScrollSwitch') {
       const value = message.payload.nativeEvent.value

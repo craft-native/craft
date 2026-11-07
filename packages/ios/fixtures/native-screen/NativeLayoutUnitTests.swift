@@ -17,6 +17,24 @@ final class NativeLayoutUnitTests: XCTestCase {
         return controller
     }
 
+    func testSegmentAccessibilityRetainsStableValueIdentityAcrossUpdates() throws {
+        func node(_ items: [[String: Any]], selected: String) -> [String: Any] {
+            ["id": "source", "type": "SegmentedControl", "props": ["testID": "library-source", "items": items, "value": selected]]
+        }
+        let items: [[String: Any]] = [["value": "own", "label": "Mine"], ["value": "coach", "label": "Coach", "spoken": "From your coach", "disabled": true]]
+        let controller = screen(node(items, selected: "own"))
+        let control = try XCTUnwrap(find("library-source", below: controller.view) as? UISegmentedControl)
+        var segments = try XCTUnwrap(control.accessibilityElements as? [UIAccessibilityElement])
+        XCTAssertEqual(segments.map(\.accessibilityIdentifier), ["library-source-own", "library-source-coach"])
+        XCTAssertEqual(segments[1].accessibilityLabel, "From your coach")
+        XCTAssertTrue(segments[0].accessibilityTraits.contains(.selected))
+        XCTAssertTrue(segments[1].accessibilityTraits.contains(.notEnabled))
+        controller.render(node(Array(items.reversed()), selected: "coach"))
+        segments = try XCTUnwrap(control.accessibilityElements as? [UIAccessibilityElement])
+        XCTAssertEqual(segments.map(\.accessibilityIdentifier), ["library-source-coach", "library-source-own"])
+        XCTAssertTrue(segments[0].accessibilityTraits.contains(.selected))
+    }
+
     func testNativeScreenUsesConfiguredUIKitAppearance() {
         var config = CraftConfig()
         config.appearance = "light"
