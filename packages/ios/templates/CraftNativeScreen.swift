@@ -8018,14 +8018,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // background. Copy its standard text/button attributes before applying
         // that background so adding title contrast preserves the same states.
         let scrollEdge = bar?.scrollEdgeAppearance ?? {
-            let appearance = standard.copy()
+            let appearance = UINavigationBarAppearance(barAppearance: standard)
             appearance.configureWithTransparentBackground()
             return appearance
         }()
         func styled(_ base: UINavigationBarAppearance) -> UINavigationBarAppearance {
-            // Clone the navigation appearance, including its title state,
-            // before changing the screen's background or text attributes.
-            let appearance = base.copy()
+            let appearance = navigationBarSolid ? UINavigationBarAppearance() : UINavigationBarAppearance(barAppearance: base)
             if navigationBarSolid {
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
