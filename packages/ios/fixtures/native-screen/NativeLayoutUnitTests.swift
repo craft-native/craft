@@ -1435,7 +1435,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             var pixel = [UInt8](repeating: 0, count: 4)
             let context = try XCTUnwrap(CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8,
                                                 bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
-                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
             context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             XCTAssertGreaterThan(pixel[0], 240, "the red scroll background must reach both bottom corners")
             XCTAssertLessThan(pixel[1], 10, "the app's grey background must not form a bottom strip")
@@ -1619,7 +1619,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             try pixels.withUnsafeMutableBytes { bytes in
                 let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: cgImage.height,
                                                     bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
-                                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
                 context.draw(strip, in: CGRect(x: 0, y: 0, width: 1, height: cgImage.height))
             }
             for y in 0..<cgImage.height {
