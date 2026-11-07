@@ -1,5 +1,39 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.482...v0.0.483)
+
+## 🐛 Bug Fixes
+
+- compose solid navigation with native scroll edge on iOS 26 ([3d07141](https://github.com/craft-native/craft/commit/3d07141)) _(by Chris Breuer)_
+- avoid duplicate scroll-edge backdrops under opaque bars ([0973bc1](https://github.com/craft-native/craft/commit/0973bc1)) _(by Chris Breuer)_
+- create complete appearances for solid navigation bars ([a09d3e2](https://github.com/craft-native/craft/commit/a09d3e2)) _(by Chris Breuer)_
+- preserve navigation appearance when copying bar styles ([593cad1](https://github.com/craft-native/craft/commit/593cad1)) _(by Chris Breuer)_
+- synchronize expanded navigation title strings ([96e7aa5](https://github.com/craft-native/craft/commit/96e7aa5)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- verify platform-native solid navigation backgrounds ([153f13d](https://github.com/craft-native/craft/commit/153f13d)) _(by Chris Breuer)_
+- isolate refresh and material title painting ([f082b06](https://github.com/craft-native/craft/commit/f082b06)) _(by Chris Breuer)_
+- replace the bare title probe with hosted compositor coverage ([7b046d5](https://github.com/craft-native/craft/commit/7b046d5)) _(by Chris Breuer)_
+- capture solid large titles through the actual hosted shell ([0d90884](https://github.com/craft-native/craft/commit/0d90884)) _(by Chris Breuer)_
+- use current Swift heading diagnostics before first render ([f93d109](https://github.com/craft-native/craft/commit/f93d109)) _(by Chris Breuer)_
+- keep heading pixel coverage scoped to navigation ([4b40053](https://github.com/craft-native/craft/commit/4b40053)) _(by Chris Breuer)_
+- make heading pixel byte order explicit ([a80667f](https://github.com/craft-native/craft/commit/a80667f)) _(by Chris Breuer)_
+- verify solid navigation titles paint visible text ([42afe3e](https://github.com/craft-native/craft/commit/42afe3e)) _(by Chris Breuer)_
+
+## 🧹 Chores
+
+- align release gates with the published Pantry installer ([8993ee4](https://github.com/craft-native/craft/commit/8993ee4)) _(by Chris Breuer)_
+- adopt the verified public POSIX Git toolchain ([d86a27f](https://github.com/craft-native/craft/commit/d86a27f)) _(by Chris Breuer)_
+
+## ⏪ Reverts
+
+- remove unproven expanded title synchronization ([3c2def4](https://github.com/craft-native/craft/commit/3c2def4)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.481...v0.0.482)
 
 ## 🐛 Bug Fixes
