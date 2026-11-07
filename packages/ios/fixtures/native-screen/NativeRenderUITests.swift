@@ -158,29 +158,32 @@ final class NativeRenderUITests: XCTestCase {
 
     func testDocumentPickerScreenReplacementDismissesAndNewScreenCanRetry() {
         continueAfterFailure = false
-        let app = XCUIApplication()
-        app.launch()
-        app.buttons["open-picker"].tap()
-        let session = app.staticTexts["picker-session"].label
-        app.buttons["picker-replace"].tap()
-        let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        XCTAssertTrue(picker.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
-        backgroundAfterObservingPicker(app)
-        XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
-        waitForLabel(app.staticTexts["picker-status"], "Picker ready")
-        XCTAssertNotEqual(app.staticTexts["picker-session"].label, session)
-        let retry = app.buttons["picker-file"]
-        XCTAssertTrue(retry.isHittable, app.debugDescription)
-        retry.tap()
-        waitForLabel(app.staticTexts["picker-status"], "Opening file")
-        let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
-        tapWhenHittable(cancel, "picker Cancel")
-        waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Document picker retry after native screen disposal"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        for round in 1...3 {
+            let app = XCUIApplication()
+            app.launch()
+            app.buttons["open-picker"].tap()
+            let session = app.staticTexts["picker-session"].label
+            app.buttons["picker-replace"].tap()
+            let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+            XCTAssertTrue(picker.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
+            backgroundAfterObservingPicker(app)
+            XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
+            waitForLabel(app.staticTexts["picker-status"], "Picker ready")
+            XCTAssertNotEqual(app.staticTexts["picker-session"].label, session)
+            let retry = app.buttons["picker-file"]
+            XCTAssertTrue(retry.isHittable, app.debugDescription)
+            retry.tap()
+            waitForLabel(app.staticTexts["picker-status"], "Opening file")
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
+            tapWhenHittable(cancel, "picker Cancel")
+            waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Document picker retry after native screen disposal, round \(round)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            app.terminate()
+        }
     }
 
     func testCheckpointInterruptedBeforeAtomicReplacementPreservesPreviousAndCanRetry() {
