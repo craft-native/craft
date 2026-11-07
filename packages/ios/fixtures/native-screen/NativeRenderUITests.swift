@@ -15,6 +15,23 @@ final class NativeRenderUITests: XCTestCase {
     /// the sheet must still present, and must still be cancellable.
     private let systemSheetTimeout: TimeInterval = 30
 
+    func testFloatingActionOutsideNestedEmptyWrappersRemainsAccessible() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["open-overflow"].tap()
+        let action = app.buttons["overflow-action"]
+        XCTAssertTrue(action.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(action.label, "Resume saved workout")
+        tapWhenHittable(action, "floating recovery action")
+        waitForLabel(app.staticTexts["overflow-result"], "Resumed once")
+        app.buttons["clip-overflow"].tap()
+        XCTAssertTrue(action.waitForNonExistence(timeout: 5), "Clipped overflow must not become a VoiceOver stop")
+        app.buttons["reveal-overflow"].tap()
+        XCTAssertTrue(action.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+
     private func waitForBackground(_ app: XCUIApplication) {
         let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             app.state == .runningBackground || app.state == .runningBackgroundSuspended

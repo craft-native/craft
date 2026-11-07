@@ -10,6 +10,7 @@
   let nextMessage = 0
   let revision = 0
   let pagerMode = false
+  let overflowMode = false
   let solidMode = false
   let agreementMode = false
   let agreementSolid = false
@@ -111,6 +112,28 @@
   }
 
   function render() {
+    if (overflowMode) {
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: `render-${++nextMessage}`, type: 'RENDER',
+        payload: { document: { type: 'View', style: { flex: 1 }, children: [
+          { type: 'View', style: { flex: 1, padding: 16 }, children: [
+            { id: 'overflow-result', type: 'Text', props: { testID: 'overflow-result' }, children: ['Not resumed'] },
+            { type: 'Button', props: { testID: 'clip-overflow' }, events: { onPress: 'clipOverflow' }, children: ['Clip wrapper'] },
+            { type: 'Button', props: { testID: 'reveal-overflow' }, events: { onPress: 'revealOverflow' }, children: ['Reveal wrapper'] },
+          ] },
+          // Component wrappers have no in-flow children. Their floating action
+          // is visible outside their zero-height bounds, as in a recovery pill.
+          { id: 'overflow-wrapper', type: 'View', style: { height: 0 }, children: [
+            { type: 'View', children: [
+              { id: 'overflow-action', type: 'TouchableOpacity', props: { testID: 'overflow-action', accessibilityLabel: 'Resume saved workout' },
+                style: { position: 'absolute', bottom: 16, right: 16, width: 280, height: 64, padding: 16, backgroundColor: '#dbeafe' },
+                events: { onPress: 'resumeOverflow' }, children: [{ type: 'Text', children: ['Resume saved workout'] }] },
+            ] },
+          ] },
+        ] } },
+      }))
+      return
+    }
     if (agreementMode) { renderAgreement(); return }
     if (pickerMode) {
       globalThis.craftNativePostMessage(JSON.stringify({
@@ -194,6 +217,7 @@
             { id: 'native-switch', type: 'Switch', props: { key: 'native-switch', value: false }, events: { onValueChange: 'changeSwitch' } },
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
+            { type: 'Button', props: { key: 'open-overflow' }, events: { onPress: 'openOverflow' }, children: ['Floating recovery action'] },
             { type: 'View', style: { flexDirection: 'row' }, children: [
               { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
               ...['native', 'solid'].map(kind => ({ type: 'Button', props: { key: `open-agreement-${kind}` }, events: { onPress: `open-agreement-${kind}` }, children: [`Agree ${kind}`] })),
@@ -227,6 +251,15 @@
       )
     }
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openOverflow') { overflowMode = true; render(); return }
+    if (message.payload.handlerName === 'resumeOverflow') {
+      mutate([{ op: 'updateNode', id: 'overflow-result', patch: { children: ['Resumed once'] } }])
+      return
+    }
+    if (['clipOverflow', 'revealOverflow'].includes(message.payload.handlerName)) {
+      mutate([{ op: 'updateNode', id: 'overflow-wrapper', patch: { style: { overflow: message.payload.handlerName === 'clipOverflow' ? 'hidden' : 'visible' } } }])
+      return
+    }
     if (message.payload.handlerName.startsWith('open-agreement-')) {
       agreementMode = true
       agreementSolid = message.payload.handlerName.endsWith('-solid')
