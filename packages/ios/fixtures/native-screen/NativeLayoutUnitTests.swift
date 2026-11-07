@@ -1336,7 +1336,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             let ink: Int = try pixels.withUnsafeMutableBytes { buffer in
                 let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width, height: height,
                     bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
                 context.draw(cropped, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
                 let bytes = buffer.bindMemory(to: UInt8.self)
                 return stride(from: 0, to: bytes.count, by: 4).filter { offset in
@@ -1435,7 +1435,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             var pixel = [UInt8](repeating: 0, count: 4)
             let context = try XCTUnwrap(CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8,
                                                 bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
-                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
             context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             XCTAssertGreaterThan(pixel[0], 240, "the red scroll background must reach both bottom corners")
             XCTAssertLessThan(pixel[1], 10, "the app's grey background must not form a bottom strip")
@@ -1619,7 +1619,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             try pixels.withUnsafeMutableBytes { bytes in
                 let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: cgImage.height,
                                                     bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
-                                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
                 context.draw(strip, in: CGRect(x: 0, y: 0, width: 1, height: cgImage.height))
             }
             for y in 0..<cgImage.height {
