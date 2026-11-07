@@ -284,6 +284,7 @@
     if (message.payload.handlerName.startsWith('pick-')) {
       pickerInterruption = null
       const mode = message.payload.handlerName.slice(5)
+      mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Opening ${mode}`] } }])
       pickerRequest = `picker-request-${++nextMessage}`
       const requestId = pickerRequest
       const library = mode.includes('photo') || mode.includes('library-video')

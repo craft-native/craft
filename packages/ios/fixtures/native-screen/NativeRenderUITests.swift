@@ -169,9 +169,12 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Picker ready")
         XCTAssertNotEqual(app.staticTexts["picker-session"].label, session)
-        app.buttons["picker-file"].tap()
+        let retry = app.buttons["picker-file"]
+        XCTAssertTrue(retry.isHittable, app.debugDescription)
+        retry.tap()
+        waitForLabel(app.staticTexts["picker-status"], "Opening file")
         let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout))
+        XCTAssertTrue(cancel.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
         tapWhenHittable(cancel, "picker Cancel")
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
