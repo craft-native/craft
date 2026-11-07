@@ -6698,7 +6698,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     override func viewDidLoad() {
         super.viewDidLoad()
         CraftInterfaceStyleController.apply(to: self, config: config)
-        updateNavigationTitle(routeName ?? config.appName)
+        navigationItem.title = routeName ?? config.appName
         view.backgroundColor = config.resolvedBackgroundColor
         if let tint = config.tintColor.flatMap({ UIColor(hex: $0) }) { view.tintColor = tint }
         rootStack.axis = .vertical
@@ -7846,22 +7846,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
               let name = selected.toString(), !name.isEmpty else { return }
         CraftNativeScriptThread.toMain { [weak self] in
             guard let self, !self.titleFromOptions else { return }
-            self.updateNavigationTitle(name)
+            self.navigationItem.title = name
         }
     }
 
     // MARK: Navigation bar options
-
-    /// UIKit 26 keeps the expanded and compact titles separately. A screen's
-    /// title update owns both representations, including a rename or clearing.
-    private func updateNavigationTitle(_ title: String?) {
-        navigationItem.title = title
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            navigationItem.largeTitle = title
-        }
-        #endif
-    }
 
     private var titleFromOptions = false
     private var rootTopToSafeArea: NSLayoutConstraint?
@@ -7950,7 +7939,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         }
         if options.keys.contains("title") {
-            updateNavigationTitle(options["title"] as? String)
+            navigationItem.title = options["title"] as? String
             titleFromOptions = true
         }
         if options.keys.contains("backTitle") {
