@@ -1,9 +1,15 @@
 <script>
 const refreshing = state(false)
 const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+const mode = String(globalThis.craft.route.params.mode ?? 'solid-refresh')
+const withRefresh = mode.endsWith('-refresh')
+const modes = ['solid-refresh', 'material-refresh', 'material-plain', 'solid-plain', 'solid-long', 'material-long']
+function nextVariant() {
+  globalThis.craft.navigation.replace('solid-title', { mode: modes[(modes.indexOf(mode) + 1) % modes.length] })
+}
 function refresh() { refreshing.set(true); setTimeout(() => refreshing.set(false), 50) }
 function navigation() {
-  globalThis.craft.navigation.setOptions({ title: 'Solid title', largeTitle: true, navigationBarSolid: true, leftButtons: [], rightButtons: [] })
+  globalThis.craft.navigation.setOptions({ title: 'Solid title', largeTitle: true, navigationBarSolid: mode.startsWith('solid-'), leftButtons: [], rightButtons: [] })
 }
 navigation()
 globalThis.craft.navigation.onAppear(navigation)
@@ -11,12 +17,24 @@ globalThis.craft.navigation.onAppear(navigation)
 <template>
   <View class="flex-1 bg-[#f2f2f7] dark:bg-black">
     <View class="flex-1">
-      <FlatList testID="solid-title-list" class="flex-1" :refreshing="refreshing" @refresh="refresh" :contentContainerStyle="{ paddingHorizontal: 16, paddingTop: 16 }">
-        <View key="header" listRole="header" style={{"height":396}}>
+      <FlatList :if="withRefresh" testID="solid-title-list" class="flex-1" :refreshing="refreshing" @refresh="refresh" :contentContainerStyle="{ paddingHorizontal: 16, paddingTop: 16 }">
+        <View key="header" listRole="header">
+          <Text testID="solid-title-mode" :text="mode" />
           <Text>Upcoming sessions</Text>
           <Button testID="solid-title-detail" @click="globalThis.craft.navigation.push('details')">Open detail</Button>
+          <Button testID="solid-title-next" @click="nextVariant">Next title variant</Button>
         </View>
-        <View :for="row in rows" :key="row.id" style={{"height":80}}><Text :text="'Session ' + row.id" /></View>
+        <View :for="row in rows" :key="row.id"><Text :text="'Session ' + row.id" /></View>
+      </FlatList>
+      <FlatList :if="!withRefresh" testID="solid-title-list" class="flex-1" :contentContainerStyle="{ paddingHorizontal: 16, paddingTop: 16 }">
+        <View key="header" listRole="header">
+          <Text testID="solid-title-mode" :text="mode" />
+          <Text>Upcoming sessions</Text>
+          <Button testID="solid-title-detail" @click="globalThis.craft.navigation.push('details')">Open detail</Button>
+          <Button testID="solid-title-next" @click="nextVariant">Next title variant</Button>
+          <View :if="mode.endsWith('-long')" class="h-[960px]" />
+        </View>
+        <View :for="row in rows" :key="row.id"><Text :text="'Session ' + row.id" /></View>
       </FlatList>
     </View>
   </View>

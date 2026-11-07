@@ -43,7 +43,8 @@ final class NativeNavigationUITests: XCTestCase {
             }
             let background = try XCTUnwrap(histogram.indices.max { histogram[$0] < histogram[$1] })
             let ink = histogram.indices.filter { abs($0 - background) > 100 }.reduce(0) { $0 + histogram[$1] }
-            XCTAssertGreaterThan(ink, Int(40 * scale * scale), "The expanded title must visibly paint against its background")
+            print("TITLE_COMPOSITOR \(name) ink=\(ink) background=\(background) frame=\(frame)")
+            XCTAssertGreaterThan(ink, Int(40 * scale * scale), "\(name): the expanded title must visibly paint against its background")
         }
         try painted("Solid title at root")
         app.buttons["solid-title-detail"].tap()
@@ -51,6 +52,12 @@ final class NativeNavigationUITests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.collectionViews["solid-title-list"].waitForExistence(timeout: 20))
         try painted("Solid title after Back")
+        for mode in ["material-refresh", "material-plain", "solid-plain", "solid-long", "material-long"] {
+            app.buttons["solid-title-next"].tap()
+            let value = app.staticTexts["solid-title-mode"]
+            XCTAssertTrue(waitForLabel(value, mode))
+            try painted(mode)
+        }
     }
 
     private func layoutCount(_ element: XCUIElement) -> Int {
