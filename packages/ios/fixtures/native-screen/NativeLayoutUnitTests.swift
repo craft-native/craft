@@ -1298,6 +1298,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             window.rootViewController = tabs
             defer { window.isHidden = true }
             controller.loadViewIfNeeded()
+            controller.evaluateScript("craft.navigation.setOptions({ title: 'Workouts', largeTitle: true, navigationBarSolid: true, leftButtons: [], rightButtons: [] })")
             controller.render(box("root", style: ["flex": 1, "backgroundColor": dark ? "#000000" : "#f2f2f7"], [
                 box("empty"),
                 box("wrapper", style: ["flex": 1], [[
@@ -1306,7 +1307,6 @@ final class NativeLayoutUnitTests: XCTestCase {
                     "children": [box("row", style: ["height": 240, "backgroundColor": "#ffffff"])],
                 ]]),
             ]))
-            controller.evaluateScript("craft.navigation.setOptions({ title: 'Workouts', largeTitle: true, navigationBarSolid: true, leftButtons: [], rightButtons: [] })")
             window.makeKeyAndVisible()
             await settle(controller)
 
@@ -1319,7 +1319,7 @@ final class NativeLayoutUnitTests: XCTestCase {
             let frame = heading.convert(heading.bounds, to: window)
             XCTAssertGreaterThan(frame.width, 100)
             XCTAssertGreaterThan(frame.height, 20)
-            NSLog("Solid title dark=%@ frame=%@ color=%@ alpha=%f hidden=%@", String(dark), NSStringFromCGRect(frame), String(describing: heading.textColor), heading.alpha, String(heading.isHidden))
+            NSLog("Solid title dark=%@ frame=%@ color=%@ alpha=%f hidden=%@", String(dark), String(describing: frame), String(describing: heading.textColor), heading.alpha, String(heading.isHidden))
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             format.opaque = true
