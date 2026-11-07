@@ -706,7 +706,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(after.maxX, before.maxX, accuracy: 1, "absolute sibling changed horizontal position")
     }
 
-    func testEmptyOverflowWrappersExposeTheirVisibleAccessibilityExtentWithoutChangingLayout() async throws {
+    func testEmptyOverflowWrappersExposeRealControlsWithoutChangingLayout() async throws {
         let controller = screen(box("root", style: ["height": 240], [
             box("body", style: ["height": 240]),
             box("wrapper", style: ["height": 0], [box("nested", style: [:], [
@@ -720,13 +720,23 @@ final class NativeLayoutUnitTests: XCTestCase {
         let action = try XCTUnwrap(find("floating", below: controller.view))
         XCTAssertEqual(wrapper.bounds.height, 0)
         XCTAssertEqual(nested.bounds.height, 0)
-        XCTAssertEqual(wrapper.accessibilityFrame, action.accessibilityFrame)
-        XCTAssertEqual(nested.accessibilityFrame, action.accessibilityFrame)
+        let root = try XCTUnwrap(find("root", below: controller.view))
+        let exposed = try XCTUnwrap(root.accessibilityElements)
+        XCTAssertTrue(exposed.contains { ($0 as? UIView) === action })
+        XCTAssertFalse(exposed.contains { ($0 as? UIView) === wrapper })
+        XCTAssertTrue(try XCTUnwrap(wrapper.accessibilityElements).contains { ($0 as? UIView) === action })
         wrapper.clipsToBounds = true
-        XCTAssertTrue(wrapper.accessibilityFrame.isEmpty)
+        XCTAssertFalse(try XCTUnwrap(root.accessibilityElements).contains { ($0 as? UIView) === action })
         wrapper.clipsToBounds = false
         action.isHidden = true
-        XCTAssertTrue(wrapper.accessibilityFrame.isEmpty)
+        XCTAssertFalse(try XCTUnwrap(root.accessibilityElements).contains { ($0 as? UIView) === action })
+        action.isHidden = false
+        wrapper.accessibilityElementsHidden = true
+        XCTAssertFalse(try XCTUnwrap(root.accessibilityElements).contains { ($0 as? UIView) === action })
+        wrapper.accessibilityElementsHidden = false
+        root.accessibilityElements = [action]
+        XCTAssertEqual(root.accessibilityElements?.count, 1, "Authored accessibility ordering wins")
+
     }
 
     func testAbsoluteChildrenHonorSizeBoundsAndKeepTheirInsetAnchors() async throws {

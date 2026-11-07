@@ -3155,22 +3155,25 @@ private class CraftNativeFlowView: UIStackView {
 
     // MARK: Touches
 
-    /// A component containing only floating children measures zero high. Its
-    /// visible overflow already participates in hit testing below; expose the
-    /// same screen-space extent to accessibility, which otherwise prunes the
-    /// empty wrapper and loses every visible control beneath it.
-    override var accessibilityFrame: CGRect {
+    /// UIKit omits empty layout wrappers from its automatic accessibility walk,
+    /// including controls drawn in their visible overflow. Keep normal native
+    /// containers intact, but lift children of transparent empty wrappers into
+    /// the nearest nonempty container's list. No proxy replaces a real control.
+    override var accessibilityElements: [Any]? {
         get {
-            let own = super.accessibilityFrame
-            guard bounds.isEmpty, !clipsToBounds, !isHidden, alpha > 0.01 else { return own }
-            var overflow = CGRect.null
-            for child in subviews where !child.isHidden && child.alpha > 0.01 && !child.accessibilityElementsHidden {
-                let frame = child.accessibilityFrame
-                if !frame.isEmpty && !frame.isNull { overflow = overflow.union(frame) }
-            }
-            return overflow.isNull ? own : overflow
+            if let authored = super.accessibilityElements { return authored }
+            guard !isAccessibilityElement else { return nil }
+            guard subviews.contains(where: { $0 is CraftNativeFlowView && $0.bounds.isEmpty }) else { return nil }
+            return subviews.flatMap { Self.accessibilityChildrenThroughEmptyWrappers($0) }
         }
-        set { super.accessibilityFrame = newValue }
+        set { super.accessibilityElements = newValue }
+    }
+
+    private static func accessibilityChildrenThroughEmptyWrappers(_ view: UIView) -> [UIView] {
+        guard !view.isHidden, view.alpha > 0.01, !view.accessibilityElementsHidden else { return [] }
+        guard let flow = view as? CraftNativeFlowView, flow.bounds.isEmpty, !flow.isAccessibilityElement else { return [view] }
+        guard !flow.clipsToBounds else { return [] }
+        return flow.subviews.flatMap { accessibilityChildrenThroughEmptyWrappers($0) }
     }
 
     /// A child drawn outside this view's bounds still takes its touches, as an
