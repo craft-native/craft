@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.481...v0.0.482)
+
+## 🐛 Bug Fixes
+
+- preserve native accessibility container identity and children ([c0ea16f](https://github.com/craft-native/craft/commit/c0ea16f)) _(by Chris Breuer)_
+- retain visible native leaf views beside overflow controls ([a50a39b](https://github.com/craft-native/craft/commit/a50a39b)) _(by Chris Breuer)_
+- preserve native segmented option accessibility identities ([a2df9d8](https://github.com/craft-native/craft/commit/a2df9d8)) _(by Chris Breuer)_
+- expose real accessibility descendants through overflow wrappers ([1bd870a](https://github.com/craft-native/craft/commit/1bd870a)) _(by Chris Breuer)_
+- retain ordinary accessibility containers beside overflow actions ([73b299e](https://github.com/craft-native/craft/commit/73b299e)) _(by Chris Breuer)_
+- preserve real controls across empty accessibility wrappers ([0d98ea0](https://github.com/craft-native/craft/commit/0d98ea0)) _(by Chris Breuer)_
+- expose floating actions through empty native wrappers ([648bdee](https://github.com/craft-native/craft/commit/648bdee)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- cover accessibility of floating overflow actions ([e4b6422](https://github.com/craft-native/craft/commit/e4b6422)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.480...v0.0.481)
 
 ## 🐛 Bug Fixes
