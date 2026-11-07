@@ -8023,7 +8023,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return appearance
         }()
         func styled(_ base: UINavigationBarAppearance) -> UINavigationBarAppearance {
-            let appearance = navigationBarSolid ? UINavigationBarAppearance() : UINavigationBarAppearance(barAppearance: base)
+            let appearance = UINavigationBarAppearance(barAppearance: base)
             if navigationBarSolid {
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
@@ -8330,7 +8330,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // content. Keep UIKit's soft top scrim rather than removing
             // it or adding an opaque bar. The floating tab pill already
             // carries its own material, so its full-width wash stays off.
-            scroll?.topEdgeEffect.isHidden = false
+            // An opaque bar already supplies this backdrop. A second scroll
+            // edge effect must not cover its expanded title.
+            scroll?.topEdgeEffect.isHidden = navigationBarSolid
             scroll?.topEdgeEffect.style = topEdgeToEdge && !navigationBarSolid ? .soft : .automatic
             scroll?.bottomEdgeEffect.isHidden = tabbedScroll
         }
