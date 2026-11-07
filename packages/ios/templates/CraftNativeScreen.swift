@@ -8025,8 +8025,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         func styled(_ base: UINavigationBarAppearance) -> UINavigationBarAppearance {
             let appearance = UINavigationBarAppearance(barAppearance: base)
             if navigationBarSolid {
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
+                // iOS 26 places the expanded title in the scroll content.
+                // An opaque bar covers it. The hard scroll-edge effect below
+                // supplies the system's solid backdrop without hiding the title.
+                if #available(iOS 26.0, *) {
+                    appearance.configureWithTransparentBackground()
+                } else {
+                    appearance.configureWithOpaqueBackground()
+                    appearance.backgroundColor = screenBackgroundColor ?? config.resolvedBackgroundColor
+                }
                 appearance.shadowColor = .clear
             }
             CraftChromeFonts.apply(to: appearance)
@@ -8326,14 +8333,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
-            // The clock and navigation title need separation from live
-            // content. Keep UIKit's soft top scrim rather than removing
-            // it or adding an opaque bar. The floating tab pill already
-            // carries its own material, so its full-width wash stays off.
-            // An opaque bar already supplies this backdrop. A second scroll
-            // edge effect must not cover its expanded title.
-            scroll?.topEdgeEffect.isHidden = navigationBarSolid
-            scroll?.topEdgeEffect.style = topEdgeToEdge && !navigationBarSolid ? .soft : .automatic
+            // UIKit composites its expanded title with the scroll content on
+            // iOS 26. Use the native hard edge for solid navigation chrome;
+            // an opaque UINavigationBarAppearance would cover that title.
+            // The floating tab pill already carries its own material.
+            scroll?.topEdgeEffect.isHidden = false
+            scroll?.topEdgeEffect.style = topEdgeToEdge ? (navigationBarSolid ? .hard : .soft) : .automatic
             scroll?.bottomEdgeEffect.isHidden = tabbedScroll
         }
         #endif
