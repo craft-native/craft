@@ -602,6 +602,7 @@ function openDetailsThenUpdateBackground() {
       <Text testID="theme-probe-label" class="text-slate-900 dark:text-white">Theme probe</Text>
     </View>
     <Text testID="home-title">Home</Text>
+    <Button testID="solid-title-root" @click="globalThis.craft.navigation.replace('solid-title')">Open solid title root</Button>
     <Text testID="selectable-native-text" selectable>Long press to copy this native text.</Text>
     <Button testID="toggle-safe-area" @click="toggleSafeAreaEdges()">Toggle safe edges</Button>
     <Text testID="safe-area-status" :text="safeAreaBottomOnly() ? 'Safe edges: bottom' : 'Safe edges: top,bottom'" />

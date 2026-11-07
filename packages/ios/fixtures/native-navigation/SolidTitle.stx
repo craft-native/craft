@@ -1,0 +1,23 @@
+<script>
+const refreshing = state(false)
+const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+function refresh() { refreshing.set(true); setTimeout(() => refreshing.set(false), 50) }
+function navigation() {
+  globalThis.craft.navigation.setOptions({ title: 'Solid title', largeTitle: true, navigationBarSolid: true, leftButtons: [], rightButtons: [] })
+}
+navigation()
+globalThis.craft.navigation.onAppear(navigation)
+</script>
+<template>
+  <View class="flex-1 bg-[#f2f2f7] dark:bg-black">
+    <View class="flex-1">
+      <FlatList testID="solid-title-list" class="flex-1" :refreshing="refreshing" @refresh="refresh" :contentContainerStyle="{ paddingHorizontal: 16, paddingTop: 16 }">
+        <View key="header" listRole="header" style={{"height":396}}>
+          <Text>Upcoming sessions</Text>
+          <Button testID="solid-title-detail" @click="globalThis.craft.navigation.push('details')">Open detail</Button>
+        </View>
+        <View :for="row in rows" :key="row.id" style={{"height":80}}><Text :text="'Session ' + row.id" /></View>
+      </FlatList>
+    </View>
+  </View>
+</template>

@@ -1,6 +1,58 @@
 import XCTest
+import UIKit
 
 final class NativeNavigationUITests: XCTestCase {
+    /// Capture the real compositor through the SwiftUI-hosted app, rather than
+    /// asking a bare UIKit test window to redraw the title in software.
+    func testSolidLargeTitlePaintsAtRootAndAfterReturning() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["solid-title-root"]
+        XCTAssertTrue(open.waitForExistence(timeout: 20))
+        open.tap()
+        XCTAssertTrue(app.collectionViews["solid-title-list"].waitForExistence(timeout: 20))
+
+        func painted(_ name: String) throws {
+            let bar = app.navigationBars["Solid title"]
+            XCTAssertTrue(bar.waitForExistence(timeout: 10))
+            let title = try XCTUnwrap(bar.staticTexts.matching(NSPredicate(format: "label == %@", "Solid title"))
+                .allElementsBoundByIndex.max { $0.frame.height < $1.frame.height })
+            XCTAssertGreaterThan(title.frame.height, 30, "Exercise the expanded title, not its compact replacement")
+            Thread.sleep(forTimeInterval: 1)
+            let shot = XCUIScreen.main.screenshot()
+            let attachment = XCTAttachment(screenshot: shot)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let image = try XCTUnwrap(shot.image.cgImage)
+            let scale = CGFloat(image.width) / app.frame.width
+            let frame = title.frame
+            let crop = try XCTUnwrap(image.cropping(to: CGRect(x: frame.minX * scale, y: frame.minY * scale,
+                width: frame.width * scale, height: frame.height * scale).integral))
+            var pixels = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: crop.width, height: crop.height,
+                    bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(crop, in: CGRect(x: 0, y: 0, width: CGFloat(crop.width), height: CGFloat(crop.height)))
+            }
+            var histogram = [Int](repeating: 0, count: 256)
+            for offset in stride(from: 0, to: pixels.count, by: 4) {
+                histogram[(Int(pixels[offset]) + Int(pixels[offset + 1]) + Int(pixels[offset + 2])) / 3] += 1
+            }
+            let background = try XCTUnwrap(histogram.indices.max { histogram[$0] < histogram[$1] })
+            let ink = histogram.indices.filter { abs($0 - background) > 100 }.reduce(0) { $0 + histogram[$1] }
+            XCTAssertGreaterThan(ink, Int(40 * scale * scale), "The expanded title must visibly paint against its background")
+        }
+        try painted("Solid title at root")
+        app.buttons["solid-title-detail"].tap()
+        XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 20))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.collectionViews["solid-title-list"].waitForExistence(timeout: 20))
+        try painted("Solid title after Back")
+    }
+
     private func layoutCount(_ element: XCUIElement) -> Int {
         Int(String(element.label.split(separator: ":").last ?? "0").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }

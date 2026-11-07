@@ -2,6 +2,7 @@
   "initialScreen": "home",
   "screens": {
     "home": "Home.stx",
+    "solid-title": "SolidTitle.stx",
     "identity": "Identity.stx",
     "capabilities": "Capabilities.stx",
     "details": "Details.stx",
