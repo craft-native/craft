@@ -3155,6 +3155,24 @@ private class CraftNativeFlowView: UIStackView {
 
     // MARK: Touches
 
+    /// A component containing only floating children measures zero high. Its
+    /// visible overflow already participates in hit testing below; expose the
+    /// same screen-space extent to accessibility, which otherwise prunes the
+    /// empty wrapper and loses every visible control beneath it.
+    override var accessibilityFrame: CGRect {
+        get {
+            let own = super.accessibilityFrame
+            guard bounds.isEmpty, !clipsToBounds, !isHidden, alpha > 0.01 else { return own }
+            var overflow = CGRect.null
+            for child in subviews where !child.isHidden && child.alpha > 0.01 && !child.accessibilityElementsHidden {
+                let frame = child.accessibilityFrame
+                if !frame.isEmpty && !frame.isNull { overflow = overflow.union(frame) }
+            }
+            return overflow.isNull ? own : overflow
+        }
+        set { super.accessibilityFrame = newValue }
+    }
+
     /// A child drawn outside this view's bounds still takes its touches, as an
     /// overflowing element is clickable on the web, unless the view clips
     /// (`overflow: hidden`). UIKit only asks a view's children when the point

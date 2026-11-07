@@ -54,6 +54,11 @@ including a target that arrives while the diffable snapshot is still applying
 or queued behind it, and a last-row target among tall self-sizing rows, which
 must land at the true end of the content rather than at an estimate.
 
+`testFloatingActionOutsideNestedEmptyWrappersRemainsAccessible` checks the real
+accessibility tree and one physical tap on a floating action whose component
+wrappers have zero height. Clipping removes that action from accessibility;
+revealing the retained wrapper restores its identifier without relabelling it.
+
 `NativeAudioUnitTests.swift` renders Web Audio graphs offline (`CraftWebAudio(live: false)`, no engine): oscillator shapes and pitch, the AudioParam timeline (ramps, targets, curves), sample-accurate start/stop and `onended`, buffer sources (offset, loop, duration), a biquad, a delay in a feedback cycle, the convolver's latency-free partitioned convolution and its spec normalisation, the compressor, a node driving a param, suspend/close, and a minute of an ambient music bed (the shape stx's `useAmbientSound` builds) whose released nodes are freed.
 
 To run the same UI test against the actual compiler output, compile `Screen.stx` as shown above and set `CRAFT_NATIVE_RENDER_BUNDLE` to the absolute bundle path when invoking `test-native-render.ts`.

@@ -706,6 +706,29 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(after.maxX, before.maxX, accuracy: 1, "absolute sibling changed horizontal position")
     }
 
+    func testEmptyOverflowWrappersExposeTheirVisibleAccessibilityExtentWithoutChangingLayout() async throws {
+        let controller = screen(box("root", style: ["height": 240], [
+            box("body", style: ["height": 240]),
+            box("wrapper", style: ["height": 0], [box("nested", style: [:], [
+                ["id": "floating", "type": "TouchableOpacity", "props": ["testID": "floating", "accessibilityLabel": "Resume"],
+                 "style": ["position": "absolute", "right": 16, "bottom": 16, "width": 160, "height": 64]],
+            ])]),
+        ]))
+        await settle(controller)
+        let wrapper = try XCTUnwrap(find("wrapper", below: controller.view))
+        let nested = try XCTUnwrap(find("nested", below: controller.view))
+        let action = try XCTUnwrap(find("floating", below: controller.view))
+        XCTAssertEqual(wrapper.bounds.height, 0)
+        XCTAssertEqual(nested.bounds.height, 0)
+        XCTAssertEqual(wrapper.accessibilityFrame, action.accessibilityFrame)
+        XCTAssertEqual(nested.accessibilityFrame, action.accessibilityFrame)
+        wrapper.clipsToBounds = true
+        XCTAssertTrue(wrapper.accessibilityFrame.isEmpty)
+        wrapper.clipsToBounds = false
+        action.isHidden = true
+        XCTAssertTrue(wrapper.accessibilityFrame.isEmpty)
+    }
+
     func testAbsoluteChildrenHonorSizeBoundsAndKeepTheirInsetAnchors() async throws {
         let controller = screen(box("root", style: ["height": 240], [
             ["id": "expand", "type": "Button", "props": ["testID": "expand", "title": "+"],
