@@ -1310,19 +1310,39 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "1")
 
-        // A <select> is a UIPickerView, which XCUITest types as a picker.
-        XCTAssertTrue(app.pickers["native-picker"].waitForExistence(timeout: 5))
+        // Shared selects are compact native menu buttons, not inline wheels.
+        let compactPicker = app.buttons["native-picker"]
+        XCTAssertTrue(compactPicker.waitForExistence(timeout: 5))
+        XCTAssertLessThan(compactPicker.frame.height, 80)
         XCTAssertTrue(app.staticTexts["picker-value"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["picker-value"].label, "one")
         // The picker's first selection is not a change: the shared status
         // still says what the switch just did.
         XCTAssertEqual(app.staticTexts["native-link-status"].label, "switch on")
-        let itemsPicker = app.pickers["native-items-picker"]
+        let itemsPicker = app.buttons["native-items-picker"]
         XCTAssertTrue(itemsPicker.waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["items-picker-value"].label, "one")
-        let selectedWheel = itemsPicker.pickerWheels.firstMatch
-        XCTAssertTrue(selectedWheel.exists)
-        XCTAssertEqual(selectedWheel.value as? String, "One item")
+        XCTAssertEqual(itemsPicker.value as? String, "One item")
+        XCTAssertTrue(itemsPicker.descendants(matching: .pickerWheel).allElementsBoundByIndex.isEmpty)
+        reveal(compactPicker, in: rootScroll)
+        compactPicker.tap()
+        let secondChoice = app.buttons["Two"]
+        XCTAssertTrue(secondChoice.waitForExistence(timeout: 5), app.debugDescription)
+        secondChoice.tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["picker-value"], "two"))
+        XCTAssertTrue(waitForLabel(app.staticTexts["native-link-status"], "picker two"))
+        reveal(itemsPicker, in: rootScroll)
+        itemsPicker.tap()
+        let numericChoice = app.buttons["Two item"]
+        XCTAssertTrue(numericChoice.waitForExistence(timeout: 5))
+        numericChoice.tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["items-picker-value"], "2"))
+        itemsPicker.tap()
+        let emptyChoice = app.buttons["No item"]
+        XCTAssertTrue(emptyChoice.waitForExistence(timeout: 5))
+        emptyChoice.tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["native-link-status"], "items picker "))
+        XCTAssertEqual(itemsPicker.value as? String, "No item")
         let modalToggle = app.buttons["toggle-modal"]
         reveal(modalToggle, in: rootScroll)
         modalToggle.tap()

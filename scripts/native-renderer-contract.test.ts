@@ -316,9 +316,9 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('accepts an `items` array or child options plus `value`/`selectedValue`')
     expect(navigationHome).toContain(':selectedValue="itemsPickerValue" :value="\'two\'"')
     expect(androidNavigationTest).toContain('selectedValue should take precedence over value')
-    expect(iosNavigationTest).toContain('let selectedWheel = itemsPicker.pickerWheels.firstMatch')
-    expect(iosNavigationTest).toContain('XCTAssertTrue(selectedWheel.exists)')
-    expect(iosNavigationTest).toContain('selectedWheel.value as? String, "One item"')
+    expect(iosNavigationTest).toContain('let itemsPicker = app.buttons["native-items-picker"]')
+    expect(iosNavigationTest).toContain('XCTAssertLessThan(compactPicker.frame.height, 80)')
+    expect(iosNavigationTest).toContain('itemsPicker.value as? String, "One item"')
   })
 
   it('keeps composed native styles recursively flattenable', () => {
@@ -924,15 +924,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('private fun craftNativePickerValue(value: Any?): String?')
     expect(android).toContain('craftNativePickerValue(optionProps?.opt("value"))')
     expect(android).toContain('craftNativePickerValue(props.opt("selectedValue"))')
-    expect(android).toContain('is String -> value.takeIf { it.isNotEmpty() }')
-    expect(android).toContain('is Number -> value.toDouble().takeIf { it.isFinite() }?.toString()')
+    expect(android).toContain('is String -> value')
+    expect(android).toContain('is Number -> value.toDouble().takeIf { it.isFinite() }?.let { value.toString() }')
     expect(android).not.toContain('else -> craftNativeOptionalString(value)')
   })
 
   it('supports typed picker items as well as child options on both hosts', () => {
     expect(componentTypes).toContain('items?: PickerOption[]')
-    expect(ios).toContain('let itemOptions = (props["items"] as? [[String: Any]])')
-    expect(ios).toContain('let options = itemOptions.isEmpty')
+    expect(ios).toContain('let rawItems = props["items"] as? [[String: Any]]')
+    expect(ios).toContain('let options: [CraftNativePickerView.Option] = rawItems.map')
     expect(android).toContain('val itemOptions = props.optJSONArray("items")')
     expect(android).toContain('val options = if (itemOptions.isNotEmpty()) itemOptions else')
   })
@@ -1505,10 +1505,10 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps Picker option selection aligned across hosts and fixtures', () => {
-    expect(ios).toContain('UIPickerViewDataSource, UIPickerViewDelegate')
-    expect(ios).toContain('picker.selectRow(row, inComponent: 0, animated: false)')
-    expect(ios).toContain('"nativeEvent": ["value": option.value, "index": row]')
-    expect(ios).toContain('if let value = craftNativeNumber(value), value.doubleValue.isFinite { return String(value.doubleValue) }')
+    expect(ios).toContain('final class CraftNativePickerView: UIButton')
+    expect(ios).toContain('showsMenuAsPrimaryAction = true')
+    expect(ios).toContain('"nativeEvent": ["value": value, "index": index]')
+    expect(ios).toContain('if let value = craftNativeNumber(value), value.doubleValue.isFinite { return value.stringValue }')
     expect(iosNativeUnitTests).toContain('testPickerBooleanValuesFallBackToTheirLabels')
     expect(android).toContain('"Picker" -> (previous as? Spinner ?: CraftNativePointerSpinner(this)).apply')
     expect(android).toContain('setSelection(selected, false)')
@@ -1524,10 +1524,10 @@ describe('native renderer component contract', () => {
     expect(navigationHome).toContain('<select testID="native-picker"')
     expect(navigationHome).toContain('<option value="one">One</option>')
     expect(navigationHome).toContain('<select testID="native-items-picker" :items="pickerItems"')
-    expect(navigationHome).toContain('const pickerItems = [{ label: \'One item\', value: \'one\' }, { label: \'Two item\', value: 2 }]')
+    expect(navigationHome).toContain('const pickerItems = [{ label: \'One item\', value: \'one\' }, { label: \'Two item\', value: 2 }, { label: \'No item\', value: \'\' }]')
     expect(iosNavigationTest).toContain('itemsPicker.waitForExistence(timeout: 5)')
     expect(androidNavigationTest).toContain('items picker should be an Android Spinner')
-    expect(androidNavigationTest).toContain('awaitText(activity, "items-picker-value", "2.0")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "items-picker-value", "2")')
     expect(navigationHome).toContain('@request-close="modalRequested($event)"')
     expect(navigationHome).toContain('@show="modalShown()"')
     expect(navigationHome).toContain('testID="clear-image-source"')
@@ -1561,7 +1561,7 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('visible modal opacity should update in place')
     expect(iosNavigationTest).toContain('waitForLabel(app.staticTexts["modal-opacity"], "0.45")')
     expect(iosNavigationTest).toContain('app.staticTexts["modal-opacity"].label, "1"')
-    expect(guide).toContain('| `Picker` | `UIPickerView` | `Spinner` |')
+    expect(guide).toContain('| `Picker` | `UIButton` / `UIMenu` | `Spinner` |')
   })
 
   it('covers native button style removal after keyed reconciliation', () => {
@@ -1598,8 +1598,8 @@ describe('native renderer component contract', () => {
 
   it('preserves UIKit interaction traits for native controls without authored roles', () => {
     expect(ios).toContain('case "Slider", "DatePicker": traits.insert(.adjustable)')
-    expect(iosNativeUnitTests).toContain('XCTAssertEqual(picker.isAccessibilityElement, referencePicker.isAccessibilityElement)')
-    expect(iosNativeUnitTests).toContain('XCTAssertEqual(picker.accessibilityTraits, referencePicker.accessibilityTraits)')
+    expect(iosNativeUnitTests).toContain('XCTAssertTrue(picker.isAccessibilityElement)')
+    expect(iosNativeUnitTests).toContain('XCTAssertTrue(picker.accessibilityTraits.contains(.button))')
     expect(iosNativeUnitTests).toContain('testSwitchReceivesNativeTouchesWhenMountedInAFlowView')
     expect(iosNativeUnitTests).toContain('testUncontrolledSwitchKeepsItsNativeValueAcrossReconciliation')
     expect(iosNativeUnitTests).toContain('testControlledSwitchDoesNotInterruptTheNativeTapAnimation')
@@ -2212,8 +2212,7 @@ describe('native renderer component contract', () => {
   it('releases iOS UIKit delegates and targets on permanent node disposal', () => {
     expect(ios).toContain('if !preservingInputDrafts {')
     expect(ios).toContain('if let textView = node.view as? UITextView { textView.delegate = nil }')
-    expect(ios).toContain('picker.delegate = nil')
-    expect(ios).toContain('picker.dataSource = nil')
+    expect(ios).toContain('(node.view as? CraftNativePickerView)?.detach()')
     expect(ios).toContain('if let scroll = node.view as? UIScrollView { scroll.delegate = nil }')
     expect(ios).toContain('(node.view as? UIControl)?.removeTarget(self, action: nil, for: .allEvents)')
   })
