@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.485...v0.0.486)
+
+## 🐛 Bug Fixes
+
+- improve native chart readout contrast across appearances ([0a812f4](https://github.com/craft-native/craft/commit/0a812f4)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.484...v0.0.485)
 
 ## 🚀 Features
