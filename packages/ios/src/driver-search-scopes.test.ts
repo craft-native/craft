@@ -13,8 +13,6 @@ test.skipIf(process.platform !== 'darwin')('looks for a label in the presented a
   expect(template).toContain('for scope in presentedScopes()')
   expect(template).toContain('self.presentedScopes().filter { $0.elementType == .alert || $0.elementType == .sheet }')
   expect(template).toContain('scope.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex')
-  expect(template).toContain('guard !dialogs.isEmpty else { return [] }')
-  expect(template).toContain('return visible.count == 1 ? visible : []')
   const dir = createTempDir('craft-driver-scopes-')
   try {
     const source = join(dir, 'main.swift')

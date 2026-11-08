@@ -231,7 +231,9 @@ final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate 
 /// controls. Neither body action belongs to optional system-prompt dismissal.
 final class DriverDismissController: UIViewController {
     private let count = UILabel()
+    private let promptCount = UILabel()
     private var bodyTaps = 0
+    private var dismissals = 0
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
@@ -242,6 +244,9 @@ final class DriverDismissController: UIViewController {
         stack.spacing = 20
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(count)
+        promptCount.accessibilityIdentifier = "prompt-dismissals"
+        promptCount.text = "Prompt dismissals: 0"
+        stack.addArrangedSubview(promptCount)
         for index in 0..<2 {
             let button = UIButton(type: .system)
             button.setTitle("Not Now", for: .normal)
@@ -260,7 +265,13 @@ final class DriverDismissController: UIViewController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 guard let self else { return }
                 let alert = UIAlertController(title: "Save Password?", message: "Native dismissal fixture", preferredStyle: .actionSheet)
-                alert.addAction(UIAlertAction(title: "Not Now", style: .cancel))
+                // A Cancel-only popover omits its action entirely on iOS 26.
+                // A real password prompt exposes Not Now as an actionable row.
+                alert.addAction(UIAlertAction(title: "Not Now", style: .default) { [weak self] _ in
+                    guard let self else { return }
+                    self.dismissals += 1
+                    self.promptCount.text = "Prompt dismissals: \(self.dismissals)"
+                })
                 alert.popoverPresentationController?.sourceView = present
                 self.present(alert, animated: true)
             }

@@ -9,7 +9,8 @@ extension DriverTests {
         XCTAssertTrue(identified("present-prompt").waitForExistence(timeout: 10))
         run("dismiss")
         XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
-        for _ in 0..<2 {
+        XCTAssertEqual(identified("prompt-dismissals").label, "Prompt dismissals: 0")
+        for cycle in 1...2 {
             run("tapid present-prompt")
             run("dismiss")
             let evidence = XCTAttachment(string: app.debugDescription)
@@ -18,6 +19,7 @@ extension DriverTests {
             add(evidence)
             print("MODAL_DISMISSAL_TREE \(app.debugDescription)")
             run("absent Save Password?")
+            XCTAssertEqual(identified("prompt-dismissals").label, "Prompt dismissals: \(cycle)")
             XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
         }
     }
