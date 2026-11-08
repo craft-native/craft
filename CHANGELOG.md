@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.484...v0.0.485)
+
+## 🚀 Features
+
+- inspect native charts with touch and accessible reading controls ([b6ed769](https://github.com/craft-native/craft/commit/b6ed769)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- verify native chart scrubbing and page scroll gestures ([557e0be](https://github.com/craft-native/craft/commit/557e0be)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.483...v0.0.484)
 
 ## 🐛 Bug Fixes
