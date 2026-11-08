@@ -2688,14 +2688,13 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(controller.evaluateScript("globalThis.__pinPress")?.toString(), "h31:trail-21")
     }
 
-    /// A wheel picker is not a UIControl either, and was switched off the
-    /// same way: it could not be spun.
-    func testAWheelPickerTakesTouchesWithoutAPressHandler() throws {
+    /// The shared picker presents UIKit's menu even without a press handler.
+    func testACompactPickerTakesTouchesWithoutAPressHandler() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
         controller.render(["type": "Picker", "props": ["key": "wheel", "items": [["label": "One", "value": 1], ["label": "Two", "value": 2]], "selectedValue": 1], "style": ["width": 320, "height": 200]])
         controller.view.layoutIfNeeded()
-        let picker = try XCTUnwrap(find(UIPickerView.self, key: "wheel", below: controller.view))
+        let picker = try XCTUnwrap(find(CraftNativePickerView.self, key: "wheel", below: controller.view))
         XCTAssertTrue(picker.isUserInteractionEnabled)
     }
 
@@ -5266,14 +5265,14 @@ final class NativeRenderUnitTests: XCTestCase {
 
         let toggle = try XCTUnwrap(find(UISwitch.self, key: "toggle", below: controller.view))
         let slider = try XCTUnwrap(find(UISlider.self, key: "slider", below: controller.view))
-        let picker = try XCTUnwrap(find(UIPickerView.self, key: "picker", below: controller.view))
+        let picker = try XCTUnwrap(find(CraftNativePickerView.self, key: "picker", below: controller.view))
         let date = try XCTUnwrap(find(UIDatePicker.self, key: "date", below: controller.view))
         XCTAssertEqual(toggle.accessibilityTraits, UISwitch().accessibilityTraits)
         XCTAssertTrue(slider.accessibilityTraits.contains(.adjustable))
-        let referencePicker = UIPickerView()
-        XCTAssertEqual(picker.isAccessibilityElement, referencePicker.isAccessibilityElement)
-        XCTAssertEqual(picker.accessibilityTraits, referencePicker.accessibilityTraits)
-        XCTAssertEqual(picker.accessibilityContainerType, referencePicker.accessibilityContainerType)
+        XCTAssertTrue(picker.isAccessibilityElement)
+        XCTAssertTrue(picker.accessibilityTraits.contains(.button))
+        XCTAssertEqual(picker.accessibilityValue, "One")
+        XCTAssertEqual(picker.accessibilityContainerType, .none)
         XCTAssertTrue(date.accessibilityTraits.contains(.adjustable))
     }
 
@@ -5384,9 +5383,77 @@ final class NativeRenderUnitTests: XCTestCase {
             "events": ["onValueChange": "picked"],
         ]]))
 
-        let picker = try XCTUnwrap(find(UIPickerView.self, key: "boolean-picker", below: controller.view))
-        controller.pickerView(picker, didSelectRow: 0, inComponent: 0)
+        let picker = try XCTUnwrap(find(CraftNativePickerView.self, key: "boolean-picker", below: controller.view))
+        picker.selection(1)()
+        picker.selection(0)()
         XCTAssertEqual(controller.evaluateScript("__picked")?.toString(), "Boolean option")
+    }
+
+    func testCompactPickerSelectionPreservesValuesAndRejectsStaleMenus() throws {
+        let picker = CraftNativePickerView(frame: .zero)
+        let options = [CraftNativePickerView.Option(value: "", label: "None", disabled: false),
+                       .init(value: "0", label: "Zero", disabled: false),
+                       .init(value: "blocked", label: "Unavailable", disabled: true)]
+        var chosen: [String] = []
+        func update(_ items: [CraftNativePickerView.Option]? = nil, _ value: String? = "", _ enabled: Bool = true, _ handler: String = "first") {
+            picker.update(options: items ?? options, selected: value, enabled: enabled, handler: handler,
+                          font: .preferredFont(forTextStyle: .body), foreground: .label) { value, _ in chosen.append(value) }
+        }
+        update()
+        XCTAssertTrue(picker.showsMenuAsPrimaryAction)
+        XCTAssertGreaterThanOrEqual(picker.intrinsicContentSize.height, 44)
+        XCTAssertLessThan(picker.intrinsicContentSize.height, 80, "the default must not reserve a wheel's height")
+        XCTAssertEqual(picker.selectedLabel, "None")
+        XCTAssertEqual(chosen, [], "mounting cannot emit a change")
+        picker.selection(2)()
+        XCTAssertEqual(chosen, [], "disabled options cannot emit")
+        picker.selection(1)()
+        XCTAssertEqual(chosen, ["0"])
+        XCTAssertEqual(picker.selectedLabel, "Zero")
+        picker.selection(1)()
+        XCTAssertEqual(chosen, ["0"], "selecting the current option is a no-op")
+        update(options, nil)
+        XCTAssertEqual(picker.selectedLabel, "Zero", "an uncontrolled picker keeps its selection")
+        let oldOptions = picker.selection(0)
+        update([.init(value: "new", label: "New", disabled: false)], "new")
+        oldOptions()
+        XCTAssertEqual(chosen, ["0"], "an old menu cannot choose a new option at the same index")
+        update()
+        let disabledLater = picker.selection(1)
+        update(options, "", false)
+        disabledLater()
+        XCTAssertEqual(chosen, ["0"])
+        update()
+        let oldHandler = picker.selection(1)
+        update(options, "", true, "next")
+        oldHandler()
+        XCTAssertEqual(chosen, ["0"], "a menu cannot call a replacement handler")
+        let removed = picker.selection(1)
+        picker.detach()
+        removed()
+        XCTAssertEqual(chosen, ["0"])
+
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.evaluateScript("globalThis.__pickerChanges = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.payload?.handlerName === 'picked') __pickerChanges.push(m.payload.nativeEvent.value); };")
+        controller.render(document([[
+            "type": "Picker", "props": ["key": "compact", "items": [["value": "", "label": "None"], ["value": 0, "label": "Zero"], ["value": 2, "label": "Two"]], "selectedValue": 0, "value": 2, "accessibilityLabel": "Result"],
+            "style": ["width": 300], "events": ["onValueChange": "picked"],
+        ]]))
+        controller.view.layoutIfNeeded()
+        let control = try XCTUnwrap(find(CraftNativePickerView.self, key: "compact", below: controller.view))
+        XCTAssertEqual(control.selectedLabel, "Zero", "selectedValue takes precedence and numeric zero remains an id")
+        XCTAssertTrue(control.isAccessibilityElement)
+        XCTAssertTrue(control.accessibilityTraits.contains(.button))
+        XCTAssertEqual(control.accessibilityValue, "Zero")
+        XCTAssertLessThan(control.frame.height, 80)
+        XCTAssertEqual(controller.evaluateScript("__pickerChanges.length")?.toInt32(), 0)
+        control.selection(0)()
+        XCTAssertEqual(controller.evaluateScript("__pickerChanges[0]")?.toString(), "", "an empty value must not become its label")
+        let detached = control.selection(2)
+        controller.render(document([["type": "Text", "children": ["Gone"]]]))
+        detached()
+        XCTAssertEqual(controller.evaluateScript("__pickerChanges.length")?.toInt32(), 1)
     }
 
     func testTheScriptHearsNewParamsAndTheScreenComingBack() throws {

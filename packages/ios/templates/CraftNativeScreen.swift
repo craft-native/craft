@@ -168,8 +168,8 @@ private func craftNativeFontWeight(_ value: Any?) -> String? {
 }
 
 private func craftNativePickerValue(_ value: Any?) -> String? {
-    if let value = value as? String, !value.isEmpty { return value }
-    if let value = craftNativeNumber(value), value.doubleValue.isFinite { return String(value.doubleValue) }
+    if let value = value as? String { return value }
+    if let value = craftNativeNumber(value), value.doubleValue.isFinite { return value.stringValue }
     return nil
 }
 
@@ -6595,11 +6595,108 @@ enum CraftNativeBundle {
     }
 }
 
-private final class CraftNativePickerView: UIPickerView {
+/// One shared single-choice control, compact like a form field. UIKit owns
+/// presentation, dismissal, checkmarks, keyboard navigation and VoiceOver.
+final class CraftNativePickerView: UIButton {
+    struct Option: Equatable {
+        let value: String
+        let label: String
+        let disabled: Bool
+    }
+    private var options: [Option] = []
+    private var selectedValue: String?
+    private var handlerIdentity: String?
+    private var dispatch: ((String, Int) -> Void)?
+    private var revision = 0
+    private(set) var selectedLabel = ""
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        showsMenuAsPrimaryAction = true
+        contentHorizontalAlignment = .fill
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        layer.cornerRadius = 10
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(options: [Option], selected: String?, enabled: Bool, handler: String?,
+                font: UIFont, foreground: UIColor, dispatch: @escaping (String, Int) -> Void) {
+        let candidate = selected ?? self.selectedValue
+        let resolved = options.contains(where: { $0.value == candidate }) ? candidate : options.first(where: { !$0.disabled })?.value
+        if self.options != options || self.selectedValue != resolved || self.isEnabled != enabled || self.handlerIdentity != handler {
+            revision += 1
+            interactions.compactMap { $0 as? UIContextMenuInteraction }.forEach { $0.dismissMenu() }
+        }
+        self.options = options
+        self.selectedValue = resolved
+        self.handlerIdentity = handler
+        self.dispatch = dispatch
+        isEnabled = enabled && options.contains(where: { !$0.disabled })
+        selectedLabel = options.first(where: { $0.value == resolved })?.label ?? ""
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = selectedLabel
+        configuration.image = UIImage(systemName: "chevron.down")
+        configuration.imagePlacement = .trailing
+        configuration.imagePadding = 12
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+        configuration.titleAlignment = .leading
+        configuration.baseForegroundColor = foreground
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes
+            result.font = font
+            return result
+        }
+        configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in .secondaryLabel }
+        self.configuration = configuration
+        refreshMenu()
+        invalidateIntrinsicContentSize()
+    }
+
+    private func refreshMenu() {
+        menu = UIMenu(children: options.enumerated().map { index, option in
+            let choose = selection(index)
+            return UIAction(title: option.label, attributes: option.disabled ? [.disabled] : [],
+                            state: option.value == selectedValue ? .on : .off) { _ in choose() }
+        })
+    }
+
+    /// An open menu must not apply an old option to a rebound or disabled field.
+    func selection(_ index: Int) -> () -> Void {
+        let expected = revision
+        return { [weak self] in
+            guard let self, self.revision == expected, self.isEnabled,
+                  self.options.indices.contains(index), !self.options[index].disabled else { return }
+            let value = self.options[index].value
+            guard value != self.selectedValue else { return }
+            self.selectedValue = value
+            self.selectedLabel = self.options[index].label
+            self.configuration?.title = self.selectedLabel
+            self.accessibilityValue = self.selectedLabel
+            self.revision += 1
+            self.refreshMenu()
+            self.invalidateIntrinsicContentSize()
+            self.dispatch?(value, index)
+        }
+    }
+
+    func detach() {
+        revision += 1
+        dispatch = nil
+        interactions.compactMap { $0 as? UIContextMenuInteraction }.forEach { $0.dismissMenu() }
+        menu = nil
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: max(44, size.width), height: max(44, size.height))
+    }
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let fitted = super.sizeThatFits(size)
+        return CGSize(width: fitted.width, height: max(44, fitted.height))
+    }
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
-
 }
 
 private final class CraftNativeDatePickerView: UIDatePicker {
@@ -6650,7 +6747,7 @@ private final class CraftNativeScreenRootView: UIView {
     }
 }
 
-final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate, UIPickerViewDataSource, UIPickerViewDelegate {
+final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate {
     private final class RenderedNode {
         /// A recycled list row's root takes the identity of the row it shows next.
         var identity: String
@@ -6714,7 +6811,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// the user's tap. Remember that native value briefly so the echo does not
     /// interrupt the animation and leave the thumb painted at its old edge.
     private var switchUserValues: [ObjectIdentifier: Bool] = [:]
-    private var pickerOptions: [ObjectIdentifier: [(value: String, label: String)]] = [:]
     private var modalVisibility: [ObjectIdentifier: Bool] = [:]
     private var modalFocusRestore: [ObjectIdentifier: UIView] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
@@ -9594,31 +9690,33 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             control.configureAccessibility(items: items)
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: control)
         case "Picker":
-            let picker = result as! UIPickerView
-            let itemOptions = (props["items"] as? [[String: Any]])?.compactMap { item -> (value: String, label: String)? in
-                guard let label = item["label"] as? String, !label.isEmpty else { return nil }
-                return (value: craftNativePickerValue(item["value"]) ?? label, label: label)
-            } ?? []
-            let options = itemOptions.isEmpty
-                ? children.compactMap { child -> (value: String, label: String)? in
-                    guard let node = child as? [String: Any], node["type"] as? String == "Text" else { return nil }
-                    let optionProps = node["props"] as? [String: Any] ?? [:]
-                    let label = (node["children"] as? [Any] ?? []).compactMap { $0 as? String }.joined()
-                    guard !label.isEmpty else { return nil }
-                    return (value: craftNativePickerValue(optionProps["value"]) ?? label, label: label)
+            let picker = result as! CraftNativePickerView
+            let rawItems = props["items"] as? [[String: Any]]
+            let options: [CraftNativePickerView.Option] = rawItems.map { items in
+                items.compactMap { item in
+                    guard let label = item["label"] as? String, !label.isEmpty else { return nil }
+                    return CraftNativePickerView.Option(value: craftNativePickerValue(item["value"]) ?? label,
+                                                        label: label, disabled: item["disabled"] as? Bool == true)
                 }
-                : itemOptions
-            let pickerID = ObjectIdentifier(picker)
-            pickerOptions[pickerID] = options
-            picker.reloadAllComponents()
-            if let selected = craftNativePickerValue(props["selectedValue"]) ?? craftNativePickerValue(props["value"]),
-               let row = options.firstIndex(where: { $0.value == selected }) {
-                picker.selectRow(row, inComponent: 0, animated: false)
-            } else if !options.isEmpty {
-                picker.selectRow(0, inComponent: 0, animated: false)
+            } ?? children.compactMap { child in
+                guard let node = child as? [String: Any], node["type"] as? String == "Text" else { return nil }
+                let optionProps = node["props"] as? [String: Any] ?? [:]
+                let label = (node["children"] as? [Any] ?? []).compactMap { $0 as? String }.joined()
+                guard !label.isEmpty else { return nil }
+                return CraftNativePickerView.Option(value: craftNativePickerValue(optionProps["value"]) ?? label,
+                                                    label: label, disabled: optionProps["disabled"] as? Bool == true)
             }
-            picker.isUserInteractionEnabled = props["disabled"] as? Bool != true
-            updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: picker)
+            let handler = nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"])
+            updateHandler(handler, for: picker)
+            picker.update(options: options,
+                          selected: craftNativePickerValue(props["selectedValue"]) ?? craftNativePickerValue(props["value"]),
+                          enabled: props["disabled"] as? Bool != true,
+                          handler: handler, font: textFont(style, default: .preferredFont(forTextStyle: .body)),
+                          foreground: color(style["color"]) ?? .label) { [weak self, weak picker] value, index in
+                guard let self, let picker, let handler = self.handlers[ObjectIdentifier(picker)] else { return }
+                self.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": value, "index": index]])
+            }
+            if style["backgroundColor"] == nil { picker.backgroundColor = .tertiarySystemFill }
         case "DatePicker":
             let picker = result as! UIDatePicker
             let mode = Self.datePickerMode(props["mode"])
@@ -9994,6 +10092,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)
         applyAccessibility(props, type: type, to: result)
         (result as? CraftNativeSvgView)?.inspection.configureAccessibility()
+        if let picker = result as? CraftNativePickerView, props["accessibilityValue"] == nil {
+            picker.accessibilityValue = picker.selectedLabel
+        }
         // After applyAccessibility: it settles whether the view is an element
         // at all, and an action on a non-element is unreachable.
         updateAccessibilityActions(props["accessibilityActions"], handler: menuDisabled ? nil : events["onAccessibilityAction"], for: result)
@@ -10053,10 +10154,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             control.addTarget(self, action: #selector(segmentChanged(_:)), for: .valueChanged)
             return control
         case "Picker":
-            let picker = CraftNativePickerView()
-            picker.dataSource = self
-            picker.delegate = self
-            return picker
+            return CraftNativePickerView(frame: .zero)
         case "DatePicker":
             let picker = CraftNativeDatePickerView()
             picker.preferredDatePickerStyle = .compact
@@ -10444,10 +10542,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // its subtree is gone.
         if !preservingInputDrafts {
             if let textView = node.view as? UITextView { textView.delegate = nil }
-            if let picker = node.view as? UIPickerView {
-                picker.delegate = nil
-                picker.dataSource = nil
-            }
+            (node.view as? CraftNativePickerView)?.detach()
             if let scroll = node.view as? UIScrollView { scroll.delegate = nil }
             (node.view as? UIControl)?.removeTarget(self, action: nil, for: .allEvents)
         }
@@ -10502,7 +10597,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         scrollMomentumEndHandlers.removeValue(forKey: id)
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
-        pickerOptions.removeValue(forKey: id)
         modalVisibility.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
@@ -10636,12 +10730,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// Views that take their own touches whatever handlers the screen gives
     /// them: native controls, a scroll view, a modal, and a video's controls (with
     /// interaction off, its play, scrubber and full screen never answered).
-    /// A map and a wheel picker too: neither is a UIControl, so a map with no
-    /// long-press handler - every map - was made non-interactive, and could
-    /// not be panned, zoomed, or have a pin tapped; a picker could not be spun.
+    /// Maps too: a map without a long-press handler must still pan, zoom,
+    /// and take taps on its pins.
     private func ownsTouches(_ view: UIView) -> Bool {
         view is UIControl || view is UIScrollView || view is CraftNativeModalView || view is CraftNativeVideoView
-            || view is MKMapView || view is UIPickerView || ((view as? CraftNativeSvgView)?.inspection.readings.isEmpty == false)
+            || view is MKMapView || ((view as? CraftNativeSvgView)?.inspection.readings.isEmpty == false)
     }
 
     private func updatePressHandler(_ handler: String?, for view: UIView) {
@@ -11630,9 +11723,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // A video with its system controls is a group too: VoiceOver reaches
         // play, the scrubber, skipping and full screen inside it.
         let controlledVideo = type == "Video" && (props["controls"] as? Bool) == true
-        // UIPickerView exposes adjustable component wheels. Making the
-        // picker itself a leaf hides those wheels and their selected values.
-        let container = ["ScrollView", "FlatList", "SectionList", "Picker", "SegmentedControl", "Modal", "Drawer"].contains(type)
+        // Compact single-choice pickers are accessible menu buttons. Controls
+        // containing several independent elements remain semantic groups.
+        let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)
             || ["tablist", "radiogroup", "list", "menu", "menubar", "toolbar"].contains(role ?? "")
             || controlledVideo
         view.isAccessibilityElement = !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))
@@ -11644,6 +11737,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         var traits: UIAccessibilityTraits = []
         switch type {
         case "Slider", "DatePicker": traits.insert(.adjustable)
+        case "Picker": traits.insert(.button)
         default: break
         }
         switch role ?? type.lowercased() {
@@ -12054,27 +12148,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     @objc private func sliderFinished(_ sender: UISlider) {
         guard let handler = sliderCompleteHandlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": Self.sliderEventValue(snappedSliderValue(sender.value, for: sender), step: sliderSteps[ObjectIdentifier(sender)])]])
-    }
-
-    func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
-
-    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int {
-        pickerOptions[ObjectIdentifier(pickerView)]?.count ?? 0
-    }
-
-    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
-        guard let options = pickerOptions[ObjectIdentifier(pickerView)], options.indices.contains(row) else { return nil }
-        return options[row].label
-    }
-
-    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
-        guard let options = pickerOptions[ObjectIdentifier(pickerView)], options.indices.contains(row),
-              let handler = handlers[ObjectIdentifier(pickerView)] else { return }
-        let option = options[row]
-        send(type: "EVENT", payload: [
-            "handlerName": handler,
-            "nativeEvent": ["value": option.value, "index": row],
-        ])
     }
 
     @objc private func textFocused(_ sender: UITextField) {

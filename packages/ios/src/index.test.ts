@@ -435,7 +435,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('compactMap { number($0).map { Int($0) } }')
     expect(nativeSwift).toContain('guard let number = craftNativeNumber(value) else { return nil }')
     expect(nativeSwift).toContain('CFGetTypeID(number) != CFBooleanGetTypeID()')
-    expect(nativeSwift).toContain('if let value = craftNativeNumber(value), value.doubleValue.isFinite { return String(value.doubleValue) }')
+    expect(nativeSwift).toContain('if let value = craftNativeNumber(value), value.doubleValue.isFinite { return value.stringValue }')
     expect(flatListSwift).toContain('guard let number = craftNativeNumber(value) else { return nil }')
     expect(nativeSwift).toContain("request('Dialog', 'alert', [options || {}], true)")
     expect(nativeSwift).toContain("request('Shortcuts', 'set', [items])")
@@ -534,8 +534,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('private final class CraftNativeButton: UIButton')
     expect(nativeSwift).toContain('let button = CraftNativeButton(type: .system)')
     expect(nativeSwift).toContain('(button as? CraftNativeButton)?.padding = paddingInsets(style)')
-    expect(nativeSwift).toContain('UIPickerViewDataSource, UIPickerViewDelegate')
-    expect(nativeSwift).toContain('pickerOptions[pickerID] = options')
+    expect(nativeSwift).toContain('final class CraftNativePickerView: UIButton')
+    expect(nativeSwift).toContain('showsMenuAsPrimaryAction = true')
     expect(nativeSwift).toContain('private final class CraftNativeModalView: UIView')
     expect(nativeSwift).toContain('modal.setVisible(visible, opacity: number(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)')
     expect(nativeSwift).toContain('if let propVisible = props["visible"] as? Bool')
@@ -2193,11 +2193,11 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(swift).toContain('accessibilityActionHandlers.removeValue(forKey: id)')
   })
 
-  it('keeps a labelled scroll view, picker or group a container, so VoiceOver reads what it holds', () => {
+  it('keeps labelled groups as containers and compact pickers as accessible buttons', () => {
     // A tour pager labelled for VoiceOver became one element and hid its pages.
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     const a11y = swift.slice(swift.indexOf('private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView)'))
-    expect(a11y).toContain('let container = ["ScrollView", "FlatList", "SectionList", "Picker", "SegmentedControl", "Modal", "Drawer"].contains(type)')
+    expect(a11y).toContain('let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)')
     expect(a11y).toContain('view.isAccessibilityElement = !container && role != "none"')
     expect(a11y).toContain('view.accessibilityContainerType = container && (view.accessibilityLabel != nil || controlledVideo) ? .semanticGroup : .none')
     expect(a11y).toContain('case "tablist": traits.insert(.tabBar)')
@@ -2265,7 +2265,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
 
   it('floats a native bar\'s round buttons, as the tab bar floats: glass, else the thin material', () => {
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
-    const button = swift.slice(swift.indexOf('private func accountNavigationButton'))
+    const button = swift.slice(swift.indexOf('private func accountNavigationButton'), swift.indexOf('private func loadBarImage'))
     expect(button).toContain('let surface = Self.floatingSurface(diameter: 44)')
     expect(button).toContain('button.widthAnchor.constraint(equalToConstant: 44)')
     expect(button).toContain('button.heightAnchor.constraint(equalToConstant: 44)')

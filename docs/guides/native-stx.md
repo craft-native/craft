@@ -184,7 +184,7 @@ next route.
 | `Pressable`, `TouchableOpacity`, `TouchableHighlight` | `CraftNativeFlowView` | `CraftNativeFlexLayout` |
 | `TextInput` | `UITextField` | `EditText` |
 | `Checkbox` | `UIButton` with system checkbox symbols | `CheckBox` |
-| `Picker` | `UIPickerView` | `Spinner` |
+| `Picker` | `UIButton` / `UIMenu` | `Spinner` |
 | `DatePicker` | `UIDatePicker` | `DatePicker` / `TimePicker` |
 | `Modal` | `CraftNativeModalView` | `CraftNativeModalView` (`FrameLayout`) |
 | `Switch` | `UISwitch` | `Switch` |
@@ -273,7 +273,10 @@ Native `Text` accepts `selectable`. When true, iOS uses a non-editable
 and selection gestures remain native. The default is false and keeps the
 lightweight label path on both hosts; changing the prop during reconciliation
 replaces the leaf only when the native control kind must change.
-`Picker` renders option children from `<select>`/`<option>` or the native
+`Picker` is a compact single-choice field (at least 44 points high on iOS),
+opening the system menu/dropdown when tapped. On iOS it announces the selected
+label, disables unavailable menu choices, and rejects stale menu selections.
+It renders option children from `<select>`/`<option>` or the native
 primitive, accepts an `items` array or child options plus `value`/`selectedValue`,
 and sends the selected option's `value` plus `index` through `onValueChange` or
 `onChange`. Numeric option values are normalized to strings consistently on
