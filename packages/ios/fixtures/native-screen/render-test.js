@@ -9,6 +9,7 @@
   let scrollPresses = 0
   let nextMessage = 0
   let revision = 0
+  let chartMode = false
   let pagerMode = false
   let overflowMode = false
   let solidMode = false
@@ -112,6 +113,23 @@
   }
 
   function render() {
+    if (chartMode) {
+      globalThis.craftNativePostMessage(JSON.stringify({ id: `render-${++nextMessage}`, type: 'RENDER', payload: { document: {
+        type: 'ScrollView', props: { testID: 'chart-scroll' }, style: { flex: 1 }, children: [
+          { type: 'Text', style: { padding: 16, fontSize: 24 }, children: ['Native chart inspection'] },
+          { type: 'Svg', props: { testID: 'native-chart', accessibilityLabel: 'HRV history', viewBox: [0, 0, 320, 224], preserveAspectRatio: 'none', inspection: { title: 'HRV', points: [
+            { key: 'a', x: 0.1, y: 0.8, label: 'Nov 1', color: '#007aff', rows: [{ label: 'HRV', value: '57 ms', color: '#007aff' }] },
+            { key: 'b', x: 0.9, y: 0.2, label: 'Nov 7', color: '#007aff', rows: [{ label: 'HRV', value: '61 ms', color: '#007aff' }] },
+          ] } }, style: { height: 224, margin: 16 }, children: [
+            { type: 'Path', props: { geometry: [0, 32, 179.2, 1, 288, 44.8], fill: 'none', stroke: '#007aff', strokeWidth: 2 } },
+          ] },
+          { type: 'View', style: { height: 1200 }, children: [] },
+          { type: 'Text', props: { testID: 'chart-end' }, children: ['Chart end'] },
+        ],
+      } } }))
+      return
+    }
+
     if (overflowMode) {
       globalThis.craftNativePostMessage(JSON.stringify({
         id: `render-${++nextMessage}`, type: 'RENDER',
@@ -220,7 +238,7 @@
             { id: 'native-switch', type: 'Switch', props: { key: 'native-switch', value: false }, events: { onValueChange: 'changeSwitch' } },
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
-            { type: 'Button', props: { key: 'open-overflow' }, events: { onPress: 'openOverflow' }, children: ['Floating recovery action'] },
+            { type: 'View', style: { flexDirection: 'row' }, children: [{ type: 'Button', props: { key: 'open-overflow' }, events: { onPress: 'openOverflow' }, children: ['Floating recovery action'] }, { type: 'Button', props: { key: 'open-chart' }, events: { onPress: 'openChart' }, children: ['Chart'] }] },
             { type: 'View', style: { flexDirection: 'row' }, children: [
               { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
               ...['native', 'solid'].map(kind => ({ type: 'Button', props: { key: `open-agreement-${kind}` }, events: { onPress: `open-agreement-${kind}` }, children: [`Agree ${kind}`] })),
@@ -254,6 +272,7 @@
       )
     }
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openChart') { chartMode = true; render(); return }
     if (message.payload.handlerName === 'openOverflow') { overflowMode = true; render(); return }
     if (message.payload.handlerName === 'resumeOverflow') {
       mutate([{ op: 'updateNode', id: 'overflow-result', patch: { children: ['Resumed once'] } }])

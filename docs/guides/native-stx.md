@@ -2371,3 +2371,31 @@ preserving other targets/settings; disabling the flag empties that generated
 spec so the next build no longer embeds the extension. If a customized project
 uses an inline `include` value, add the generated spec to that include list first.
 This feature does not implement Android remote attachments.
+
+### Inspecting native vector charts
+
+An `Svg` can opt into Craft's native chart readout with an `inspection` prop:
+
+```stx
+<svg viewBox="0 0 320 200" preserveAspectRatio="none" class="h-56 w-full"
+  :inspection="{ title: 'Heart rate', points: readings }"
+  accessibilityLabel="Heart rate through the day">
+  <path :d="line" fill="none" stroke="#007aff" />
+</svg>
+```
+
+Each reading has a stable `key`, an `x` fraction between 0 and 1, a localized
+`label`, and `rows: [{ label, value, color? }]`. Optional `y` (also 0–1) and
+`color` locate the selected dot. Coordinates describe the entire stretched
+plot; keep axes and their labels outside it. Supply measured points only,
+including zero values; missing data should stay absent. Plain SVGs retain
+their existing behavior.
+
+UIKit and Android draw the dotted guide, marker and themed readout locally.
+Tap to select, drag horizontally to scrub, or hold to inspect. Vertical drags
+remain available to the parent scroll view. VoiceOver adjustment and TalkBack
+forward/back actions step through the readings; accessibility escape/dismiss
+closes the readout. Values are available as accessible text even when a long
+visual label is truncated. A changed dataset clears selection, and detaching
+a chart cancels its pending gesture work. No WebView or per-move JS callback
+is involved. Give the chart enough height for its number of readout rows.

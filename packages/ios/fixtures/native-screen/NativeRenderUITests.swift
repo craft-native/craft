@@ -15,6 +15,26 @@ final class NativeRenderUITests: XCTestCase {
     /// the sheet must still present, and must still be cancellable.
     private let systemSheetTimeout: TimeInterval = 30
 
+    func testNativeChartTouchSelectionAndVerticalScroll() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["open-chart"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["open-chart"].tap()
+        let chart = app.descendants(matching: .any).matching(identifier: "native-chart").firstMatch
+        XCTAssertTrue(chart.waitForExistence(timeout: 10), app.debugDescription)
+        chart.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.7)).tap()
+        XCTAssertTrue(NSPredicate(format: "value CONTAINS %@", "57 ms").evaluate(with: chart), app.debugDescription)
+        chart.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.7)).press(forDuration: 0.1, thenDragTo: chart.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.7)))
+        XCTAssertTrue(NSPredicate(format: "value CONTAINS %@", "61 ms").evaluate(with: chart), app.debugDescription)
+        let readout = XCTAttachment(screenshot: app.screenshot())
+        readout.name = "Native chart selection"; readout.lifetime = .keepAlways; add(readout)
+        let before = chart.frame.minY
+        chart.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).press(forDuration: 0.05, thenDragTo: chart.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)))
+        XCTAssertLessThan(chart.frame.minY, before - 40, "The chart captured a vertical page scroll")
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+
     func testFloatingActionOutsideNestedEmptyWrappersRemainsAccessible() {
         continueAfterFailure = false
         let app = XCUIApplication()
