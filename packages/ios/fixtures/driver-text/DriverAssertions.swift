@@ -1,6 +1,22 @@
 import XCTest
 
 extension DriverTests {
+    func testOptionalDismissalNeverTapsMatchingBodyControls() {
+        bundledJourney = true
+        app.launchArguments = ["dismiss-prompt"]
+        defer { app.terminate(); app.launchArguments = [] }
+        app.launch()
+        XCTAssertTrue(identified("present-prompt").waitForExistence(timeout: 10))
+        run("dismiss")
+        XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
+        for _ in 0..<2 {
+            run("tapid present-prompt")
+            run("dismiss")
+            run("absent Save Password?")
+            XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
+        }
+    }
+
     private func retainFocusEvidence(_ name: String, immediateValue: String?) -> [[String: Any]] {
         let evidence = identified("focus-evidence").value as? String ?? "missing focus evidence"
         let receipt = "Immediate accessibility value: \(String(describing: immediateValue))\n\(evidence)"

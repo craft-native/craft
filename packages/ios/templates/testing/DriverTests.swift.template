@@ -796,9 +796,16 @@ final class DriverTests: XCTestCase {
             // A system prompt over the app ("Save Password?" → Not Now), wherever iOS shows it.
             let label = arg.isEmpty ? "Not Now" : arg
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            // The app's own alert or sheet first (its button can share a
-            // label with the control behind it), then the app, then iOS.
-            let candidates = { self.presentedScopes().map { $0.buttons[label] } + [springboard.buttons[label]] }
+            // Optional prompt dismissal must never activate a same-named
+            // control on the screen behind it. Resolve only presented dialogs
+            // and system UI, binding each match by index before tapping: a
+            // password sheet can arrive between query construction and use.
+            let candidates = {
+                let dialogs = self.presentedScopes().filter { $0.elementType == .alert || $0.elementType == .sheet }
+                return (dialogs + [springboard]).flatMap { scope in
+                    scope.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+                }
+            }
             let end = Date().addingTimeInterval(6)
             // A tap is not a dismissal. iOS 26 draws "Save Password?" as a
             // sheet that is in the tree, and hittable, while it still slides

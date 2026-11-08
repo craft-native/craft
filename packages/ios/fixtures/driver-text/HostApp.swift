@@ -7,7 +7,9 @@ final class DriverTextHost: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let window = UIWindow(frame: UIScreen.main.bounds)
-        if ProcessInfo.processInfo.arguments.contains("browser-focus") {
+        if ProcessInfo.processInfo.arguments.contains("dismiss-prompt") {
+            window.rootViewController = DriverDismissController()
+        } else if ProcessInfo.processInfo.arguments.contains("browser-focus") {
             window.rootViewController = DriverBrowserFocusController()
         } else if ProcessInfo.processInfo.arguments.contains("invalid-toggle-evidence") {
             window.rootViewController = DriverToggleEvidenceController()
@@ -222,5 +224,53 @@ final class DriverBrowserFocusController: UIViewController, UITextFieldDelegate 
             }
         }
         return false
+    }
+}
+
+/// A delayed native sheet shares its action label with two visible body
+/// controls. Neither body action belongs to optional system-prompt dismissal.
+final class DriverDismissController: UIViewController {
+    private let count = UILabel()
+    private var bodyTaps = 0
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        count.accessibilityIdentifier = "body-taps"
+        count.text = "Body taps: 0"
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 20
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(count)
+        for index in 0..<2 {
+            let button = UIButton(type: .system)
+            button.setTitle("Not Now", for: .normal)
+            button.accessibilityIdentifier = "body-not-now-\(index)"
+            button.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                self.bodyTaps += 1
+                self.count.text = "Body taps: \(self.bodyTaps)"
+            }, for: .touchUpInside)
+            stack.addArrangedSubview(button)
+        }
+        let present = UIButton(type: .system)
+        present.setTitle("Present prompt", for: .normal)
+        present.accessibilityIdentifier = "present-prompt"
+        present.addAction(UIAction { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                guard let self else { return }
+                let alert = UIAlertController(title: "Save Password?", message: "Native dismissal fixture", preferredStyle: .actionSheet)
+                alert.addAction(UIAlertAction(title: "Not Now", style: .cancel))
+                alert.popoverPresentationController?.sourceView = present
+                self.present(alert, animated: true)
+            }
+        }, for: .touchUpInside)
+        stack.addArrangedSubview(present)
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+        ])
     }
 }

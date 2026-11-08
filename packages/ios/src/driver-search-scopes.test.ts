@@ -9,9 +9,10 @@ test.skipIf(process.platform !== 'darwin')('looks for a label in the presented a
   const end = template.indexOf('    func presentedScopes()', start)
   expect(start).toBeGreaterThan(0)
   expect(end).toBeGreaterThan(start)
-  // exact() and dismiss both search presentedScopes(), which is this rule.
+  // Exact selection prefers the modal; dismissal excludes the body altogether.
   expect(template).toContain('for scope in presentedScopes()')
-  expect(template).toContain('self.presentedScopes().map { $0.buttons[label] }')
+  expect(template).toContain('self.presentedScopes().filter { $0.elementType == .alert || $0.elementType == .sheet }')
+  expect(template).toContain('scope.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex')
   const dir = createTempDir('craft-driver-scopes-')
   try {
     const source = join(dir, 'main.swift')

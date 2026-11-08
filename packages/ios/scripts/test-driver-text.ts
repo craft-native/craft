@@ -71,8 +71,8 @@ ${renderer.slice(solidStart, solidEnd)}`)
   if (summary.exitCode !== 0) throw new Error(summary.stderr.toString())
   const counts = JSON.parse(summary.stdout.toString())
   // xcresult counts the negative test in expectedFailures, not passedTests.
-  if (counts.result !== 'Passed' || counts.totalTestCount !== 3 || counts.passedTests !== 1 || counts.expectedFailures !== 2 || counts.failedTests !== 0 || counts.skippedTests !== 0)
+  if (counts.result !== 'Passed' || counts.totalTestCount !== 4 || counts.passedTests !== 2 || counts.expectedFailures !== 2 || counts.failedTests !== 0 || counts.skippedTests !== 0)
     throw new Error(`Driver text acceptance failed: ${JSON.stringify(counts)}`)
-  console.log('Native driver verified toggles, rejected unresponsive controls and refused focus, edited Unicode text, and observed delayed/native WebKit input focus.')
+  console.log('Native driver dismissed delayed dialogs without touching matching body controls, verified toggles, rejected unresponsive controls and refused focus, edited Unicode text, and observed delayed/native WebKit input focus.')
 }
 finally { removeTempDir(workspace) }
