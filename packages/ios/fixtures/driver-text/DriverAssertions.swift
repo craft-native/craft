@@ -12,6 +12,11 @@ extension DriverTests {
         for _ in 0..<2 {
             run("tapid present-prompt")
             run("dismiss")
+            let evidence = XCTAttachment(string: app.debugDescription)
+            evidence.name = "modal-dismissal-tree"
+            evidence.lifetime = .keepAlways
+            add(evidence)
+            print("MODAL_DISMISSAL_TREE \(app.debugDescription)")
             run("absent Save Password?")
             XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
         }

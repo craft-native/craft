@@ -800,11 +800,20 @@ final class DriverTests: XCTestCase {
             // control on the screen behind it. Resolve only presented dialogs
             // and system UI, binding each match by index before tapping: a
             // password sheet can arrive between query construction and use.
-            let candidates = {
+            let candidates = { () -> [XCUIElement] in
                 let dialogs = self.presentedScopes().filter { $0.elementType == .alert || $0.elementType == .sheet }
-                return (dialogs + [springboard]).flatMap { scope in
+                let predicate = NSPredicate(format: "label == %@", label)
+                let scoped = dialogs.flatMap { scope in
                     scope.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
                 }
+                let system = springboard.buttons.matching(predicate).allElementsBoundByIndex
+                if !(scoped + system).isEmpty { return scoped + system }
+                // UIKit puts an action sheet's separate Cancel group outside
+                // its Sheet node. Only admit that shape while a dialog exists,
+                // and only when exactly one matching button is hittable.
+                guard !dialogs.isEmpty else { return [] }
+                let visible = self.app.buttons.matching(predicate).allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+                return visible.count == 1 ? visible : []
             }
             let end = Date().addingTimeInterval(6)
             // A tap is not a dismissal. iOS 26 draws "Save Password?" as a
