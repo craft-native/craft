@@ -28,6 +28,10 @@ To select a case, use the full XCTest target/class/method identifier, for exampl
 The runner checks the result bundle and rejects zero tests or skipped cases,
 including Xcode's successful exit for an unmatched selection.
 
+Set `CRAFT_NATIVE_RENDER_APPEARANCE=light`, `dark` (the default), or `system`
+to test the same renderer under an explicit appearance. A simulator appearance
+setting cannot override the fixture app’s own pinned configuration.
+
 Single-line input coverage checks both its non-wrapping paragraph and its native
 clipping viewport. A long URL stays editable without painting outside the field;
 multiline notes retain their wrapping behavior.

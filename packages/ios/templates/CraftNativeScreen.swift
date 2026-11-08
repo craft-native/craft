@@ -5330,7 +5330,7 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
         func text(_ value: String, rect: CGRect, strong: Bool = false, right: Bool = false, secondary: Bool = false) {
             paragraph.alignment = right ? .right : .left
-            (value as NSString).draw(in: rect, withAttributes: [.font: strong ? bold : font, .foregroundColor: secondary ? UIColor.secondaryLabel : UIColor.label, .paragraphStyle: paragraph])
+            (value as NSString).draw(in: rect, withAttributes: [.font: strong ? bold : font, .foregroundColor: secondary ? UIColor.label.withAlphaComponent(0.72) : UIColor.label, .paragraphStyle: paragraph])
         }
         var top = panel.minY + 12
         if !title.isEmpty { text(title, rect: CGRect(x: left + 12, y: top, width: width - 24, height: rowHeight), strong: true); top += rowHeight }

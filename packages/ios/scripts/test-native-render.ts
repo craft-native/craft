@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { bootSimulator, build, init, pickSimulator } from '../src/index'
+import { bootSimulator, build, init, pickSimulator, type CraftConfig } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 import { nativeTestResultBundle } from './native-test-result'
 import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
@@ -14,6 +14,9 @@ if (cliArgs.length > 0) {
   }
   throw new Error(`Unknown native renderer test argument: ${cliArgs.join(' ')}`)
 }
+
+const fixtureAppearance = process.env.CRAFT_NATIVE_RENDER_APPEARANCE || 'dark'
+if (!['light', 'dark', 'system'].includes(fixtureAppearance)) throw new Error('CRAFT_NATIVE_RENDER_APPEARANCE must be light, dark or system')
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-screen')
 const workspace = createTempDir('craft-native-render-')
@@ -33,7 +36,7 @@ try {
     output,
     // These tests construct enabled service implementations (including injected
     // location managers and fake heart-rate straps), so compile those services.
-    config: { renderer: 'native', enablePushNotifications: true, enableNotificationAttachments: true, enableBarometer: true, enablePedometer: true, enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
+    config: { renderer: 'native', appearance: fixtureAppearance as CraftConfig['appearance'], enablePushNotifications: true, enableNotificationAttachments: true, enableBarometer: true, enablePedometer: true, enableGeolocation: true, enableHeartRate: true, enableHealthKit: true, enableCamera: true, enableAudioRecording: true, enableBiometric: true, urlSchemes: ['craft-fixture'], appShortcuts: [{ id: 'saved', title: 'Saved trails', symbol: 'heart.fill', url: 'craft-fixture://saved', phrases: ['Show saved trails in {app}'] }] },
     runtimeDir: null,
   })
   await build({
