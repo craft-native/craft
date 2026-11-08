@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.486...v0.0.487)
+
+## 🐛 Bug Fixes
+
+- preserve scalar values in Android selectors ([7e355a0](https://github.com/craft-native/craft/commit/7e355a0)) _(by Chris Breuer)_
+- render shared iOS selectors as compact native menus ([e5b609d](https://github.com/craft-native/craft/commit/e5b609d)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- cover compact selector menus across native hosts ([2f5c97b](https://github.com/craft-native/craft/commit/2f5c97b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.485...v0.0.486)
 
 ## 🐛 Bug Fixes
