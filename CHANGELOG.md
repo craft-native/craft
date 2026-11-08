@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.483...v0.0.484)
+
+## 🐛 Bug Fixes
+
+- resolve action sheet cancel controls outside the sheet node ([06361d1](https://github.com/craft-native/craft/commit/06361d1)) _(by Chris Breuer)_
+- dismiss native prompts without activating body controls ([df9c30d](https://github.com/craft-native/craft/commit/df9c30d)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- verify actionable prompt dismissal without body fallback ([270b90f](https://github.com/craft-native/craft/commit/270b90f)) _(by Chris Breuer)_
+- stress picker retries across three screen replacements ([9de6b00](https://github.com/craft-native/craft/commit/9de6b00)) _(by Chris Breuer)_
+- identify the document picker retry event boundary ([54d3229](https://github.com/craft-native/craft/commit/54d3229)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.482...v0.0.483)
 
 ## 🐛 Bug Fixes
