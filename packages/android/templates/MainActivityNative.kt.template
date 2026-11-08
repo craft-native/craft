@@ -150,8 +150,8 @@ private fun craftNativeBoolean(value: Any?, fallback: Boolean = false): Boolean 
 private fun craftNativeInt(value: Any?, fallback: Int): Int = (value as? Number)?.toInt() ?: fallback
 
 private fun craftNativePickerValue(value: Any?): String? = when (value) {
-    is String -> value.takeIf { it.isNotEmpty() }
-    is Number -> value.toDouble().takeIf { it.isFinite() }?.toString()
+    is String -> value
+    is Number -> value.toDouble().takeIf { it.isFinite() }?.let { value.toString() }
     else -> null
 }
 
