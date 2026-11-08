@@ -5192,7 +5192,164 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 /// 3 quadratic, 4 close, in viewBox units - and scaled to the view. Paint is
 /// inherited down the tree as SVG does; `dark:` classes arrive already
 /// resolved for the appearance, so a redraw is all a theme change needs.
+/// Native inspection of an SVG plot. Coordinates are fractions of the plot's
+/// bounds; labels and values are already localized by the application. No JS
+/// callback or bridge round trip is needed while a finger moves.
+final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
+    struct Reading {
+        let key: String
+        let x: CGFloat
+        let y: CGFloat?
+        let color: UIColor
+        let label: String
+        let rows: [(String, String, UIColor?)]
+        var announcement: String { ([label] + rows.map { $0.0 + ": " + $0.1 }).joined(separator: ". ") }
+    }
+    private weak var view: UIView?
+    private var configuration: NSDictionary = [:]
+    private(set) var readings: [Reading] = []
+    private(set) var selectedIndex = -1
+    private var title = ""
+    private let feedback = UISelectionFeedbackGenerator()
+    private lazy var tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
+    private lazy var pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+    private lazy var hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+
+    init(view: UIView) {
+        self.view = view
+        super.init()
+        pan.delegate = self
+        hold.minimumPressDuration = 0.25
+        [tap, pan, hold].forEach { view.addGestureRecognizer($0); $0.isEnabled = false }
+    }
+
+    func configure(_ raw: Any?) {
+        let next = raw as? [String: Any] ?? [:]
+        guard !configuration.isEqual(to: next) else { return }
+        configuration = next as NSDictionary
+        title = next["title"] as? String ?? ""
+        readings = (next["points"] as? [[String: Any]] ?? []).compactMap { point in
+            guard let x = craftNativeNumber(point["x"])?.doubleValue, x.isFinite, x >= 0, x <= 1,
+                  let label = point["label"] as? String else { return nil }
+            let rawY = craftNativeNumber(point["y"])?.doubleValue
+            let y = rawY.flatMap { $0.isFinite && $0 >= 0 && $0 <= 1 ? CGFloat($0) : nil }
+            let rows = (point["rows"] as? [[String: Any]] ?? []).compactMap { row -> (String, String, UIColor?)? in
+                guard let label = row["label"] as? String, let value = row["value"] as? String else { return nil }
+                return (label, value, (row["color"] as? String).flatMap { UIColor(css: $0) })
+            }
+            return Reading(key: point["key"] as? String ?? label, x: CGFloat(x), y: y,
+                           color: (point["color"] as? String).flatMap { UIColor(css: $0) } ?? .systemBlue, label: label, rows: rows)
+        }
+        selectedIndex = -1
+        view?.isUserInteractionEnabled = !readings.isEmpty
+        if readings.isEmpty { view?.accessibilityTraits.remove(.adjustable); view?.accessibilityValue = nil }
+        [tap, pan, hold].forEach { $0.isEnabled = !readings.isEmpty }
+        configureAccessibility()
+        view?.setNeedsDisplay()
+    }
+
+    func configureAccessibility() {
+        guard let view, !readings.isEmpty else { return }
+        view.isAccessibilityElement = true
+        view.accessibilityTraits.insert(.adjustable)
+        view.accessibilityValue = readings[selectedIndex >= 0 ? selectedIndex : readings.count - 1].announcement
+    }
+
+    func select(_ index: Int, haptic: Bool = true) {
+        guard !readings.isEmpty else { return }
+        let next = max(0, min(readings.count - 1, index))
+        guard next != selectedIndex else { return }
+        selectedIndex = next
+        if haptic { feedback.selectionChanged() }
+        configureAccessibility()
+        view?.setNeedsDisplay()
+    }
+
+    func adjust(_ direction: Int) {
+        select(selectedIndex < 0 ? (direction < 0 ? readings.count - 1 : 0) : selectedIndex + direction)
+    }
+
+    @discardableResult func dismiss() -> Bool {
+        guard selectedIndex >= 0 else { return false }
+        selectedIndex = -1
+        configureAccessibility()
+        view?.setNeedsDisplay()
+        return true
+    }
+
+    private func select(at point: CGPoint) {
+        guard let view, view.bounds.width > 0 else { return }
+        let fraction = max(0, min(1, point.x / view.bounds.width))
+        if let nearest = readings.indices.min(by: { abs(readings[$0].x - fraction) < abs(readings[$1].x - fraction) }) { select(nearest) }
+    }
+    @objc private func tapped(_ gesture: UITapGestureRecognizer) { select(at: gesture.location(in: view)) }
+    @objc private func panned(_ gesture: UIPanGestureRecognizer) {
+        if gesture.state == .began || gesture.state == .changed { select(at: gesture.location(in: view)) }
+        if gesture.state == .cancelled { dismiss() }
+    }
+    @objc private func held(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began || gesture.state == .changed { select(at: gesture.location(in: view)) }
+        if gesture.state == .cancelled { dismiss() }
+    }
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard gesture === pan else { return true }
+        let velocity = pan.velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y)
+    }
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+        gesture === pan && other.view is UIScrollView
+    }
+
+    func draw(in context: CGContext, bounds: CGRect) {
+        guard readings.indices.contains(selectedIndex), bounds.width > 24, bounds.height > 24 else { return }
+        let reading = readings[selectedIndex], x = bounds.width * reading.x
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setStrokeColor(UIColor.secondaryLabel.withAlphaComponent(0.65).cgColor)
+        context.setLineWidth(1)
+        context.setLineDash(phase: 0, lengths: [2, 3])
+        context.move(to: CGPoint(x: x, y: 0)); context.addLine(to: CGPoint(x: x, y: bounds.height)); context.strokePath()
+        context.setLineDash(phase: 0, lengths: [])
+        if let y = reading.y {
+            let dot = CGRect(x: x - 5, y: bounds.height * y - 5, width: 10, height: 10)
+            context.setFillColor(reading.color.cgColor); context.fillEllipse(in: dot)
+            context.setStrokeColor(UIColor.systemBackground.cgColor); context.setLineWidth(2); context.strokeEllipse(in: dot)
+        }
+        let font = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 12), maximumPointSize: 20)
+        let bold = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 20)
+        let rowHeight = ceil(font.lineHeight) + 7
+        let width = min(264, bounds.width - 16)
+        let height = min(bounds.height - 16, 24 + rowHeight * CGFloat(reading.rows.count + (title.isEmpty ? 1 : 2)))
+        let left = max(8, min(bounds.width - width - 8, x > bounds.midX ? x - width - 12 : x + 12))
+        let panel = CGRect(x: left, y: 8, width: width, height: height)
+        context.setShadow(offset: CGSize(width: 0, height: 4), blur: 12, color: UIColor.black.withAlphaComponent(0.16).cgColor)
+        UIColor.secondarySystemGroupedBackground.setFill(); UIBezierPath(roundedRect: panel, cornerRadius: 12).fill()
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        UIColor.separator.withAlphaComponent(0.5).setStroke(); let border = UIBezierPath(roundedRect: panel.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 12); border.lineWidth = 1; border.stroke()
+        context.clip(to: panel.insetBy(dx: 10, dy: 8))
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
+        func text(_ value: String, rect: CGRect, strong: Bool = false, right: Bool = false, secondary: Bool = false) {
+            paragraph.alignment = right ? .right : .left
+            (value as NSString).draw(in: rect, withAttributes: [.font: strong ? bold : font, .foregroundColor: secondary ? UIColor.secondaryLabel : UIColor.label, .paragraphStyle: paragraph])
+        }
+        var top = panel.minY + 12
+        if !title.isEmpty { text(title, rect: CGRect(x: left + 12, y: top, width: width - 24, height: rowHeight), strong: true); top += rowHeight }
+        text(reading.label, rect: CGRect(x: left + 12, y: top, width: width - 24, height: rowHeight), secondary: true); top += rowHeight
+        for row in reading.rows {
+            var labelLeft = left + 12
+            if let color = row.2 { color.setFill(); UIBezierPath(roundedRect: CGRect(x: labelLeft, y: top + 4, width: 8, height: 8), cornerRadius: 1).fill(); labelLeft += 14 }
+            text(row.0, rect: CGRect(x: labelLeft, y: top, width: width * 0.47 - (labelLeft - left), height: rowHeight), secondary: true)
+            text(row.1, rect: CGRect(x: left + width * 0.48, y: top, width: width * 0.52 - 12, height: rowHeight), strong: true, right: true)
+            top += rowHeight
+        }
+    }
+}
+
 final class CraftNativeSvgView: UIView {
+    lazy var inspection = CraftChartInspection(view: self)
+    override func accessibilityIncrement() { inspection.adjust(1) }
+    override func accessibilityDecrement() { inspection.adjust(-1) }
+    override func accessibilityPerformEscape() -> Bool { inspection.dismiss() }
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
@@ -5200,6 +5357,7 @@ final class CraftNativeSvgView: UIView {
     var drawing: [String: Any] = [:] {
         didSet {
             animates = Self.hasAnimation(drawing["children"] as? [Any] ?? [])
+            inspection.configure((drawing["props"] as? [String: Any])?["inspection"])
             setNeedsDisplay()
             updateFrames()
         }
@@ -5426,14 +5584,17 @@ final class CraftNativeSvgView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.saveGState()
         viewTransform = .identity
         if let box = viewBox {
             let props = drawing["props"] as? [String: Any] ?? [:]
-            guard let transform = CraftNativeSvgView.transform(box: box, bounds: bounds.size, preserveAspectRatio: props["preserveAspectRatio"] as? String) else { return }
+            guard let transform = CraftNativeSvgView.transform(box: box, bounds: bounds.size, preserveAspectRatio: props["preserveAspectRatio"] as? String) else { context.restoreGState(); return }
             viewTransform = transform
             context.concatenate(transform)
         }
         draw(children: drawing["children"] as? [Any] ?? [], paint: Paint().merged(drawing), in: context)
+        context.restoreGState()
+        inspection.draw(in: context, bounds: bounds)
     }
 
     private func draw(children: [Any], paint: Paint, in context: CGContext) {
@@ -9832,6 +9993,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         result.craftPointerEvents = CraftNativePointerEvents.resolve(props: props, style: style)
         applyAccessibility(props, type: type, to: result)
+        (result as? CraftNativeSvgView)?.inspection.configureAccessibility()
         // After applyAccessibility: it settles whether the view is an element
         // at all, and an action on a non-element is unreachable.
         updateAccessibilityActions(props["accessibilityActions"], handler: menuDisabled ? nil : events["onAccessibilityAction"], for: result)
@@ -10479,7 +10641,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// not be panned, zoomed, or have a pin tapped; a picker could not be spun.
     private func ownsTouches(_ view: UIView) -> Bool {
         view is UIControl || view is UIScrollView || view is CraftNativeModalView || view is CraftNativeVideoView
-            || view is MKMapView || view is UIPickerView
+            || view is MKMapView || view is UIPickerView || ((view as? CraftNativeSvgView)?.inspection.readings.isEmpty == false)
     }
 
     private func updatePressHandler(_ handler: String?, for view: UIView) {

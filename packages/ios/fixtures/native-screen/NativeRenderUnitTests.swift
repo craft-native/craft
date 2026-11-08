@@ -2932,6 +2932,64 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(map?.overlays.count, 0, "Boolean map coordinates were treated as numeric")
     }
 
+    func testNativeChartInspectionRetainsSelectionAndClearsReplacedData() throws {
+        let svg = CraftNativeSvgView(frame: CGRect(x: 0, y: 0, width: 320, height: 224))
+        let points: [[String: Any]] = [
+            ["key": "a", "x": 0.1, "y": 0.4, "label": "Nov 1", "rows": [["label": "HRV", "value": "57 ms", "color": "#007aff"]]],
+            ["key": "b", "x": 0.9, "y": 0.6, "label": "Nov 7", "rows": [["label": "HRV", "value": "61 ms"]]],
+        ]
+        let drawing: [String: Any] = ["type": "Svg", "props": ["viewBox": [0, 0, 320, 224], "inspection": ["title": "HRV", "points": points]]]
+        svg.drawing = drawing
+        XCTAssertTrue(svg.accessibilityTraits.contains(.adjustable))
+        svg.accessibilityIncrement()
+        XCTAssertEqual(svg.inspection.selectedIndex, 0)
+        XCTAssertEqual(svg.accessibilityValue, "Nov 1. HRV: 57 ms")
+        svg.accessibilityIncrement()
+        XCTAssertEqual(svg.inspection.selectedIndex, 1)
+        XCTAssertEqual(svg.accessibilityValue, "Nov 7. HRV: 61 ms")
+        svg.drawing = drawing
+        XCTAssertEqual(svg.inspection.selectedIndex, 1, "A path repaint discarded the selected reading")
+        let image = UIGraphicsImageRenderer(size: svg.bounds.size).image { svg.layer.render(in: $0.cgContext) }
+        XCTAssertNotNil(image.cgImage)
+        XCTAssertTrue(svg.accessibilityPerformEscape())
+        XCTAssertEqual(svg.inspection.selectedIndex, -1)
+        svg.accessibilityDecrement()
+        XCTAssertEqual(svg.inspection.selectedIndex, 1)
+        svg.drawing = ["props": ["viewBox": [0, 0, 320, 224], "inspection": ["title": "Other account", "points": []]]]
+        XCTAssertEqual(svg.inspection.selectedIndex, -1)
+        XCTAssertFalse(svg.accessibilityTraits.contains(.adjustable))
+        XCTAssertNil(svg.accessibilityValue)
+    }
+
+    func testNativeChartKeepsItsNativeTouchOwnershipWithoutAnAppPressHandler() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.render(["type": "Svg", "props": ["testID": "native-reading", "viewBox": [0, 0, 320, 224],
+            "inspection": ["title": "HRV", "points": [["x": 0.5, "label": "Today", "rows": [["label": "HRV", "value": "57 ms"]]]]]],
+            "style": ["height": 224]])
+        controller.view.layoutIfNeeded()
+        let chart = try XCTUnwrap(find(CraftNativeSvgView.self, key: "native-reading", below: controller.view))
+        XCTAssertTrue(chart.isUserInteractionEnabled)
+        XCTAssertTrue(chart.accessibilityTraits.contains(.adjustable))
+        chart.accessibilityIncrement()
+        XCTAssertEqual(chart.accessibilityValue, "Today. HRV: 57 ms")
+    }
+
+    func testNativeChartInspectionRejectsInvalidPositions() {
+        let svg = CraftNativeSvgView(frame: CGRect(x: 0, y: 0, width: 320, height: 224))
+        svg.inspection.configure(["points": [
+            ["x": -1, "label": "Before"], ["x": 2, "label": "After"],
+            ["x": "0.5", "label": "Text"], ["x": true, "label": "Boolean"], ["x": Double.nan, "label": "Invalid"],
+            ["x": 0.5, "label": "Only", "rows": [["label": "Value", "value": "0"]]],
+        ]])
+        XCTAssertEqual(svg.inspection.readings.count, 1)
+        svg.accessibilityIncrement()
+        svg.accessibilityIncrement()
+        XCTAssertEqual(svg.inspection.selectedIndex, 0)
+        XCTAssertEqual(svg.accessibilityValue, "Only. Value: 0")
+    }
+
     func testSvgIgnoresBooleanNumericGeometry() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

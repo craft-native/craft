@@ -389,13 +389,172 @@ private object CraftNativeSkewTransforms {
 }
 
 /** A DOM-free SVG surface for the geometry emitted by the shared STX native protocol. */
+/** Local native chart selection: no JS events are needed while scrubbing. */
+private class CraftNativeChartInspection(private val view: View) {
+    private var fingerprint = ""
+    private var title = ""
+    private var points = emptyList<JSONObject>()
+    private var selected = -1
+    private var startX = 0f
+    private var startY = 0f
+    private var dragging = false
+    private var abandoned = false
+    private val slop = android.view.ViewConfiguration.get(view.context).scaledTouchSlop
+    private val hold = Runnable { if (!abandoned) selectAt(startX) }
+    val enabled: Boolean get() = points.isNotEmpty()
+    private val density get() = view.resources.displayMetrics.density
+    private fun dp(value: Float) = value * density
+    fun configure(raw: JSONObject?) {
+        val next = raw?.toString().orEmpty()
+        if (next == fingerprint) return
+        fingerprint = next
+        title = raw?.optString("title").orEmpty()
+        val list = raw?.optJSONArray("points") ?: JSONArray()
+        points = (0 until list.length()).mapNotNull { list.optJSONObject(it) }.filter {
+            val x = it.optDouble("x", Double.NaN)
+            x.isFinite() && x in 0.0..1.0 && it.opt("label") is String
+        }
+        selected = -1
+        view.isFocusable = enabled
+        view.invalidate()
+    }
+    private fun announcement(point: JSONObject): String {
+        val rows = point.optJSONArray("rows") ?: JSONArray()
+        return (listOf(point.optString("label")) + (0 until rows.length()).mapNotNull { rows.optJSONObject(it)?.let { row -> row.optString("label") + ": " + row.optString("value") } }).joinToString(". ")
+    }
+    private fun select(index: Int) {
+        if (!enabled) return
+        val next = index.coerceIn(0, points.lastIndex)
+        if (next == selected) return
+        selected = next
+        view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        view.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SELECTED)
+        view.invalidate()
+    }
+    private fun selectAt(x: Float) {
+        if (view.width <= 0) return
+        val fraction = (x / view.width).coerceIn(0f, 1f)
+        points.indices.minByOrNull { kotlin.math.abs(points[it].optDouble("x") - fraction) }?.let { select(it) }
+    }
+    fun touch(event: MotionEvent): Boolean {
+        if (!enabled) return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = event.x; startY = event.y; dragging = false; abandoned = false
+                view.postDelayed(hold, 250)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = kotlin.math.abs(event.x - startX); val dy = kotlin.math.abs(event.y - startY)
+                if (!dragging && maxOf(dx, dy) > slop) {
+                    view.removeCallbacks(hold)
+                    if (dy > dx) { abandoned = true; return false }
+                    dragging = true
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                if (dragging && !abandoned) selectAt(event.x)
+            }
+            MotionEvent.ACTION_UP -> {
+                view.removeCallbacks(hold)
+                if (!abandoned) { view.performClick(); selectAt(event.x) }
+                view.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                view.removeCallbacks(hold); abandoned = true; selected = -1
+                view.parent?.requestDisallowInterceptTouchEvent(false); view.invalidate()
+            }
+        }
+        return !abandoned
+    }
+    fun detach() { view.removeCallbacks(hold); selected = -1 }
+    fun accessibility(info: android.view.accessibility.AccessibilityNodeInfo) {
+        if (!enabled) return
+        info.className = "android.widget.SeekBar"
+        info.isScrollable = true
+        info.contentDescription = listOf(title, announcement(points[if (selected >= 0) selected else points.lastIndex])).filter { it.isNotBlank() }.joinToString(". ")
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        if (selected >= 0) info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_DISMISS)
+    }
+    fun action(action: Int): Boolean {
+        if (!enabled) return false
+        when (action) {
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> select(if (selected < 0) 0 else selected + 1)
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> select(if (selected < 0) points.lastIndex else selected - 1)
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS -> { selected = -1; view.invalidate() }
+            else -> return false
+        }
+        return true
+    }
+    fun draw(canvas: Canvas) {
+        val point = points.getOrNull(selected) ?: return
+        val dark = view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        val ink = if (dark) Color.rgb(249, 250, 251) else Color.rgb(17, 24, 39)
+        val secondary = if (dark) Color.rgb(209, 213, 219) else Color.rgb(75, 85, 99)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val x = (point.optDouble("x") * view.width).toFloat()
+        paint.color = secondary; paint.alpha = 160; paint.strokeWidth = dp(1f); paint.style = Paint.Style.STROKE
+        paint.pathEffect = DashPathEffect(floatArrayOf(dp(2f), dp(3f)), 0f)
+        canvas.drawLine(x, 0f, x, view.height.toFloat(), paint)
+        paint.pathEffect = null; paint.alpha = 255; paint.style = Paint.Style.FILL
+        val y = point.optDouble("y", Double.NaN)
+        if (y.isFinite() && y in 0.0..1.0) {
+            paint.color = runCatching { craftNativeColor(point.optString("color", "#3b82f6")) }.getOrDefault(Color.BLUE)
+            canvas.drawCircle(x, (y * view.height).toFloat(), dp(5f), paint)
+            paint.color = if (dark) Color.BLACK else Color.WHITE; paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(2f)
+            canvas.drawCircle(x, (y * view.height).toFloat(), dp(5f), paint)
+        }
+        val rows = point.optJSONArray("rows") ?: JSONArray()
+        val textSize = minOf(dp(20f), 12f * view.resources.displayMetrics.scaledDensity)
+        val rowHeight = textSize * 1.25f + dp(7f)
+        val width = minOf(dp(264f), view.width - dp(16f))
+        if (width <= 0 || view.height < dp(24f)) return
+        val height = minOf(view.height - dp(16f), dp(24f) + rowHeight * (rows.length() + if (title.isBlank()) 1 else 2))
+        val left = (if (x > view.width / 2f) x - width - dp(12f) else x + dp(12f)).coerceIn(dp(8f), view.width - width - dp(8f))
+        val panel = RectF(left, dp(8f), left + width, dp(8f) + height)
+        paint.style = Paint.Style.FILL; paint.color = if (dark) Color.rgb(36, 36, 38) else Color.WHITE
+        canvas.drawRoundRect(panel, dp(12f), dp(12f), paint)
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1f); paint.color = if (dark) Color.rgb(70, 70, 74) else Color.rgb(226, 232, 240)
+        canvas.drawRoundRect(panel, dp(12f), dp(12f), paint)
+        canvas.save(); canvas.clipRect(panel.left + dp(10f), panel.top + dp(8f), panel.right - dp(10f), panel.bottom - dp(8f))
+        paint.style = Paint.Style.FILL; paint.textSize = textSize
+        fun text(value: String, left: Float, top: Float, width: Float, bold: Boolean = false, right: Boolean = false, muted: Boolean = false) {
+            paint.color = if (muted) secondary else ink
+            paint.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            val shown = TextUtils.ellipsize(value, android.text.TextPaint(paint), maxOf(0f, width), TextUtils.TruncateAt.END).toString()
+            canvas.drawText(shown, if (right) left + width - paint.measureText(shown) else left, top - paint.fontMetrics.ascent, paint)
+        }
+        var top = panel.top + dp(12f)
+        if (title.isNotBlank()) { text(title, left + dp(12f), top, width - dp(24f), bold = true); top += rowHeight }
+        text(point.optString("label"), left + dp(12f), top, width - dp(24f), muted = true); top += rowHeight
+        for (i in 0 until rows.length()) {
+            val row = rows.optJSONObject(i) ?: continue
+            var labelLeft = left + dp(12f)
+            if (row.opt("color") is String) {
+                paint.color = runCatching { craftNativeColor(row.optString("color")) }.getOrDefault(ink)
+                canvas.drawRoundRect(RectF(labelLeft, top + dp(4f), labelLeft + dp(8f), top + dp(12f)), dp(1f), dp(1f), paint); labelLeft += dp(14f)
+            }
+            text(row.optString("label"), labelLeft, top, width * 0.47f - (labelLeft - left), muted = true)
+            text(row.optString("value"), left + width * 0.48f, top, width * 0.52f - dp(12f), bold = true, right = true)
+            top += rowHeight
+        }
+        canvas.restore()
+    }
+}
+
 private class CraftNativeSvgView(context: Context) : View(context) {
+    private val inspection = CraftNativeChartInspection(this)
+    override fun onTouchEvent(event: MotionEvent): Boolean = inspection.touch(event) || super.onTouchEvent(event)
+    override fun performClick(): Boolean = super.performClick()
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) { super.onInitializeAccessibilityNodeInfo(info); inspection.accessibility(info) }
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean = inspection.action(action) || super.performAccessibilityAction(action, arguments)
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
     var drawing: JSONObject = JSONObject()
         set(value) {
             field = value
+            inspection.configure(value.optJSONObject("props")?.optJSONObject("inspection"))
             animates = hasAnimation(value.optJSONArray("children"))
             invalidate()
             requestLayout()
@@ -419,6 +578,7 @@ private class CraftNativeSvgView(context: Context) : View(context) {
     }
 
     override fun onDetachedFromWindow() {
+        inspection.detach()
         super.onDetachedFromWindow()
         updateFrames()
     }
@@ -633,6 +793,7 @@ private class CraftNativeSvgView(context: Context) : View(context) {
         canvas.concat(viewTransform)
         drawNodes(canvas, drawing.optJSONArray("children") ?: JSONArray(), SvgPaint().merge(drawing))
         canvas.restore()
+        inspection.draw(canvas)
     }
 
     private fun viewBox(): Quadruple<Float, Float, Float, Float>? {
