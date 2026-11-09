@@ -398,6 +398,15 @@ internal class CraftNativeStores private constructor(
 
     fun snapshot(name: String): String? = snapshotCache[name]
 
+    /**
+     * One secure value, read directly rather than through the preload.
+     *
+     * For code that runs before any isolate exists. The auth gate resolves the
+     * start path before the first screen is built, so it cannot wait for the
+     * preload every isolate is handed (#499).
+     */
+    fun secureValue(key: String): String? = secure?.getString(key, null)
+
     /** `craft.storage.setSync`: null removes the key. Tells every isolate. */
     fun setStorage(key: String, json: String?, from: String?) {
         synchronized(CraftNativeStorage.lock) {
@@ -506,6 +515,32 @@ internal object CraftNativePrelude {
      * `craft.session` follows it, and a change of it is `SESSION_CHANGED`.
      */
     fun sessionTokenKey(config: JSONObject): String = config.optString("sessionTokenKey").ifBlank { "auth.token" }
+
+    /**
+     * Whether `path` may be shown to someone who is not signed in.
+     *
+     * Listed, or under something listed: `/m/store` admits `/m/store/42` and
+     * not `/m/storefront`. The separator is attached before comparing so a
+     * listed path cannot admit a sibling that merely starts with its letters.
+     *
+     * A literal mirror of `CraftHybrid.gateAdmits` in
+     * `packages/ios/templates/CraftHybrid.swift`, down to the trailing-slash
+     * trimming, because the two hosts must admit exactly the same paths from
+     * the same `publicPaths` list. `native-gate.test.ts` runs both against one
+     * table of cases.
+     */
+    fun gateAdmits(path: String, allowed: List<String>): Boolean = allowed.any { entry ->
+        var listed = entry
+        while (listed.length > 1 && listed.endsWith("/")) listed = listed.dropLast(1)
+        when {
+            listed.isEmpty() -> false
+            path == listed -> true
+            // "/" is the root path, not a prefix of everything. Reading it as
+            // one would admit every path, which is a gate that is not a gate.
+            listed == "/" -> false
+            else -> path.startsWith("$listed/")
+        }
+    }
 
     fun script(
         bridgeFields: String,

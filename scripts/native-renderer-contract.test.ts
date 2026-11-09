@@ -315,6 +315,41 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if ((!screen.active && !screen.closing) || !screen.pendingCapabilities.remove(token)) return@perform')
   })
 
+  it('resolves the auth gate before either host builds its first screen', () => {
+    // #499: the app script that would gate a signed-out launch cannot. UIKit
+    // starts it from the first frame's CATransaction completion block, so it
+    // loses by construction; Android's `openScreen` returns as soon as it has
+    // an isolate and evaluates later, so it races. Both paint the previous
+    // session's kept snapshot when they lose.
+    //
+    // Order is the whole fix on both hosts, so it is asserted as order.
+    const iosConfigure = iosHybrid.slice(iosHybrid.indexOf('    func configure(_ config: CraftConfig) {'))
+    const iosBody = iosConfigure.slice(0, iosConfigure.indexOf('\n    }'))
+    expect(iosBody.indexOf('applyGate(config)')).toBeGreaterThan(0)
+    expect(iosBody.indexOf('applyGate(config)'), 'UIKit must gate before the start path is final')
+      .toBeLessThan(iosBody.indexOf('startsNative = isEnabled'))
+
+    const androidStart = android.slice(android.indexOf('    private fun startApp() {'))
+    const androidBody = androidStart.slice(0, androidStart.indexOf('\n    }'))
+    expect(androidBody.indexOf('gatedStartPath(routes.initialPath)')).toBeGreaterThan(0)
+    expect(androidBody.indexOf('gatedStartPath(routes.initialPath)'), 'Android must gate before a tab is chosen')
+      .toBeLessThan(androidBody.indexOf('selectTab('))
+
+    // The same three config keys, read the same way, or an app is gated on
+    // one host and not the other from one `nativeGate` block.
+    for (const key of ['redirect', 'token', 'publicPaths']) {
+      expect(iosHybrid, `UIKit must read nativeGate.${key}`).toContain(`gate.${key === 'publicPaths' ? 'publicPaths ?? []' : key}`)
+      expect(android, `Android must read nativeGate.${key}`).toContain(`"${key}"`)
+    }
+    // Both fall back to the item craft.session already follows.
+    expect(iosHybrid).toContain('gate.token ?? config.sessionTokenKey ?? "auth.token"')
+    expect(androidChrome).toContain('fun sessionTokenKey(config: JSONObject): String')
+    expect(android).toContain('CraftNativePrelude.sessionTokenKey(config)')
+    // Neither may trade a private screen for a blank one.
+    expect(iosHybrid).toContain('has no native screen; the gate did not run')
+    expect(android).toContain('has no native screen; the gate did not run')
+  })
+
   it('a declared member only one host implements says which', () => {
     const declared = new Map<string, string[]>()
     {

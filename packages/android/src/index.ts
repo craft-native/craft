@@ -288,6 +288,20 @@ export interface CraftAndroidConfig {
    * screen, and a change of it is `SESSION_CHANGED { key, token, previous }`.
    */
   sessionTokenKey?: string
+  /**
+   * Which screens a signed-out launch may start on.
+   *
+   * The shell resolves this while choosing the start path, before any screen
+   * is built. The `nativeApp` script cannot do the same job: `openScreen`
+   * returns as soon as it has an isolate and evaluates the script later, so
+   * the gate and the first screen race — and on a launch that follows an
+   * expired token rather than a sign-out, losing paints the previous
+   * session's kept snapshot.
+   *
+   * The same shape as the iOS field, deliberately: one `nativeGate` block
+   * must gate both hosts or an app is protected on one and not the other.
+   */
+  nativeGate?: AndroidNativeGate
   /** Wake the app script every so often (`craftBackgroundRefresh`), through WorkManager. */
   backgroundRefresh?: { enabled?: boolean, minimumIntervalMinutes?: number }
   /**
@@ -309,6 +323,21 @@ export interface CraftAndroidConfig {
     /** One session per launch, for crash-free sessions. Default on. */
     sessions?: boolean
   }
+}
+
+/**
+ * An auth gate the shell applies while choosing the start path.
+ *
+ * See `CraftAndroidConfig.nativeGate`. Mirrors the iOS `NativeGate`, field for
+ * field, because one config block has to gate both hosts.
+ */
+export interface AndroidNativeGate {
+  /** Paths a signed-out launch may start on, each admitting what sits under it. */
+  publicPaths?: string[]
+  /** Where a signed-out launch starts instead. */
+  redirect: string
+  /** The secure-storage key holding the sign-in. Defaults to `sessionTokenKey`. */
+  token?: string
 }
 
 export interface CraftTabBarConfig {
@@ -796,6 +825,24 @@ function validateNativeRouteConfig(config: CraftAndroidConfig): void {
     const start = nativeStartPath(config)
     if (!matchesNativeRoute(config.nativeScreens, start, config.nativeScreenConstraints))
       throw new Error(`The start path "${start}" (from devServerURL) is not a nativeScreens path; with renderer: "native" the app must start on a native screen.`)
+  }
+
+  const gate = config.nativeGate
+  if (gate !== undefined) {
+    // The same four rules the iOS builder enforces, so one `nativeGate` block
+    // is accepted or refused identically by both.
+    if (typeof gate.redirect !== 'string' || normalizeNativeRoutePath(gate.redirect) !== gate.redirect)
+      throw new Error(`nativeGate.redirect "${String(gate.redirect)}" must be an absolute path with no query, hash or trailing slash.`)
+    if (config.renderer === 'native' && screens.length > 0 && !matchesNativeRoute(config.nativeScreens, gate.redirect, config.nativeScreenConstraints))
+      throw new Error(`nativeGate.redirect "${gate.redirect}" is not a nativeScreens path; a signed-out launch would have nothing to show.`)
+    for (const path of gate.publicPaths ?? []) {
+      if (typeof path !== 'string' || normalizeNativeRoutePath(path) !== path)
+        throw new Error(`nativeGate.publicPaths "${String(path)}" must be an absolute path with no query, hash or trailing slash.`)
+    }
+    if (!(gate.publicPaths ?? []).some(path => gate.redirect === path || gate.redirect.startsWith(`${path}/`)))
+      throw new Error(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.publicPaths.`)
+    if (gate.token !== undefined && (typeof gate.token !== 'string' || !gate.token))
+      throw new Error('nativeGate.token must be the secure-storage key the sign-in lives under.')
   }
 
   if (config.nativeApp !== undefined) {

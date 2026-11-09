@@ -5221,9 +5221,51 @@ class MainActivity : AppCompatActivity() {
         }
         val launch = initialDeepLink?.let { routes.appPath(it.toString(), urlSchemes) }
         if (launch != null) deliveredInitialDeepLink = true
-        selectTab(routes.tabFor(launch ?: routes.initialPath)?.let { routes.tabs.indexOf(it) } ?: 0)
+        // A launch link is deliberately not gated. Suppressing one would have
+        // to decide whether it is dropped or replayed after signing in, and
+        // UIKit does not gate them either — its gate resolves the start path
+        // while links are still queued for replay. Same gap, both hosts, and
+        // better as its own change than as a silent asymmetry here.
+        val start = if (launch != null) launch else gatedStartPath(routes.initialPath)
+        selectTab(routes.tabFor(start)?.let { routes.tabs.indexOf(it) } ?: 0)
         if (launch != null && routes.tabFor(launch) == null) navigateOpen(launch, fromLink = true)
-        else if (routes.tabs.isEmpty() && screens.isEmpty()) navigateOpen(routes.initialPath)
+        else if (routes.tabs.isEmpty() && screens.isEmpty()) navigateOpen(start)
+    }
+
+    /**
+     * Send a signed-out launch to the gate's redirect before any screen is
+     * built (#499).
+     *
+     * The app script cannot do this. `openScreen` returns as soon as it has an
+     * isolate and evaluates the script later on an executor, so opening the
+     * app script before the first screen only creates its isolate first — the
+     * two then evaluate with nothing ordering them, and whether the gate runs
+     * before the first screen paints is a race. On a launch that follows an
+     * expired session rather than a sign-out, losing that race paints the
+     * previous session's kept snapshot.
+     *
+     * UIKit loses the same race by construction rather than by chance, which
+     * is where this was reported; the fix is the same on both and so is the
+     * config.
+     */
+    private fun gatedStartPath(start: String): String {
+        val gate = config.optJSONObject("nativeGate") ?: return start
+        val redirect = gate.optString("redirect").takeIf { it.isNotBlank() } ?: return start
+        val listed = gate.optJSONArray("publicPaths")
+        val allowed = (0 until (listed?.length() ?: 0)).mapNotNull { index ->
+            listed?.optString(index)?.takeIf { it.isNotBlank() }
+        }
+        if (CraftNativePrelude.gateAdmits(start, allowed)) return start
+        val key = gate.optString("token").ifBlank { CraftNativePrelude.sessionTokenKey(config) }
+        if (!stores.secureValue(key).isNullOrEmpty()) return start
+        // A redirect nothing can draw would trade a private screen for a blank
+        // one. Say so and leave the start path alone.
+        if (routes.match(redirect) == null) {
+            Log.w(TAG, "nativeGate redirect $redirect has no native screen; the gate did not run")
+            return start
+        }
+        Log.i(TAG, "no sign-in under $key: starting on $redirect instead of $start")
+        return redirect
     }
 
     private fun installChrome() {
