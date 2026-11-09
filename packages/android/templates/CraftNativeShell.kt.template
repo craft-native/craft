@@ -824,9 +824,21 @@ internal object CraftNativePrelude {
 
 /**
  * The bar above a screen (back, title, the screen's buttons) and the tab bar
- * below it, in plain Android views. A screen sets its bar with
- * `craft.navigation.setOptions` (title, largeTitle, hidden, rightButtons,
- * tabAccessory, tabBarHidden); the tabs come from the app's `tabs`.
+ * below it, in plain Android views. The tabs come from the app's `tabs`; a
+ * screen sets its own chrome with
+ *
+ * `craft.navigation.setOptions({ title, largeTitle, titleColor, hidden,
+ *   backgroundColor, leftButtons, rightButtons, tabItem, tabAccessory,
+ *   tabBarHidden, tabBarHiddenWhenPushed, tabSwipeEnabled })`
+ *
+ * which `apply` below reads. That list is checked against `apply` itself
+ * rather than kept by hand, and only the list is: the iOS comment named
+ * twelve keys while fifteen shipped (#489), and a first attempt at the same
+ * ratchet there passed with keys deleted because the prose underneath
+ * happened to mention them. Six of these twelve had never been written down.
+ *
+ * One of them is honoured here and nowhere else in Craft, with no iOS
+ * behaviour, no SDK type and no test. See #493.
  */
 internal class CraftNativeChrome(
     context: Context,
