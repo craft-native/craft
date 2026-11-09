@@ -308,9 +308,11 @@ jobs:
         if: runner.os == 'macOS'
         run: bun test ./scripts/macos-release.test.ts
 
+      # The package, not one file: engine.test.ts is darwin-gated and no job
+      # ran a bare `bun test` for packages/macos, so it executed nowhere (#494).
       - name: Verify AppKit component layout and controls
         if: runner.os == 'macOS'
-        run: bun test ./packages/macos/src/renderer.test.ts
+        run: bun test ./packages/macos/src
 
       - name: Verify WebKit inspection and distribution capabilities natively
         if: runner.os == 'macOS'
@@ -655,13 +657,18 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Test Swift launch and queued native link lifecycle
+      # The whole package, not a hand-written list of files. Thirteen
+      # darwin-gated blocks across eleven files ran nowhere before this:
+      # ios-builder runs the suite on ubuntu, where the gates skip them, and
+      # this job named three files (#494). hybrid.test.ts showed the cost —
+      # seven contract tests had never passed in either place, in either
+      # sense, for as long as the gate and an undeclared hook budget had
+      # coexisted. The whole suite is 437 tests in 40s on a macOS runner.
+      - name: Test the iOS builder including its Darwin-gated cases
         working-directory: packages/ios
-        run: bun test ./src/launch-link-state.test.ts
-
-      - name: Test public recording frame provenance
-        working-directory: packages/ios
-        run: bun test ./src/held-viewer-video.test.ts ./src/held-viewer-extractor.test.ts
+        run: bun test
+        env:
+          CRAFT_IOS_RUNTIME: ''
 
       # Build generated iOS, Live Activity, and Watch targets against device
       # SDKs; build the Watch-enabled app with its Watch app embedded and
@@ -820,6 +827,11 @@ jobs:
 
       - name: Test host-neutral native renderer contract
         run: bun test ./scripts/native-renderer-contract.test.ts
+
+      # Checks that the lists above, and the macOS legs, still reach the tests
+      # they are supposed to reach (#494).
+      - name: Test that every test runs somewhere
+        run: bun test ./scripts/test-reachability.test.ts
 
       - name: Test native Windows C++ toolchain discovery
         run: bun test ./scripts/native/windows-vulkan-driver.test.ts
