@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.489...v0.0.490)
+
+## 🚀 Features
+
+- **native**: let a navigation bar button open a native menu ([e082553](https://github.com/craft-native/craft/commit/e082553)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **native**: let a chart reading always be put away ([6a45ad9](https://github.com/craft-native/craft/commit/6a45ad9)) _(by Chris Breuer)_
+- **ios**: do not force the controller's view while it is being deallocated ([833f794](https://github.com/craft-native/craft/commit/833f794)) _(by glennmichael123)_ ([#497](https://github.com/craft-native/craft/issues/497))
+- **scripts**: bind registry bytes to the release's own, and correct how they get there ([dbb0789](https://github.com/craft-native/craft/commit/dbb0789)) _(by glennmichael123)_ ([#454](https://github.com/craft-native/craft/issues/454))
+- **ios**: start a multiline placeholder at the top of its field ([260fe7d](https://github.com/craft-native/craft/commit/260fe7d)) _(by glennmichael123)_ ([#501](https://github.com/craft-native/craft/issues/501))
+
+## 🧪 Tests
+
+- **android**: prove a rejected SDK download is actually described ([477c871](https://github.com/craft-native/craft/commit/477c871)) _(by glennmichael123)_ ([#451](https://github.com/craft-native/craft/issues/451))
+- **ios**: report the status label a failed Metal acknowledgement read ([44b4b89](https://github.com/craft-native/craft/commit/44b4b89)) _(by glennmichael123)_ ([#452](https://github.com/craft-native/craft/issues/452))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.488...v0.0.489)
 
 ## 🚀 Features
