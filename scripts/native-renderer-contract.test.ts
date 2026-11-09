@@ -75,6 +75,11 @@ const hybridNavigationReadme = readFileSync(join(root, 'packages/ios/fixtures/hy
 const androidNavigationReadme = readFileSync(join(root, 'packages/android/fixtures/native-navigation/README.md'), 'utf8')
 const iosScreenReadme = readFileSync(join(root, 'packages/ios/fixtures/native-screen/README.md'), 'utf8')
 const mobileE2EWorkflow = readFileSync(join(root, '.github/workflows/mobile-e2e.yml'), 'utf8')
+const mobileApi = readFileSync(join(root, 'packages/typescript/src/api/mobile.ts'), 'utf8')
+/** Every host template, so a capability reached through a generic dispatcher still counts. */
+const hostTemplates = (glob: string) => [...new Bun.Glob(glob).scanSync({ cwd: root })].sort().map(file => readFileSync(join(root, file), 'utf8')).join('\n')
+const iosHostTemplates = hostTemplates('packages/ios/templates/*')
+const androidHostTemplates = hostTemplates('packages/android/templates/*')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
@@ -106,6 +111,74 @@ const COMPONENTS: Array<[string, string, string]> = [
 ]
 
 describe('native renderer component contract', () => {
+  /**
+   * A member of the injected `craft` global that only one host implements must
+   * say so, in the `**iOS only.**` / `**Android only.**` form `craft.d.ts`
+   * already uses eleven times — including a whole `Siri (iOS only)` section.
+   *
+   * Silence is worse than absence here. Every one of these groups is declared
+   * optional, so `craft.chrome?.setKeyboardAccessory(false)` type-checks and
+   * then does nothing on Android, with the declaration giving no hint that it
+   * was never going to work there.
+   *
+   * The oracle is deliberately the host templates rather than the SDK: an SDK
+   * helper can be host-neutral by listening for a `window` event, and one is —
+   * hence the exemption below, which is checked against the declaration so it
+   * cannot outlive the member it excuses.
+   */
+  const hostNeutralDeclarations = new Map([
+    // `background.onSilentPush` is `onCraftEvent('craftSilentPush', …)`: a plain
+    // window listener. Android dispatches that event from
+    // `CraftNativeMessagingService` and `CraftNativeBackground`, so the SDK
+    // import works on both hosts even though only the iOS global installs the
+    // method. Declaring it iOS-only would be wrong.
+    ['background.onSilentPush', 'craftSilentPush'],
+  ])
+
+  it('a declared member only one host implements says which', () => {
+    const declared = new Map<string, string[]>()
+    {
+      let group: string | null = null, depth = 0
+      for (const line of craftTypes.split('\n')) {
+        const open = /^  ([a-zA-Z][A-Za-z]*)\??:\s*\{\s*$/.exec(line)
+        if (group === null) { if (open) { group = open[1]!; depth = 1; declared.set(group, []) } continue }
+        depth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length
+        const member = /^    ([a-zA-Z][A-Za-z]*)\??(?:\(|\s*:\s*\()/.exec(line)
+        if (member) declared.get(group)!.push(member[1]!)
+        if (depth <= 0) group = null
+      }
+    }
+    const members = [...declared].flatMap(([group, names]) => names.map(name => [group, name] as const))
+    expect(members.length).toBeGreaterThan(80)
+
+    // Each declaration's own doc comment, for the platform note.
+    const noteFor = (name: string) => {
+      const at = craftTypes.indexOf(`    ${name}(`) >= 0 ? craftTypes.indexOf(`    ${name}(`) : craftTypes.indexOf(`    ${name}?(`)
+      return at < 0 ? '' : craftTypes.slice(Math.max(0, craftTypes.lastIndexOf('/**', at)), at)
+    }
+    const undeclaredAsymmetries = members.filter(([group, name]) => {
+      const key = `${group}.${name}`
+      const onIos = iosHostTemplates.includes(name), onAndroid = androidHostTemplates.includes(name)
+      if (onIos === onAndroid) return false
+      if (hostNeutralDeclarations.has(key)) return false
+      return !/\*\*(iOS|Android) only\.\*\*/.test(noteFor(name))
+    }).map(([group, name]) => `craft.${group}.${name}`)
+    expect(undeclaredAsymmetries, 'these members exist on one host and the declaration does not say so').toEqual([])
+
+    // An exemption must still name a real host-neutral mechanism, or it is just
+    // a member nobody got round to documenting.
+    for (const [key, event] of hostNeutralDeclarations) {
+      const method = key.split('.')[1]!
+      // The dispatch and the listener, not a mention of the name: both files
+      // discuss this event in prose, and `toContain(event)` alone passed with
+      // the listener rewired to a different event.
+      expect(androidHostTemplates, `${key} is exempt but Android never dispatches ${event}`).toContain(`runOnce(applicationContext, "${event}")`)
+      expect(mobileApi, `${key} is exempt but its SDK helper does not listen for ${event}`).toContain(`onCraftEvent('${event}'`)
+      expect(iosHostTemplates.includes(method) !== androidHostTemplates.includes(method),
+        `${key} is no longer asymmetric, so its exemption is dead`).toBe(true)
+    }
+  })
+
   it('runs checkpoint interruption coverage without adding fault hooks to shipped hosts', () => {
     const runner = readFileSync(join(root, 'packages/ios/scripts/test-native-render.ts'), 'utf8')
     expect(runner).toContain("['CheckpointInterruption.swift', 'CheckpointInterruption.c']")

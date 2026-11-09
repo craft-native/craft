@@ -1060,10 +1060,18 @@ export interface CraftBridge {
     setStyle(style: 'default' | 'light' | 'dark'): Promise<boolean>;
   };
 
+  // ==================== Chrome (iOS only) ====================
   chrome?: {
-    /** What shows past the page's edges when it rubber-bands. */
+    /**
+     * What shows past the page's edges when it rubber-bands. **iOS only.**
+     * WKWebView's `underPageBackgroundColor`; the Android host has no chrome
+     * surface, so style the page's own background there instead.
+     */
     setUnderPageColor(color: string): Promise<boolean>;
-    /** WebKit's bar above the keyboard. */
+    /**
+     * WebKit's bar above the keyboard. **iOS only.** Android's keyboard has no
+     * host-owned accessory bar to show or hide.
+     */
     setKeyboardAccessory(visible: boolean): Promise<boolean>;
   };
 
