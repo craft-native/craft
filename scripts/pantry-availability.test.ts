@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { assessPantryAvailability, compareVersions, publishedPantryPlatforms } from './pantry-availability'
+import { createTempDir, removeTempDir } from '../packages/typescript/src/temp-dir'
+import { assessPantryAvailability, bindPantryBytes, compareVersions, digestBinaries, pantryPlatformAssets, publishedPantryPlatforms } from './pantry-availability'
 
 const digest = (fill: string) => fill.repeat(64).slice(0, 64)
 const entry = (fill: string, size = 1024) => ({ tarball: 'binaries/craft-native.org/x/y.tar.gz', sha256: digest(fill), size, uploadedAt: '2026-11-02T12:53:36.748Z' })
@@ -10,14 +11,16 @@ function registry(versions: Record<string, Record<string, unknown>>, latestVersi
   return { name: 'craft-native.org', latestVersion, versions: Object.fromEntries(Object.entries(versions).map(([version, platforms]) => [version, { platforms }])) }
 }
 
-test('the published platforms are read off the job that publishes them', () => {
+test('the expected platforms are read off the job that builds them', () => {
   // Derived, not pinned. A literal list here agrees with itself: adding a
   // third platform to the `pantry` matrix would leave the receipt silently
   // not checking it while this test still passed.
   //
-  // Not every GitHub release asset, either: `publish-pantry` packages Zig
-  // source and does not rebuild a platform binary, so windows-x64 and
-  // darwin-x64 have never been on this registry.
+  // The matrix is what this repository builds archives for, not what uploads
+  // them — nothing here uploads a platform binary to the registry at all.
+  // The release publishes four assets and the registry has only ever indexed
+  // three platforms, darwin-x86-64 last at 0.0.37 and windows-x86-64 never,
+  // so the asset list would report a gap no release can close.
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as {
     jobs: Record<string, { strategy?: { matrix?: { platform?: { name?: string }[] } } }>
   }
@@ -88,4 +91,97 @@ test('versions order numerically, including the registry\'s four-segment rows', 
 test('a version or platform set must be given', () => {
   expect(() => assessPantryAvailability(registry({}, '0.0.1'), '')).toThrow('needs a version')
   expect(() => assessPantryAvailability(registry({}, '0.0.1'), '0.0.1', [])).toThrow('at least one platform')
+})
+
+test('every platform the matrix builds has a release asset to bind against', () => {
+  // Derived from the same matrix the receipt expects, so a platform added to
+  // release.yml without an asset name here fails rather than binding nothing.
+  for (const platform of publishedPantryPlatforms) {
+    expect(pantryPlatformAssets[platform], `${platform} has no release asset to compare against`).toBeString()
+  }
+})
+
+test('the same binaries under the same names bind, whatever the container', () => {
+  // The real 0.0.487 darwin-arm64 reading: the registry's `.tar.gz` holds its
+  // four binaries under `bin/` while the release's `.zip` holds them flat,
+  // the two container digests have nothing to do with each other, and all
+  // four binaries are the same bytes. Binding by container would have called
+  // that a mismatch, which is why an earlier pass on #454 recorded the
+  // comparison as impossible.
+  const published = {
+    'craft': digest('a'),
+    'craft-app-store': digest('b'),
+    'craft-webview': digest('c'),
+    'craft-webview-app-store': digest('d'),
+  }
+  const binding = bindPantryBytes('darwin-arm64', published, { ...published })
+  expect(binding.bound).toBe(true)
+  expect(binding.binaries).toHaveLength(4)
+  expect(binding.binaries.every(entry => entry.matches)).toBe(true)
+  expect(binding.note).toContain('byte for byte')
+})
+
+test('a registry archive missing a binary is not bound', () => {
+  const binding = bindPantryBytes('darwin-arm64', { 'craft': digest('a'), 'craft-webview': digest('c') }, { craft: digest('a') })
+  expect(binding.bound).toBe(false)
+  expect(binding.note).toContain('absent from the registry archive: craft-webview')
+  expect(binding.binaries.find(entry => entry.name === 'craft')!.matches).toBe(true)
+})
+
+test('a binary of the same name with different bytes is not bound', () => {
+  // The case that matters most: a registry serving something that is not
+  // what this release built, under the name consumers install.
+  const binding = bindPantryBytes('linux-x86-64', { craft: digest('a') }, { craft: digest('f') })
+  expect(binding.bound).toBe(false)
+  expect(binding.note).toContain('different bytes under the same name: craft')
+  expect(binding.binaries[0]!.matches).toBe(false)
+})
+
+test('a registry archive carrying an extra binary is not bound either', () => {
+  const binding = bindPantryBytes('linux-x86-64', { craft: digest('a') }, { craft: digest('a'), 'craft-webview': digest('c') })
+  expect(binding.bound).toBe(false)
+  expect(binding.note).toContain('in the registry archive only: craft-webview')
+})
+
+test('two empty archives claim nothing rather than binding', () => {
+  const binding = bindPantryBytes('darwin-arm64', {}, {})
+  expect(binding.bound).toBe(false)
+  expect(binding.binaries).toEqual([])
+  expect(binding.note).toContain('nothing is claimed')
+})
+
+test('digests are taken per binary, flat or nested, and a collision throws', () => {
+  const dir = createTempDir('pantry-digest-')
+  try {
+    mkdirSync(join(dir, 'bin'), { recursive: true })
+    writeFileSync(join(dir, 'bin/craft'), 'one')
+    writeFileSync(join(dir, 'bin/craft-webview'), 'two')
+    const nested = digestBinaries(dir)
+    expect(Object.keys(nested).sort()).toEqual(['craft', 'craft-webview'])
+
+    const flat = createTempDir('pantry-digest-flat-')
+    try {
+      writeFileSync(join(flat, 'craft'), 'one')
+      writeFileSync(join(flat, 'craft-webview'), 'two')
+      // The whole point: the containers nest differently and bind anyway.
+      expect(digestBinaries(flat)).toEqual(nested)
+    }
+    finally { removeTempDir(flat) }
+
+    mkdirSync(join(dir, 'other'), { recursive: true })
+    writeFileSync(join(dir, 'other/craft'), 'three')
+    expect(() => digestBinaries(dir)).toThrow(/Two files named craft/)
+  }
+  finally { removeTempDir(dir) }
+})
+
+test('a pending reading says why one taken at release time means little', () => {
+  // The release workflow records this receipt in `notify-registry`, moments
+  // after publication, which is the one moment it cannot read `available`.
+  // Without saying so the warning it raises on every healthy release trains
+  // its readers to ignore it.
+  const receipt = assessPantryAvailability(registry({ '0.0.424': { 'darwin-arm64': entry('a') } }, '0.0.424'), '0.0.489')
+  expect(receipt.outcome).toBe('pending')
+  expect(receipt.note).toContain('on its own schedule')
+  expect(receipt.note).toContain('Only a later reading')
 })
