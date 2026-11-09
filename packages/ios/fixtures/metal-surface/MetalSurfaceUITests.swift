@@ -2,6 +2,24 @@ import CoreImage
 import XCTest
 
 final class MetalSurfaceUITests: XCTestCase {
+    /// What the status label actually reads, for a failure message.
+    ///
+    /// Read after the deadline has passed, so it describes the app when the
+    /// failure is reported rather than when the expectation gave up — and it
+    /// says which, because on an app that has gone idle those are the same
+    /// reading and on a busy one they are not.
+    ///
+    /// Worth the line because #452's single attempt carried no observed
+    /// label: the debug attachment holds the query chain and nothing else, so
+    /// establishing what the label said took the 136MB artifact and a
+    /// frame-by-frame read of the screen recording. It had read the wanted
+    /// string since 1.2 seconds before the wait began.
+    private func observedStatus(_ app: XCUIApplication) -> String {
+        let status = app.staticTexts["metal-status"]
+        guard status.exists else { return "no \"metal-status\" element was present when this was reported" }
+        return "the status label read \"\(status.label)\" when this was reported"
+    }
+
     private func verifiedFrame(_ frame: UInt32, in app: XCUIApplication) -> XCUIElement {
         // Match identity and acknowledgement in the same remote snapshot. In
         // #452 the existence query already returned frame 60; a second query
@@ -15,13 +33,16 @@ final class MetalSurfaceUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--craft-metal-hold-penultimate"]
         app.launch()
-        XCTAssertTrue(verifiedFrame(59, in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(verifiedFrame(59, in: app).waitForExistence(timeout: 10),
+                      "The held fixture must acknowledge frame 59 within ten seconds; \(observedStatus(app))")
         XCTAssertFalse(verifiedFrame(60, in: app).waitForExistence(timeout: 1),
-                       "An existing status element at frame 59 must not acknowledge frame 60")
+                       "An existing status element at frame 59 must not acknowledge frame 60; \(observedStatus(app))")
         // The existing resize action submits and verifies the next real frame.
         app.buttons["metal-resize"].tap()
-        XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10))
-        XCTAssertFalse(verifiedFrame(59, in: app).exists)
+        XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10),
+                      "The resize must submit frame 60 within ten seconds; \(observedStatus(app))")
+        XCTAssertFalse(verifiedFrame(59, in: app).exists,
+                       "Frame 59 must not still be acknowledged after the resize; \(observedStatus(app))")
     }
 
     func testDisplayedPixelsResizeAndBackgroundResume() throws {
@@ -30,7 +51,7 @@ final class MetalSurfaceUITests: XCTestCase {
         let status = app.staticTexts["metal-status"]
         let verified = NSPredicate { _, _ in status.label.hasPrefix("Verified frame ") }
         XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10),
-                      "The native surface must acknowledge exactly frame 60 within ten seconds")
+                      "The native surface must acknowledge exactly frame 60 within ten seconds; \(observedStatus(app))")
         XCTAssertEqual(app.webViews.count, 0)
         let canvas = app.otherElements["metal-canvas"]
         XCTAssertTrue(canvas.exists)
