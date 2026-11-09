@@ -1386,7 +1386,25 @@ internal class CraftNativeChrome(
         if (badge > 0) {
             view.text = "${view.text}${if (button.optString("badgeStyle") == "dot") " •" else " $badge"}"
         }
-        view.setOnClickListener { onButton?.invoke(id) }
+        // `menu`: the button opens a popup instead of reporting its own id, and
+        // each choice is reported as a press of that choice's id.
+        val choices = button.optJSONArray("menu")
+        val menu = (0 until minOf(choices?.length() ?: 0, 12)).mapNotNull { index ->
+            choices?.optJSONObject(index)?.takeIf { it.optString("id").isNotBlank() && it.optString("title").isNotBlank() }
+        }
+        view.setOnClickListener {
+            if (menu.isEmpty()) onButton?.invoke(id)
+            else android.widget.PopupMenu(context, view).apply {
+                menu.forEachIndexed { index, choice ->
+                    this.menu.add(0, index, index, choice.optString("title")).isEnabled = !choice.optBoolean("disabled")
+                }
+                setOnMenuItemClickListener { selected ->
+                    menu.getOrNull(selected.itemId)?.let { onButton?.invoke(it.optString("id")) }
+                    true
+                }
+                show()
+            }
+        }
         view.layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
         return view
     }

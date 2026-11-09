@@ -1011,6 +1011,16 @@ iOS, account-style buttons are independent 44-point custom bar items with
 their own circular material surface; they opt out of iOS 26's shared bar-item
 platter so adjacent buttons cannot merge into one oversized background.
 
+A symbol or title button may carry a `menu` of up to twelve choices, each with
+an `id`, a `title` and optionally a `symbol`, `disabled` or `destructive`. The
+button then opens a native menu (a `UIMenu` on iOS, a popup on Android) and a
+choice is reported as a press of that choice's id.
+
+A chart's `inspection` reading can always be put away: tapping pins the
+nearest reading and tapping it again closes it, a touch that starts anywhere
+off the chart closes it, and a drag or a hold shows readings only while the
+finger is down.
+
 A screen can update one tab without replacing the bar or its navigation stacks.
 The iOS and Android shells accept a live `title`, `iconTint`, and `iconPulse`:
 
