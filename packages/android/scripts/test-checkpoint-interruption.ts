@@ -144,7 +144,12 @@ try {
   proof.sourceInputs = await Promise.all([
     import.meta.filename, join(import.meta.dir, 'native-fixture-launch.ts'), join(root, 'packages/ios/scripts/native-fixture-command.ts'), join(import.meta.dir, 'vulkan-surface-probe.ts'),
     ...[...new Bun.Glob('**/*').scanSync({ cwd: join(root, 'packages/android/templates'), absolute: true, onlyFiles: true })],
-    ...[...new Bun.Glob('*.ts').scanSync({ cwd: join(root, 'packages/android/src'), absolute: true, onlyFiles: true })].filter(path => !path.endsWith('.test.ts')),
+    // Recursive, like the templates line above it: this is the provenance
+    // record for the checkpoint result, so a source file added under a
+    // subdirectory must not drop out of it silently. The set is unchanged
+    // today — `src` has no nested non-test TypeScript — which is exactly when
+    // it is safe to fix.
+    ...[...new Bun.Glob('**/*.ts').scanSync({ cwd: join(root, 'packages/android/src'), absolute: true, onlyFiles: true })].filter(path => !path.endsWith('.test.ts')),
     ...['package.json', 'bun.lock', 'pantry.lock', 'packages/android/package.json'].map(path => join(root, path)),
   ].map(identity))
   proof.compiler = await identity(compiler)

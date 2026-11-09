@@ -1041,7 +1041,11 @@ test('every scripts test is named somewhere that runs it', () => {
   const workflows = [...new Bun.Glob('*.yml').scanSync({ cwd: join(root, '.github/workflows') })]
     .map(file => readFileSync(join(root, '.github/workflows', file), 'utf8'))
     .join('\n')
-  const orphans = [...new Bun.Glob('*.test.ts').scanSync({ cwd: join(root, 'scripts') })]
+  // Recursive: the non-recursive glob this started with could not see
+  // `scripts/native/` or `scripts/mobile-e2e/`, so a nested test was exempt
+  // from the check whose whole purpose is to find tests nothing runs. All
+  // three nested ones happen to be named; that was luck, not coverage.
+  const orphans = [...new Bun.Glob('**/*.test.ts').scanSync({ cwd: join(root, 'scripts') })]
     .filter(name => !manifest.includes(name) && !workflows.includes(name))
     .sort()
   expect(orphans, 'these scripts tests are named in no workflow and no package.json script, so they never run').toEqual([])
