@@ -187,7 +187,7 @@ const optional_string_map_keys = [_][]const u8{ "nativeScreens", "shareStorage" 
 /// Swift route → parameter → strict `ParameterConstraint` objects.
 const optional_route_constraint_map_keys = [_][]const u8{"nativeScreenConstraints"};
 /// Swift `Codable` structs, whose fields are checked by `checkObject`.
-const optional_object_keys = [_]Nested{ .{ .key = "backgroundRefresh", .fields = &background_refresh_fields }, .{ .key = "crashReporting", .fields = &crash_reporting_fields }, .{ .key = "tabBar", .fields = &tab_bar_fields } };
+const optional_object_keys = [_]Nested{ .{ .key = "backgroundRefresh", .fields = &background_refresh_fields }, .{ .key = "crashReporting", .fields = &crash_reporting_fields }, .{ .key = "nativeGate", .fields = &native_gate_fields }, .{ .key = "tabBar", .fields = &tab_bar_fields } };
 /// Swift arrays of `Codable` structs. Every element is checked.
 const optional_array_of_object_keys = [_]Nested{ .{ .key = "tabs", .fields = &tab_fields }, .{ .key = "appShortcuts", .fields = &app_shortcut_fields }, .{ .key = "notificationCategories", .fields = &notification_category_fields } };
 
@@ -236,6 +236,15 @@ const crash_reporting_fields = [_]Field{
     .{ .name = "environment", .kind = .string, .required = false },
     .{ .name = "release", .kind = .string, .required = false },
     .{ .name = "sessions", .kind = .bool, .required = false },
+};
+
+/// `CraftConfig.NativeGate`: which screens a signed-out launch may start on,
+/// resolved by the shell before the first frame is built. Every field is
+/// optional, and a gate with no `redirect` simply does not run.
+const native_gate_fields = [_]Field{
+    .{ .name = "publicPaths", .kind = .string_array, .required = false },
+    .{ .name = "redirect", .kind = .string, .required = false },
+    .{ .name = "token", .kind = .string, .required = false },
 };
 
 /// `CraftConfig.TabBar` and its optional selected-indicator styling.

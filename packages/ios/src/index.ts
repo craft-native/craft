@@ -406,13 +406,13 @@ export interface CraftConfig {
    *
    * ```ts
    * nativeGate: {
-   *   public: ['/m/login', '/m/signup', '/m/store'],
+   *   publicPaths: ['/m/login', '/m/signup', '/m/store'],
    *   redirect: '/m/login',
    * }
    * ```
    *
-   * `public` admits a listed path and anything under it, so `/m/store` covers
-   * `/m/store/42` and not `/m/storefront`. `token` defaults to
+   * `publicPaths` admits a listed path and anything under it, so `/m/store`
+   * covers `/m/store/42` and not `/m/storefront`. `token` defaults to
    * `sessionTokenKey`, the item `craft.session` already follows.
    */
   nativeGate?: NativeGate
@@ -432,8 +432,13 @@ export interface CraftConfig {
  * need this, so emitting it into the config costs nothing at runtime.
  */
 export interface NativeGate {
-  /** Paths a signed-out launch may start on, each admitting what sits under it. */
-  public?: string[]
+  /**
+   * Paths a signed-out launch may start on, each admitting what sits under it.
+   *
+   * Not `public`: that is a Swift keyword, and remapping it would make the
+   * stored key differ from the property the host decodes it into.
+   */
+  publicPaths?: string[]
   /** Where a signed-out launch starts instead. Must itself be public. */
   redirect: string
   /** The secure-storage key holding the sign-in. Defaults to `sessionTokenKey`. */
@@ -542,14 +547,14 @@ export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nat
       problems.push(`nativeGate.redirect "${String(gate.redirect)}" must be an absolute path with no query, hash or trailing slash.`)
     else if (hasNativeRoutes(config) && !matchNativePath(config.nativeScreens, gate.redirect, config.nativeScreenConstraints))
       problems.push(`nativeGate.redirect "${gate.redirect}" is not a nativeScreens path; a signed-out launch would have nothing to show.`)
-    for (const path of gate.public ?? []) {
+    for (const path of gate.publicPaths ?? []) {
       if (typeof path !== 'string' || normalizeNativePath(path) !== path)
-        problems.push(`nativeGate.public "${String(path)}" must be an absolute path with no query, hash or trailing slash.`)
+        problems.push(`nativeGate.publicPaths "${String(path)}" must be an absolute path with no query, hash or trailing slash.`)
     }
     // A redirect that is not itself public sends a signed-out launch to a
     // screen the gate would redirect away from again.
-    if (typeof gate.redirect === 'string' && !(gate.public ?? []).some(path => gate.redirect === path || gate.redirect.startsWith(`${path}/`)))
-      problems.push(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.public.`)
+    if (typeof gate.redirect === 'string' && !(gate.publicPaths ?? []).some(path => gate.redirect === path || gate.redirect.startsWith(`${path}/`)))
+      problems.push(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.publicPaths.`)
     if (gate.token !== undefined && (typeof gate.token !== 'string' || !gate.token))
       problems.push('nativeGate.token must be the secure-storage key the sign-in lives under.')
   }

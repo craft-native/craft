@@ -2072,6 +2072,12 @@ struct CraftConfig: Codable {
         /// Paths that may be shown without a sign-in. A path is public when
         /// it is listed, or when it sits under a listed one: `/m/store`
         /// admits `/m/store/42` and not `/m/storefront`.
+        ///
+        /// Spelled `publicPaths` rather than `public` in the stored config
+        /// too. `public` is a Swift keyword, and remapping it through
+        /// `CodingKeys` would make the property name and the stored key
+        /// differ — which is exactly what the Zig conformance mirror checks,
+        /// and a divergence worth not having for the sake of one word.
         var publicPaths: [String]? = nil
         /// Where a signed-out launch starts instead.
         var redirect: String? = nil
@@ -2079,14 +2085,6 @@ struct CraftConfig: Codable {
         /// `sessionTokenKey`, which is the same item `craft.session` follows,
         /// so an app that already declares one need not repeat it.
         var token: String? = nil
-
-        // `public` is a Swift keyword, and the config spells the field the
-        // way an allowlist reads.
-        enum CodingKeys: String, CodingKey {
-            case publicPaths = "public"
-            case redirect
-            case token
-        }
     }
 
     struct Tab: Codable {

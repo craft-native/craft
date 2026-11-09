@@ -87,17 +87,17 @@ test('a gate whose redirect nothing draws is refused at generation', () => {
   const screens = { '/m': 'Today', '/m/login': 'Login' }
   const base = { renderer: 'native' as const, nativeScreens: screens, devServerURL: 'https://example.com/m', tabs: [] }
 
-  expect(hybridConfigProblems({ ...base, nativeGate: { public: ['/m/login'], redirect: '/m/login' } })).toEqual([])
+  expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['/m/login'], redirect: '/m/login' } })).toEqual([])
   // Trading a private screen for a blank one is not a fix.
-  expect(hybridConfigProblems({ ...base, nativeGate: { public: ['/m/login'], redirect: '/m/nowhere' } })[0])
+  expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['/m/login'], redirect: '/m/nowhere' } })[0])
     .toContain('is not a nativeScreens path')
   // A redirect the gate would itself redirect away from is a loop.
-  expect(hybridConfigProblems({ ...base, nativeGate: { public: ['/m/store'], redirect: '/m/login' } })[0])
-    .toContain('must also be listed in nativeGate.public')
-  expect(hybridConfigProblems({ ...base, nativeGate: { public: ['/m/login'], redirect: 'm/login' } })[0])
+  expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['/m/store'], redirect: '/m/login' } })[0])
+    .toContain('must also be listed in nativeGate.publicPaths')
+  expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['/m/login'], redirect: 'm/login' } })[0])
     .toContain('must be an absolute path')
-  expect(hybridConfigProblems({ ...base, nativeGate: { public: ['m/login'], redirect: '/m/login' } }).join('\n'))
-    .toContain('nativeGate.public')
+  expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['m/login'], redirect: '/m/login' } }).join('\n'))
+    .toContain('nativeGate.publicPaths')
 })
 
 test('the gate is resolved before anything is built, and the app script still is not', () => {
