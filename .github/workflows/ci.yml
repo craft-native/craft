@@ -878,6 +878,9 @@ jobs:
       - name: Test release SBOM verification
         run: bun test ./scripts/verify-sbom.test.ts ./scripts/release-workflow.test.ts ./scripts/managed-java-home.test.ts ./scripts/pantry-availability.test.ts
 
+      - name: Test bounded-deadline test budgets
+        run: bun test ./scripts/test-deadline-budgets.test.ts
+
   integration:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
