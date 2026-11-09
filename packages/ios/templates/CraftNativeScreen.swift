@@ -6002,9 +6002,23 @@ final class CraftNativeSolidSwitch: UIControl {
         return CGRect(x: min(max(x, track.minX), track.maxX - rect.width - stretch),
                       y: rect.minY, width: rect.width + stretch, height: rect.height)
     }
+    /// How much wider than tall the thumb is drawn.
+    ///
+    /// iOS 26 draws a wide pill where every system before it drew a circle,
+    /// so a square thumb reads as a control from an older OS sitting among
+    /// native ones. Measured on iOS 26.5 (iPhone 17 Pro simulator) by walking
+    /// a real `UISwitch`: the control is 63x28 and its thumb 37x24, inset 2 on
+    /// every side, travelling from x=2 to x=24.
+    ///
+    /// Expressed against the thumb's own height rather than as a fixed size,
+    /// so it keeps following whatever the real `UISwitch` reports — which is
+    /// where `naturalSize` already comes from. At the system's own 24-point
+    /// thumb height this is exactly 37.
+    private static let thumbAspect: CGFloat = 37.0 / 24.0
     private func thumbRect(at position: CGFloat) -> CGRect {
         let track = trackRect.insetBy(dx: 2, dy: 2)
-        return CGRect(x: track.minX + (track.width - track.height) * position, y: track.minY, width: track.height, height: track.height)
+        let width = min(track.width, track.height * Self.thumbAspect)
+        return CGRect(x: track.minX + (track.width - width) * position, y: track.minY, width: width, height: track.height)
     }
     override func draw(_ rect: CGRect) {
         let track = trackRect
