@@ -3659,7 +3659,13 @@ describe('native renderer component contract', () => {
     expect(documented).toContain('tabAccessory')
     expect(documented).toContain('rightButtons')
     expect(documented).toContain('navigationBarSolid')
-    expect(androidShell).toContain('rightButtons,\n * tabAccessory, tabBarHidden')
+    // The Android list is read the same way, and for the same reason: pinning
+    // its exact wording is what broke when it grew to name every key `apply`
+    // reads. `packages/android/src/navigation-options-doc.test.ts` owns the
+    // completeness rule; this only requires `tabAccessory` to be in it.
+    const documentedOnAndroid = androidShell.slice(androidShell.indexOf('`craft.navigation.setOptions({'), androidShell.indexOf('})`', androidShell.indexOf('`craft.navigation.setOptions({')))
+    expect(documentedOnAndroid).toContain('tabAccessory')
+    expect(documentedOnAndroid).toContain('tabBarHidden')
   })
 
   it('keeps Dynamic Type scaling aligned with Android SP text sizing', () => {
