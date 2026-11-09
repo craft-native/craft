@@ -154,6 +154,36 @@ describe('native renderer component contract', () => {
    * `onLayout` bounds the same screen reports, which `emitLayoutEvent` has
    * always divided by density. Infinite-scroll code compares exactly those two.
    */
+  /**
+   * A checkpoint key valid on one host must be valid on the other.
+   *
+   * `CraftSnapshots.isValidName` accepts ASCII alphanumerics and `-_.:` up to
+   * 128 characters, rejecting only a leading dot, and its comment calls the
+   * `:` the account namespace. Android's regex left the colon out, so a key
+   * like `account:slot` wrote on iOS and returned `false` on Android — a
+   * failure path that disagreed with the other host rather than with the
+   * platform.
+   */
+  it('accepts the same snapshot names on both hosts', () => {
+    expect(iosActions).toContain('name.count <= 128 && !name.hasPrefix(".")')
+    expect(iosActions).toContain('CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)')
+    expect(androidShell).toContain('Regex("[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,127}")')
+
+    // Derived rather than eyeballed: the two rules are re-implemented here and
+    // compared over the cases that distinguish them.
+    const iosValid = (name: string) => name.length > 0 && name.length <= 128 && !name.startsWith('.')
+      && [...name].every(character => /[A-Za-z0-9]/.test(character) || '-_.:'.includes(character))
+    const pattern = /Regex\("(\[[^"]+)"\)/.exec(androidShell.slice(androidShell.indexOf('private fun isSnapshotName')))?.[1]
+    expect(pattern).toBeTruthy()
+    const androidValid = (name: string) => new RegExp(`^${pattern}$`).test(name)
+    for (const name of ['a', 'account:slot', ':lead', '-lead', '_lead', '.lead', '1', 'a.b', 'a-b_c.d:e', 'a'.repeat(128), 'a'.repeat(129), '', 'has space', 'has/slash', 'h\u00e9llo']) {
+      expect(androidValid(name), `hosts disagree on ${JSON.stringify(name.slice(0, 32))}`).toBe(iosValid(name))
+    }
+
+    // The colon must never reach the filesystem on either host.
+    expect(androidShell).toContain('URLEncoder.encode(name, "UTF-8") + ".json"')
+  })
+
   it('reports scroll geometry in density-independent units on both hosts', () => {
     expect(ios).toContain('"contentOffset": ["x": scrollView.contentOffset.x, "y": scrollView.contentOffset.y]')
     expect(ios).toContain('"layoutMeasurement": ["width": scrollView.bounds.width, "height": scrollView.bounds.height]')

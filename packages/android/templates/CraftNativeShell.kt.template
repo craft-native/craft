@@ -465,7 +465,19 @@ internal class CraftNativeStores private constructor(
         CraftNativeHub.broadcast("SYNC_UPDATE", payload, except = from)
     }
 
-    private fun isSnapshotName(name: String): Boolean = name.matches(Regex("[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}"))
+    /**
+     * The same names UIKit accepts, so one checkpoint key is not valid on one
+     * host and refused on the other.
+     *
+     * `CraftSnapshots.isValidName` allows ASCII alphanumerics and `-_.:`, up
+     * to 128 characters, and rejects only a leading dot. The `:` is deliberate
+     * there — its own comment calls it the account namespace — so a key like
+     * `account:slot` wrote on iOS and came back `false` on Android.
+     *
+     * A colon never reaches the filesystem: `snapshotFile` percent-encodes the
+     * name, and `snapshotName` decodes it back.
+     */
+    private fun isSnapshotName(name: String): Boolean = name.matches(Regex("[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,127}"))
 
     private fun snapshotFile(name: String): File = File(snapshotsDir, URLEncoder.encode(name, "UTF-8") + ".json")
 
