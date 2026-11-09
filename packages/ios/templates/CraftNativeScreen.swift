@@ -7037,6 +7037,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // A screen does not take the keyboard with it. Its field is still
+        // first responder at this point, and once the view leaves the window
+        // the next screen's `window?.endEditing` no longer reaches it — the
+        // keyboard then stays up with nothing able to dismiss it until the
+        // app is backgrounded (#497). This is the one moment both facts hold:
+        // the screen is going, and its view still owns the responder.
+        //
+        // `lastFocusedInput` is deliberately left alone. A screen merely
+        // covered by a push comes back, and restoreFocus putting the person
+        // back where they were is the behaviour that was already there.
+        view.endEditing(true)
         screenVisibilityChanged(false)
         stopCelebrations(in: view)
         // Release only this screen's accessory. A retained or prepared screen
@@ -7183,6 +7194,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func disposeRuntime() {
         guard !runtimeDisposed else { return }
         runtimeDisposed = true
+        // Again here, and forgetting the input this time: a screen can be torn
+        // down without ever appearing (one prepared and then replaced), so
+        // viewWillDisappear is not guaranteed to have run. Nothing comes back
+        // from here, so there is no focus worth restoring.
+        forgetFocusedInput()
+        view.endEditing(true)
         frameDelivery.close()
         storageLifetime.close()
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
