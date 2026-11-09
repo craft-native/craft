@@ -48,9 +48,75 @@ test('sparse viewer frame before 750ms remains valid when its whole interval is 
     .toEqual({ frameWallEarliest: 102.25, frameWallLatest: 102.75, frameOffsetFromFirstPTS: 2.25 })
 })
 
-test.skipIf(process.platform !== 'darwin')('public AVFoundation extractor verifies actual media frames and rejects static footage', () => {
+
+/**
+ * How long a fixture generator may say nothing before it is treated as hung.
+ *
+ * The generator writes a progress line roughly every second, so silence is
+ * real evidence and wall-clock time is not. Ten missed heartbeats is a hang;
+ * a slow one is still a working one.
+ */
+const generatorSilenceMs = 10_000
+/** A silent compile has no heartbeat to read, so it keeps a wall-clock cap. */
+const compileTimeoutMs = 120_000
+
+interface RunResult { exitCode: number | null, signalCode: string | null, stdout: string, stderr: string, silentMs: number, elapsedMs: number }
+
+/**
+ * Run a command until it exits or stops producing output.
+ *
+ * The wall-clock budget this replaces was sized on an idle machine and
+ * asserted on a shared one. Under ten busy cores the `dense-late` generator
+ * reached 7034 of its 15013 samples when a 20 s cap killed it, with
+ * `appended` climbing monotonically to the last heartbeat before the signal —
+ * starved, not stalled, which is the distinction #447 instrumented and #490
+ * asked these assertions to make.
+ *
+ * Raising that number would have hidden the thing a real defect looks like.
+ * Reading the heartbeat does not: a generator that stops emitting is killed
+ * in ten seconds however fast the host is, and one that is merely slow is
+ * allowed to finish and still has every one of its outputs checked.
+ */
+async function runUntilSilent(args: string[], silenceMs: number): Promise<RunResult> {
+  const started = performance.now()
+  const child = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' })
+  let lastOutput = performance.now()
+  const chunks: Record<'stdout' | 'stderr', string[]> = { stdout: [], stderr: [] }
+  const drain = async (stream: ReadableStream<Uint8Array>, into: 'stdout' | 'stderr'): Promise<void> => {
+    const decoder = new TextDecoder()
+    for await (const chunk of stream) {
+      lastOutput = performance.now()
+      chunks[into].push(decoder.decode(chunk, { stream: true }))
+    }
+  }
+  const reading = Promise.all([drain(child.stdout, 'stdout'), drain(child.stderr, 'stderr')])
+  let signalCode: string | null = null
+  const watchdog = setInterval(() => {
+    if (performance.now() - lastOutput < silenceMs) return
+    signalCode = 'SIGTERM'
+    child.kill()
+  }, 250)
+  try {
+    const exitCode = await child.exited
+    await reading
+    return {
+      exitCode: signalCode === null ? exitCode : null,
+      signalCode,
+      stdout: chunks.stdout.join(''),
+      stderr: chunks.stderr.join(''),
+      silentMs: Math.round(performance.now() - lastOutput),
+      elapsedMs: Math.round(performance.now() - started),
+    }
+  }
+  finally { clearInterval(watchdog) }
+}
+
+test.skipIf(process.platform !== 'darwin')('public AVFoundation extractor verifies actual media frames and rejects static footage', async () => {
   const dir = createTempDir('craft-held-video-test-')
-  const run = (args: string[]) => Bun.spawnSync(args, { stdout: 'pipe', stderr: 'pipe', timeout: 20_000 })
+  // Compiles emit nothing until they are done, so they keep a wall clock —
+  // generous, because the only thing it guards against is a hang, and the
+  // test's own cap bounds the whole run regardless.
+  const run = (args: string[]) => Bun.spawnSync(args, { stdout: 'pipe', stderr: 'pipe', timeout: compileTimeoutMs })
   try {
     const generator = join(dir, 'media.swift'), movieTool = join(dir, 'media'), extractor = join(dir, 'extract')
     // Synthetic media only: these pixels test source-frame identity, not a
@@ -154,15 +220,19 @@ guard writer.status == .completed else { fatalError("Synthetic movie incomplete"
     }
     for (const mode of ['sparse', 'moving', 'late', 'dense-late', 'static']) {
       const movie = join(dir, `${mode}.mov`), png = join(dir, `${mode}.png`), receipt = join(dir, `${mode}.json`)
-      const generatedAt = performance.now()
-      const media = run([movieTool, movie, mode])
-      console.log(`Generated ${mode} native H.264 fixture in ${(performance.now() - generatedAt).toFixed(0)}ms`)
-      expect(media.exitCode, `${mode} generation (${media.signalCode || 'normal exit'}): ${media.stderr.toString()}`).toBe(0)
-      const progress = media.stderr.toString().trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+      const media = await runUntilSilent([movieTool, movie, mode], generatorSilenceMs)
+      console.log(`Generated ${mode} native H.264 fixture in ${media.elapsedMs}ms`)
+      const progress = media.stderr.trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+      // A killed generator reports the silence that condemned it, so the
+      // failure says which kind it was instead of leaving it to inference.
+      expect(media.exitCode, `${mode} generation ${media.signalCode ? `killed after ${media.silentMs} ms of silence` : 'exited'} at ${media.elapsedMs} ms, last heartbeat ${JSON.stringify(progress.at(-1))}`).toBe(0)
       expect(progress.at(-1)).toMatchObject({ event: 'completed', mode, status: 2, appended: mode === 'dense-late' ? 15013 : mode === 'static' ? 1 : mode === 'sparse' || mode === 'late' ? 3 : 7 })
       expect(progress.at(-1).callbacks).toBeGreaterThan(0)
       const dense = mode === 'dense-late', late = mode === 'late' || dense
       const result = run([extractor, movie, png, receipt, '100', '100.25', dense ? '1201.125' : late ? '1201' : '101', dense ? '1207.125' : late ? '1207' : '107'])
+      // `spawnSync` leaves this undefined on a normal exit and sets it on a
+      // kill, so falsy is the honest check for "was not killed".
+      expect(result.signalCode, `${mode} extraction was killed rather than finishing`).toBeFalsy()
       const evidence = JSON.parse(readFileSync(receipt, 'utf8'))
       // Trimming a sparse source to a hold range can invent a boundary PTS
       // for the old picture. Retain original stored times even when the
@@ -187,7 +257,11 @@ guard writer.status == .completed else { fatalError("Synthetic movie incomplete"
     }
   }
   finally { removeTempDir(dir) }
-}, 45_000)
+  // Above every inner guard, so a slow host is reported by the assertion that
+  // measured it rather than by the harness cutting the test off — a Bun test
+  // that hits its own cap does not run this `finally`, which would leak the
+  // fixture directory as well as losing the diagnosis (#490).
+}, 240_000)
 
 // Craft 468's navigation-ui-core failure (#486). Every candidate frame's wall
 // interval is exactly as wide as the first-frame bracket, so once that bracket
