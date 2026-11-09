@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, readBudgets, readTestBlocks, requiredHeadroomMs } from './test-deadline-budgets'
+import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, findUndeclaredSpawnBudgets, readBudgets, readHookBlocks, readTestBlocks, requiredHeadroomMs, spawningTestTimeoutMs, spawnsRealProcess } from './test-deadline-budgets'
 
 const root = resolve(import.meta.dir, '..')
 
@@ -88,4 +88,54 @@ test('no test in this repository asserts a command budget it cannot reach', asyn
   expect(files.length).toBeGreaterThan(50)
   const conflicts = (await Promise.all(files.map(async file => findDeadlineBudgetConflicts(file, await Bun.file(resolve(root, file)).text())))).flat()
   expect(conflicts.map(describeConflict)).toEqual([])
+})
+
+/**
+ * The second rule: a test that drives a real subprocess has a budget nobody
+ * wrote down, so it inherits 5000 ms.
+ *
+ * `macOS signing reads credentials from the declared Stacks CLI…` spawns
+ * fourteen processes and costs 2.2 s on an idle machine. Under this suite's
+ * own load it took 111 s, and what it reported was not a slow test:
+ * `expected 0, received null`, because Bun had killed the child on the cap and
+ * a signalled process has no exit code. Its own file already had one spawning
+ * test at 30000; this one had missed it.
+ */
+test('a test that spawns a real process is read as one, embedded scripts aside', () => {
+  const body = (call: string) => `test('x', () => { ${call} })`
+  for (const call of ['Bun.spawnSync([bin])', 'Bun.spawn([bin])', 'spawnSync(bin)', 'execFileSync(bin)', 'execSync(bin)']) {
+    expect(spawnsRealProcess(body(call)), call).toBe(true)
+  }
+  // A fixture that writes a script mentioning a spawn does not itself spawn.
+  expect(spawnsRealProcess('const fixture = `#!/usr/bin/env bun\nBun.spawnSync([x])`')).toBe(false)
+  expect(spawnsRealProcess('// Bun.spawnSync([x]) used to be here')).toBe(false)
+  expect(spawnsRealProcess('test(\'x\', () => { expect(1).toBe(1) })')).toBe(false)
+})
+
+test('a spawning test without its own timeout is reported', () => {
+  const spawning = 'test(\'spawns\', () => { Bun.spawnSync([process.execPath, \'-e\', \'1\']) })\n'
+  expect(findUndeclaredSpawnBudgets('a.test.ts', spawning)).toEqual([{ file: 'a.test.ts', test: 'spawns' }])
+  expect(findUndeclaredSpawnBudgets('a.test.ts', `${spawning.trimEnd().slice(0, -1)}, ${spawningTestTimeoutMs})\n`)).toEqual([])
+})
+
+test('a lifecycle hook is read and budgeted like a test', () => {
+  // A hook that overruns fails its whole block as one unnamed test saying only
+  // `a beforeEach/afterEach hook timed out`. `hybrid.test.ts` compiled a Swift
+  // probe in a `beforeAll` under the inherited default; declaring its budget
+  // took that file from 35 pass / 1 fail to 42 pass / 0 fail.
+  const hook = (trailing: string) => `beforeAll(() => {\n  Bun.spawnSync(['swiftc', '-o', binary, mainPath])\n}${trailing})\n`
+  expect(readHookBlocks(hook('')).map(block => block.timeoutMs)).toEqual([null])
+  expect(readHookBlocks(hook(', 180_000')).map(block => block.timeoutMs)).toEqual([180000])
+  expect(findUndeclaredSpawnBudgets('a.test.ts', hook('')).map(entry => entry.test)).toHaveLength(1)
+  expect(findUndeclaredSpawnBudgets('a.test.ts', hook(', 180_000'))).toEqual([])
+  // A hook that spawns nothing is not this rule's business.
+  expect(findUndeclaredSpawnBudgets('a.test.ts', 'afterEach(() => { reset() })\n')).toEqual([])
+})
+
+test('every test in this repository that spawns a process declares a budget', async () => {
+  const files = [...new Bun.Glob('{scripts,packages,src,benchmarks}/**/*.test.ts').scanSync({ cwd: root })]
+    .filter(file => !file.includes('node_modules') && !file.includes('/dist/'))
+    .sort()
+  const undeclared = (await Promise.all(files.map(async file => findUndeclaredSpawnBudgets(file, await Bun.file(resolve(root, file)).text())))).flat()
+  expect(undeclared.map(entry => `${entry.file} › ${entry.test}`), 'these tests drive a real subprocess under Bun\'s inherited 5000 ms default').toEqual([])
 })

@@ -56,10 +56,35 @@ interface TestBlock { name: string, body: string, timeoutMs: number | null, star
  * early.
  */
 export function readTestBlocks(source: string): TestBlock[] {
+  return readBlocks(source, /\b(?:test|it)(?:\.\w+)*\s*\(/g)
+}
+
+/**
+ * The same for lifecycle hooks, which take a budget the same way and inherit
+ * the same default when they do not.
+ *
+ * A hook that exceeds it fails its whole block as one unnamed test reporting
+ * `a beforeEach/afterEach hook timed out`, naming neither the hook nor what it
+ * was doing. `packages/ios/src/hybrid.test.ts` compiled a Swift probe in a
+ * `beforeAll` for exactly the right reason — so a host without `swiftc` never
+ * pays for it — and `swiftc` takes far longer than 5000 ms, so the block
+ * failed on every macOS machine while CI ran that package on ubuntu and
+ * skipped it. Declaring the hook's budget recovered seven tests that had never
+ * passed anywhere.
+ */
+export function readHookBlocks(source: string): TestBlock[] {
+  return readBlocks(source, /\b(?:beforeAll|beforeEach|afterAll|afterEach)\s*\(/g)
+}
+
+function readBlocks(source: string, opening: RegExp): TestBlock[] {
   const blocks: TestBlock[] = []
-  const opening = /\b(?:test|it)(?:\.\w+)*\s*\(/g
+  // Openings are located in blanked source so a `beforeAll(` or `test(` quoted
+  // inside a fixture — including this rule's own test fixtures — is not read as
+  // a real one. Offsets are preserved, so the body and name still come from
+  // the original text.
+  const code = blankLiterals(source)
   let match: RegExpExecArray | null
-  while ((match = opening.exec(source)) !== null) {
+  while ((match = opening.exec(code)) !== null) {
     const open = match.index + match[0].length - 1
     if (blocks.some(block => open > block.start && open < block.end)) continue
     const end = matchingParen(source, open)
@@ -169,6 +194,51 @@ export function blankLiterals(source: string): string {
 /** Every inner command budget a test body declares. */
 export function readBudgets(body: string): number[] {
   return [...blankLiterals(body).matchAll(/\btimeoutMs:\s*([0-9][0-9_]*)\b/g)].map(found => Number(found[1]!.replace(/_/g, '')))
+}
+
+/**
+ * The budget a test that drives real subprocesses declares.
+ *
+ * Not invented: 38 of this suite's spawning tests now carry one, and 30000 is
+ * the figure most of them already used before this rule was written down.
+ */
+export const spawningTestTimeoutMs = 30_000
+
+/** Ways a test body starts a real process. */
+const spawnCalls = /\b(?:Bun\.spawnSync|Bun\.spawn|spawnSync|execFileSync|execSync)\b/
+
+/**
+ * Whether a test body starts a real process.
+ *
+ * Read off blanked source, so a spawn named inside a fixture's embedded script
+ * is not mistaken for one the test performs.
+ */
+export function spawnsRealProcess(body: string): boolean {
+  return spawnCalls.test(blankLiterals(body))
+}
+
+/**
+ * Tests that drive a real subprocess under Bun's inherited default.
+ *
+ * The companion rule to the one above, for a budget that is never written
+ * down. A spawning test cannot predict its own duration on a shared host: the
+ * same `macOS signing reads credentials…` check that costs 2.2 s idle took
+ * 111 s under this suite's own load, and the symptom was not a slow test but
+ * `expected 0, received null` — Bun had killed the child on the 5000 ms cap,
+ * so `exitCode` was null because the process died by signal.
+ *
+ * Nothing here asserts a duration, so declaring a budget changes no
+ * expectation; it only decides whether a loaded host reports what happened or
+ * reports a bare timeout and a null exit status.
+ */
+export function findUndeclaredSpawnBudgets(file: string, source: string): { file: string, test: string }[] {
+  // A hook has no name, so say which kind it is and where, rather than
+  // whatever text happens to precede it.
+  const named = (block: TestBlock) => block.name
+    || `${/(beforeAll|beforeEach|afterAll|afterEach)\s*\($/.exec(source.slice(0, block.start + 1))?.[1] ?? 'hook'}() at line ${source.slice(0, block.start).split('\n').length}`
+  return [...readTestBlocks(source), ...readHookBlocks(source)]
+    .filter(block => block.timeoutMs === null && spawnsRealProcess(block.body))
+    .map(block => ({ file, test: named(block) }))
 }
 
 /** Tests whose own deadline leaves no room for the deadline they assert about. */
