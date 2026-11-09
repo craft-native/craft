@@ -8993,14 +8993,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 ])
             }
         case "NAVIGATE", "NAVIGATE_REPLACE":
-            // A screen's own stack; the app script has none (it opens paths).
-            guard !isAppScript, navigationController?.topViewController === self,
-                  let screen = payload["screen"] as? String, !screen.isEmpty,
-                  let navigation = navigationController else { return }
+            guard let screen = payload["screen"] as? String, !screen.isEmpty else { return }
+            // Replacing a path needs no stack of its own: it asks the shell to
+            // show that path, which is why it delegates rather than pushing.
+            // The app script has no stack, so this was refused to it along
+            // with everything else, and its only way to redirect was to push
+            // sign-in on top of the screen it meant to prevent (#499). The
+            // gate in CraftHybrid.configure is the fix for launch; this is
+            // what lets a session that ends mid-run replace rather than stack.
             if type == "NAVIGATE_REPLACE", screen.hasPrefix("/") {
+                guard isAppScript || navigationController?.topViewController === self else { return }
                 hybridEvents?.nativeScreen(self, replace: screen)
                 return
             }
+            // A screen's own stack; the app script has none (it opens paths).
+            guard !isAppScript, navigationController?.topViewController === self,
+                  let navigation = navigationController else { return }
             let params = payload["params"] as? [String: Any] ?? [:]
             let next = CraftNativeScreenController(config: config, routeName: screen, routeParams: params)
             next.hybridEvents = hybridEvents

@@ -425,6 +425,7 @@ final class CraftHybrid: NSObject {
                 : "[craft hybrid] nativeScreens are set but dist/native-screen.js is missing; the app has no screens to show")
         }
         isEnabled = wanted && Self.hasBundle
+        applyGate(config)
         if isEnabled, !hasWeb, routes.match(startPath) == nil {
             // No web view to show it in: the first tab a screen draws.
             let fallback = (config.tabs ?? []).map(\.id).first { routes.match($0) != nil }
@@ -456,6 +457,54 @@ final class CraftHybrid: NSObject {
         // (`applicationState` cannot tell those apart here: a scene-based app
         // is `.background` during launch however it was opened.)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.startAppScript() }
+    }
+
+    /// Whether `path` may be shown to someone who is not signed in.
+    ///
+    /// Listed, or under something listed: `/m/store` admits `/m/store/42` and
+    /// not `/m/storefront`. Prefixes are compared with the separator attached
+    /// so a listed path cannot admit a sibling that merely starts with its
+    /// letters.
+    static func gateAdmits(_ path: String, public allowed: [String]) -> Bool {
+        allowed.contains { entry in
+            var listed = entry
+            while listed.count > 1, listed.hasSuffix("/") { listed.removeLast() }
+            guard !listed.isEmpty else { return false }
+            if path == listed { return true }
+            // "/" is the root path, not a prefix of everything. Reading it as
+            // one would admit every path, which is a gate that is not a gate.
+            guard listed != "/" else { return false }
+            return path.hasPrefix(listed + "/")
+        }
+    }
+
+    /// Send a signed-out launch to the gate's redirect before anything is built.
+    ///
+    /// This runs while `startPath` is still being resolved, which is the
+    /// whole point: the app script that would otherwise do it does not start
+    /// until the first frame has been committed, so it can only push sign-in
+    /// on top of a screen that has already been drawn with the previous
+    /// session's data in it (#499).
+    ///
+    /// The Keychain read is synchronous and can cost 100-900ms cold. It is
+    /// not an extra read: every signed-in screen reads this same item when it
+    /// opens, and `CraftKeychain` caches it, so the gate moves the app's first
+    /// read earlier rather than adding one. Only apps that declare a gate pay
+    /// it at all.
+    private func applyGate(_ config: CraftConfig) {
+        guard let gate = config.nativeGate, let redirect = gate.redirect, !redirect.isEmpty else { return }
+        guard !Self.gateAdmits(startPath, public: gate.publicPaths ?? []) else { return }
+        let key = gate.token ?? config.sessionTokenKey ?? "auth.token"
+        guard (CraftNativeActions.webSecureValue(forKey: key) ?? "").isEmpty else { return }
+        // A redirect nothing can draw would trade a private screen for a
+        // blank one. Say so and leave the start path alone; the fallback
+        // below then treats it as any other unroutable start.
+        if isEnabled, !hasWeb, routes.match(redirect) == nil {
+            NSLog("[craft hybrid] nativeGate redirect %@ has no native screen; the gate did not run", redirect)
+            return
+        }
+        NSLog("[craft hybrid] no sign-in under %@: starting on %@ instead of %@", key, redirect, startPath)
+        startPath = redirect
     }
 
     /// A silent push or a background refresh is waiting for the app script,

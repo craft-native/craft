@@ -395,12 +395,49 @@ export interface CraftConfig {
    */
   sessionTokenKey?: string
   /**
+   * Which screens a signed-out launch may start on.
+   *
+   * The shell resolves this while it is deciding the start path, before any
+   * screen is built. An app script cannot do the same job: it is started from
+   * the first frame's completion block, so by the time it can read a token the
+   * signed-in screen it would have prevented has already been painted — with
+   * the previous session's kept snapshot in it when the launch follows an
+   * expired token rather than a sign-out.
+   *
+   * ```ts
+   * nativeGate: {
+   *   public: ['/m/login', '/m/signup', '/m/store'],
+   *   redirect: '/m/login',
+   * }
+   * ```
+   *
+   * `public` admits a listed path and anything under it, so `/m/store` covers
+   * `/m/store/42` and not `/m/storefront`. `token` defaults to
+   * `sessionTokenKey`, the item `craft.session` already follows.
+   */
+  nativeGate?: NativeGate
+  /**
    * Crash and error reporting to bughq (CraftCrashReporter.swift): crashes
    * and hangs (signal handlers, NSException, MetricKit), uncaught JavaScript
    * errors in native screens and the app script, and what the page sends
    * through `craft.crashReporter`. Queued on disk and sent when online.
    */
   crashReporting?: CraftCrashReporting
+}
+
+/**
+ * An auth gate the shell applies while resolving the start path.
+ *
+ * See `CraftConfig.nativeGate`. The allowlist is static data in the apps that
+ * need this, so emitting it into the config costs nothing at runtime.
+ */
+export interface NativeGate {
+  /** Paths a signed-out launch may start on, each admitting what sits under it. */
+  public?: string[]
+  /** Where a signed-out launch starts instead. Must itself be public. */
+  redirect: string
+  /** The secure-storage key holding the sign-in. Defaults to `sessionTokenKey`. */
+  token?: string
 }
 
 export interface CraftCrashReporting {
@@ -461,7 +498,7 @@ export function nativeStartPath(config: Pick<CraftConfig, 'devServerURL'>): stri
 }
 
 /** What is wrong with a config's hybrid and tab settings, one sentence each. */
-export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread' | 'notificationCategories'>): string[] {
+export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nativeScreens' | 'nativeScreenConstraints' | 'tabs' | 'shareStorage' | 'devServerURL' | 'nativeApp' | 'nativeScriptThread' | 'notificationCategories' | 'nativeGate'>): string[] {
   const problems: string[] = nativeNotificationProblems(config.notificationCategories, config.nativeApp, config.renderer)
   const screens = Object.entries(config.nativeScreens ?? {})
   problems.push(...nativeRouteConstraintProblems(config.nativeScreens, config.nativeScreenConstraints))
@@ -495,6 +532,26 @@ export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nat
     const start = nativeStartPath(config)
     if (!matchNativePath(config.nativeScreens, start, config.nativeScreenConstraints))
       problems.push(`The start path "${start}" (from devServerURL) is not a nativeScreens path; with renderer: "native" the app must start on a native screen.`)
+  }
+  const gate = config.nativeGate
+  if (gate !== undefined) {
+    // A gate whose redirect nothing draws would trade a private screen for a
+    // blank one, and the shell would rather refuse than do that — so this is
+    // caught at generation, where there is someone to tell.
+    if (typeof gate.redirect !== 'string' || normalizeNativePath(gate.redirect) !== gate.redirect)
+      problems.push(`nativeGate.redirect "${String(gate.redirect)}" must be an absolute path with no query, hash or trailing slash.`)
+    else if (hasNativeRoutes(config) && !matchNativePath(config.nativeScreens, gate.redirect, config.nativeScreenConstraints))
+      problems.push(`nativeGate.redirect "${gate.redirect}" is not a nativeScreens path; a signed-out launch would have nothing to show.`)
+    for (const path of gate.public ?? []) {
+      if (typeof path !== 'string' || normalizeNativePath(path) !== path)
+        problems.push(`nativeGate.public "${String(path)}" must be an absolute path with no query, hash or trailing slash.`)
+    }
+    // A redirect that is not itself public sends a signed-out launch to a
+    // screen the gate would redirect away from again.
+    if (typeof gate.redirect === 'string' && !(gate.public ?? []).some(path => gate.redirect === path || gate.redirect.startsWith(`${path}/`)))
+      problems.push(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.public.`)
+    if (gate.token !== undefined && (typeof gate.token !== 'string' || !gate.token))
+      problems.push('nativeGate.token must be the secure-storage key the sign-in lives under.')
   }
   if (config.nativeApp !== undefined) {
     if (typeof config.nativeApp !== 'string' || !/^[A-Za-z_$][\w$-]*$/.test(config.nativeApp))

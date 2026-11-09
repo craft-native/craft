@@ -2046,6 +2046,9 @@ struct CraftConfig: Codable {
     /// (`auth.token` unless set): `craft.session` follows it, and a change of
     /// it is `SESSION_CHANGED` on every screen (CraftSession).
     var sessionTokenKey: String? = nil
+    /// Which screens a signed-out launch may start on, resolved before the
+    /// first frame is built (CraftHybrid.configure).
+    var nativeGate: NativeGate? = nil
     /// The bundle route of the app script: a screen-less script that runs for
     /// the app's whole life and hears the app's events (CraftHybrid.swift).
     var nativeApp: String? = nil
@@ -2056,6 +2059,35 @@ struct CraftConfig: Codable {
     /// Crash and error reporting to bughq (CraftCrashReporter.swift). Off
     /// unless the config names a project key.
     var crashReporting: CrashReporting? = nil
+
+    /// An auth gate the shell applies while resolving the start path.
+    ///
+    /// An app script cannot do this. It is started from the first frame's
+    /// `CATransaction` completion block, so by the time it can read a token
+    /// the signed-in screen it would have prevented is already on screen —
+    /// with the previous session's kept snapshot in it when the launch
+    /// follows an expired token rather than a sign-out (#499). The check has
+    /// to belong to whoever decides the start path, and that is the shell.
+    struct NativeGate: Codable {
+        /// Paths that may be shown without a sign-in. A path is public when
+        /// it is listed, or when it sits under a listed one: `/m/store`
+        /// admits `/m/store/42` and not `/m/storefront`.
+        var publicPaths: [String]? = nil
+        /// Where a signed-out launch starts instead.
+        var redirect: String? = nil
+        /// The secure-storage key holding the sign-in. Defaults to
+        /// `sessionTokenKey`, which is the same item `craft.session` follows,
+        /// so an app that already declares one need not repeat it.
+        var token: String? = nil
+
+        // `public` is a Swift keyword, and the config spells the field the
+        // way an allowlist reads.
+        enum CodingKeys: String, CodingKey {
+            case publicPaths = "public"
+            case redirect
+            case token
+        }
+    }
 
     struct Tab: Codable {
         var id: String
