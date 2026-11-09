@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { assessPantryAvailability, compareVersions, publishedPantryPlatforms } from './pantry-availability'
 
 const digest = (fill: string) => fill.repeat(64).slice(0, 64)
@@ -8,11 +10,23 @@ function registry(versions: Record<string, Record<string, unknown>>, latestVersi
   return { name: 'craft-native.org', latestVersion, versions: Object.fromEntries(Object.entries(versions).map(([version, platforms]) => [version, { platforms }])) }
 }
 
-test('the published platforms are the ones release.yml actually publishes binaries for', () => {
-  // Not every GitHub release asset: `publish-pantry` packages Zig source and
-  // does not rebuild a platform binary, so windows-x64 and darwin-x64 have
-  // never been on this registry.
-  expect([...publishedPantryPlatforms]).toEqual(['darwin-arm64', 'linux-x86-64'])
+test('the published platforms are read off the job that publishes them', () => {
+  // Derived, not pinned. A literal list here agrees with itself: adding a
+  // third platform to the `pantry` matrix would leave the receipt silently
+  // not checking it while this test still passed.
+  //
+  // Not every GitHub release asset, either: `publish-pantry` packages Zig
+  // source and does not rebuild a platform binary, so windows-x64 and
+  // darwin-x64 have never been on this registry.
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as {
+    jobs: Record<string, { strategy?: { matrix?: { platform?: { name?: string }[] } } }>
+  }
+  const pantry = workflow.jobs.pantry
+  expect(pantry).toBeDefined()
+  const published = pantry!.strategy?.matrix?.platform?.map(platform => platform.name)
+  expect(published).toBeArray()
+  expect(published!.every(name => typeof name === 'string' && name.length > 0)).toBe(true)
+  expect([...publishedPantryPlatforms].sort()).toEqual([...published!].sort() as string[])
 })
 
 test('every published platform present reads as available', () => {
