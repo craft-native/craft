@@ -145,6 +145,34 @@ describe('native renderer component contract', () => {
    * animation code, and the shell's `|| Date.now()` fallback added a third
    * epoch twelve orders of magnitude away.
    */
+  /**
+   * A scroll event's geometry is density-independent on both hosts.
+   *
+   * UIKit reports `contentOffset`, `contentSize` and `layoutMeasurement` in
+   * points. Android shipped raw View pixels for all three, so the same handler
+   * saw values three times larger on a 3x screen — and larger than the
+   * `onLayout` bounds the same screen reports, which `emitLayoutEvent` has
+   * always divided by density. Infinite-scroll code compares exactly those two.
+   */
+  it('reports scroll geometry in density-independent units on both hosts', () => {
+    expect(ios).toContain('"contentOffset": ["x": scrollView.contentOffset.x, "y": scrollView.contentOffset.y]')
+    expect(ios).toContain('"layoutMeasurement": ["width": scrollView.bounds.width, "height": scrollView.bounds.height]')
+
+    // One builder for both Android scroll sources, dividing by the display density.
+    expect(android).toContain('private fun craftNativeScrollMetrics(')
+    expect(android).toContain('.put("contentOffset", JSONObject().put("x", offsetX / scale).put("y", offsetY / scale))')
+    expect(android).toContain('.put("layoutMeasurement", JSONObject().put("width", viewportWidth / scale).put("height", viewportHeight / scale))')
+    for (const source of ['send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", craftNativeScrollMetrics(', 'private fun flatListScrollEvent(list: CraftNativeFlatList): JSONObject = craftNativeScrollMetrics(']) {
+      expect(android, 'both Android scroll sources must use the shared builder').toContain(source)
+    }
+    // The raw-pixel payloads must not return, in either scroll source.
+    expect(android).not.toContain('.put("contentOffset", JSONObject().put("x", scrollX).put("y", scrollY))')
+    expect(android).not.toContain('.put("x", list.computeHorizontalScrollOffset())')
+    // A broken DisplayMetrics reports pixels rather than NaN, which JSON
+    // cannot carry and a handler cannot compare.
+    expect(android).toContain('val scale = if (density.isFinite() && density > 0.0) density else 1.0')
+  })
+
   it('gives requestAnimationFrame the same origin-relative milliseconds on both hosts', () => {
     // UIKit: origin subtracted, converted to milliseconds, monotonic.
     expect(ios).toContain('let timestamp = (displayTimestamp - frameTimeOrigin) * 1000')

@@ -149,6 +149,34 @@ private fun craftNativeBoolean(value: Any?, fallback: Boolean = false): Boolean 
 
 private fun craftNativeInt(value: Any?, fallback: Int): Int = (value as? Number)?.toInt() ?: fallback
 
+/**
+ * A scroll event's geometry in density-independent units.
+ *
+ * UIKit reports `contentOffset`, `contentSize` and `layoutMeasurement` in
+ * points, and this host's own `emitLayoutEvent` already divides a View's
+ * pixels by the display density. These three were the exception: they shipped
+ * raw pixels, so the same scroll handler saw values three times larger on a
+ * 3x Android screen than on iOS — and larger than the `onLayout` bounds the
+ * same screen reports, which is the comparison infinite-scroll code makes.
+ */
+private fun craftNativeScrollMetrics(
+    offsetX: Int,
+    offsetY: Int,
+    contentWidth: Int,
+    contentHeight: Int,
+    viewportWidth: Int,
+    viewportHeight: Int,
+    density: Double,
+): JSONObject {
+    // A density of zero would be a broken DisplayMetrics; report pixels rather
+    // than NaN, which JSON cannot carry and a handler cannot compare.
+    val scale = if (density.isFinite() && density > 0.0) density else 1.0
+    return JSONObject()
+        .put("contentOffset", JSONObject().put("x", offsetX / scale).put("y", offsetY / scale))
+        .put("contentSize", JSONObject().put("width", contentWidth / scale).put("height", contentHeight / scale))
+        .put("layoutMeasurement", JSONObject().put("width", viewportWidth / scale).put("height", viewportHeight / scale))
+}
+
 private fun craftNativePickerValue(value: Any?): String? = when (value) {
     is String -> value
     is Number -> value.toDouble().takeIf { it.isFinite() }?.let { value.toString() }
@@ -7151,10 +7179,15 @@ class MainActivity : AppCompatActivity() {
                     onScroll = { scrollX, scrollY ->
                         screen.scrollHandlers[nativeScroll]?.let { current ->
                             val contentView = nativeScroll.content
-                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()
-                                .put("contentOffset", JSONObject().put("x", scrollX).put("y", scrollY))
-                                .put("contentSize", JSONObject().put("width", contentView.width).put("height", contentView.height))
-                                .put("layoutMeasurement", JSONObject().put("width", nativeScroll.width).put("height", nativeScroll.height))))
+                            // Density-independent, like `emitLayoutEvent` and
+                            // like UIKit's points: see craftNativeScrollMetrics.
+                            val scale = resources.displayMetrics.density.toDouble()
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", craftNativeScrollMetrics(
+                                offsetX = scrollX, offsetY = scrollY,
+                                contentWidth = contentView.width, contentHeight = contentView.height,
+                                viewportWidth = nativeScroll.width, viewportHeight = nativeScroll.height,
+                                density = scale,
+                            )))
                         }
                     },
                     onBeginDrag = {
@@ -7491,16 +7524,12 @@ class MainActivity : AppCompatActivity() {
             ?: craftNativeOptionalString(props.opt("resizeMode")).orEmpty()
     }
 
-    private fun flatListScrollEvent(list: CraftNativeFlatList): JSONObject = JSONObject()
-        .put("contentOffset", JSONObject()
-            .put("x", list.computeHorizontalScrollOffset())
-            .put("y", list.computeVerticalScrollOffset()))
-        .put("contentSize", JSONObject()
-            .put("width", list.computeHorizontalScrollRange())
-            .put("height", list.computeVerticalScrollRange()))
-        .put("layoutMeasurement", JSONObject()
-            .put("width", list.width)
-            .put("height", list.height))
+    private fun flatListScrollEvent(list: CraftNativeFlatList): JSONObject = craftNativeScrollMetrics(
+        offsetX = list.computeHorizontalScrollOffset(), offsetY = list.computeVerticalScrollOffset(),
+        contentWidth = list.computeHorizontalScrollRange(), contentHeight = list.computeVerticalScrollRange(),
+        viewportWidth = list.width, viewportHeight = list.height,
+        density = resources.displayMetrics.density.toDouble(),
+    )
 
     private fun reconcileChildren(
         screen: Screen,

@@ -590,7 +590,12 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('ACTION_DOWN')
       expect(nativeActivity).toContain('scrollEndHandlers')
       expect(nativeActivity).toContain('layoutMeasurement')
-      expect(nativeActivity).toContain('nativeScroll.height))))')
+      // What matters is where the viewport height comes from and that it goes
+      // through the density-normalizing builder — not the closing parens,
+      // which is what this pinned before and why it broke when the payload
+      // moved into `craftNativeScrollMetrics`.
+      expect(nativeActivity).toContain('viewportHeight = nativeScroll.height')
+      expect(nativeActivity).toContain('private fun craftNativeScrollMetrics(')
       expect(nativeActivity).toContain('screen.scrollHandlers')
       expect(nativeActivity).toContain('contentOffset')
       expect(nativeActivity).toContain('craftNativeEventName(events, "onLayout")')
