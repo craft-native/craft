@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { resolveZig } from '../../../scripts/zig'
 import { tempDirPrefix } from '../../typescript/src/temp-dir'
-import { NativeFixtureCommandScope } from './native-fixture-command'
+import { NativeFixtureCommandScope, describeFixtureCommandFailure } from './native-fixture-command'
 import { metalXCTestSteps, verifyMetalXCTestSummaries } from './metal-xctest-steps'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { runtime: { type: 'string' }, xcodegen: { type: 'string' }, output: { type: 'string' } } })
@@ -46,7 +46,7 @@ async function run(name: string, args: string[], timeoutMs: number): Promise<voi
   const result = await commandScope.run(args, { cwd: workspace, timeoutMs, logPath: log, signal: interruption.signal })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, ...result, startedAt, finishedAt: new Date().toISOString(), log })
   save()
-  if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`${name} failed (${result.code}); see ${log}`)
+  if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(describeFixtureCommandFailure(name, result, log))
 }
 try {
   // The first CoreSimulator query may start its service and migrate metadata.

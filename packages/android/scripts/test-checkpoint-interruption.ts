@@ -3,7 +3,7 @@ import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile 
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../../ios/scripts/native-fixture-command'
+import { NativeFixtureCommandScope, describeFixtureCommandFailure, nativeFixtureBuildTimeoutMs } from '../../ios/scripts/native-fixture-command'
 import { build, init } from '../src/index'
 import { createAndroidEmulator } from '../src/emulator'
 import { emulatorVersionCommand } from './vulkan-surface-probe'
@@ -54,7 +54,7 @@ async function run(name: string, args: string[], timeoutMs = 10000, cwd = worksp
   const result = await scope.run(args, { cwd, timeoutMs, logPath, signal: cleanup ? undefined : cancellation.signal })
   commands.push({ name, args, timeoutMs, startedAt, elapsedMs: performance.now() - started, logPath, ...result })
   await save()
-  if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`${name} failed (${result.code}); ${logPath}`)
+  if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(describeFixtureCommandFailure(name, result, logPath))
   return readFile(logPath, 'utf8')
 }
 function adb(...args: string[]) {

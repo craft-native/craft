@@ -3,7 +3,7 @@ import { cp, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { NativeFixtureCommandScope } from '../../ios/scripts/native-fixture-command'
+import { NativeFixtureCommandScope, describeFixtureCommandFailure } from '../../ios/scripts/native-fixture-command'
 import { createAndroidEmulator } from '../src/emulator'
 import { resolveZig } from '../../../scripts/zig'
 import { nativeVulkanResult } from './vulkan-surface-result'
@@ -47,7 +47,7 @@ async function run(name: string, args: string[], timeoutMs: number, cwd = worksp
   const result = await scope.run(args, { cwd, timeoutMs, logPath, signal: interruption.signal })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, ...result, logPath })
   await save()
-  if (result.code !== 0 || result.timedOut || result.cancelled || !result.groupDisposed) throw new Error(`${name} failed (${result.code}); see ${logPath}`)
+  if (result.code !== 0 || result.timedOut || result.cancelled || !result.groupDisposed) throw new Error(describeFixtureCommandFailure(name, result, logPath))
 }
 try {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, onSignal)
