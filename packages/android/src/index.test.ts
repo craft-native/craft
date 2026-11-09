@@ -1382,7 +1382,7 @@ describe('Craft Android builder', () => {
     expect(readFileSync(join(output, 'app/src/main/assets/index.html'), 'utf8')).toContain('WildLoop')
     expect(existsSync(join(output, 'app/src/main/assets/assets/app.js'))).toBe(true)
     expect(existsSync(join(output, 'app/src/main/assets/craft.config.json'))).toBe(true)
-  })
+  }, 30_000)
 
   it('rejects unsafe web asset sources before replacing generated assets', async () => {
     const root = createTempDir('craft-android-asset-guard-')
@@ -1479,7 +1479,7 @@ describe('Craft Android builder', () => {
     expect(activity).toContain('returnFromBundledFallback("the app returned to the foreground")')
     expect(activity).toContain('val wasConnected = isConnected')
     expect(activity).toContain('if (!wasConnected && isConnected) {')
-  })
+  }, 30_000)
 
   it('delivers shortcut activations and refuses impossible event streams', async () => {
     const output = createTempDir('craft-android-shortcut-events-')

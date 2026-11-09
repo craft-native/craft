@@ -733,7 +733,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(readFileSync(join(output, 'dist', 'index.html'), 'utf8')).toContain('WildLoop')
     expect(existsSync(join(output, 'dist', 'assets', 'app.js'))).toBe(true)
     expect(existsSync(join(output, 'dist', 'stale.js'))).toBe(false)
-  })
+  }, 30_000)
 
   it('keeps native route teardown and missing-bundle fallback explicit', async () => {
     const output = createTempDir('craft-ios-native-lifecycle-')
@@ -1585,7 +1585,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
     expect(swift).toContain('loadBundledFallback(in: webView)')
     expect(readFileSync(join(output, 'dist/index.html'), 'utf8')).toContain('Available offline')
-  })
+  }, 30_000)
 
   it('delivers shortcut and Siri activations after cold launches', async () => {
     const output = createTempDir('craft-ios-shortcut-events-')

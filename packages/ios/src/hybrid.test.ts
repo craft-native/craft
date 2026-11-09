@@ -726,6 +726,14 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.s
   let result: ReturnType<typeof JSON.parse>
   // Bun calls a skipped describe's registration body. Compile and execute the
   // probe in its hook so only a host that can run the suite performs either.
+  //
+  // The hook's own budget has to be declared. `swiftc` on this probe takes far
+  // longer than Bun's 5000 ms default, and a hook that exceeds it fails the
+  // whole block as one unnamed test with `a beforeEach/afterEach hook timed
+  // out` — which is what this block did on every macOS machine, while CI runs
+  // `packages/ios` on ubuntu and skips it for want of `swiftc`. So the
+  // compilation that was moved in here to spare CI was never once observed to
+  // pass anywhere.
   beforeAll(() => {
     writeFileSync(mainPath, main)
     const compiled = Bun.spawnSync(['swiftc', '-o', binary, mainPath], { stderr: 'pipe' })
@@ -743,7 +751,7 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.s
     })], { stderr: 'pipe' })
     if (run.exitCode !== 0) throw new Error(`the Swift probe failed:\n${run.stderr.toString()}`)
     result = JSON.parse(run.stdout.toString())
-  })
+  }, 180_000)
 
   it('matches paths by the shared cases', () => {
     CASES.forEach(([path, expected], index) => {
@@ -756,7 +764,7 @@ print(String(data: try! JSONSerialization.data(withJSONObject: out, options: [.s
     const probe = Bun.spawnSync([binary, JSON.stringify(input)], { stderr: 'pipe' })
     if (probe.exitCode !== 0) throw new Error(probe.stderr.toString())
     expect(JSON.parse(probe.stdout.toString()).matches).toEqual(PROFILE_CASES.map(([, match]) => match))
-  })
+  }, 30_000)
 
   it('turns links into app paths', () => {
     expect(result.appPaths).toEqual(['/m', '/m/calendar?date=1', '/m/x', '/m/workout/4', '/', '/m'])
