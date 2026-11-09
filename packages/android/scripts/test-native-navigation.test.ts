@@ -112,25 +112,40 @@ describe('Android native runner failure evidence', () => {
       // fixture executable itself, including when it ignores graceful signals.
       writeFileSync(adb, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n'); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`)
       chmodSync(adb, 0o755)
+      // Lines a client wrote before being reaped. `trim().split('\n')` cannot
+      // be used: on an empty file it yields [''] and so [NaN], which reads as
+      // one started client that no launch accounts for — a failure the
+      // comment below explicitly permits, arriving as if it were a defect.
+      const startedLines = () => (existsSync(pids) ? readFileSync(pids, 'utf8') : '').split('\n').filter(line => line.length > 0)
       const before = performance.now()
       let launchedPids: number[] = []
       try {
         retainNativeNavigationEvidence({ project: directory, directory: join(directory, 'evidence'), serial: 'emulator-owned', adbPath: adb, timeoutMs: 500 })
-        expect(performance.now() - before).toBeLessThan(4000)
+        const elapsed = performance.now() - before
         const report = JSON.parse(readFileSync(join(directory, 'evidence/diagnostics.json'), 'utf8'))
-        expect(report.commands).toHaveLength(5)
-        expect(report.commands.every((command: { signalCode: string }) => command.signalCode === 'SIGKILL')).toBe(true)
-        const reportedPids = report.commands.map((command: { pid: number }) => command.pid)
-        expect(reportedPids.every((pid: number) => Number.isSafeInteger(pid) && pid > 0)).toBe(true)
-        launchedPids = reportedPids
-        expect(new Set(launchedPids).size).toBe(5)
-        for (const pid of launchedPids) expect(() => process.kill(pid, 0)).toThrow()
+        // Each assertion names the value it saw. A bare `every(...)` reports
+        // only `expected false to be true`, which is how #490's 2609 ms
+        // failure here became unattributable after the fact.
+        expect(report.commands.map((command: { args: string[] }) => command.args[3])).toEqual(['logcat', 'shell', 'shell', 'shell', 'shell'])
+        expect(report.commands.map((command: { signalCode: string }) => command.signalCode)).toEqual(Array.from({ length: 5 }, () => 'SIGKILL'))
+        launchedPids = report.commands.map((command: { pid: number }) => command.pid)
+        expect(launchedPids.filter(pid => !Number.isSafeInteger(pid) || pid <= 0)).toEqual([])
+        expect([...new Set(launchedPids)]).toEqual(launchedPids)
+        expect(launchedPids.filter((pid) => { try { process.kill(pid, 0); return true } catch { return false } })).toEqual([])
         // A cold client can be killed before it writes a startup receipt.
-        // Still require a running TERM-ignoring fixture, but prove all five
-        // launches were reaped from the parent's OS process identities.
-        const startedPids = readFileSync(pids, 'utf8').trim().split('\n').map(Number)
-        expect(startedPids.length).toBeGreaterThan(0)
-        expect(startedPids.every(pid => launchedPids.includes(pid))).toBe(true)
+        // Still require a running TERM-ignoring fixture, but prove every line
+        // that was written names a launch the parent recorded.
+        const started = startedLines()
+        expect(started.filter(line => !/^\d+$/.test(line))).toEqual([])
+        expect(started.map(Number).filter(pid => !launchedPids.includes(pid))).toEqual([])
+        expect(started.length, `no diagnostic client reached its startup receipt within 5 x 500 ms (elapsed ${Math.round(elapsed)} ms)`).toBeGreaterThan(0)
+        // Last, so a starved host is reported as the slow run it is rather
+        // than masking which post-condition above actually failed. The test's
+        // own cap is declared well above this bound for the same reason: five
+        // 500 ms deadlines put the floor at 2500 ms, and under Bun's inherited
+        // 5000 ms there was not enough room left for this line to report the
+        // number it measured instead of being cut off (#490).
+        expect(elapsed).toBeLessThan(4000)
       }
       finally {
         // A failed assertion still rescues only this fixture's owned clients,
@@ -139,13 +154,11 @@ describe('Android native runner failure evidence', () => {
           try { process.kill(pid, 'SIGKILL') }
           catch { /* already reaped */ }
         }
-        if (existsSync(pids)) {
-          for (const pid of readFileSync(pids, 'utf8').trim().split('\n').map(Number)) {
-            try { process.kill(pid, 'SIGKILL') }
-            catch { /* already reaped */ }
-          }
+        for (const line of startedLines()) {
+          try { process.kill(Number(line), 'SIGKILL') }
+          catch { /* already reaped, or never a pid */ }
         }
       }
     })
-  })
+  }, 15000)
 })
