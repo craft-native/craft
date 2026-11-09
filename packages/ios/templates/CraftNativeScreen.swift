@@ -6355,12 +6355,37 @@ private final class CraftNativeTextView: UITextView {
         if !isScrollEnabled, contentOffset != .zero { contentOffset = .zero }
         let inset = textContainerInset
         let padding = textContainer.lineFragmentPadding
-        placeholderLabel.frame = CGRect(
-            x: inset.left + padding,
-            y: inset.top,
-            width: max(0, bounds.width - inset.left - inset.right - padding * 2),
-            height: max(0, bounds.height - inset.top - inset.bottom)
-        )
+        let measured = placeholderLabel
+            .sizeThatFits(CGSize(width: Self.placeholderWidth(bounds: bounds, inset: inset, padding: padding),
+                                 height: .greatestFiniteMagnitude))
+        placeholderLabel.frame = Self.placeholderFrame(bounds: bounds, inset: inset, padding: padding,
+                                                       fittedHeight: measured.height)
+    }
+
+    static func placeholderWidth(bounds: CGRect, inset: UIEdgeInsets, padding: CGFloat) -> CGFloat {
+        max(0, bounds.width - inset.left - inset.right - padding * 2)
+    }
+
+    /// Where the placeholder sits inside the box.
+    ///
+    /// Anchored at the top, and no taller than the text it holds. `UILabel`
+    /// centres its text block vertically within its frame, while
+    /// `UITextView` lays its glyphs out from the top, so a label handed the
+    /// box's whole remaining height drew the placeholder of a four-row notes
+    /// field halfway down it — nowhere near the caret that replaced it the
+    /// moment the field was tapped (#501). The two rules only agreed when
+    /// the box was exactly one line tall, which is why single-line fields
+    /// looked right and every `textarea` did not. Given only the height its
+    /// text needs, the label has no spare height to centre within.
+    ///
+    /// Clamped to what is left of the box so that a placeholder longer than
+    /// the field stays inside it rather than drawing past the bottom.
+    static func placeholderFrame(bounds: CGRect, inset: UIEdgeInsets, padding: CGFloat, fittedHeight: CGFloat) -> CGRect {
+        let available = max(0, bounds.height - inset.top - inset.bottom)
+        return CGRect(x: inset.left + padding,
+                      y: inset.top,
+                      width: placeholderWidth(bounds: bounds, inset: inset, padding: padding),
+                      height: min(max(0, fittedHeight), available))
     }
 
     func refreshPlaceholder() {
