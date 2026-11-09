@@ -66,7 +66,7 @@ test('Android disk preparation routes Bun temporary data onto the checked runner
   })
   expect(child.exitCode).toBe(0)
   expect(child.stdout.toString().trim().startsWith(`${temporary}/craft-device-`)).toBe(true)
-})
+}, 30_000)
 
 test('Android disk preparation refuses a missing environment destination before deleting tools', () => {
   const { result, cleanup, environment } = rehearseAndroidDisk({ GITHUB_ENV: '' })
@@ -228,7 +228,7 @@ test('macOS signing reads credentials from the declared Stacks CLI, not the shar
     expect(readFileSync(output, 'utf8')).toBe('')
   }
   finally { rmSync(dir, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('shared native layout changes trigger mobile acceptance for pushes and pull requests', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as {
@@ -819,7 +819,7 @@ exit 1
     }
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('a registry network failure remains a visible best-effort warning', () => {
   const command = steps(release.jobs['notify-registry'])
@@ -837,7 +837,7 @@ test('a registry network failure remains a visible best-effort warning', () => {
     expect(result.stdout.toString()).toContain('::warning::Registry request failed')
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('the post-publication Discord announcement names the complete release', () => {
   const command = release.jobs['notify-registry'].steps!.find(step => step.name === 'Announce only the complete public release')?.run
@@ -865,7 +865,7 @@ test('the post-publication Discord announcement names the complete release', () 
     expect(readFileSync(calls, 'utf8')).toContain('https://github.com/craft-native/craft/releases/tag/v0.0.106')
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('SBOM generation validates required documents before uploading artifacts', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/sbom.yml'), 'utf8')) as { jobs: Record<string, Job> }

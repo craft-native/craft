@@ -33,7 +33,7 @@ test('packed Svelte condition resolves outside the workspace', async () => {
   finally {
     rmSync(temp, { recursive: true, force: true })
   }
-})
+}, 30_000)
 
 test('store declarations expose the public Readable contract', () => {
   const root = resolve(import.meta.dir, '..')

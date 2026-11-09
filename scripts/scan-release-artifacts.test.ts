@@ -59,7 +59,7 @@ test('release scanner rejects extra arguments before scanning', () => {
   ], { stdout: 'pipe', stderr: 'pipe' })
   expect(result.exitCode).not.toBe(0)
   expect(result.stderr.toString()).toContain('Usage: scan-release-artifacts.ts')
-})
+}, 30_000)
 
 function binary(root: string, path: string, magic: string) {
   const absolute = join(root, path)

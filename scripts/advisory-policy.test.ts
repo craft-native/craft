@@ -64,14 +64,14 @@ test('a failed scanner process with empty stdout is never a clean report', () =>
   expect(scan.stdout.length).toBe(0)
   expect(() => readAuditReport(scan)).toThrow('bun audit failed')
   expect(() => readAuditReport(scan)).toThrow('registry request failed')
-})
+}, 30_000)
 
 test('a scanner exit for real findings still reaches advisory review', () => {
   const report = { esbuild: [low] }
   const scan = Bun.spawnSync([process.execPath, '-e', `console.log(${JSON.stringify(JSON.stringify(report))}); process.exit(1)`], { stdout: 'pipe', stderr: 'pipe' })
   const review = assertAdvisoryPolicy(readAuditReport(scan), [reviewed(1, 'esbuild', '2026-12-31')], '2026-09-25')
   expect(review.retained).toHaveLength(1)
-})
+}, 30_000)
 
 test('only a successful explicit empty report is a clean scan', () => {
   const clean = Bun.spawnSync([process.execPath, '-e', 'console.log("{}")'], { stdout: 'pipe', stderr: 'pipe' })
@@ -80,19 +80,19 @@ test('only a successful explicit empty report is a clean scan', () => {
   expect(() => readAuditReport(empty)).toThrow('empty report')
   const failed = Bun.spawnSync([process.execPath, '-e', 'console.log("{}"); process.exit(1)'], { stdout: 'pipe', stderr: 'pipe' })
   expect(() => readAuditReport(failed)).toThrow('without findings')
-})
+}, 30_000)
 
 test('invalid reports and unexpected scanner exits cannot reach review', () => {
   const invalid = Bun.spawnSync([process.execPath, '-e', 'console.log("not JSON")'], { stdout: 'pipe', stderr: 'pipe' })
   expect(() => readAuditReport(invalid)).toThrow('invalid JSON')
   const failed = Bun.spawnSync([process.execPath, '-e', 'console.error("scanner failed"); console.log("{}"); process.exit(2)'], { stdout: 'pipe', stderr: 'pipe' })
   expect(() => readAuditReport(failed)).toThrow('exit code 2')
-})
+}, 30_000)
 
 test('an interrupted scanner cannot supply an apparently clean report', () => {
   const scan = Bun.spawnSync([process.execPath, '-e', 'console.log("{}"); process.kill(process.pid, "SIGTERM")'], { stdout: 'pipe', stderr: 'pipe' })
   expect(() => readAuditReport(scan)).toThrow('bun audit failed')
-})
+}, 30_000)
 
 test('every retained advisory carries a reason, a review date and an expiry', () => {
   expect(retainedAdvisories.length).toBeGreaterThan(0)

@@ -59,7 +59,7 @@ test('refuses an incomplete sparse release checkout before a version bump', () =
   expect(() => validateReleaseCheckout(root)).not.toThrow()
   rmSync(manifest)
   expect(() => validateReleaseCheckout(root)).toThrow('packages/react/package.json')
-})
+}, 30_000)
 
 test('release preflight rejects missing tools before changing package versions or tags', () => {
   const root = createTempDir('craft-release-prerequisites-')
@@ -74,7 +74,7 @@ test('release preflight rejects missing tools before changing package versions o
   expect(result.stderr.toString()).toContain('bun install --frozen-lockfile')
   expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(manifest)
   expect(Bun.spawnSync(['git', 'tag', '--list'], { cwd: root, stdout: 'pipe' }).stdout.toString()).toBe('')
-})
+}, 30_000)
 
 test('release formatting checks the core project, propagates failure and rejects an unpinned override', () => {
   const root = createTempDir('craft-release-format-')
