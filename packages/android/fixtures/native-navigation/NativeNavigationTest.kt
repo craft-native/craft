@@ -1110,6 +1110,82 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * `tabBarHiddenWhenPushed` on the real chrome, at real depths (#493).
+     *
+     * The option was honoured here and nowhere else in Craft until UIKit was
+     * given the same depth gate, so this is the host half of that: the
+     * generated-source contract test proves both hosts read the key, and this
+     * proves the view actually moves.
+     *
+     * Four states, because the interesting ones are the two that must *not*
+     * happen: a root screen that asks for it keeps the bar, and a pushed
+     * screen that never asked keeps it too. Without those the test would pass
+     * on a chrome that simply hid the bar whenever anything was pushed.
+     */
+    @Test
+    fun tabBarHidesOncePushedOnlyWhenTheScreenAsksForIt() {
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            fun chrome(): CraftNativeChrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                ?: throw AssertionError("native chrome did not mount")
+            // The chrome keeps the row private, so it is reached through a tab
+            // cell and up to the chrome's own child. How deeply the cell sits
+            // inside the row is the chrome's business, not this test's.
+            fun tabRow(): View {
+                var row: View? = null
+                instrumentation.runOnMainSync {
+                    val host = chrome()
+                    var candidate: View = find(host, "craft-tab-/") ?: throw AssertionError("the tab bar did not mount")
+                    while (candidate.parent !== host) {
+                        candidate = candidate.parent as? View ?: throw AssertionError("a tab cell was not inside the chrome")
+                    }
+                    row = candidate
+                }
+                return row!!
+            }
+            fun applyOptions(depth: Int, asksToHideOnPush: Boolean) {
+                instrumentation.runOnMainSync {
+                    val options = org.json.JSONObject().put("title", "Home")
+                    if (asksToHideOnPush) options.put("tabBarHiddenWhenPushed", true)
+                    chrome().apply(options, depth, "Home")
+                }
+            }
+            // The bar animates away and only becomes GONE in the animation's
+            // end action, so the end state is waited for rather than read in
+            // the same main-thread pass that asked for it.
+            fun awaitVisibility(expected: Int, why: String) {
+                val row = tabRow()
+                var actual = -1
+                repeat(50) {
+                    instrumentation.runOnMainSync { actual = row.visibility }
+                    if (actual == expected) return
+                    SystemClock.sleep(100)
+                }
+                throw AssertionError("$why: expected visibility $expected, saw $actual")
+            }
+
+            applyOptions(depth = 0, asksToHideOnPush = true)
+            awaitVisibility(View.VISIBLE, "a stack root that asks to hide the bar on push must keep it")
+
+            applyOptions(depth = 1, asksToHideOnPush = true)
+            awaitVisibility(View.GONE, "a pushed screen that asked for it must lose the bar")
+
+            applyOptions(depth = 0, asksToHideOnPush = true)
+            awaitVisibility(View.VISIBLE, "returning to the stack root must bring the bar back")
+
+            applyOptions(depth = 1, asksToHideOnPush = false)
+            awaitVisibility(View.VISIBLE, "a pushed screen that never asked must keep the bar")
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     @Test
     fun liveTabUpdatesRetainToolbarViewsAndActionsUntilTheirSpecsChange() {
         val context = instrumentation.targetContext
