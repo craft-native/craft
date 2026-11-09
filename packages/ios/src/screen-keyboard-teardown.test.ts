@@ -54,7 +54,19 @@ test('a screen puts the keyboard away as it disappears', () => {
 
 test('a screen torn down without appearing puts it away too', () => {
   const dispose = body('private func disposeRuntime() {')
-  expect(dispose).toContain('view.endEditing(true)')
+  // Through `viewIfLoaded`, and this assertion used to demand the bare
+  // `view.endEditing(true)` instead — which pinned the one spelling that
+  // crashes. disposeRuntime also runs from `deinit`, where `view` is a
+  // cleared `UIView!`: reading it traps, and on a screen that never appeared
+  // it instead runs `loadView` during deallocation. Every mobile E2E run from
+  // that commit onwards died in `disposeRuntime()` under
+  // `__deallocating_deinit`.
+  //
+  // So this checks the keyboard is given up, not the accessor it is given up
+  // through; `screen-teardown-safety.test.ts` is what forbids forcing the
+  // view on the deallocation path.
+  expect(dispose, 'a disposed screen must still end editing').toMatch(/\bendEditing\(true\)/)
+  expect(dispose, 'and must not force self.view to do it').not.toMatch(/(?<![.\w])view\s*\./)
   // Nothing comes back from dispose, so the remembered input goes as well —
   // otherwise restoreFocus can put the keyboard back on a later render.
   expect(dispose).toContain('forgetFocusedInput()')

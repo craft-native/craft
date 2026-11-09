@@ -7237,8 +7237,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // down without ever appearing (one prepared and then replaced), so
         // viewWillDisappear is not guaranteed to have run. Nothing comes back
         // from here, so there is no focus worth restoring.
+        //
+        // `viewIfLoaded`, never `view`: this also runs from `deinit`, where
+        // `view` is a `UIView!` that UIKit has already cleared — reading it
+        // traps on the implicit unwrap, and a screen that never appeared
+        // would instead have `loadView` resurrect `self` while it is being
+        // deallocated. A screen with no loaded view has nothing focused.
         forgetFocusedInput()
-        view.endEditing(true)
+        viewIfLoaded?.endEditing(true)
         frameDelivery.close()
         storageLifetime.close()
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
