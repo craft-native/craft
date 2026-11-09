@@ -2421,7 +2421,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // A finished task closes to the first screen of its stack.
     // A screen can ask the tab bar away while it shows; the next one says again.
     expect(screen).toContain('if let hidden = options["tabBarHidden"] as? Bool {')
-    expect(screen).toContain('CraftChrome.shared.setHiddenByScreen(tabBarHidden)')
+    expect(screen).toContain('if let hiddenWhenPushed = options["tabBarHiddenWhenPushed"] as? Bool {')
+    expect(screen).toContain('CraftChrome.shared.setHiddenByScreen(tabBarHiddenApplied)')
     // Going away hands the accessory on; the next screen keeps it until it says.
     expect(screen).toContain('CraftChrome.shared.releaseTabAccessory(ownedBy: self)')
     expect(screen).toContain('if tabAccessoryDeclared { CraftChrome.shared.updateTabAccessory(tabAccessory, owner: self) }')

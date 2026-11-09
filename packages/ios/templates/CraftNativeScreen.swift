@@ -7045,7 +7045,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         CraftChrome.shared.releaseTabAccessory(ownedBy: self)
         // Popped (or its stack dismissed) while the bar was away: it comes
         // back for whatever shows next, a web page included.
-        if tabBarHidden, isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
+        if tabBarHiddenApplied, isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
             CraftChrome.shared.setHiddenByScreen(false)
         }
     }
@@ -7087,7 +7087,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func restoreShellChrome() {
         guard !isAppScript else { return }
-        CraftChrome.shared.setHiddenByScreen(tabBarHidden)
+        applyTabBarHidden()
         // A screen not yet asked about the accessory (one shown for the first
         // time, before its script has run) leaves the bar as it is; one that
         // has drawn without asking for it takes off what nobody claims.
@@ -7658,7 +7658,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// - `craft.secureStorage.getSync(key)`: the Keychain item the web page's
     ///   `craft.secureStorage.set` wrote.
     /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
-    ///   backTitle, tabBarHidden, tabItem, swipeBack, contentSwipeBack,
+    ///   backTitle, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
+    ///   contentSwipeBack,
     ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, leftButtons,
     ///   rightButtons, tabAccessory })`; a button's tap is the event
     ///   `navButton`. `craft.d.ts` types no navigation surface, so this list
@@ -8125,6 +8126,32 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var statusBarHiddenOverride: Bool?
     /// The app's tab bar away while this screen shows (`tabBarHidden`).
     private var tabBarHidden = false
+    /// The bar away only once this screen is pushed onto something
+    /// (`tabBarHiddenWhenPushed`): UIKit's `hidesBottomBarWhenPushed` idiom,
+    /// for a screen that keeps the bar as its stack's root and drops it when
+    /// it is a detail. Craft's tab bar is drawn by CraftChrome rather than a
+    /// UITabBarController, so the depth is read here and the bar is asked
+    /// directly; the Android shell has honoured the same key all along.
+    private var tabBarHiddenWhenPushed = false
+    /// What this screen last told the chrome. Teardown has to put back a bar
+    /// this screen took away, and recomputing the answer there is no good:
+    /// UIKit has already taken a popped screen out of `viewControllers` by
+    /// `viewWillDisappear`, so a bar hidden for depth would read as never
+    /// hidden at all and stay off for whatever shows next.
+    private var tabBarHiddenApplied = false
+
+    /// Whether the bar should be away for this screen as it stands now.
+    private var wantsTabBarHidden: Bool {
+        if tabBarHidden { return true }
+        guard tabBarHiddenWhenPushed, let stack = navigationController?.viewControllers else { return false }
+        guard let depth = stack.firstIndex(where: { $0 === self }) else { return false }
+        return depth > 0
+    }
+
+    private func applyTabBarHidden() {
+        tabBarHiddenApplied = wantsTabBarHidden
+        CraftChrome.shared.setHiddenByScreen(tabBarHiddenApplied)
+    }
     private var tabAccessory: [String: Any]?
     /// Whether the screen has said anything about the accessory yet
     /// (`tabAccessory`, null included): until it has, the bar keeps showing
@@ -8210,8 +8237,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let hidden = options["tabBarHidden"] as? Bool {
             tabBarHidden = hidden
+        }
+        if let hiddenWhenPushed = options["tabBarHiddenWhenPushed"] as? Bool {
+            tabBarHiddenWhenPushed = hiddenWhenPushed
+        }
+        if options.keys.contains("tabBarHidden") || options.keys.contains("tabBarHiddenWhenPushed") {
+            // Prepared tabs and screens under a push keep the answer and apply
+            // it when they are shown (restoreShellChrome); only the screen on
+            // display may move the shared bar.
             if navigationController?.topViewController === self, isShownOnScreen {
-                CraftChrome.shared.setHiddenByScreen(hidden)
+                applyTabBarHidden()
             }
         }
         if let swipeBack = options["swipeBack"] as? Bool {

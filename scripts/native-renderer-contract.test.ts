@@ -263,6 +263,30 @@ describe('native renderer component contract', () => {
     expect(androidShell).not.toContain('message.payload.time || Date.now()')
   })
 
+  it('hides the tab bar on push at the same depth on both hosts', () => {
+    // #493: Android had honoured `tabBarHiddenWhenPushed` since it was written
+    // and UIKit had never read the key, so an app that set it got the
+    // behaviour on one host and silence on the other — not a platform
+    // difference a caller can see, because hiding the bar on push is the
+    // ordinary iOS idiom (`hidesBottomBarWhenPushed`).
+    //
+    // Both now read the key and both gate it on the screen's own depth in its
+    // stack: zero keeps the bar, anything deeper takes it away.
+    expect(androidChrome).toContain('options.optBoolean("tabBarHidden", false) || depth > 0 && options.optBoolean("tabBarHiddenWhenPushed", false)')
+    expect(ios).toContain('if let hiddenWhenPushed = options["tabBarHiddenWhenPushed"] as? Bool {')
+    expect(ios).toContain('guard tabBarHiddenWhenPushed, let stack = navigationController?.viewControllers else { return false }')
+    expect(ios).toContain('guard let depth = stack.firstIndex(where: { $0 === self }) else { return false }')
+    expect(ios).toContain('return depth > 0')
+
+    // UIKit's teardown restores a bar this screen took away, and it must read
+    // what was applied rather than recompute it: a popped screen is already
+    // out of `viewControllers` by viewWillDisappear, so a depth-hidden bar
+    // would read as never hidden and stay off for whatever shows next.
+    expect(ios).toContain('tabBarHiddenApplied = wantsTabBarHidden')
+    expect(ios).toContain('if tabBarHiddenApplied, isMovingFromParent || isBeingDismissed')
+    expect(ios).not.toContain('if tabBarHidden, isMovingFromParent')
+  })
+
   it('a declared member only one host implements says which', () => {
     const declared = new Map<string, string[]>()
     {
@@ -279,17 +303,23 @@ describe('native renderer component contract', () => {
     const members = [...declared].flatMap(([group, names]) => names.map(name => [group, name] as const))
     expect(members.length).toBeGreaterThan(80)
 
-    // Each declaration's own doc comment, for the platform note.
-    const noteFor = (name: string) => {
-      const at = craftTypes.indexOf(`    ${name}(`) >= 0 ? craftTypes.indexOf(`    ${name}(`) : craftTypes.indexOf(`    ${name}?(`)
+    // The doc comment above a declaration, member or group.
+    const docAbove = (opening: string) => {
+      const at = craftTypes.indexOf(opening)
       return at < 0 ? '' : craftTypes.slice(Math.max(0, craftTypes.lastIndexOf('/**', at)), at)
     }
+    const noteFor = (name: string) => docAbove(`    ${name}(`) || docAbove(`    ${name}?(`)
+    // A group a host does not install at all says so once, above the group,
+    // rather than on each of its members: `craft.app` is three lines of UIKit
+    // appearance and no Android shell installs it.
+    const groupNoteFor = (group: string) => docAbove(`  ${group}?: {`) || docAbove(`  ${group}: {`)
+    const saysWhichHost = (text: string) => /\*\*(iOS|Android) only\.\*\*/.test(text)
     const undeclaredAsymmetries = members.filter(([group, name]) => {
       const key = `${group}.${name}`
       const onIos = iosHostTemplates.includes(name), onAndroid = androidHostTemplates.includes(name)
       if (onIos === onAndroid) return false
       if (hostNeutralDeclarations.has(key)) return false
-      return !/\*\*(iOS|Android) only\.\*\*/.test(noteFor(name))
+      return !saysWhichHost(noteFor(name)) && !saysWhichHost(groupNoteFor(group))
     }).map(([group, name]) => `craft.${group}.${name}`)
     expect(undeclaredAsymmetries, 'these members exist on one host and the declaration does not say so').toEqual([])
 

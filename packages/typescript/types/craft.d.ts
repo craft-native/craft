@@ -483,8 +483,8 @@ export interface CraftBridge {
   };
 
   /**
-   * The app's own light/dark selection. **iOS native screens only** — the
-   * Android shell does not install this group.
+   * The app's own light/dark selection. **iOS only.** The Android shell does
+   * not install this group at all, so every member of it is absent there.
    */
   app?: {
     /**

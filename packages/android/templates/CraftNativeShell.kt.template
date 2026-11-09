@@ -857,8 +857,11 @@ internal object CraftNativePrelude {
  * ratchet there passed with keys deleted because the prose underneath
  * happened to mention them. Six of these twelve had never been written down.
  *
- * One of them is honoured here and nowhere else in Craft, with no iOS
- * behaviour, no SDK type and no test. See #493.
+ * `tabBarHiddenWhenPushed` was honoured here and nowhere else in Craft until
+ * #493: hiding the tab bar on push is the ordinary iOS idiom, so a caller who
+ * set it got the behaviour on one host and silence on the other. UIKit reads
+ * the same key now, at the same depth, through CraftNativeScreen's
+ * `wantsTabBarHidden`.
  */
 internal class CraftNativeChrome(
     context: Context,
