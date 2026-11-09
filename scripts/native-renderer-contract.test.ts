@@ -164,6 +164,31 @@ describe('native renderer component contract', () => {
    * failure path that disagreed with the other host rather than with the
    * platform.
    */
+  /**
+   * A failed checkpoint write must not leave the optimistic value on screen.
+   *
+   * A screen displays its own write before the host confirms it. Android says
+   * so and restores the confirmed value on failure. UIKit posted its change
+   * notification only when the write succeeded, so a failed checkpoint stayed
+   * displayed as though it had been kept — the visible result disagreeing with
+   * the platform state on exactly the failure path #396 asks about.
+   */
+  it('tells readers to re-read after a failed checkpoint write on both hosts', () => {
+    // Android restores the confirmed value in the same post as the rejection.
+    expect(androidShell).toContain('changed("snapshots", name, if (ok) json else previous, null)')
+
+    // UIKit posts regardless of the outcome; the notification carries only the
+    // name, so the reader's own `read` supplies the value.
+    const write = iosActions.slice(iosActions.indexOf('static func write(_ name: String, json: String?'), iosActions.indexOf('static func names()'))
+    expect(write.length).toBeGreaterThan(400)
+    expect(write).toContain('NotificationCenter.default.post(name: changed, object: nil, userInfo: ["name": name])')
+    expect(write, 'a failed write must still tell readers to re-read').not.toContain('if ok { NotificationCenter.default.post')
+    // And the failure path must leave nothing newer in front of the file: the
+    // pending value is dropped and the cache is only refilled on success.
+    expect(write).toContain('pending.removeValue(forKey: name)')
+    expect(write).toContain('if ok, let json {')
+  })
+
   it('accepts the same snapshot names on both hosts', () => {
     expect(iosActions).toContain('name.count <= 128 && !name.hasPrefix(".")')
     expect(iosActions).toContain('CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)')

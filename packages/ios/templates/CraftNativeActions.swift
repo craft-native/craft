@@ -2001,7 +2001,15 @@ enum CraftSnapshots {
             }
             lock.unlock()
             DispatchQueue.main.async {
-                if ok { NotificationCenter.default.post(name: changed, object: nil, userInfo: ["name": name]) }
+                // Posted whether or not the write landed. A screen displays its
+                // checkpoint optimistically, and this notification carries only
+                // the name, so a reader answers it by calling `read` — which
+                // after a failure finds the previous value, because `pending`
+                // was cleared above and the cache was only refilled on success.
+                // Posting only on success left a failed checkpoint on screen as
+                // though it had been kept; Android already restores it
+                // (`changed("snapshots", name, if (ok) json else previous, null)`).
+                NotificationCenter.default.post(name: changed, object: nil, userInfo: ["name": name])
                 completion?(ok)
             }
         }
