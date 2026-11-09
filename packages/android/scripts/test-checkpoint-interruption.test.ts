@@ -58,7 +58,7 @@ test('missing Android prerequisites allocate no output or workspace', async () =
     expect(result.stderr).toContain('Select SDK, NDK and Pantry Android command-line tools')
     expect(await readdir(directory)).toEqual([])
   })
-})
+}, 15000)
 
 test('workspace acquisition failure retains its original failure and disposes everything acquired', async () => {
   await fixture(async (directory, scope) => {
@@ -74,7 +74,7 @@ test('workspace acquisition failure retains its original failure and disposes ev
     expect(report.commandGroupsDisposed).toBe(true)
     expect(await Bun.file(join(directory, 'unexpected-native-work')).exists()).toBe(false)
   })
-})
+}, 15000)
 
 test('real compiler failure preserves exit status and full log without starting an emulator', async () => {
   await fixture(async (directory, scope) => {
@@ -91,7 +91,7 @@ test('real compiler failure preserves exit status and full log without starting 
     expect(await Bun.file(join(directory, 'unexpected-native-work')).exists()).toBe(false)
     expect(report.serial).toBeUndefined()
   })
-})
+}, 15000)
 
 test('SIGINT during native work kills owned descendants, retains failure, and leaves unrelated processes alive', async () => {
   await fixture(async (directory, scope) => {

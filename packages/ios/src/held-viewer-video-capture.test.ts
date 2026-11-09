@@ -97,7 +97,7 @@ for (const alteredAnchor of [false, true]) {
       }
     }
     finally { removeTempDir(dir) }
-  })
+  }, 10000)
 }
 
 

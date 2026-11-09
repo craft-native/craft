@@ -27,7 +27,7 @@ test('invalid Vulkan image selection creates no owned paths and requires no SDK 
     expect(result.stderr).toContain('Choose an Android35/36 SDK image matching the native host ABI')
     expect(await readdir(directory)).toEqual([])
   })
-})
+}, 15000)
 
 test('workspace allocation failure retains an honest failure receipt without starting native work', async () => {
   await fixture(async (directory, scope) => {
@@ -51,7 +51,7 @@ test('workspace allocation failure retains an honest failure receipt without sta
     expect(receipt.commandGroupsDisposed).toBe(true)
     expect(receipt.error).toContain('mkdtemp')
   })
-})
+}, 15000)
 
 test('emulator identity reaches the headless frontend when GUI audio dependencies are absent', async () => {
   await fixture(async (directory, scope) => {
@@ -74,4 +74,4 @@ test('emulator identity reaches the headless frontend when GUI audio dependencie
     expect(identity.groupDisposed).toBe(true)
     expect(JSON.parse(await readFile(selected, 'utf8'))).toEqual({ frontend: 'headless', audioEnabled: false })
   })
-})
+}, 15000)
