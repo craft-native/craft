@@ -819,6 +819,19 @@ test "Android surface creation forwards the owned native window and preserves dr
     try std.testing.expectEqual(@as(usize, 3), Probe.calls);
 }
 
+// The extent policy, and what it is a policy against (#435).
+//
+// Treating a non-sentinel `currentExtent` as mandatory is the defect: Android
+// reports it from cached default dimensions, so after a real SurfaceView
+// resize to 160x120 the cache could still say 256x192 and `resize(160,120)`
+// came back 256x192 while every other observation — the callback, the measured
+// View, the SurfaceHolder frame and the live native window — said 160x120.
+// Android WSI defines `currentExtent` as the consumer's *preferred* size and
+// permits any extent within the surface's min/max image bounds, so the bounds
+// are what Craft honours.
+//
+// Reinstating the old policy makes the first and third of these fail with
+// `expected 160, found 256`, which is the reported symptom exactly.
 test "Vulkan image bounds permit requested Android pixels despite a stale preferred extent" {
     var capabilities = std.mem.zeroes(vk.VkSurfaceCapabilitiesKHR);
     capabilities.currentExtent = .{ .width = 256, .height = 192 };
