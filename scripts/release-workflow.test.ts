@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { requiredReleaseAssets } from './release-manifest'
@@ -507,21 +507,62 @@ test('Android native evidence is captured inside the live emulator action and up
   expect((upload?.with as Record<string, string>).path).toContain('artifacts/mobile-e2e/android-emulator/**')
 })
 
+/**
+ * Workflows that deliberately install an older Pantry CLI, and why.
+ *
+ * `native-cache-diagnostic.yml` replays the exact `PathAlreadyExists` failure
+ * of #488 against the cache that produced it, so running it on a newer
+ * installer would be running a different experiment. It is
+ * `workflow_dispatch` only and says in its own header that it cannot qualify
+ * a release.
+ *
+ * Checked below rather than merely skipped, so the exemption cannot outlive
+ * the replay it exists for.
+ */
+const replaysAnOlderPantry = new Map([['native-cache-diagnostic.yml', '0.11.166']])
+
 test('workflow setup uses a known Pantry CLI instead of resolving latest', () => {
-  for (const file of ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'benchmarks.yml', 'binary-size.yml', 'native-lifecycle.yml', 'windows-source-provenance.yml', 'windows-managed-git.yml']) {
-    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }
-    for (const [name, job] of Object.entries(workflow.jobs)) {
+  // Every workflow, not a list of them. `menubar-native.yml` was on 0.11.166
+  // months after the rest moved, because the list here did not name it — and
+  // 0.11.166 is the version whose Zig install dies at a fixed 30-second
+  // timeout with no output, which is what took four jobs and a release down
+  // in #491. A straggler is exactly the thing this test is for, so it can no
+  // longer be a straggler by omission.
+  const directory = join(import.meta.dir, '../.github/workflows')
+  const files = readdirSync(directory).filter(name => name.endsWith('.yml')).sort()
+  expect(files.length, 'the workflow scan must find the workflows').toBeGreaterThan(8)
+
+  // Release gates use one published installer with frozen provider replay and
+  // alias closure, including the macOS HTTPS dependencies.
+  const version = '0.11.184'
+  const source = '624cd6674f8c5c2d4e4204c11ece62a00d7fac0a'
+  let pinned = 0
+  for (const file of files) {
+    const text = readFileSync(join(directory, file), 'utf8')
+    const workflow = Bun.YAML.parse(text) as { on?: unknown, jobs: Record<string, Job> }
+    const replay = replaysAnOlderPantry.get(file)
+    for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
       for (const step of job.steps ?? []) {
-        if (step.uses?.startsWith('pantry-pm/pantry/packages/action@')) {
-          // Release gates use one published installer with frozen provider
-          // replay and alias closure, including the macOS HTTPS dependencies.
-          const version = '0.11.184'
-          const source = '624cd6674f8c5c2d4e4204c11ece62a00d7fac0a'
-          expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
-          expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
+        if (!step.uses?.startsWith('pantry-pm/pantry/packages/action@')) continue
+        pinned++
+        if (replay) {
+          expect(step.with?.version, `${file} is exempt to replay ${replay} and must install it`).toBe(replay)
+          continue
         }
+        expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe(version)
+        expect(step.uses, `${file} ${name} must pin the matching action source`).toBe(`pantry-pm/pantry/packages/action@${source}`)
       }
     }
+  }
+  expect(pinned, 'the scan must actually reach Pantry steps').toBeGreaterThan(20)
+
+  for (const [file, replay] of replaysAnOlderPantry) {
+    const text = readFileSync(join(directory, file), 'utf8')
+    // An exemption has to still be a manual diagnostic that still installs the
+    // old CLI, or it is just a workflow nobody updated.
+    expect(text, `${file} is exempt but no longer installs ${replay}`).toContain(`version: '${replay}'`)
+    expect(text, `${file} is exempt but is no longer manual-only`).toContain('workflow_dispatch')
+    expect(replay, `${file} is exempt but names the current version`).not.toBe(version)
   }
 })
 
