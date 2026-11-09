@@ -1313,7 +1313,32 @@ export type CraftErrorCode = NativeBridgeErrorCode
   | 'SESSION_EXPIRED'       // Session has expired
   | 'AUTH_FAILED'           // Authentication failed
   | 'NOT_FOUND'             // Resource not found
-  | 'STORAGE_FULL';         // Storage is full
+  | 'STORAGE_FULL'          // Storage is full
+
+  // Emitted by the native screen hosts' capability dispatchers. These arrived
+  // without being declared, so an exhaustive handler could not see them. The
+  // contract test below derives this list from the hosts rather than trusting
+  // it. Which of the host-specific ones should be unified across hosts is
+  // tracked separately — this only stops the type from omitting codes that
+  // actually reach a caller.
+  | 'APP_INACTIVE'          // The capability needs a foreground app
+  | 'NEEDS_ACTIVITY'        // The capability needs a visible app
+  | 'UNAVAILABLE'           // The capability is not usable right now
+  | 'UNSUPPORTED'           // Android: the capability is not supported here
+  | 'UNSUPPORTED_TARGET'    // The operation does not apply to this node
+  | 'VIEW_NOT_FOUND'        // No mounted node with that id
+  | 'VIEW_NOT_MOUNTED'      // The node exists but is not mounted
+  | 'FOCUS_FAILED'          // The node could not take focus
+  | 'MEASURE_FAILED'        // iOS: the node could not be measured
+  | 'PRESENTATION_FAILED'   // Android: the screen could not be presented
+  | 'POSITION_UNAVAILABLE'  // Android: no position for that node
+  | 'IO_ERROR'              // Android: a filesystem operation failed
+  | 'PASSKEY_FAILED'        // iOS: the passkey request failed
+  | 'RECORDING_BUSY'        // Another microphone session is active
+  | 'RECORDING_CANCELLED'   // The recording was cancelled
+  | 'RECORDING_FAILED'      // The recording could not be completed or read
+  | 'RECORDING_TIMEOUT'     // iOS: the recording passed its maximum length
+  | 'EMPTY_RECORDING';      // iOS: the recording produced no audio
 
 export interface CraftSpeechOptions {
   /** Speaking rate, 0.5 to 2. 1 is the voice's normal pace. */

@@ -52,3 +52,52 @@ void [compatible, error, typo, legacy]
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 }, 30_000)
+
+/**
+ * Every error code the native screen hosts emit is declared.
+ *
+ * The test above derives `NativeBridgeErrorCode` from `bridge_error.zig`, which
+ * is the Zig bridge's wire vocabulary. The native screen hosts are a second
+ * source: their capability dispatchers construct codes as literals, and 18 of
+ * them — `RECORDING_BUSY`, `VIEW_NOT_FOUND`, `APP_INACTIVE`, `IO_ERROR` and the
+ * rest — reached callers without appearing in either union, so an exhaustive
+ * handler could not account for them.
+ *
+ * Derived from the hosts, so a new code has to be declared when it is added.
+ */
+test('every code the native screen hosts emit is in the public union', async () => {
+  const host = async (path: string) => Bun.file(resolve(sdk, '..', path)).text()
+  const swift = (await Promise.all([
+    'ios/templates/CraftNativeScreen.swift',
+    'ios/templates/CraftNativeActions.swift',
+    'ios/templates/CraftVoiceRecording.swift',
+  ].map(host))).join('\n')
+  const kotlin = (await Promise.all([
+    'android/templates/MainActivityNative.kt.template',
+    'android/templates/CraftNativeServices.kt.template',
+  ].map(host))).join('\n')
+
+  const emitted = new Set<string>()
+  for (const found of swift.matchAll(/CraftNativeActionError\(code:\s*"([A-Z_]+)"/g)) emitted.add(found[1]!)
+  for (const found of swift.matchAll(/fail\("([A-Z_]+)"/g)) emitted.add(found[1]!)
+  for (const found of kotlin.matchAll(/CraftNativeCapabilityResult\(code\s*=\s*"([A-Z_]+)"/g)) emitted.add(found[1]!)
+  for (const found of kotlin.matchAll(/failure\("([A-Z_]+)"/g)) emitted.add(found[1]!)
+  expect(emitted.size).toBeGreaterThan(20)
+
+  // Comments are stripped before the union is sliced: a `//` comment holding a
+  // semicolon ends the non-greedy match early and silently truncates the
+  // declared set, which is how the first version of this test reported every
+  // code as undeclared while the declarations were right there.
+  const types = readFileSync(declarations, 'utf8').replace(/\/\/[^\n]*/g, '')
+  const declared = new Set<string>()
+  for (const name of ['NativeBridgeErrorCode', 'CraftErrorCode']) {
+    const body = new RegExp(`export type ${name}\\s*=([^;]*);`).exec(types)?.[1]
+    expect(body, `${name} must be declared`).toBeTruthy()
+    for (const found of body!.matchAll(/'([A-Z_]+)'/g)) declared.add(found[1]!)
+  }
+  // The slice must reach the end of the union, not stop inside it.
+  expect(declared.size).toBeGreaterThan(55)
+
+  const undeclared = [...emitted].filter(code => !declared.has(code)).sort()
+  expect(undeclared, 'these codes reach callers with no public declaration').toEqual([])
+}, 30_000)
