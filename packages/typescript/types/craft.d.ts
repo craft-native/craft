@@ -345,6 +345,12 @@ export interface CraftBridge {
 
   /** Typed secure storage API used by WebView-free STX screens. */
   secureStorage: {
+    /**
+     * The stored string now, without awaiting, or null. **Native screens
+     * only** — the shells install it so a screen can read a session token
+     * before its first frame.
+     */
+    getSync?(key: string): string | null;
     set(key: string, value: string): Promise<boolean>;
     get(key: string): Promise<string | null>;
     remove(key: string): Promise<boolean>;
@@ -457,6 +463,62 @@ export interface CraftBridge {
     keys(): Promise<string[]>;
     compareAndSet(key: string, expectedValue: CraftStorageValue, nextValue: CraftStorageValue): Promise<boolean>;
     setIfAbsent(key: string, value: CraftStorageValue): Promise<boolean>;
+    /**
+     * The value now, without awaiting. **Native screens only** — the shells
+     * install it so a screen can read its state before its first frame.
+     */
+    getSync?<T extends CraftStorageValue = CraftStorageValue>(key: string): T | null;
+    /**
+     * Store `value` now; `null` or `undefined` removes the key. **Native
+     * screens only.**
+     *
+     * The two hosts report failure differently, because their transports do.
+     * UIKit calls the host directly and **throws** when the write is refused.
+     * The Android isolate cannot reach its host synchronously, so it updates
+     * its own mirror and posts the write; a refused write arrives later as a
+     * change event carrying the previous value, and this call does not throw.
+     * Await `set` instead when the outcome has to be known at the call site.
+     */
+    setSync?(key: string, value: CraftStorageValue): void;
+  };
+
+  /**
+   * The app's own light/dark selection. **iOS native screens only** — the
+   * Android shell does not install this group.
+   */
+  app?: {
+    /**
+     * Follow `light`, `dark`, or the device with `system`. Rejects with a
+     * `TypeError` for anything else, and with an `Error` when the host
+     * refused the change.
+     */
+    setAppearance(value: 'light' | 'dark' | 'system'): Promise<void>;
+    /**
+     * The appearance in effect, resolved against the device when the app
+     * follows it — so `system` is never answered, only what it resolved to.
+     */
+    getAppearance(): Promise<'light' | 'dark'>;
+  };
+
+  /**
+   * Checkpoints a screen can read before its first frame. **Native screens
+   * only** — each is `craft-snapshots/<name>.json` in the app's own storage.
+   *
+   * Names are letters, digits, `.`, `_`, `-` and `:`, up to 128 characters,
+   * and may not begin with a dot. The `:` is the account namespace, so
+   * `account:slot` is a legitimate key.
+   *
+   * This is the native-screen surface on the injected global. The page writes
+   * the same store through the SDK's own `snapshots` export, which posts to
+   * the shell and answers synchronously with a boolean.
+   */
+  snapshots?: {
+    /** The checkpoint now, without awaiting, or null when there is none. */
+    get<T = unknown>(name: string): T | null;
+    /** Replace the checkpoint. Rejects when the host refused the write. */
+    set(name: string, value: unknown): Promise<void>;
+    /** Remove every checkpoint but the names in `keep`, as a sign-out does. */
+    clear(keep?: readonly string[]): Promise<void>;
   };
 
   // ==================== Clipboard ====================
