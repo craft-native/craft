@@ -721,8 +721,11 @@ internal object CraftNativePrelude {
             if (json === null || json === undefined) return null;
             try { return JSON.parse(json); } catch (error) { return null; }
           }
+          // The same names the host accepts, including the `:` UIKit calls the
+          // account namespace. This gate runs inside the isolate, so a stricter
+          // rule here refuses a key the host would have kept.
           function validSnapshotName(name) {
-            return /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/.test(name);
+            return /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,127}$/.test(name);
           }
           var craft = globalThis.craft = globalThis.craft || {};
           function keep(name, extras) {
@@ -752,7 +755,7 @@ internal object CraftNativePrelude {
             },
             set: function(name, value) {
               name = String(name);
-              if (!validSnapshotName(name)) return Promise.reject(new TypeError('Snapshot names are letters, digits, ".", "_" and "-"'));
+              if (!validSnapshotName(name)) return Promise.reject(new TypeError('Snapshot names are letters, digits, ".", "_", "-" and ":"'));
               var json = value === null ? null : JSON.stringify(value);
               if (json === undefined) return Promise.reject(new TypeError('Snapshot ' + name + ' is not JSON'));
               if (json === null) delete sync.snapshots[name];

@@ -2959,7 +2959,11 @@ function postHybrid(message: Record<string, unknown>): boolean {
 
 /** Letters, digits, `.`, `_` and `-`, not starting with a dot: the names the shell accepts. */
 export function isSnapshotName(name: string): boolean {
-  return typeof name === 'string' && /^[A-Za-z0-9_-][\w.-]{0,127}$/.test(name)
+  // Matches the hosts, `:` included: UIKit's `CraftSnapshots.isValidName`
+  // calls it the account namespace, so `account:slot` is a legitimate key.
+  // This helper is exported and gates `snapshots.set`, so a stricter rule
+  // here refuses a name both hosts would have kept.
+  return typeof name === 'string' && /^[A-Za-z0-9_:-][\w.:-]{0,127}$/.test(name)
 }
 
 /**
@@ -2977,7 +2981,7 @@ export const snapshots = {
   },
   /** Keep `value` (anything JSON can hold) as `name`. Answers whether it was handed to the shell. */
   set(name: string, value: unknown): boolean {
-    if (!isSnapshotName(name)) throw new TypeError(`Snapshot names are letters, digits, ".", "_" and "-": ${String(name)}`)
+    if (!isSnapshotName(name)) throw new TypeError(`Snapshot names are letters, digits, ".", "_", "-" and ":": ${String(name)}`)
     const json = JSON.stringify(value)
     if (json === undefined) throw new TypeError(`Snapshot ${name} is not JSON`)
     return postHybrid({ type: 'snapshotSet', name, json })

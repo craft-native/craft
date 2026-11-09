@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'bun:test'
 import { androidMapHost } from '../packages/android/src/native-map'
+import { isSnapshotName } from '../packages/typescript/src/api/mobile'
 
 const root = join(import.meta.dir, '..')
 const ios = readFileSync(join(root, 'packages/ios/templates/CraftNativeScreen.swift'), 'utf8')
@@ -194,16 +195,30 @@ describe('native renderer component contract', () => {
     expect(iosActions).toContain('CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)')
     expect(androidShell).toContain('Regex("[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,127}")')
 
-    // Derived rather than eyeballed: the two rules are re-implemented here and
-    // compared over the cases that distinguish them.
+    // Four implementations gate this one key, and widening only the Kotlin host
+    // rule left two of them refusing a name the hosts keep. All four are
+    // compared, so the next one cannot drift on its own.
     const iosValid = (name: string) => name.length > 0 && name.length <= 128 && !name.startsWith('.')
       && [...name].every(character => /[A-Za-z0-9]/.test(character) || '-_.:'.includes(character))
-    const pattern = /Regex\("(\[[^"]+)"\)/.exec(androidShell.slice(androidShell.indexOf('private fun isSnapshotName')))?.[1]
-    expect(pattern).toBeTruthy()
-    const androidValid = (name: string) => new RegExp(`^${pattern}$`).test(name)
-    for (const name of ['a', 'account:slot', ':lead', '-lead', '_lead', '.lead', '1', 'a.b', 'a-b_c.d:e', 'a'.repeat(128), 'a'.repeat(129), '', 'has space', 'has/slash', 'h\u00e9llo']) {
-      expect(androidValid(name), `hosts disagree on ${JSON.stringify(name.slice(0, 32))}`).toBe(iosValid(name))
+    const kotlin = /Regex\("(\[[^"]+)"\)/.exec(androidShell.slice(androidShell.indexOf('private fun isSnapshotName')))?.[1]
+    const shimJs = /return (\/\^\[[^/]+\$\/)\.test\(name\)/.exec(androidShell.slice(androidShell.indexOf('function validSnapshotName')))?.[1]
+    expect(kotlin, 'the Kotlin rule must be a single extractable Regex literal').toBeTruthy()
+    expect(shimJs, 'the isolate gate must be a single extractable regex literal').toBeTruthy()
+    const rules: Array<[string, (name: string) => boolean]> = [
+      ['UIKit host', iosValid],
+      ['Android host (Kotlin)', name => new RegExp(`^${kotlin}$`).test(name)],
+      // eslint-disable-next-line no-eval
+      ['Android isolate gate', name => (eval(shimJs!) as RegExp).test(name)],
+      ['SDK isSnapshotName', isSnapshotName],
+    ]
+    for (const name of ['a', 'account:slot', ':lead', '-lead', '_lead', '.lead', '1', 'a.b', 'a-b_c.d:e', 'a'.repeat(127), 'a'.repeat(128), 'a'.repeat(129), '', 'has space', 'has/slash', 'h\u00e9llo', ':', ':'.repeat(128)]) {
+      const verdicts = rules.map(([label, rule]) => [label, rule(name)] as const)
+      const disagreeing = verdicts.filter(([, verdict]) => verdict !== verdicts[0]![1]).map(([label]) => label)
+      expect(disagreeing, `these disagree with ${verdicts[0]![0]} on ${JSON.stringify(name.slice(0, 32))}`).toEqual([])
     }
+    // And the messages must not tell a caller the colon is invalid.
+    expect(androidShell).toContain('Snapshot names are letters, digits, ".", "_", "-" and ":"')
+    expect(mobileApi).toContain('Snapshot names are letters, digits, ".", "_", "-" and ":"')
 
     // The colon must never reach the filesystem on either host.
     expect(androidShell).toContain('URLEncoder.encode(name, "UTF-8") + ".json"')
