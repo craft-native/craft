@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.488...v0.0.489)
+
+## 🚀 Features
+
+- **android**: resolve the auth gate before the first screen is built ([289961d](https://github.com/craft-native/craft/commit/289961d)) _(by glennmichael123)_ ([#499](https://github.com/craft-native/craft/issues/499))
+
+## 🐛 Bug Fixes
+
+- **ios**: let a configured fontFamily reach a screen's own text ([0b52362](https://github.com/craft-native/craft/commit/0b52362)) _(by glennmichael123)_ ([#500](https://github.com/craft-native/craft/issues/500))
+- **zig**: mirror nativeGate into the iOS config validator ([fddea11](https://github.com/craft-native/craft/commit/fddea11)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **zig**: record what the Vulkan extent policy is a policy against ([75978ff](https://github.com/craft-native/craft/commit/75978ff)) _(by glennmichael123)_ ([#435](https://github.com/craft-native/craft/issues/435))
+
+## 🧪 Tests
+
+- hold the two builders to the same nativeGate rules ([7523991](https://github.com/craft-native/craft/commit/7523991)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.487...v0.0.488)
 
 ## 🚀 Features
