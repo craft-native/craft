@@ -20,15 +20,16 @@ const sdk = resolve(import.meta.dir, '../..')
 const host = (path: string) => readFileSync(resolve(sdk, '..', path), 'utf8')
 
 /**
- * `navigation.setOptions` is the one known gap, tracked by #489.
+ * Members installed on the global and deliberately left undeclared, each with
+ * the issue that tracks it. Empty, and meant to stay that way.
  *
- * Typing it means typing all fifteen options it reads, which is that issue's
- * own work — `packages/ios/src/navigation-options-doc.test.ts` exists because
- * the doc comment is currently the only public description. Listed here so the
- * gap is explicit rather than silently excluded, and checked below so the
- * exemption cannot outlive it.
+ * `navigation.setOptions` was the last entry: typing it meant typing all
+ * sixteen options it reads, which #493 did once the two hosts finally agreed
+ * on what those options are. The checks below mean an entry here cannot
+ * outlive the gap it describes — it fails if the member becomes declared, and
+ * it fails if the member stops being installed.
  */
-const undeclaredOnPurpose = new Map([['navigation.setOptions', 489]])
+const undeclaredOnPurpose = new Map<string, number>()
 
 /** The block starting just past an opening brace. */
 function block(source: string, start: number): string {

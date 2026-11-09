@@ -521,6 +521,25 @@ export interface CraftBridge {
     clear(keep?: readonly string[]): Promise<void>;
   };
 
+  /**
+   * This screen's chrome: the bar above it and the tab bar below.
+   *
+   * Native screens only. Every key is optional and only the keys given
+   * change, so a screen can set its title at mount and its buttons later
+   * without restating the rest. The two hosts draw the chrome differently —
+   * UIKit's `UINavigationItem` and a `CraftNativeChrome` of plain Android
+   * views — and the keys below are the surface they share, with the
+   * exceptions marked.
+   *
+   * Until #493 this was typed nowhere at all, and the two host comments were
+   * the only public description of it. That is how `tabBarHiddenWhenPushed`
+   * came to be honoured on one host and ignored on the other for as long as
+   * it existed.
+   */
+  navigation?: {
+    setOptions(options: CraftNavigationOptions): void;
+  };
+
   // ==================== Clipboard ====================
   clipboard: {
     /**
@@ -2464,6 +2483,143 @@ declare global {
     craftBackgroundRefresh: CraftBackgroundWorkEvent;
     craftRefresh: CustomEvent<Record<string, never>>;
   }
+}
+
+/**
+ * A button in the screen's navigation bar (`leftButtons`, `rightButtons`).
+ * `id` identifies it in the `navButton` event; a button without one is
+ * dropped. A button needs a `symbol` or a `title` to be drawn at all.
+ */
+export interface CraftNavigationButton {
+  /** Sent back as the `navButton` event's `id` when the button is tapped. */
+  id: string;
+  title?: string;
+  /** An SF Symbol name. Android maps the common ones onto its own icons. */
+  symbol?: string;
+  /** Defaults to `title`, then to `id`. */
+  accessibilityLabel?: string;
+  /**
+   * `neutral` draws in the label colour rather than the app accent.
+   * `accent` and `account` are **iOS only**: a round account button that can
+   * carry `image` and a badge. Android draws every variant as a bar button.
+   */
+  variant?: 'neutral' | 'accent' | 'account';
+  /** A hex colour that overrides the variant's tint. */
+  color?: string;
+  /** A count. Zero or absent draws none. */
+  badge?: number;
+  /** `dot` draws a mark rather than the number. */
+  badgeStyle?: 'dot' | 'count';
+  /**
+   * **iOS only.** An `https` picture drawn round, as iOS draws an account
+   * button. The symbol or title shows until it has loaded, and stays if it
+   * cannot be.
+   */
+  image?: string;
+}
+
+/**
+ * Changes to this screen's own entry in the tab bar (`tabItem`). Only the
+ * keys given change; `null` clears one back to the tab's declared value.
+ */
+export interface CraftTabItemOptions {
+  /** Which tab to change. A tab that is not in the bar is ignored. */
+  id: string;
+  /** Up to 40 characters; `null` restores the declared title. */
+  title?: string | null;
+  symbol?: string | null;
+  /** The symbol drawn while this tab is the selected one. */
+  selectedSymbol?: string | null;
+  /** Up to 8 characters drawn in place of the symbol. */
+  iconText?: string | null;
+  /** A hex colour for the icon. */
+  iconTint?: string | null;
+  selectedIconTint?: string | null;
+  /** Draw attention to the icon until something else changes it. */
+  iconPulse?: boolean;
+  selectedIconPulse?: boolean | null;
+  accessibilityLabel?: string | null;
+}
+
+/**
+ * An extra entry beside the tabs (`tabAccessory`), for a destination that is
+ * not one of the app's tabs — a conversation, a live session. `path` must be
+ * absolute and single-slashed, and a `title` is required; anything else is
+ * ignored and takes the accessory off.
+ *
+ * A screen that has not mentioned the key leaves the accessory as it is. Pass
+ * `null` to take it off.
+ */
+export interface CraftTabAccessory {
+  path: string;
+  title: string;
+  symbol?: string;
+  /** Up to 8 characters. */
+  badge?: string;
+  accessibilityLabel?: string;
+  /** Draw the symbol without the title. */
+  iconOnly?: boolean;
+  /** Up to two further destinations drawn beside it, icon-only. */
+  companions?: readonly CraftTabAccessoryCompanion[];
+}
+
+export interface CraftTabAccessoryCompanion {
+  path: string;
+  title: string;
+  symbol?: string;
+  accessibilityLabel?: string;
+  /** Up to twelve destinations offered on a long press. */
+  menu?: readonly { path: string; title: string; symbol?: string }[];
+}
+
+/**
+ * `craft.navigation.setOptions` — this screen's bar and tab bar. Every key is
+ * optional and only the keys given change.
+ */
+export interface CraftNavigationOptions {
+  title?: string;
+  /** A hex colour for the title. */
+  titleColor?: string;
+  /** Draw the title large, collapsing as the screen scrolls. */
+  largeTitle?: boolean;
+  /** Take the navigation bar away entirely for this screen. */
+  hidden?: boolean;
+  /** The screen's own colour, under the status bar and home indicator too. */
+  backgroundColor?: string;
+  leftButtons?: readonly CraftNavigationButton[];
+  rightButtons?: readonly CraftNavigationButton[];
+  tabItem?: CraftTabItemOptions;
+  tabAccessory?: CraftTabAccessory | null;
+  /** Take the app's tab bar away while this screen shows. */
+  tabBarHidden?: boolean;
+  /**
+   * Take the tab bar away only once this screen has something pushed on top
+   * of it — UIKit's `hidesBottomBarWhenPushed` idiom. Both hosts read the
+   * screen's own depth in its stack: zero keeps the bar, deeper takes it away.
+   */
+  tabBarHiddenWhenPushed?: boolean;
+  /** Whether the shell's horizontal tab-switch gesture may begin here. */
+  tabSwipeEnabled?: boolean;
+  /**
+   * **iOS only.** The back button's own title on the screen pushed from here.
+   */
+  backTitle?: string | null;
+  /**
+   * **iOS only.** Whether a back-swipe may leave this screen at all, the
+   * screen edge's included. A screen that steps through its own pages with a
+   * Back of its own would otherwise lose its place to a stray swipe.
+   */
+  swipeBack?: boolean;
+  /**
+   * **iOS only.** Whether iOS 26's content-wide back-swipe may begin here.
+   * Setting it false leaves the 32-point edge gesture.
+   */
+  contentSwipeBack?: boolean;
+  /**
+   * **iOS only.** Fill the navigation bar with the screen's own background
+   * colour instead of UIKit's material.
+   */
+  navigationBarSolid?: boolean;
 }
 
 export {};

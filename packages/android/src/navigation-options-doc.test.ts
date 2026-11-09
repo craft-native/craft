@@ -42,6 +42,37 @@ test('every option the Android chrome reads is named in its public comment', () 
   expect(undocumented, 'these setOptions keys ship with no public documentation on Android').toEqual([])
 })
 
+/** Every key declared on `CraftNavigationOptions`. */
+function declaredOptions(): Set<string> {
+  const types = readFileSync(join(import.meta.dir, '../../typescript/types/craft.d.ts'), 'utf8')
+  const from = types.indexOf('export interface CraftNavigationOptions {')
+  expect(from).toBeGreaterThan(0)
+  const to = types.indexOf('\n}', from)
+  expect(to).toBeGreaterThan(from)
+  // Doc comments carry `backgroundColor` and the rest in prose, so read the
+  // property lines only — a comment that happens to name a key is not a
+  // declaration of it.
+  const body = types.slice(from, to).replace(/\/\*[\s\S]*?\*\//g, '')
+  return new Set([...body.matchAll(/^ {2}([a-zA-Z]+)\??:/gm)].map(match => match[1]!))
+}
+
+test('every option either host reads is declared on CraftNavigationOptions', () => {
+  // The type exists because the two host comments used to be the only public
+  // description of this surface, which is how `tabBarHiddenWhenPushed` came to
+  // be honoured on one host and ignored on the other (#493). Derived from the
+  // hosts so the next key is typed when it is read, not when someone notices.
+  const swift = readFileSync(join(import.meta.dir, '../../ios/templates/CraftNativeScreen.swift'), 'utf8')
+  const start = swift.indexOf('`craft.navigation.setOptions`: this screen\'s bar.')
+  expect(start).toBeGreaterThan(0)
+  const ios = new Set([...swift.slice(start, start + 6000).matchAll(/options(?:\.keys\.contains\(|\[)"([a-zA-Z]+)"/g)].map(match => match[1]!))
+  const read = new Set([...ios, ...appliedOptions()])
+  expect(read.size).toBeGreaterThan(14)
+
+  const declared = declaredOptions()
+  expect([...read].filter(key => !declared.has(key)).sort(), 'these options ship with no SDK type').toEqual([])
+  expect([...declared].filter(key => !read.has(key)).sort(), 'these options are typed and no host reads them').toEqual([])
+})
+
 test('the hosts agree on which navigation options exist, or the difference is recorded', () => {
   // A key one host honours and the other silently ignores is not a platform
   // difference a caller can see; it reads as a broken option. The iOS-only
