@@ -2960,6 +2960,57 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(svg.accessibilityValue)
     }
 
+    func testNavigationButtonMenuReportsTheChoiceThatWasPicked() {
+        var picked: [String] = []
+        let menu = CraftNativeScreenController.navigationMenu([
+            ["id": "store", "title": "Store", "symbol": "bag"],
+            ["id": "", "title": "No id"], ["id": "untitled"],
+            ["id": "remove", "title": "Remove", "destructive": true],
+            ["id": "locked", "title": "Locked", "disabled": true],
+        ]) { picked.append($0) }
+        let actions = (menu?.children ?? []).compactMap { $0 as? UIAction }
+        XCTAssertEqual(actions.map(\.title), ["Store", "Remove", "Locked"], "A choice without an id or a title was offered")
+        XCTAssertEqual(actions.map(\.accessibilityIdentifier), ["nav-menu-store", "nav-menu-remove", "nav-menu-locked"])
+        XCTAssertTrue(actions[1].attributes.contains(.destructive))
+        XCTAssertTrue(actions[2].attributes.contains(.disabled))
+        XCTAssertNil(CraftNativeScreenController.navigationMenu([], chosen: { _ in }), "An empty menu replaced the button's own press")
+        XCTAssertNil(CraftNativeScreenController.navigationMenu(nil, chosen: { _ in }))
+    }
+
+    func testNativeChartReadingCanAlwaysBePutAway() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let svg = CraftNativeSvgView(frame: CGRect(x: 20, y: 100, width: 320, height: 224))
+        window.addSubview(svg)
+        svg.drawing = ["type": "Svg", "props": ["viewBox": [0, 0, 320, 224], "inspection": ["title": "HRV", "points": [
+            ["key": "a", "x": 0.1, "y": 0.4, "label": "Nov 1", "rows": [["label": "HRV", "value": "57 ms"]]],
+            ["key": "b", "x": 0.9, "y": 0.6, "label": "Nov 7", "rows": [["label": "HRV", "value": "61 ms"]]],
+        ]]]]
+        let watchers = { (window.gestureRecognizers ?? []).filter { $0 is CraftTouchBeganRecognizer }.count }
+        svg.inspection.tap(at: CGPoint(x: 30, y: 50))
+        XCTAssertEqual(svg.inspection.selectedIndex, 0)
+        XCTAssertEqual(watchers(), 1)
+        svg.inspection.tap(at: CGPoint(x: 300, y: 50))
+        XCTAssertEqual(svg.inspection.selectedIndex, 1, "A tap on another reading did not move the pin")
+        XCTAssertEqual(watchers(), 1, "Moving the pin stacked a second window watcher")
+        svg.inspection.tap(at: CGPoint(x: 290, y: 120))
+        XCTAssertEqual(svg.inspection.selectedIndex, -1, "Tapping the pinned reading again left it open")
+        XCTAssertEqual(watchers(), 0)
+
+        svg.inspection.tap(at: CGPoint(x: 30, y: 50))
+        svg.inspection.touchBegan(inWindow: CGPoint(x: 60, y: 150))
+        XCTAssertEqual(svg.inspection.selectedIndex, 0, "A touch on the chart itself closed its reading")
+        svg.inspection.touchBegan(inWindow: CGPoint(x: 60, y: 600))
+        XCTAssertEqual(svg.inspection.selectedIndex, -1, "A touch off the chart left the reading open")
+        XCTAssertEqual(watchers(), 0)
+
+        svg.inspection.scrub(.began, at: CGPoint(x: 30, y: 50))
+        svg.inspection.scrub(.changed, at: CGPoint(x: 300, y: 50))
+        XCTAssertEqual(svg.inspection.selectedIndex, 1)
+        svg.inspection.scrub(.ended, at: CGPoint(x: 300, y: 50))
+        XCTAssertEqual(svg.inspection.selectedIndex, -1, "Lifting the finger after a drag left the reading open")
+        XCTAssertEqual(watchers(), 0)
+    }
+
     func testNativeChartKeepsItsNativeTouchOwnershipWithoutAnAppPressHandler() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

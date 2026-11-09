@@ -419,6 +419,16 @@ private object CraftNativeSkewTransforms {
 /** A DOM-free SVG surface for the geometry emitted by the shared STX native protocol. */
 /** Local native chart selection: no JS events are needed while scrubbing. */
 private class CraftNativeChartInspection(private val view: View) {
+    companion object {
+        /** The one chart with a reading pinned open, if any. */
+        private var pinned: java.lang.ref.WeakReference<CraftNativeChartInspection>? = null
+        /** A touch that starts off the pinned chart closes its reading; the touch still lands where it was aimed. */
+        fun touchBegan(event: MotionEvent) {
+            if (event.actionMasked != MotionEvent.ACTION_DOWN) return
+            val open = pinned?.get() ?: return
+            if (!open.contains(event.rawX, event.rawY)) open.dismiss()
+        }
+    }
     private var fingerprint = ""
     private var title = ""
     private var points = emptyList<JSONObject>()
@@ -427,8 +437,9 @@ private class CraftNativeChartInspection(private val view: View) {
     private var startY = 0f
     private var dragging = false
     private var abandoned = false
+    private var holding = false
     private val slop = android.view.ViewConfiguration.get(view.context).scaledTouchSlop
-    private val hold = Runnable { if (!abandoned) selectAt(startX) }
+    private val hold = Runnable { if (!abandoned) { holding = true; selectAt(startX) } }
     val enabled: Boolean get() = points.isNotEmpty()
     private val density get() = view.resources.displayMetrics.density
     private fun dp(value: Float) = value * density
@@ -442,7 +453,7 @@ private class CraftNativeChartInspection(private val view: View) {
             val x = it.optDouble("x", Double.NaN)
             x.isFinite() && x in 0.0..1.0 && it.opt("label") is String
         }
-        selected = -1
+        dismiss()
         view.isFocusable = enabled
         view.invalidate()
     }
@@ -459,16 +470,31 @@ private class CraftNativeChartInspection(private val view: View) {
         view.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SELECTED)
         view.invalidate()
     }
-    private fun selectAt(x: Float) {
-        if (view.width <= 0) return
+    private fun nearest(x: Float): Int? {
+        if (view.width <= 0) return null
         val fraction = (x / view.width).coerceIn(0f, 1f)
-        points.indices.minByOrNull { kotlin.math.abs(points[it].optDouble("x") - fraction) }?.let { select(it) }
+        return points.indices.minByOrNull { kotlin.math.abs(points[it].optDouble("x") - fraction) }
+    }
+    private fun selectAt(x: Float) { nearest(x)?.let { select(it); pinned = java.lang.ref.WeakReference(this) } }
+    /** Puts the reading away. Returns whether one was showing. */
+    fun dismiss(): Boolean {
+        if (pinned?.get() === this) pinned = null
+        if (selected < 0) return false
+        selected = -1
+        view.invalidate()
+        return true
+    }
+    /** A tap pins the reading under it; tapping the pinned reading again puts it away. */
+    private fun tapAt(x: Float) { if (nearest(x) == selected) dismiss() else selectAt(x) }
+    private fun contains(rawX: Float, rawY: Float): Boolean {
+        val origin = IntArray(2).also { view.getLocationOnScreen(it) }
+        return rawX >= origin[0] && rawX < origin[0] + view.width && rawY >= origin[1] && rawY < origin[1] + view.height
     }
     fun touch(event: MotionEvent): Boolean {
         if (!enabled) return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                startX = event.x; startY = event.y; dragging = false; abandoned = false
+                startX = event.x; startY = event.y; dragging = false; abandoned = false; holding = false
                 view.postDelayed(hold, 250)
             }
             MotionEvent.ACTION_MOVE -> {
@@ -483,17 +509,19 @@ private class CraftNativeChartInspection(private val view: View) {
             }
             MotionEvent.ACTION_UP -> {
                 view.removeCallbacks(hold)
-                if (!abandoned) { view.performClick(); selectAt(event.x) }
+                // A drag or a hold reads the chart only while the finger is down.
+                if (dragging || holding) dismiss()
+                else if (!abandoned) { view.performClick(); tapAt(event.x) }
                 view.parent?.requestDisallowInterceptTouchEvent(false)
             }
             MotionEvent.ACTION_CANCEL -> {
-                view.removeCallbacks(hold); abandoned = true; selected = -1
-                view.parent?.requestDisallowInterceptTouchEvent(false); view.invalidate()
+                view.removeCallbacks(hold); abandoned = true; dismiss()
+                view.parent?.requestDisallowInterceptTouchEvent(false)
             }
         }
         return !abandoned
     }
-    fun detach() { view.removeCallbacks(hold); selected = -1 }
+    fun detach() { view.removeCallbacks(hold); dismiss() }
     fun accessibility(info: android.view.accessibility.AccessibilityNodeInfo) {
         if (!enabled) return
         info.className = "android.widget.SeekBar"
@@ -508,7 +536,7 @@ private class CraftNativeChartInspection(private val view: View) {
         when (action) {
             android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> select(if (selected < 0) 0 else selected + 1)
             android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> select(if (selected < 0) points.lastIndex else selected - 1)
-            android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS -> { selected = -1; view.invalidate() }
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS -> dismiss()
             else -> return false
         }
         return true
@@ -1214,6 +1242,7 @@ internal object CraftNativePointers {
     fun ownsTouch(view: View): Boolean = route(view).firstOrNull() !in setOf("none", "box-none")
 
     fun dispatch(view: View, event: MotionEvent, native: (MotionEvent) -> Boolean): Boolean {
+        CraftNativeChartInspection.touchBegan(event)
         val state = states.getOrPut(view) { State() }
         val route = route(view)
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) {

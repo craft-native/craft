@@ -12,6 +12,7 @@ import OSLog
 import Security
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// A menu belongs to its native view, not to coordinates in a web page.
 final class CraftNativeContextMenu: NSObject, UIContextMenuInteractionDelegate {
@@ -5195,6 +5196,23 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 /// Native inspection of an SVG plot. Coordinates are fractions of the plot's
 /// bounds; labels and values are already localized by the application. No JS
 /// callback or bridge round trip is needed while a finger moves.
+/// Reports where each touch starts and then fails, so it observes a window
+/// without ever taking a touch from the view underneath.
+final class CraftTouchBeganRecognizer: UIGestureRecognizer {
+    private let began: (CGPoint) -> Void
+    init(began: @escaping (CGPoint) -> Void) {
+        self.began = began
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .failed
+        if let touch = touches.first { began(touch.location(in: view)) }
+    }
+}
+
 final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
     struct Reading {
         let key: String
@@ -5214,6 +5232,7 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
     private lazy var tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
     private lazy var pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
     private lazy var hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+    private var outside: CraftTouchBeganRecognizer?
 
     init(view: UIView) {
         self.view = view
@@ -5241,6 +5260,7 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
                            color: (point["color"] as? String).flatMap { UIColor(css: $0) } ?? .systemBlue, label: label, rows: rows)
         }
         selectedIndex = -1
+        unwatchOutside()
         view?.isUserInteractionEnabled = !readings.isEmpty
         if readings.isEmpty { view?.accessibilityTraits.remove(.adjustable); view?.accessibilityValue = nil }
         [tap, pan, hold].forEach { $0.isEnabled = !readings.isEmpty }
@@ -5270,6 +5290,7 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
     }
 
     @discardableResult func dismiss() -> Bool {
+        unwatchOutside()
         guard selectedIndex >= 0 else { return false }
         selectedIndex = -1
         configureAccessibility()
@@ -5277,20 +5298,47 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
         return true
     }
 
-    private func select(at point: CGPoint) {
-        guard let view, view.bounds.width > 0 else { return }
+    private func nearest(at point: CGPoint) -> Int? {
+        guard let view, view.bounds.width > 0 else { return nil }
         let fraction = max(0, min(1, point.x / view.bounds.width))
-        if let nearest = readings.indices.min(by: { abs(readings[$0].x - fraction) < abs(readings[$1].x - fraction) }) { select(nearest) }
+        return readings.indices.min(by: { abs(readings[$0].x - fraction) < abs(readings[$1].x - fraction) })
     }
-    @objc private func tapped(_ gesture: UITapGestureRecognizer) { select(at: gesture.location(in: view)) }
-    @objc private func panned(_ gesture: UIPanGestureRecognizer) {
-        if gesture.state == .began || gesture.state == .changed { select(at: gesture.location(in: view)) }
-        if gesture.state == .cancelled { dismiss() }
+    private func select(at point: CGPoint) {
+        if let index = nearest(at: point) { select(index); watchOutside() }
     }
-    @objc private func held(_ gesture: UILongPressGestureRecognizer) {
-        if gesture.state == .began || gesture.state == .changed { select(at: gesture.location(in: view)) }
-        if gesture.state == .cancelled { dismiss() }
+    /// A tap pins the reading under it. Tapping the pinned reading again puts
+    /// it away, so a reading can always be closed where it was opened.
+    func tap(at point: CGPoint) {
+        guard let index = nearest(at: point) else { return }
+        if index == selectedIndex { dismiss() } else { select(at: point) }
     }
+    /// A drag or a hold reads the chart only while the finger is down.
+    func scrub(_ state: UIGestureRecognizer.State, at point: CGPoint) {
+        switch state {
+        case .began, .changed: select(at: point)
+        case .ended, .cancelled, .failed: dismiss()
+        default: break
+        }
+    }
+    /// A touch that starts anywhere off the chart closes a pinned reading. The
+    /// watcher never recognises, so the touch still reaches what it landed on.
+    func touchBegan(inWindow point: CGPoint) {
+        guard let view, let window = view.window else { return }
+        if !view.bounds.contains(view.convert(point, from: window)) { dismiss() }
+    }
+    private func watchOutside() {
+        guard outside == nil, let window = view?.window else { return }
+        let watcher = CraftTouchBeganRecognizer { [weak self] point in self?.touchBegan(inWindow: point) }
+        window.addGestureRecognizer(watcher)
+        outside = watcher
+    }
+    private func unwatchOutside() {
+        if let outside { outside.view?.removeGestureRecognizer(outside) }
+        outside = nil
+    }
+    @objc private func tapped(_ gesture: UITapGestureRecognizer) { tap(at: gesture.location(in: view)) }
+    @objc private func panned(_ gesture: UIPanGestureRecognizer) { scrub(gesture.state, at: gesture.location(in: view)) }
+    @objc private func held(_ gesture: UILongPressGestureRecognizer) { scrub(gesture.state, at: gesture.location(in: view)) }
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
         guard gesture === pan else { return true }
         let velocity = pan.velocity(in: view)
@@ -8421,6 +8469,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     /// A bar button from `{ id, symbol | title }`. Its tap is the event
     /// `navButton` with `{ id }`.
+    /// A bar button's choices, or nil when it has none worth a menu.
+    static func navigationMenu(_ raw: Any?, chosen: @escaping (String) -> Void) -> UIMenu? {
+        let actions: [UIAction] = ((raw as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
+            guard let id = choice["id"] as? String, !id.isEmpty,
+                  let title = choice["title"] as? String, !title.isEmpty else { return nil }
+            var attributes: UIMenuElement.Attributes = []
+            if choice["disabled"] as? Bool == true { attributes.insert(.disabled) }
+            if choice["destructive"] as? Bool == true { attributes.insert(.destructive) }
+            let action = UIAction(title: title, image: (choice["symbol"] as? String).flatMap { UIImage(systemName: $0) },
+                                  attributes: attributes) { _ in chosen(id) }
+            action.accessibilityIdentifier = "nav-menu-\(id)"
+            return action
+        }
+        return actions.isEmpty ? nil : UIMenu(children: actions)
+    }
+
     private func navigationButton(_ spec: [String: Any]) -> UIBarButtonItem? {
         guard let id = spec["id"] as? String, !id.isEmpty else { return nil }
         let action = UIAction { [weak self] _ in
@@ -8429,11 +8493,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if spec["variant"] as? String == "accent" || spec["variant"] as? String == "account" {
             return accountNavigationButton(spec, action: action)
         }
+        // `menu`: the button opens a native menu instead of sending its own
+        // id, and each choice is reported as a press of that choice's id.
+        let menu = Self.navigationMenu(spec["menu"]) { [weak self] choice in
+            self?.send(type: "EVENT", payload: ["handlerName": "navButton", "nativeEvent": ["id": choice]])
+        }
         let item: UIBarButtonItem
         if let symbol = spec["symbol"] as? String, let image = UIImage(systemName: symbol) {
-            item = UIBarButtonItem(image: image, primaryAction: action)
+            item = menu.map { UIBarButtonItem(image: image, menu: $0) } ?? UIBarButtonItem(image: image, primaryAction: action)
         } else if let title = spec["title"] as? String {
-            item = UIBarButtonItem(title: title, primaryAction: action)
+            item = menu.map { UIBarButtonItem(title: title, menu: $0) } ?? UIBarButtonItem(title: title, primaryAction: action)
         } else {
             return nil
         }
