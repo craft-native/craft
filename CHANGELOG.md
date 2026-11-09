@@ -1,5 +1,54 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.487...v0.0.488)
+
+## 🚀 Features
+
+- **ios**: resolve an auth gate before the first frame is built ([b6593fe](https://github.com/craft-native/craft/commit/b6593fe)) _(by glennmichael123)_ ([#499](https://github.com/craft-native/craft/issues/499))
+- **types**: declare craft.navigation.setOptions and its options ([dbe5d5e](https://github.com/craft-native/craft/commit/dbe5d5e)) _(by glennmichael123)_ ([#493](https://github.com/craft-native/craft/issues/493), [#489](https://github.com/craft-native/craft/issues/489))
+
+## 🐛 Bug Fixes
+
+- **ios**: draw the solid switch thumb as the pill iOS 26 draws ([1bbd8a0](https://github.com/craft-native/craft/commit/1bbd8a0)) _(by glennmichael123)_ ([#498](https://github.com/craft-native/craft/issues/498), [#416](https://github.com/craft-native/craft/issues/416))
+- **ios**: let a screen's keyboard go when the screen does ([cff004f](https://github.com/craft-native/craft/commit/cff004f)) _(by glennmichael123)_ ([#497](https://github.com/craft-native/craft/issues/497))
+- **android**: tell an empty recording apart from one that could not be read ([6c05be5](https://github.com/craft-native/craft/commit/6c05be5)) _(by glennmichael123)_ ([#496](https://github.com/craft-native/craft/issues/496))
+- **ios**: hide the tab bar on push, as Android already did ([d4badd3](https://github.com/craft-native/craft/commit/d4badd3)) _(by glennmichael123)_ ([#493](https://github.com/craft-native/craft/issues/493))
+- **types**: declare the craft.* members the native shims install ([cafebdb](https://github.com/craft-native/craft/commit/cafebdb)) _(by glennmichael123)_ ([#489](https://github.com/craft-native/craft/issues/489), [#396](https://github.com/craft-native/craft/issues/396))
+- let the colon reach the host that already accepted it ([30b2688](https://github.com/craft-native/craft/commit/30b2688)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **types**: declare the error codes the native hosts actually emit ([3e59e59](https://github.com/craft-native/craft/commit/3e59e59)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- **ios**: tell readers to re-read after a failed checkpoint write ([7230353](https://github.com/craft-native/craft/commit/7230353)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **android**: accept the same snapshot names UIKit does ([264859d](https://github.com/craft-native/craft/commit/264859d)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **android**: report scroll geometry in the same units as iOS ([acb96ca](https://github.com/craft-native/craft/commit/acb96ca)) _(by glennmichael123)_ ([#395](https://github.com/craft-native/craft/issues/395))
+- **android**: give requestAnimationFrame the same epoch as iOS and the web ([a0733d3](https://github.com/craft-native/craft/commit/a0733d3)) _(by glennmichael123)_ ([#395](https://github.com/craft-native/craft/issues/395))
+- **ios**: let the Swift hybrid probe compile, recovering seven dead tests ([ee613b0](https://github.com/craft-native/craft/commit/ee613b0)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- **types**: say that the chrome surface is iOS only ([d9d8f2d](https://github.com/craft-native/craft/commit/d9d8f2d)) _(by glennmichael123)_
+- make the starved-versus-stalled evidence work where it is used ([d4e9707](https://github.com/craft-native/craft/commit/d4e9707)) _(by glennmichael123)_ ([#447](https://github.com/craft-native/craft/issues/447), [#490](https://github.com/craft-native/craft/issues/490))
+- **android**: document every navigation option the chrome actually reads ([b8d11e3](https://github.com/craft-native/craft/commit/b8d11e3)) _(by glennmichael123)_ ([#489](https://github.com/craft-native/craft/issues/489), [#493](https://github.com/craft-native/craft/issues/493))
+
+## 🧪 Tests
+
+- **android**: check the tab bar actually moves on push ([5d4821a](https://github.com/craft-native/craft/commit/5d4821a)) _(by glennmichael123)_ ([#493](https://github.com/craft-native/craft/issues/493))
+- **ios**: guard the video fixture on silence rather than a wall clock ([745aaa5](https://github.com/craft-native/craft/commit/745aaa5)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490), [#447](https://github.com/craft-native/craft/issues/447))
+- **android**: check the snapshot name rule in Kotlin's own regex engine ([1e858e6](https://github.com/craft-native/craft/commit/1e858e6)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- let the orphan and provenance globs see nested files ([b7898a1](https://github.com/craft-native/craft/commit/b7898a1)) _(by glennmichael123)_
+- derive the rule that a spawning test or hook declares its budget ([027c30b](https://github.com/craft-native/craft/commit/027c30b)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- give the scripts tests that spawn real processes a budget ([a764d18](https://github.com/craft-native/craft/commit/a764d18)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- keep sliced regions bounded instead of running to the end of the file ([2fb38f0](https://github.com/craft-native/craft/commit/2fb38f0)) _(by glennmichael123)_
+- **android**: make the diagnostic reaping test say what it saw ([863a7e7](https://github.com/craft-native/craft/commit/863a7e7)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- stop pinning the Android navigation option list's wording ([60a9a61](https://github.com/craft-native/craft/commit/60a9a61)) _(by glennmichael123)_
+- **release**: read the published Pantry platforms off the job that publishes them ([f4c49ed](https://github.com/craft-native/craft/commit/f4c49ed)) _(by glennmichael123)_ ([#454](https://github.com/craft-native/craft/issues/454))
+- derive the rule that a test must outlast its own deadlines ([dda9e9b](https://github.com/craft-native/craft/commit/dda9e9b)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490), [#447](https://github.com/craft-native/craft/issues/447))
+- let bounded commands outlive the tests that assert them ([d7987c1](https://github.com/craft-native/craft/commit/d7987c1)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490), [#447](https://github.com/craft-native/craft/issues/447))
+
+## 🤖 Continuous Integration
+
+- move the last workflow off the Pantry CLI that loses releases ([56cba8a](https://github.com/craft-native/craft/commit/56cba8a)) _(by glennmichael123)_ ([#491](https://github.com/craft-native/craft/issues/491), [#454](https://github.com/craft-native/craft/issues/454), [#489](https://github.com/craft-native/craft/issues/489), [#493](https://github.com/craft-native/craft/issues/493), [#494](https://github.com/craft-native/craft/issues/494), [#488](https://github.com/craft-native/craft/issues/488))
+- run the Darwin-gated tests on a Mac ([0f6d7a1](https://github.com/craft-native/craft/commit/0f6d7a1)) _(by glennmichael123)_ ([#494](https://github.com/craft-native/craft/issues/494))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.486...v0.0.487)
 
 ## 🐛 Bug Fixes
