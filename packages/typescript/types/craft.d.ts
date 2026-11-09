@@ -1373,6 +1373,9 @@ export type CraftErrorCode = NativeBridgeErrorCode
   | 'RECORDING_OWNERSHIP_UNSUPPORTED'
   | 'RECORDING_INTENT_IDENTITY_UNSUPPORTED'
   | 'NO_ACTIVE_RECORDING'
+  // iOS only: the shared-recorder handoff is where a power mode can be
+  // refused, and Android's own location recording service always has them.
+  /** iOS only. The linked runtime's recorder has no power modes. */
   | 'RECORDING_POWER_MODE_UNSUPPORTED'
   | 'CRYPTO_UNSUPPORTED'
   | 'CRYPTO_INVALID_RESPONSE'
@@ -1384,13 +1387,22 @@ export type CraftErrorCode = NativeBridgeErrorCode
   | 'CRAFT_ERROR'           // Generic error
   | 'PERMISSION_DENIED'     // Permission not granted
   | 'NOT_AVAILABLE'         // Feature not available on device
+  /** @deprecated Nothing emits this. The hosts use `UNSUPPORTED` instead. */
   | 'NOT_SUPPORTED'         // Feature not supported on platform
   | 'CANCELLED'             // User cancelled operation
   | 'TIMEOUT'               // Operation timed out
   | 'NETWORK_ERROR'         // Network-related error
   | 'INVALID_PARAMS'        // Invalid parameters provided
+  // Declared but unreachable: nothing in the hosts, the SDK or the Zig bridge
+  // constructs these four, so a handler written against them is covering
+  // conditions that cannot occur. They stay in the union because removing a
+  // member breaks an exhaustive `switch` downstream; the contract test below
+  // keeps the list from growing.
+  /** @deprecated Nothing emits this. */
   | 'NOT_AUTHENTICATED'     // Authentication required
+  /** @deprecated Nothing emits this. */
   | 'NOT_REACHABLE'         // Target not reachable (e.g., watch)
+  /** @deprecated Nothing emits this. */
   | 'SESSION_EXPIRED'       // Session has expired
   | 'AUTH_FAILED'           // Authentication failed
   | 'NOT_FOUND'             // Resource not found
@@ -1399,27 +1411,45 @@ export type CraftErrorCode = NativeBridgeErrorCode
   // Emitted by the native screen hosts' capability dispatchers. These arrived
   // without being declared, so an exhaustive handler could not see them. The
   // contract test below derives this list from the hosts rather than trusting
-  // it. Which of the host-specific ones should be unified across hosts is
-  // tracked separately — this only stops the type from omitting codes that
-  // actually reach a caller.
+  // it, and a second one checks each host note below against what the hosts
+  // actually construct — the first version of these notes called four codes
+  // Android-only and one iOS-only when both hosts emitted every one of them.
+  //
+  // UNAVAILABLE and UNSUPPORTED are not interchangeable, and both hosts have
+  // always drawn the line the same way: UNAVAILABLE is "not here or not right
+  // now" and may differ between two devices or two moments (no camera, no
+  // barometer, the sensor refused to register); UNSUPPORTED is "this platform
+  // never does this" and is the same answer on every device of that kind
+  // (Live Activities below iOS 16.2, background barometer recording, step
+  // history Android's sensor does not keep). A caller may retry an
+  // UNAVAILABLE elsewhere; an UNSUPPORTED is final for that host.
   | 'APP_INACTIVE'          // The capability needs a foreground app
   | 'NEEDS_ACTIVITY'        // The capability needs a visible app
-  | 'UNAVAILABLE'           // The capability is not usable right now
-  | 'UNSUPPORTED'           // Android: the capability is not supported here
+  | 'UNAVAILABLE'           // Not present, or not usable right now
+  | 'UNSUPPORTED'           // This platform does not do it at all
   | 'UNSUPPORTED_TARGET'    // The operation does not apply to this node
   | 'VIEW_NOT_FOUND'        // No mounted node with that id
   | 'VIEW_NOT_MOUNTED'      // The node exists but is not mounted
   | 'FOCUS_FAILED'          // The node could not take focus
-  | 'MEASURE_FAILED'        // iOS: the node could not be measured
-  | 'PRESENTATION_FAILED'   // Android: the screen could not be presented
-  | 'POSITION_UNAVAILABLE'  // Android: no position for that node
-  | 'IO_ERROR'              // Android: a filesystem operation failed
-  | 'PASSKEY_FAILED'        // iOS: the passkey request failed
+  // iOS only, and structurally so: UIKit geometry is CGFloat and can come
+  // back NaN or infinite, while Android measures in Int pixels that cannot.
+  | 'MEASURE_FAILED'        // iOS only: the node had no finite layout
+  | 'PRESENTATION_FAILED'   // The screen could not be presented
+  | 'POSITION_UNAVAILABLE'  // No position for that node
+  | 'IO_ERROR'              // A filesystem operation failed
+  // iOS only: there is no Android counterpart because the capability itself
+  // does not exist there.
+  | 'PASSKEY_FAILED'        // iOS only: the passkey request failed
   | 'RECORDING_BUSY'        // Another microphone session is active
   | 'RECORDING_CANCELLED'   // The recording was cancelled
   | 'RECORDING_FAILED'      // The recording could not be completed or read
-  | 'RECORDING_TIMEOUT'     // iOS: the recording passed its maximum length
-  | 'EMPTY_RECORDING';      // iOS: the recording produced no audio
+  // iOS only, and structurally so: AVAudioRecorder's start and stop are
+  // asynchronous and can stall, so each is run under a watchdog. Android's
+  // MediaRecorder calls are synchronous, so there is nothing to time out —
+  // a failure there surfaces as RECORDING_FAILED instead. This is not the
+  // maximum length being reached, which both hosts report as a normal stop.
+  | 'RECORDING_TIMEOUT'     // iOS only: the encoder or microphone stalled
+  | 'EMPTY_RECORDING';      // The recording produced no audio
 
 export interface CraftSpeechOptions {
   /** Speaking rate, 0.5 to 2. 1 is the voice's normal pace. */

@@ -287,6 +287,34 @@ describe('native renderer component contract', () => {
     expect(ios).not.toContain('if tabBarHidden, isMovingFromParent')
   })
 
+  it('cancels a screen\'s outstanding native work when the screen closes', () => {
+    // #495 was filed claiming Android cancelled only audio at screen close.
+    // It does not: `Screen.close()` drains the audio cancellers, and the
+    // `closeScreen` that calls it walks every outstanding capability token
+    // and removes every posted timeout, on both the path before close and
+    // the one in its completion. The issue was read off `close()` alone, and
+    // a search for `capabilities.cancel(` missed the two method-reference
+    // call sites that do the work.
+    //
+    // Pinned here so the next reader does not have to derive it again, and
+    // so removing it is a failing test rather than a silent leak.
+    expect(android).toContain('screen.capabilityTimeouts.values.forEach(capabilityHandler::removeCallbacks)')
+    expect(android).toContain('screen.pendingCapabilities.forEach(capabilities::cancel)')
+    expect(android).toContain('screen.pendingCapabilities.clear()')
+    // Both halves: the screen is drained before the isolate teardown starts,
+    // and again when it finishes, because a request can be issued in between.
+    expect(android.split('screen.pendingCapabilities.forEach(capabilities::cancel)').length - 1).toBe(2)
+    expect(android).toContain('soundRequestCancellers.values.toList().forEach { it() }')
+
+    // UIKit keeps one canceller per outstanding request and drains them all.
+    expect(ios).toContain('screenRequestCancellers.values.forEach { $0() }')
+    expect(ios).toContain('screenRequestCancellers.removeAll()')
+
+    // The ordered channel barrier stays: completions are still admitted while
+    // closing, so the responses onDestroy's final writes carry still arrive.
+    expect(android).toContain('if ((!screen.active && !screen.closing) || !screen.pendingCapabilities.remove(token)) return@perform')
+  })
+
   it('a declared member only one host implements says which', () => {
     const declared = new Map<string, string[]>()
     {

@@ -685,7 +685,16 @@ internal class CraftNativeServices(
                 voiceRecorder = null
                 val metadata = MediaMetadataRetriever()
                 val duration = try { metadata.setDataSource(file.absolutePath); (metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toDoubleOrNull() ?: 0.0) / 1000 } finally { metadata.release() }
-                if (!file.exists() || file.length() == 0L || duration <= 0) throw IllegalStateException("Empty recording")
+                // Nothing recorded is its own answer, not a read failure.
+                // Thrown into the blanket catch below, it reached callers as
+                // RECORDING_FAILED and became indistinguishable from a damaged
+                // file, so an app could offer "nothing was recorded — try
+                // again" on iOS and not here (#496).
+                if (!file.exists() || file.length() == 0L || duration <= 0) {
+                    cancelVoice()
+                    done(failure("EMPTY_RECORDING", "The recording was empty"))
+                    return
+                }
                 done(success(JSONObject().put("path", file.absolutePath).put("name", file.name).put("type", "audio/mp4").put("size", file.length()).put("durationSeconds", duration)))
             } catch (_: Exception) { cancelVoice(); done(failure("RECORDING_FAILED", "The recording could not be read")) }
             return
