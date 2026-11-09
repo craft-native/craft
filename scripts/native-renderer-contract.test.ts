@@ -350,6 +350,39 @@ describe('native renderer component contract', () => {
     expect(android).toContain('has no native screen; the gate did not run')
   })
 
+  it('both builders refuse the same nativeGate blocks', () => {
+    // One `nativeGate` block configures both hosts, so a rule enforced by one
+    // builder and not the other means a config accepted on one platform and
+    // refused on the other — the same split the gate exists to prevent, moved
+    // up into generation.
+    //
+    // The two validators cannot be run against one table from here: the iOS
+    // one is an exported pure function and the Android one is module-private
+    // and reachable only by generating a project. So the comparison is of the
+    // rules themselves, taken from each builder's own source.
+    const rulesIn = (source: string, path: string) => {
+      const from = source.indexOf('const gate = config.nativeGate')
+      expect(from, `${path} must validate nativeGate`).toBeGreaterThan(0)
+      const to = source.indexOf('config.nativeApp !== undefined', from)
+      expect(to).toBeGreaterThan(from)
+      // Comments go first. The Android block's own comment says "one
+      // `nativeGate` block", and backticked prose reads as a message — this
+      // test failed on its own explanation before it ever compared anything.
+      const block = source.slice(from, to).replace(/^\s*\/\/[^\n]*$/gm, '')
+      // Message skeletons: interpolations collapse, so the two builders'
+      // different variable names do not read as different rules.
+      const found = [...block.matchAll(/[`']([^`']*nativeGate[^`']*)[`']/g)]
+        .map(match => match[1]!.replace(/\$\{[^}]*\}/g, '…').replace(/\s+/g, ' ').trim())
+      return [...new Set(found)].sort()
+    }
+
+    const iosRules = rulesIn(readFileSync(join(root, 'packages/ios/src/index.ts'), 'utf8'), 'the iOS builder')
+    const androidRules = rulesIn(readFileSync(join(root, 'packages/android/src/index.ts'), 'utf8'), 'the Android builder')
+
+    expect(iosRules.length, 'the gate must have rules to compare').toBeGreaterThan(3)
+    expect(androidRules, 'the two builders enforce different nativeGate rules').toEqual(iosRules)
+  })
+
   it('a declared member only one host implements says which', () => {
     const declared = new Map<string, string[]>()
     {
