@@ -9450,7 +9450,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         previousNodesByProtocolID.removeAll(keepingCapacity: true)
         adoptedPreviousProtocolIDs.removeAll(keepingCapacity: true)
         indexPreviousNodes(previous)
-        let next = reconcile(document, identity: "root", path: "root", previous: previous)
+        // The app's configured body face seeds the inheritance chain, so a
+        // screen's text is branded for the same reason its chrome is. Without
+        // this the chain starts empty and `fontFamily` reached the navigation
+        // bar, the tab labels and the bar buttons — all UIAppearance proxies —
+        // while every label, button and field inside a screen stayed in the
+        // system face (#500).
+        //
+        // A node that sets its own family still wins: the fill below only
+        // applies where a node set none or `inherit`. Nil unless the app
+        // configured one, which the same guard makes free.
+        let next = reconcile(document, identity: "root", path: "root", previous: previous,
+                             inheritedFontFamily: CraftChromeFonts.body)
         previousNodesByProtocolID.removeAll(keepingCapacity: true)
         adoptedPreviousProtocolIDs.removeAll(keepingCapacity: true)
         if previous?.view !== next.view {
