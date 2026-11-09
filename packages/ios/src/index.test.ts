@@ -2921,7 +2921,10 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // even though the caller that timed out is gone.
     const receive = swift.slice(
       swift.indexOf('@objc private func receivePushToken('),
-      swift.indexOf('@objc private func receiveNotificationResponse('),
+      // The next observer, not `receiveNotificationResponse` — that one was
+      // deliberately removed, as the warm-tap test below asserts, so this
+      // boundary was -1 and the slice ran to the end of the file.
+      swift.indexOf('@objc private func receivePushRegistrationError('),
     )
     expect(receive).toContain('if let claimed = claimPushRegistration() { resolveCallback(claimed, result: token) }')
     expect(receive).toContain('sendToWeb("craftPushToken", data: ["token": token])')

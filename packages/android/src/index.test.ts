@@ -2486,7 +2486,10 @@ describe('Craft Android builder', () => {
     )
     const bridgePdf = bridge.slice(
       bridge.indexOf('fun openPDF('),
-      bridge.indexOf('// ==================== Contact Picker'),
+      // Plural, as the generated bridge spells it. Singular matched nothing,
+      // and `slice(start, -1)` then ran to the end of the file: 845 lines
+      // instead of openPDF's 42, so any later capability satisfied the guards.
+      bridge.indexOf('// ==================== Contacts Picker'),
     )
     const holderPdf = holder.slice(
       holder.indexOf('fun openPdfExternal('),
