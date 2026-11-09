@@ -4827,6 +4827,17 @@ class MainActivity : AppCompatActivity() {
         val chunks = CraftNativeChunks()
         /** A `requestAnimationFrame` is waiting for the next frame. */
         var frameRequested = false
+        /**
+         * Choreographer's frame time at this screen's first delivered frame.
+         *
+         * `requestAnimationFrame` hands its callback a `DOMHighResTimeStamp`:
+         * milliseconds measured from the context's own origin, so the first one
+         * is near zero. `frameTimeNanos` counts from boot, which on a device up
+         * for a month is nine digits of offset, and UIKit already subtracts its
+         * own origin (`frameTimeOrigin` in `CraftNativeScreen.swift`). Without
+         * this the same shared animation code sees two different epochs.
+         */
+        var frameTimeOrigin: Long? = null
         /** The screen's timers (`setTimeout`), kept by the host. */
         val timers = mutableMapOf<Int, Runnable>()
         val drafts = mutableMapOf<String, String>()
@@ -5814,7 +5825,11 @@ class MainActivity : AppCompatActivity() {
             if (!screen.active || !screen.frameRequested) return@postFrameCallback
             if (visibleScreen !== screen && !screen.headless) return@postFrameCallback
             screen.frameRequested = false
-            send(screen, "FRAME_FIRE", JSONObject().put("time", frameTime / 1_000_000.0))
+            // Milliseconds from this screen's first frame, not from boot: see
+            // Screen.frameTimeOrigin. Nanoseconds are subtracted before the
+            // division so the difference keeps full resolution.
+            val origin = screen.frameTimeOrigin ?: frameTime.also { screen.frameTimeOrigin = it }
+            send(screen, "FRAME_FIRE", JSONObject().put("time", (frameTime - origin) / 1_000_000.0))
         }
     }
 

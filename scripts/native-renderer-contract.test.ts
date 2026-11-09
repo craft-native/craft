@@ -135,6 +135,36 @@ describe('native renderer component contract', () => {
     ['background.onSilentPush', 'craftSilentPush'],
   ])
 
+  /**
+   * `requestAnimationFrame` hands its callback a `DOMHighResTimeStamp`:
+   * milliseconds from the context's own origin, so the first one is near zero.
+   * Nothing pinned that across the hosts, and they disagreed — UIKit sent
+   * `(displayTimestamp - frameTimeOrigin) * 1000` while Android sent
+   * Choreographer's `frameTimeNanos / 1_000_000`, which counts from boot. On a
+   * device up for a month that is nine digits of offset for the same shared
+   * animation code, and the shell's `|| Date.now()` fallback added a third
+   * epoch twelve orders of magnitude away.
+   */
+  it('gives requestAnimationFrame the same origin-relative milliseconds on both hosts', () => {
+    // UIKit: origin subtracted, converted to milliseconds, monotonic.
+    expect(ios).toContain('let timestamp = (displayTimestamp - frameTimeOrigin) * 1000')
+    expect(ios).toContain('private let frameTimeOrigin = CACurrentMediaTime()')
+    expect(ios).toContain('timestamp > lastFrameTimestamp')
+
+    // Android: the same, from Choreographer's nanoseconds. Subtracting before
+    // dividing keeps the resolution the division would otherwise discard.
+    expect(android).toContain('var frameTimeOrigin: Long? = null')
+    expect(android).toContain('val origin = screen.frameTimeOrigin ?: frameTime.also { screen.frameTimeOrigin = it }')
+    expect(android).toContain('JSONObject().put("time", (frameTime - origin) / 1_000_000.0)')
+    // Boot-relative delivery must not come back.
+    expect(android).not.toContain('JSONObject().put("time", frameTime / 1_000_000.0)')
+
+    // Neither host may substitute wall-clock time for a frame time, and a
+    // legitimate first frame of 0 must survive the fallback.
+    expect(androidShell).toContain('typeof reported === \'number\' && isFinite(reported) ? reported : 0')
+    expect(androidShell).not.toContain('message.payload.time || Date.now()')
+  })
+
   it('a declared member only one host implements says which', () => {
     const declared = new Map<string, string[]>()
     {

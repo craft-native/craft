@@ -632,7 +632,12 @@ internal object CraftNativePrelude {
             if (message && message.type === 'FRAME_FIRE') {
               var due = frames;
               frames = [];
-              var time = message.payload && message.payload.time || Date.now();
+              // A real first frame is 0, which `||` would replace with a Unix
+              // epoch value twelve orders of magnitude away. Only a missing or
+              // non-finite time falls back, and it falls back to the same
+              // origin-relative scale rather than to wall-clock.
+              var reported = message.payload && message.payload.time;
+              var time = typeof reported === 'number' && isFinite(reported) ? reported : 0;
               due.forEach(function(entry) {
                 if (cancelledFrames[entry.id]) { delete cancelledFrames[entry.id]; return; }
                 try { entry.fn(time); } catch (error) { console.error('[frame] ' + (error && error.stack || error)); }
