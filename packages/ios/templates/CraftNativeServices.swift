@@ -324,11 +324,19 @@ final class CraftNativeSounds {
         object: nil,
         queue: .main,
     ) { note in CraftNativeSounds.handleInterruption(note) }
+    /// There is no interruption for the media server restarting, and it is
+    /// not recoverable the way an interruption is: see `handleMediaReset`.
+    private static let mediaResetObserver = NotificationCenter.default.addObserver(
+        forName: AVAudioSession.mediaServicesWereResetNotification,
+        object: nil,
+        queue: .main,
+    ) { _ in CraftNativeSounds.handleMediaReset() }
     /// `{ id, event: "ended" | "error", message? }` to the screen's script.
     var emit: (([String: Any]) -> Void)?
 
     init() {
         _ = Self.interruptionObserver
+        _ = Self.mediaResetObserver
         Self.services.add(self)
     }
 
@@ -358,6 +366,33 @@ final class CraftNativeSounds {
                 // handle. A later unrelated interruption must not restart it.
                 sound.paused = !shouldResume
                 if shouldResume { sound.player.play() }
+            }
+        }
+    }
+
+    /// The media server restarted, which orphans every audio object the
+    /// process holds. Apple's requirement is to discard them and make new
+    /// ones; an orphaned `AVQueuePlayer` never plays again, never reaches the
+    /// end of its item and so never reports anything. Without this, a sound
+    /// playing across a reset left the script a handle that was silent
+    /// forever, `pause`/`resume` answering `true` about nothing, and the
+    /// session claim never released — while Android reports the equivalent
+    /// permanent loss of audio focus as an `error` event and drops the sound.
+    ///
+    /// A file player's playhead does not survive the reset, so the handle is
+    /// released and the loss reported rather than guessed at. Web Audio is
+    /// recovered instead (CraftWebAudio.swift): its graph is pure synthesis
+    /// the script is still driving, so a new engine continues it.
+    static let mediaResetMessage = "Audio stopped because the media services were reset"
+
+    /// Sound services and their playback controls are used on main.
+    private static func handleMediaReset() {
+        // The pre-reset interruption, if any, is gone with the server.
+        sessionInterrupted = false
+        for service in services.allObjects {
+            for id in Array(service.sounds.keys) {
+                service.remove(id, result: .failure(CraftNativeActionError(code: "AUDIO_ERROR", message: mediaResetMessage)))
+                service.emit?(["id": id, "event": "error", "message": mediaResetMessage])
             }
         }
     }

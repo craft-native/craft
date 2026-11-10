@@ -135,6 +135,134 @@ final class NativeAudioUnitTests: XCTestCase {
         XCTAssertFalse(service.resume(id: "music"))
     }
 
+    /// The media server restarting is not an interruption: every audio object
+    /// the process holds is orphaned, an orphaned `AVQueuePlayer` never plays
+    /// again and never reaches the end of its item, so it reports nothing at
+    /// all. Android already surfaces the same loss — `MediaPlayer` raises
+    /// `MEDIA_ERROR_SERVER_DIED` through its error listener, which removes the
+    /// sound and emits `error` — and iOS used to leave the script a handle
+    /// that was silent forever and a session claim that was never released.
+    func testMediaServicesResetReleasesEverySoundAndTellsTheScript() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let service = CraftNativeSounds()
+        defer { service.close() }
+        var events: [[String: Any]] = []
+        service.emit = { events.append($0) }
+        let ready = expectation(description: "both sounds loaded")
+        ready.expectedFulfillmentCount = 2
+        for id in ["music", "effect"] {
+            service.play(id: id, url: file, options: ["loop": id == "music"]) { result in
+                if case .failure(let error) = result { XCTFail("load failed: \(error.code)") }
+                ready.fulfill()
+            }
+        }
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(try soundIds(service), ["effect", "music"])
+
+        resetMediaServices()
+
+        XCTAssertEqual(try soundIds(service), [], "orphaned players must not be kept")
+        XCTAssertFalse(service.pause(id: "music"), "a released handle must not answer about nothing")
+        XCTAssertFalse(service.resume(id: "effect"))
+        let reported = events.filter { $0["event"] as? String == "error" }
+        XCTAssertEqual(Set(reported.compactMap { $0["id"] as? String }), ["music", "effect"],
+                       "every sound lost to the reset must be reported, as Android reports a dead media server")
+        for event in reported {
+            XCTAssertEqual(event["message"] as? String, CraftNativeSounds.mediaResetMessage)
+        }
+        XCTAssertFalse(events.contains { $0["event"] as? String == "ended" },
+                       "a sound lost to a reset did not finish playing")
+    }
+
+    /// A sound started after the reset works, and the session bookkeeping the
+    /// released handles gave back is not double-counted.
+    func testASoundStartsAgainAfterTheMediaServicesReset() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let service = CraftNativeSounds()
+        defer { service.close() }
+        let first = expectation(description: "first sound loaded")
+        service.play(id: "tone", url: file, options: [:]) { _ in first.fulfill() }
+        await fulfillment(of: [first], timeout: 5)
+        resetMediaServices()
+        let again = expectation(description: "sound loaded after the reset")
+        service.play(id: "tone", url: file, options: [:]) { result in
+            if case .failure(let error) = result { XCTFail("replay after reset failed: \(error.code)") }
+            again.fulfill()
+        }
+        await fulfillment(of: [again], timeout: 5)
+        XCTAssertEqual(try soundIds(service), ["tone"])
+        XCTAssertTrue(service.pause(id: "tone"))
+    }
+
+    /// Web Audio is recovered rather than reported: its graph is pure
+    /// synthesis holding no AVFoundation object, so a fresh engine and fresh
+    /// source nodes continue it. The notification cannot really orphan the
+    /// engine here, so this checks the engine and the source were replaced
+    /// and that the replacements render — a rebuild that produced a dead
+    /// engine would stop the context's clock.
+    func testMediaServicesResetRebuildsTheLiveEngineAndKeepsTheContextRunning() {
+        let live = CraftWebAudio()
+        defer { live.close() }
+        let page = JSContext()!
+        live.install(in: page)
+        page.evaluateScript("""
+            var live = new AudioContext();
+            var tone = live.createOscillator();
+            var quiet = live.createGain();
+            quiet.gain.value = 0.001;
+            tone.connect(quiet).connect(live.destination);
+            tone.start();
+        """)
+        let id = live.contextIdsForTesting.first
+        let engine = live.engineForTesting
+        let source = live.sourceForTesting(id ?? -1)
+        XCTAssertNotNil(engine)
+        XCTAssertNotNil(source)
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        let before = page.evaluateScript("live.currentTime").toDouble()
+        XCTAssertGreaterThan(before, 0.2)
+
+        resetMediaServices()
+
+        XCTAssertEqual(live.contextIdsForTesting, id.map { [$0] } ?? [], "the context survives the reset")
+        XCTAssertFalse(live.engineForTesting === engine, "an orphaned engine cannot be restarted")
+        XCTAssertFalse(live.sourceForTesting(id ?? -1) === source, "nor its source nodes")
+        XCTAssertNotNil(live.engineForTesting)
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        XCTAssertGreaterThan(page.evaluateScript("live.currentTime").toDouble(), before + 0.2,
+                             "the rebuilt engine must pull the graph; a dead one stops the clock")
+        page.evaluateScript("live.close()")
+    }
+
+    /// Closing after a reset must not leave the rebuilt engine behind.
+    func testClosingAfterAMediaServicesResetReleasesTheRebuiltEngine() {
+        let live = CraftWebAudio()
+        let page = JSContext()!
+        live.install(in: page)
+        page.evaluateScript("var live = new AudioContext(); live.createOscillator().start();")
+        XCTAssertNotNil(live.engineForTesting)
+        resetMediaServices()
+        XCTAssertNotNil(live.engineForTesting)
+        live.close()
+        XCTAssertNil(live.engineForTesting)
+        XCTAssertEqual(live.contextIdsForTesting, [])
+        // And a reset arriving after the screen closed changes nothing.
+        resetMediaServices()
+        XCTAssertNil(live.engineForTesting)
+    }
+
+    private func soundIds(_ service: CraftNativeSounds) throws -> [String] {
+        let handles = try XCTUnwrap(Mirror(reflecting: service).descendant("sounds") as? [String: Any])
+        return handles.keys.sorted()
+    }
+
+    private func resetMediaServices() {
+        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification,
+                                        object: AVAudioSession.sharedInstance())
+    }
+
     private func interrupt(_ type: AVAudioSession.InterruptionType, resume: Bool = false) {
         NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
             AVAudioSessionInterruptionTypeKey: NSNumber(value: type.rawValue),

@@ -2829,6 +2829,27 @@ describe('native renderer component contract', () => {
     expect(readFileSync(join(root, 'packages/ios/templates/CraftNativeUI.swift'), 'utf8')).toContain('craftNativeNumber(options["pointSize"])')
   })
 
+  it('tells the script when the media server takes a sound away on both hosts', () => {
+    // Android has always had this: MediaPlayer raises MEDIA_ERROR_SERVER_DIED
+    // through the error listener, which removes the sound and emits `error`.
+    const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
+    expect(androidSounds).toContain('player.setOnErrorListener { _, what, extra ->')
+    expect(androidSounds).toContain('failed("The sound could not be played ($what, $extra)")')
+    // iOS gets the equivalent signal from the session, not from the player:
+    // an orphaned AVQueuePlayer reports nothing at all, so without this a
+    // reset left the script a handle that was silent forever.
+    const iosServices = readFileSync(join(root, 'packages/ios/templates/CraftNativeServices.swift'), 'utf8')
+    expect(iosServices).toContain('forName: AVAudioSession.mediaServicesWereResetNotification')
+    expect(iosServices).toContain('_ = Self.mediaResetObserver')
+    expect(iosServices).toContain('service.emit?(["id": id, "event": "error", "message": mediaResetMessage]')
+    // Both hosts drop the handle rather than keeping a dead one.
+    expect(androidSounds).toContain('AudioManager.AUDIOFOCUS_LOSS -> {')
+    expect(iosServices).toContain('service.remove(id, result: .failure(CraftNativeActionError(code: "AUDIO_ERROR"')
+    // Web Audio is recovered instead, because its graph survives.
+    expect(iosWebAudio).toContain('private func rebuildEngine()')
+    expect(iosWebAudio).toContain('attachSource(context, format: format, to: engine)')
+  })
+
   it('keeps iOS native media limits strict and finite', () => {
     expect(iosFiles).toContain('craftNativeNumber(options["maxPixels"])')
     expect(iosFiles).toContain('Double(largestMaxPixels)')

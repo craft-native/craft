@@ -1361,7 +1361,12 @@ final class CraftWebAudio {
     private var engine: AVAudioEngine?
     private var claimedSession = false
     private var pump: Timer?
+    /// Notifications about the audio session and the app, registered once and
+    /// outliving any one engine.
     private var observers: [NSObjectProtocol] = []
+    /// And the one about this engine's configuration, which does not: a
+    /// rebuilt engine is a different object (`rebuildEngine`).
+    private var engineObserver: NSObjectProtocol?
     private weak var script: JSContext?
 
     init(live: Bool = true) {
@@ -1434,15 +1439,7 @@ final class CraftWebAudio {
                 contexts[id] = nil
                 return nil
             }
-            let engine = self.engine ?? makeEngine()
-            let source = AVAudioSourceNode(format: format) { silence, _, frameCount, bufferList in
-                let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
-                silence.pointee = ObjCBool(graph.render(Int(frameCount), into: buffers))
-                return noErr
-            }
-            engine.attach(source)
-            engine.connect(source, to: engine.mainMixerNode, format: format)
-            context.source = source
+            attachSource(context, format: format, to: self.engine ?? makeEngine())
             refreshEngine()
         }
         startPump()
@@ -1482,23 +1479,82 @@ final class CraftWebAudio {
 
     // MARK: Engine and session
 
+    /// A context's graph reaches the engine through a source node. Attached
+    /// when the context opens, and again on a fresh engine for every live
+    /// context after the media server restarts.
+    private func attachSource(_ context: Context, format: AVAudioFormat, to engine: AVAudioEngine) {
+        let graph = context.graph
+        let source = AVAudioSourceNode(format: format) { silence, _, frameCount, bufferList in
+            let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+            silence.pointee = ObjCBool(graph.render(Int(frameCount), into: buffers))
+            return noErr
+        }
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: format)
+        context.source = source
+    }
+
     private func makeEngine() -> AVAudioEngine {
         let engine = AVAudioEngine()
         self.engine = engine
         let center = NotificationCenter.default
         // A route change (headphones) or an interruption (a call) stops the
-        // engine; it starts again when the context still plays.
-        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+        // engine; it starts again when the context still plays. This one is
+        // scoped to the engine, so a rebuilt engine replaces it.
+        if let engineObserver { center.removeObserver(engineObserver) }
+        engineObserver = center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             self?.refreshEngine()
-        })
+        }
+        // The rest are about the session and the app, not this engine.
+        guard observers.isEmpty else { return engine }
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
             if type == AVAudioSession.InterruptionType.ended.rawValue { self?.refreshEngine() }
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.rebuildEngine()
         })
         observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.refreshEngine()
         })
         return engine
+    }
+
+    /// The media server restarted, which orphans every audio object the
+    /// process holds — this engine and the source nodes attached to it. An
+    /// orphaned engine can be told to start and still produce no sound, and
+    /// no configuration-change notification is posted for it, so
+    /// `refreshEngine` cannot recover from this. Apple's requirement is to
+    /// discard the orphans and make new ones.
+    ///
+    /// A context does survive, because `CraftAudioGraph` is pure synthesis
+    /// holding no AVFoundation object: it is given a fresh source node on a
+    /// fresh engine and keeps playing from where its own clock is. That is
+    /// why this recovers where a file-backed sound reports the loss instead
+    /// (`CraftNativeSounds.handleMediaReset`) — a player's playhead does not
+    /// survive the reset, a synthesised graph does. Starting the new engine
+    /// reactivates the session, so the claim this screen already holds does
+    /// not need to be taken again.
+    private func rebuildEngine() {
+        guard live, let orphaned = engine else { return }
+        for context in contexts.values {
+            if let source = context.source {
+                orphaned.disconnectNodeOutput(source)
+                orphaned.detach(source)
+            }
+            context.source = nil
+        }
+        orphaned.stop()
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        engineObserver = nil
+        engine = nil
+        guard !contexts.isEmpty else { return }
+        let engine = makeEngine()
+        for context in contexts.values {
+            guard let format = AVAudioFormat(standardFormatWithSampleRate: context.graph.sampleRate, channels: 2) else { continue }
+            attachSource(context, format: format, to: engine)
+        }
+        refreshEngine()
     }
 
     private func refreshEngine() {
@@ -1522,6 +1578,8 @@ final class CraftWebAudio {
     }
 
     private func stopEngine() {
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        engineObserver = nil
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         engine?.stop()
@@ -1714,6 +1772,13 @@ final class CraftWebAudio {
     }
 
     var contextIdsForTesting: [Int] { Array(contexts.keys).sorted() }
+    /// The engine and a context's source node, so a test can see that a
+    /// media-services reset replaced them rather than restarting orphans
+    /// (`rebuildEngine`). Posting the notification cannot really orphan them,
+    /// so identity is the only observable; the clock moving afterwards is
+    /// what shows the replacements actually render.
+    var engineForTesting: AVAudioEngine? { engine }
+    func sourceForTesting(_ contextId: Int) -> AVAudioSourceNode? { contexts[contextId]?.source }
 
     // MARK: Helpers
 
