@@ -1612,6 +1612,7 @@ class NativeCapabilitiesTest {
     fun nativeFilesStayOwnedAndUploadAsMultipart() {
         val server = ServerSocket(0)
         val errorServer = ServerSocket(0)
+        val fileServer = ServerSocket(0)
         var received = ""
         val serving = thread(name = "native-upload-fixture") {
             server.accept().use { socket ->
@@ -1642,6 +1643,14 @@ class NativeCapabilitiesTest {
                 socket.getInputStream().bufferedReader().readLine()
                 socket.getOutputStream().bufferedWriter().use { writer ->
                     writer.write("HTTP/1.1 404 Not Found\r\nContent-Length: 7\r\nConnection: close\r\n\r\nmissing")
+                }
+            }
+        }
+        val fileServing = thread(name = "native-download-fixture") {
+            fileServer.accept().use { socket ->
+                socket.getInputStream().bufferedReader().readLine()
+                socket.getOutputStream().bufferedWriter().use { writer ->
+                    writer.write("HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=\"route export.csv\"\r\nContent-Length: 8\r\nConnection: close\r\n\r\na,b\n1,2\n")
                 }
             }
         }
@@ -1683,10 +1692,24 @@ class NativeCapabilitiesTest {
             assertEquals(404, (refused.data as JSONObject).getInt("status"))
             assertEquals("missing", (refused.data as JSONObject).getString("body"))
             errorServing.join(5_000)
+            // A kept download says so: `ok` is how a screen tells it from the
+            // refusal above, and its name is the server's rather than the
+            // address's last segment with its percent signs.
+            val kept = call(capabilities, "Files", "download", JSONArray()
+                .put("http://127.0.0.1:${fileServer.localPort}/exports/route%20export"))
+            assertNull(kept.code)
+            val keptFile = kept.data as JSONObject
+            assertTrue(keptFile.getBoolean("ok"))
+            assertEquals(200, keptFile.getInt("status"))
+            assertEquals("route export.csv", keptFile.getString("name"))
+            assertEquals(8L, keptFile.getLong("size"))
+            assertTrue(keptFile.getString("path").contains("craft-files"))
+            fileServing.join(5_000)
         }
         finally {
             server.close()
             errorServer.close()
+            fileServer.close()
             capabilities.close()
             instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
             instrumentation.waitForIdleSync()

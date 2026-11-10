@@ -34,10 +34,12 @@ import org.json.JSONTokener
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLConnection
+import java.net.URLDecoder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -585,18 +587,34 @@ internal class CraftNativeCapabilities(
         return try {
             val status = connection.responseCode
             if (status !in 200..299) return refusedDownload(connection, status, requestToken)
-            val name = options.optString("name").ifBlank { connection.url.path.substringAfterLast('/').ifBlank { "download" } }
+            // The name the screen asked for, else the server's, else the
+            // address's: the order UIKit's download keeps a file under.
+            val name = options.optString("name").ifBlank { downloadName(connection.getHeaderField("Content-Disposition"), connection.url.path) }
             val file = File(fileRoot, UUID.randomUUID().toString()).apply { mkdirs() }.resolve(safeFileName(name))
-            connection.inputStream.use { input -> FileOutputStream(file).use { output ->
-                val buffer = ByteArray(8192)
-                while (true) {
-                    if (cancelled.contains(requestToken)) return failure("CANCELLED", "File download was cancelled")
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
+            var kept = false
+            try {
+                val output = try { FileOutputStream(file) } catch (error: IOException) {
+                    return failure("WRITE_ERROR", error.message ?: "File could not be written")
                 }
-            } }
-            success(descriptor(file, connection.contentType ?: "application/octet-stream"))
+                output.use { connection.inputStream.use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        if (cancelled.contains(requestToken)) return failure("CANCELLED", "File download was cancelled")
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        // A full disk is not the network's failure.
+                        try { output.write(buffer, 0, count) } catch (error: IOException) {
+                            return failure("WRITE_ERROR", error.message ?: "File could not be written")
+                        }
+                    }
+                } }
+                kept = true
+                // `ok` is how a screen tells this from a refusal, which
+                // resolves `{ ok: false, status, body }` rather than rejecting.
+                success(descriptor(file, connection.contentType ?: "application/octet-stream").put("ok", true).put("status", status))
+            } finally {
+                if (!kept) removePartial(file)
+            }
         } catch (error: SocketTimeoutException) {
             failure("TIMEOUT", error.message ?: "File download timed out")
         } catch (error: Exception) {
@@ -607,6 +625,38 @@ internal class CraftNativeCapabilities(
             connection.disconnect()
         }
     }
+
+    /**
+     * A download that stopped part-way is not a file. Nothing was told its
+     * path, so nothing would remove it before the daily sweep.
+     */
+    private fun removePartial(file: File) {
+        runCatching { file.delete() }
+        // Its folder was made for it alone; delete refuses one that is not empty.
+        runCatching { file.parentFile?.takeIf { it != fileRoot }?.delete() }
+    }
+
+    /**
+     * The server's name for a download (`Content-Disposition`, the encoded
+     * `filename*` before the plain one), else the address's last segment as a
+     * person reads it rather than as it is percent-encoded.
+     */
+    private fun downloadName(disposition: String?, path: String): String {
+        val header = disposition.orEmpty()
+        Regex("filename\\*\\s*=\\s*UTF-8''([^;\\s]+)", RegexOption.IGNORE_CASE).find(header)?.let { match ->
+            percentDecoded(match.groupValues[1])?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        Regex("filename\\s*=\\s*(?:\"((?:[^\"\\\\]|\\\\.)*)\"|([^;]+))", RegexOption.IGNORE_CASE).find(header)?.let { match ->
+            val quoted = match.groups[1]?.value?.replace(Regex("\\\\(.)")) { it.groupValues[1] }
+            (quoted ?: match.groupValues[2]).trim().takeIf { it.isNotBlank() }?.let { return it }
+        }
+        val segment = path.substringAfterLast('/')
+        return (percentDecoded(segment) ?: segment).ifBlank { "download" }
+    }
+
+    /** Percent-decoded as UTF-8, or null when it is not validly encoded. A `+` is a plus, not a space. */
+    private fun percentDecoded(value: String): String? =
+        runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }.getOrNull()
 
     private fun refusedDownload(
         connection: HttpURLConnection,
@@ -997,9 +1047,24 @@ internal class CraftNativeCapabilities(
         return true
     }
 
+    /**
+     * A file name with no path in it that the disk will take, as UIKit's
+     * `safeName` makes one: no leading dots (so never `..`, the folder
+     * itself), and cut to fit. 255 bytes is what a name may be on disk and
+     * 120 characters is where UIKit cuts; the extension stays, since it is
+     * how a share sheet and an upload know what the file is.
+     */
     private fun safeFileName(raw: String): String {
-        val name = raw.substringAfterLast('/').substringAfterLast('\\').trim()
-        return name.ifBlank { "file" }.replace(Regex("[\\\\/:*?\"<>|\\r\\n]"), "_")
+        val name = raw.substringAfterLast('/').substringAfterLast('\\').trim().trimStart('.')
+        val safe = name.replace(Regex("[\\\\/:*?\"<>|\\r\\n\\u0000]"), "_").ifBlank { "file" }
+        fun fits(value: String) = value.codePointCount(0, value.length) <= 120 && value.toByteArray(Charsets.UTF_8).size <= 255
+        if (fits(safe)) return safe
+        val dot = safe.lastIndexOf('.')
+        val extension = if (dot > 0 && safe.length - dot <= 16) safe.substring(dot) else ""
+        var stem = safe.dropLast(extension.length)
+        stem = stem.substring(0, stem.offsetByCodePoints(0, minOf(120, stem.codePointCount(0, stem.length))))
+        while (stem.isNotEmpty() && !fits(stem + extension)) stem = stem.substring(0, stem.offsetByCodePoints(stem.length, -1))
+        return stem + extension
     }
 
     private fun jpegName(raw: String): String {

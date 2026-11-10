@@ -1801,9 +1801,14 @@ implementation accepts text fields and those file descriptors;
 `Network.fetch` assembles the multipart body natively, so file bytes do not
 pass through JavaScriptCore as base64. Without that capability, native
 `FormData` is not installed and the text-only fetch contract below remains
-unchanged. `craft.files.download` resolves a non-2xx response as
-`{ ok: false, status, body }`; transport failures still reject with the native
-network error codes.
+unchanged. `craft.files.download` resolves a kept file as its descriptor with
+`ok: true` and the response `status`, and a non-2xx response as
+`{ ok: false, status, body }`, so `result.ok` tells the two apart on every
+host; transport failures still reject with the native network error codes and
+leave no partial file behind. The file is kept under the `name` option, else
+the server's `Content-Disposition` name, else the address's last path segment
+with its percent-encoding decoded. A name is cut to what the disk takes and
+keeps its extension.
 
 Both maintained native hosts implement `craft.files.pickFile`. Android maps the
 shared MIME, UTI, and common extension filters to `ACTION_OPEN_DOCUMENT`, copies

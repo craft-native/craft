@@ -2829,6 +2829,35 @@ describe('native renderer component contract', () => {
     expect(readFileSync(join(root, 'packages/ios/templates/CraftNativeUI.swift'), 'utf8')).toContain('craftNativeNumber(options["pointSize"])')
   })
 
+  it('answers a kept download with ok on every host, so a screen can tell it from a refusal', () => {
+    // A refused download resolves `{ ok: false, status, body }` rather than
+    // rejecting, so `result.ok` is the only way a screen tells the two apart.
+    // Android answered a kept file with no `ok` at all, which reads as a
+    // refusal. The behaviour is run in packages/android's file-download test;
+    // this holds the three hosts to one shape.
+    const browser = readFileSync(join(root, 'packages/typescript/src/browser.ts'), 'utf8')
+    const kept: Record<string, [string, string]> = {
+      UIKit: [iosFiles, 'extra: ["ok": true, "status": response.statusCode]'],
+      Android: [androidCapabilities, '.put("ok", true).put("status", status)'],
+      browser: [browser, '{ ok: true, status: response.status }'],
+    }
+    const refused: Record<string, [string, string]> = {
+      UIKit: [iosFiles, '["ok": false, "status": response.statusCode, "body": text]'],
+      Android: [androidCapabilities, '.put("ok", false).put("status", status).put("body"'],
+      browser: [browser, '{ ok: false, status: response.status, body: await response.text() }'],
+    }
+    for (const [host, [source, shape]] of Object.entries(kept)) expect(source, `${host} must answer a kept download with ok and its status`).toContain(shape)
+    for (const [host, [source, shape]] of Object.entries(refused)) expect(source, `${host} must answer a refused download with ok false`).toContain(shape)
+
+    // The server's name for the file before the address's, on both native hosts.
+    expect(iosFiles).toContain('response.suggestedFilename')
+    expect(androidCapabilities).toContain('downloadName(connection.getHeaderField("Content-Disposition"), connection.url.path)')
+    // And a body that stopped part-way is not kept: UIKit moves only a
+    // finished download into place, Android removes what it had written.
+    expect(iosFiles).toContain('try FileManager.default.moveItem(at: location, to: url)')
+    expect(androidCapabilities).toContain('if (!kept) removePartial(file)')
+  })
+
   it('refuses a malformed audio.setVolume on both hosts instead of muting on one', () => {
     const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
     // Android has always refused it and left the sound alone.

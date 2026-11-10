@@ -126,12 +126,21 @@ enum CraftNativeFiles {
         return url
     }
 
-    /// A file name with no path in it.
+    /// A file name with no path in it that the disk will take. A long name
+    /// is cut to fit and keeps its extension, which is how a share sheet and
+    /// an upload know what the file is.
     static func safeName(_ name: String) -> String {
         let parts = name.components(separatedBy: CharacterSet(charactersIn: "/\\:\u{0}\r\n"))
         var cleaned = parts.joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
         while cleaned.hasPrefix(".") { cleaned.removeFirst() }
-        return cleaned.isEmpty ? "file" : String(cleaned.prefix(120))
+        // 255 UTF-16 units is what the file system takes, and 120 characters
+        // of flags or family emoji is more than that.
+        guard cleaned.count > 120 || cleaned.utf16.count > 255 else { return cleaned.isEmpty ? "file" : cleaned }
+        let ending = (cleaned as NSString).pathExtension
+        let suffix = ending.isEmpty || ending.count > 15 ? "" : "." + ending
+        var stem = String(cleaned.dropLast(suffix.count).prefix(120 - suffix.count))
+        while (stem + suffix).utf16.count > 255, !stem.isEmpty { stem.removeLast() }
+        return stem + suffix
     }
 
     static func describe(_ url: URL, type: String, extra: [String: Any] = [:]) -> [String: Any] {
