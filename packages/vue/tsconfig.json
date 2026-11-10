@@ -17,5 +17,9 @@
     "isolatedModules": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // Tests are not part of the published surface. `build` runs
+  // `tsc --emitDeclarationOnly` over this program, so a test file here would
+  // both emit a stray declaration and fail the build on `bun:test` and
+  // `node:*` types this package does not depend on.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }

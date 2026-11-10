@@ -825,6 +825,15 @@ jobs:
       - name: Verify API documentation links
         run: bun run verify:docs
 
+      # `build:npm` was named in exactly one place — media-cache.yml, which
+      # runs in a Mobile E2E leg — so a broken published package build was
+      # invisible here and looked like mobile flakiness when it did show up.
+      - name: Build the npm packages
+        run: bun run build:npm
+
+      - name: Test that a published declaration build cannot compile a test file
+        run: bun test ./scripts/declaration-program.test.ts
+
       - name: Test host-neutral native renderer contract
         run: bun test ./scripts/native-renderer-contract.test.ts
 
