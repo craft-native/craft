@@ -1,5 +1,43 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.491...v0.0.492)
+
+## 🚀 Features
+
+- **ios**: share native glass across floating action groups ([829862a](https://github.com/craft-native/craft/commit/829862a)) _(by Chris Breuer)_
+- **android**: group floating actions above native tabs ([4f90c9f](https://github.com/craft-native/craft/commit/4f90c9f)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **ios**: keep floating buttons out of the system accessory shelf ([54d3235](https://github.com/craft-native/craft/commit/54d3235)) _(by Chris Breuer)_
+- **ios**: use a visible messaging symbol in floating chrome ([07fcfc5](https://github.com/craft-native/craft/commit/07fcfc5)) _(by Chris Breuer)_
+- **ci**: bootstrap the Pantry availability receipt job ([9b88ac1](https://github.com/craft-native/craft/commit/9b88ac1)) _(by Chris Breuer)_ ([#454](https://github.com/craft-native/craft/issues/454))
+- **android**: refuse a secure-storage write that did not reach the disk ([e6d60ed](https://github.com/craft-native/craft/commit/e6d60ed)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **android**: check a download's length instead of trusting the connection ([5ae7045](https://github.com/craft-native/craft/commit/5ae7045)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- hold the Electron benchmark to a clean floor instead of a literal ([be806b6](https://github.com/craft-native/craft/commit/be806b6)) _(by glennmichael123)_ ([#399](https://github.com/craft-native/craft/issues/399))
+- **android**: seed a new screen with a checkpoint that is not on disk yet ([cd67475](https://github.com/craft-native/craft/commit/cd67475)) _(by glennmichael123)_ ([#507](https://github.com/craft-native/craft/issues/507), [#396](https://github.com/craft-native/craft/issues/396))
+- read files.write base64 as atob does on both native hosts ([cbb9d91](https://github.com/craft-native/craft/commit/cbb9d91)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- **android**: answer a kept download with ok, as the other hosts do ([6f1ea30](https://github.com/craft-native/craft/commit/6f1ea30)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- **android**: resume a sound at the volume that was asked for ([019e5ed](https://github.com/craft-native/craft/commit/019e5ed)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- require a budget on tests that spawn through an imported function ([37c47fb](https://github.com/craft-native/craft/commit/37c47fb)) _(by glennmichael123)_ ([#506](https://github.com/craft-native/craft/issues/506))
+- **benchmarks**: declare the electron floor the lockfile already resolves ([56e0f8d](https://github.com/craft-native/craft/commit/56e0f8d)) _(by glennmichael123)_ ([#399](https://github.com/craft-native/craft/issues/399))
+- **ios**: settle every driver tap, not only the boolean tapid branch ([b147390](https://github.com/craft-native/craft/commit/b147390)) _(by glennmichael123)_ ([#449](https://github.com/craft-native/craft/issues/449))
+- **ios**: stop the upload cancellation test racing loopback buffering ([44379ef](https://github.com/craft-native/craft/commit/44379ef)) _(by glennmichael123)_ ([#506](https://github.com/craft-native/craft/issues/506))
+
+## 🧪 Tests
+
+- declare a budget on package tests that spawn through an imported function ([938c25b](https://github.com/craft-native/craft/commit/938c25b)) _(by glennmichael123)_ ([#506](https://github.com/craft-native/craft/issues/506))
+
+## 🤖 Continuous Integration
+
+- cap the release jobs and put release.yml under the hang-guard rule ([b76b600](https://github.com/craft-native/craft/commit/b76b600)) _(by glennmichael123)_ ([#504](https://github.com/craft-native/craft/issues/504))
+- cap the remaining workflows and derive the hang-guard rule from the directory ([7b60c75](https://github.com/craft-native/craft/commit/7b60c75)) _(by glennmichael123)_ ([#504](https://github.com/craft-native/craft/issues/504))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.490...v0.0.491)
 
 ## 🐛 Bug Fixes
