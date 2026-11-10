@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, statSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, createDiskImage, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { attachedDevice, candleArguments, codesignArguments, createDiskImage, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 import { createTempDir, removeAllTempDirs, removeTempDir } from './temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -248,6 +248,16 @@ describe('macOS packaging diagnostics', () => {
     })
     expect(detached.success).toBe(true)
     expect(attempts).toEqual([['detach', '/tmp/mount'], ['detach', '/tmp/mount'], ['detach', '/tmp/mount', '-force']])
+  })
+
+  it('ejects the device hdiutil attached rather than the mount point it was asked for', () => {
+    // The mount point comes back resolved (/private/var for /var), and a detach
+    // by the unresolved path failed on a volume that was attached.
+    const attached = '/dev/disk2          \tGUID_partition_scheme          \t\n/dev/disk2s1        \tApple_HFS                      \t/private/var/folders/20/T/craft-installer/mount\n'
+    expect(attachedDevice(attached)).toBe('/dev/disk2')
+    expect(attachedDevice('/dev/disk14\tGUID_partition_scheme\n/dev/disk14s1\tApple_HFS\t/Volumes/App\n')).toBe('/dev/disk14')
+    expect(attachedDevice('')).toBeNull()
+    expect(attachedDevice('hdiutil: attach failed - no mountable file systems')).toBeNull()
   })
 
   it('reports an eject failure that is not contention without retrying it', async () => {

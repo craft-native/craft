@@ -1245,6 +1245,14 @@ export async function detachDiskImage(
 }
 
 /**
+ * The whole-disk device `hdiutil attach` reports for the image it mounted
+ * ("/dev/disk4" from its first line), or null when the output names none.
+ */
+export function attachedDevice(attachOutput: string): string | null {
+  return attachOutput.match(/^(\/dev\/disk\d+)(?=\s)/m)?.[1] ?? null
+}
+
+/**
  * Helper: Create DMG from app bundle
  */
 export async function createDiskImage(opts: {
@@ -1291,7 +1299,12 @@ export async function createDiskImage(opts: {
     phase = 'layout'
     writeInstallerLayout(mount, opts.volumeName, bundleName)
     phase = 'detach'
-    const detached = await detachDiskImage(mount)
+    // Eject the device hdiutil reported, not the mount point. The mount point
+    // is the path we asked for, while the system mounts at its resolved form
+    // (/private/var/... for /var/...), and a detach by that unresolved path
+    // intermittently answered "No such file or directory" for a volume that
+    // was plainly attached. The device node names the image unambiguously.
+    const detached = await detachDiskImage(attachedDevice(attachment) ?? mount)
     if (!detached.success) {
       detachAttempts = detached.attempts
       throw new Error(detached.error)
@@ -1306,7 +1319,7 @@ export async function createDiskImage(opts: {
     return { success: false, error: `${message}\nDisk image lifecycle: ${JSON.stringify({ phase, image: writable, mount, attachment, detachAttempts })}` }
   }
   finally {
-    if (mounted) await runTool('hdiutil', ['detach', mount, '-force'])
+    if (mounted) await runTool('hdiutil', ['detach', attachedDevice(attachment) ?? mount, '-force'])
     removeTempDir(scratch)
   }
 }
