@@ -33,6 +33,9 @@ defaults:
 jobs:
   track:
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 10 min was the slowest of the last three runs.
+    # Without it a wedged job holds a runner for GitHub's 360-minute default.
+    timeout-minutes: 30
 
     # The last step posts the size report as a pull request comment, and the
     # default token here is read-only, so it failed with "Resource not

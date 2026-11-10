@@ -18,6 +18,9 @@ jobs:
   benchmarks:
     name: run
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 4 min was the slowest of the last three runs.
+    # Without it a wedged job holds a runner for GitHub's 360-minute default.
+    timeout-minutes: 20
 
     # The last step posts the benchmark comparison as a pull request comment,
     # and the default token is read-only, so it failed with "Resource not

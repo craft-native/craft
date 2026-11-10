@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /**
@@ -24,14 +24,30 @@ import { join, resolve } from 'node:path'
  * stuck job is killed — the same distinction #447 drew for a wall clock that
  * could not tell stopped from slow.
  *
- * Scope is the two workflows that gate main, which is where the cost lands.
- * `release.yml`, `sbom.yml`, `binary-size.yml`, `benchmarks.yml` and
- * `buddy-bot.yml` have 23 uncapped jobs between them and are tracked
- * separately — sizing release jobs wants its own change, not a drive-by one
- * made while cutting a release.
+ * Every workflow in `.github/workflows` is covered, found by reading the
+ * directory rather than by naming files, so one added later cannot arrive
+ * uncapped. The two that gate main carry the reasoning above; the rest simply
+ * should not hold a runner for six hours.
+ *
+ * `release.yml` is the one exclusion, and it is counted rather than waved
+ * through (#504). Its two acceptance jobs spend 87 to 119 minutes *waiting* on
+ * other runs, so their cap is a decision about how long a release may wait
+ * rather than a measurement, and it belongs to whoever owns the release path.
+ * Until then no uncapped job may be added there.
  */
 const root = resolve(import.meta.dir, '..')
 const gates = ['.github/workflows/ci.yml', '.github/workflows/mobile-e2e.yml']
+/** Every workflow file, read off the directory. */
+const workflows = readdirSync(join(root, '.github/workflows'))
+  .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
+  .sort()
+  .map(name => `.github/workflows/${name}`)
+/**
+ * The release jobs that had no cap when the rest were given one. A ratchet:
+ * the set may shrink as they are capped and may not grow.
+ */
+const release = '.github/workflows/release.yml'
+const releaseUncapped = ['attach-release-sbom', 'notify-registry', 'npm', 'pantry', 'prepare-npm', 'publish-pantry', 'publish-release', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release']
 
 interface Job { name: string, head: string, caller: boolean, timeout: number | null }
 
@@ -85,7 +101,26 @@ test('both gate workflows still decline to cancel a running push', () => {
   }
 })
 
-for (const path of gates) {
+test('the workflows are found, and the gates are among them', () => {
+  // A floor: an empty directory read must not pass every case below.
+  expect(workflows.length).toBeGreaterThan(8)
+  for (const path of [...gates, release]) expect(workflows).toContain(path)
+})
+
+test('release.yml gains no uncapped job while its caps are undecided', () => {
+  const uncapped = jobs(readFileSync(join(root, release), 'utf8'))
+    .filter(job => !job.caller && job.timeout === null)
+    .map(job => job.name)
+    .sort()
+  expect(uncapped.filter(name => !releaseUncapped.includes(name)),
+    'a release job was added with no timeout-minutes; the exclusion covers the eleven that predate #504, not new ones')
+    .toEqual([])
+  // When the last of them is capped this exclusion is dead weight: delete it
+  // and let release.yml fall under the rule like every other workflow.
+  expect(uncapped.length, 'every release job is capped now; remove the release.yml exclusion from this file').toBeGreaterThan(0)
+})
+
+for (const path of workflows.filter(entry => entry !== release)) {
   test(`every job in ${path.split('/').pop()} declares a hang guard`, () => {
     const uncapped = jobs(readFileSync(join(root, path), 'utf8'))
       .filter(job => !job.caller && job.timeout === null)

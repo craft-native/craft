@@ -19,6 +19,9 @@ jobs:
   generate:
     # name: Generate Software Bill of Materials
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 0 min was the slowest of the last three runs.
+    # Without it a wedged job holds a runner for GitHub's 360-minute default.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
@@ -103,6 +106,9 @@ jobs:
   vulnerability-scan:
     needs: generate
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last three runs.
+    # Without it a wedged job holds a runner for GitHub's 360-minute default.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
