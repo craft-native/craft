@@ -25,6 +25,11 @@ import { liftKotlinMember, runKotlinFixture } from './testing'
  *   connection, a timeout and a cancellation each returned from inside the
  *   copy with the partial file still there, in a folder nothing pointed at,
  *   until the daily sweep. UIKit only ever moves a complete body into place.
+ * - **Whether a short body was a failure at all was the connection's call.**
+ *   Android's connection fails a read that ends before `Content-Length`; JDK
+ *   17's ends it quietly, and this test, run there, was answered with a
+ *   5000-byte file and `ok: true` for a 100000-byte download. The length is
+ *   now checked by the download itself.
  *
  * The functions under test are the shipped ones, lifted out of the template
  * by name and run on a JVM against a real `HttpURLConnection` and a socket
@@ -119,6 +124,18 @@ class Server {
     fun close() { release.countDown(); socket.close() }
 }
 
+/** A connection that reports 100000 bytes, delivers 5000, and ends without complaint. */
+object Stops : java.net.URLStreamHandler() {
+    override fun openConnection(url: URL): java.net.URLConnection = object : HttpURLConnection(url) {
+        override fun connect() {}
+        override fun disconnect() {}
+        override fun usingProxy(): Boolean = false
+        override fun getResponseCode(): Int = 200
+        override fun getHeaderField(name: String?): String? = if (name.equals("Content-Length", ignoreCase = true)) "100000" else null
+        override fun getInputStream(): java.io.InputStream = java.io.ByteArrayInputStream(ByteArray(5_000))
+    }
+}
+
 fun must(condition: Boolean, message: () -> String) { if (!condition) throw AssertionError(message()) }
 
 fun main() {
@@ -196,6 +213,15 @@ fun main() {
         must(!running.isAlive) { "the cancelled download never returned" }
         must(cancelledResult?.code == "CANCELLED") { "a cancelled download answered " + cancelledResult?.code }
         must(leftovers().isEmpty()) { "a cancelled download left " + leftovers() + " on disk" }
+        // A connection that fails a short body is the platform being helpful,
+        // not something every one does: Android's does and so does a recent
+        // JDK's, and JDK 17's stops at the end of what arrived as though the
+        // body were complete. So the last word is a connection that does
+        // exactly that, on whichever JDK this runs.
+        URL.setURLStreamHandlerFactory { protocol -> if (protocol == "http") Stops else null }
+        val short = files.run("short", "http://short.test/report.pdf")
+        must(short.code == "NETWORK_ERROR") { "a body that stopped at 5000 of 100000 bytes answered " + short.code + " " + short.data }
+        must(leftovers().isEmpty()) { "a body that stopped short left " + leftovers() + " on disk" }
         println("download fixture passed")
     } finally {
         server.close()

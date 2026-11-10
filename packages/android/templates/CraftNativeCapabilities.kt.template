@@ -619,6 +619,7 @@ internal class CraftNativeCapabilities(
                 val output = try { FileOutputStream(file) } catch (error: IOException) {
                     return failure("WRITE_ERROR", error.message ?: "File could not be written")
                 }
+                var written = 0L
                 output.use { connection.inputStream.use { input ->
                     val buffer = ByteArray(8192)
                     while (true) {
@@ -629,8 +630,20 @@ internal class CraftNativeCapabilities(
                         try { output.write(buffer, 0, count) } catch (error: IOException) {
                             return failure("WRITE_ERROR", error.message ?: "File could not be written")
                         }
+                        written += count
                     }
                 } }
+                // A body shorter than the server said it would be is not the
+                // file. Android's connection fails such a read itself, and
+                // other implementations simply stop, so the length is checked
+                // here and the answer is this function's own. (When the
+                // connection decompressed the body it reports no length.)
+                val declared = connection.getHeaderField("Content-Length")?.trim()?.toLongOrNull()
+                if (declared != null && written != declared) {
+                    // A cancel can end the read early rather than fail it.
+                    return if (cancelled.contains(requestToken)) failure("CANCELLED", "File download was cancelled")
+                    else failure("NETWORK_ERROR", "File download ended after $written of $declared bytes")
+                }
                 kept = true
                 // `ok` is how a screen tells this from a refusal, which
                 // resolves `{ ok: false, status, body }` rather than rejecting.
