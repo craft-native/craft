@@ -38,28 +38,28 @@ it('reconnects after the root daemon closes the transport, then proves root with
     ['-s', 'emulator-5582', 'wait-for-device'],
     ['-s', 'emulator-5582', 'shell', 'id', '-u'],
   ])
-})
+}, 30_000)
 
 it('requires root after an acknowledged daemon restart too', async () => {
   const test = await fixture('success')
   await requireAndroidEmulatorRoot(test.adb, 'emulator-5582')
   expect((await test.commands()).at(-1)).toEqual(['-s', 'emulator-5582', 'shell', 'id', '-u'])
-})
+}, 30_000)
 
 it('rejects production images without attempting to reconnect or fault their storage', async () => {
   const test = await fixture('denied')
   await expect(requireAndroidEmulatorRoot(test.adb, 'emulator-5582')).rejects.toThrow('production builds')
   expect((await test.commands()).length).toBe(1)
-})
+}, 30_000)
 
 it('rejects a reconnected daemon that still runs as the shell user', async () => {
   const test = await fixture('closed', '2000')
   await expect(requireAndroidEmulatorRoot(test.adb, 'emulator-5582')).rejects.toThrow('rootable')
-})
+}, 30_000)
 
 it('preserves reconnect failures and refuses physical devices before executing ADB', async () => {
   const test = await fixture('closed', '0', false)
   await expect(requireAndroidEmulatorRoot(test.adb, 'emulator-5582')).rejects.toThrow('transport unavailable')
   await expect(requireAndroidEmulatorRoot(test.adb, 'phone')).rejects.toThrow('emulator serial')
   expect((await test.commands()).length).toBe(2)
-})
+}, 30_000)

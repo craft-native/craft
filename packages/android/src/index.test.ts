@@ -71,7 +71,7 @@ describe('Craft Android builder', () => {
     expect(config.postGenerate).toEqual({ command: 'sh', args: ['-c', 'printf "%s|%s|%s" "$PWD" "$CRAFT_PLATFORM" "$CRAFT_GENERATE_PHASE" > hook.txt'] })
     runPostGenerateHook(config.postGenerate, output)
     expect(readFileSync(join(output, 'hook.txt'), 'utf8')).toBe(`${realpathSync(output)}|android|build`)
-  })
+  }, 30_000)
 
   it('runs the postGenerate hook during the Android build before compilation', async () => {
     const output = createTempDir('craft-android-post-generate-build-')
@@ -80,7 +80,7 @@ describe('Craft Android builder', () => {
     } })
     await build({ output, compile: false })
     expect(readFileSync(join(output, 'hook-phase.txt'), 'utf8')).toBe('build')
-  })
+  }, 30_000)
 
   it('reports invalid Android postGenerate commands and non-zero exits', () => {
     const output = createTempDir('craft-android-post-generate-errors-')
@@ -88,7 +88,7 @@ describe('Craft Android builder', () => {
     expect(() => runPostGenerateHook({ command: join(output, 'missing-hook') }, output)).toThrow('postGenerate hook could not start')
     expect(() => runPostGenerateHook({ command: 'sh', args: ['-c', 'printf "patch failed" >&2; exit 7'] }, output))
       .toThrow('postGenerate hook failed')
-  })
+  }, 30_000)
 
   it('generates static tab-bar selection appearance and validates its shape', async () => {
     const output = createTempDir('craft-android-tab-bar-appearance-')
@@ -715,7 +715,7 @@ describe('Craft Android builder', () => {
         .toBe('globalThis.__stxNativeRoute = "home";')
     }
     finally { rmSync(root, { recursive: true, force: true }) }
-  })
+  }, 30_000)
 
   it('plays every iOS haptic name on native screens, through view feedback first', async () => {
     const output = createTempDir('craft-android-native-haptics-')

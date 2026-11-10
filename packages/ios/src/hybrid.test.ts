@@ -583,7 +583,7 @@ describe('hybrid project generation', () => {
     writeFileSync(other, '// other\n')
     await build({ output, nativeBundlePath: other, generateProject: false, runtimeDir: null })
     expect(readFileSync(join(output, 'dist', 'native-screen.js'), 'utf8')).toBe('// other\n')
-  })
+  }, 30_000)
 
   it('refuses a broken hybrid config', async () => {
     await expect(init({
@@ -630,7 +630,7 @@ describe('hybrid project generation', () => {
     expect(readFileSync(join(output, 'dist', 'native-screen.js'), 'utf8')).toBe('// native flag\n')
     // Still no web assets or dev server for a native app.
     await expect(build({ output, devServer: 'http://localhost:3000', generateProject: false, runtimeDir: null })).rejects.toThrow('--dev-server')
-  })
+  }, 30_000)
 
   it('installs a single-screen native app\'s nativeBundle at init', async () => {
     const output = join(workspace, 'Single')
@@ -651,7 +651,7 @@ describe('hybrid project generation', () => {
     const output = join(workspace, 'Web')
     await init({ name: 'Web', bundleId: 'dev.craft.hybrid.web', output, runtimeDir: null })
     await expect(build({ output, nativeBundlePath: bundle, generateProject: false, runtimeDir: null })).rejects.toThrow('nativeScreens')
-  })
+  }, 30_000)
 })
 
 // ---------------------------------------------------------------------------

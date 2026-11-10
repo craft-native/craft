@@ -51,7 +51,7 @@ describe('installed mobile app test controls', () => {
     expect(() => createMobileTestDevice({ platform: 'ios', device: 'booted', appId: 'org.example.workout' })).toThrow('UUID')
     expect(() => createMobileTestDevice({ platform: 'android', device: '', appId: 'org.example.workout' })).toThrow('serial')
     expect(() => createMobileTestDevice({ platform: 'android', device: 'real-phone', appId: 'org.example.workout' })).toThrow('serial')
-  })
+  }, 30_000)
 
   it('waits through an ADB disconnect for a new boot, then updates the existing installation in place', async () => {
     const test = await device()

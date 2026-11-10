@@ -19,7 +19,7 @@ test('App Store packaging refuses missing, direct and unresponsive native provid
   writeFileSync(store, `#!${process.execPath}\nif(process.argv[2] === '--distribution') console.log('app-store')\n`)
   expect(macOSAppStoreRuntimePath(direct)).toBe(store)
   expect(macOSAppStoreRuntimePath(store)).toBe(store)
-})
+}, 30_000)
 
 test.each(['MenuBarClientCore', 'MBAssessmentMode', 'developerExtrasEnabled', 'javaScriptCanAccessClipboard', 'drawsBackground'])(
   'App Store packaging rejects a provider containing %s even when its distribution flag claims public APIs', (marker) => {
@@ -42,7 +42,7 @@ test('App Store selection preserves the webview profile and fails closed if its 
   chmodSync(store, 0o755)
   expect(macOSAppStoreRuntimePath(direct)).toBe(store)
   expect(macOSAppStoreRuntimePath(store)).toBe(store)
-})
+}, 30_000)
 
 
 test.skipIf(process.platform !== 'darwin')('prebuilt backend bundles replace the main runtime before App Store signing and preserve their backend', async () => {

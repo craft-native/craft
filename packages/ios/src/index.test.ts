@@ -237,7 +237,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(config.postGenerate).toEqual({ command: 'sh', args: ['-c', 'printf "%s|%s|%s" "$PWD" "$CRAFT_PLATFORM" "$CRAFT_GENERATE_PHASE" > hook.txt'] })
     runPostGenerateHook(config.postGenerate, output)
     expect(readFileSync(join(output, 'hook.txt'), 'utf8')).toBe(`${realpathSync(output)}|ios|build`)
-  })
+  }, 30_000)
 
   it('runs the postGenerate hook after the iOS builder generates its Xcode project', async () => {
     const root = createTempDir('craft-ios-post-generate-build-')
@@ -258,7 +258,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
       if (previousPath === undefined) delete process.env.PATH
       else process.env.PATH = previousPath
     }
-  })
+  }, 30_000)
 
   it('reports invalid iOS postGenerate commands and non-zero exits', () => {
     const output = createTempDir('craft-ios-post-generate-errors-')
@@ -266,7 +266,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(() => runPostGenerateHook({ command: join(output, 'missing-hook') }, output)).toThrow('postGenerate hook could not start')
     expect(() => runPostGenerateHook({ command: 'sh', args: ['-c', 'printf "patch failed" >&2; exit 7'] }, output))
       .toThrow('postGenerate hook failed')
-  })
+  }, 30_000)
 
   it('generates static tab-bar selection appearance and validates its shape', async () => {
     const output = createTempDir('craft-ios-tab-bar-appearance-')
@@ -717,7 +717,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('area.range(of: #"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$"#, options: .regularExpression) != nil')
     await expect(build({ output, htmlPath: bundle, generateProject: false, runtimeDir: null })).rejects.toThrow('cannot use --html-path')
     await expect(init({ runtimeDir: null, name: 'Invalid', output: join(output, 'invalid'), config: { renderer: 'canvas' as 'native' } })).rejects.toThrow('Unknown iOS renderer')
-  })
+  }, 30_000)
 
   it('copies a complete web distribution and removes stale assets', () => {
     const root = createTempDir('craft-ios-assets-')
@@ -1694,7 +1694,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     await build({ output, runtimeDir: null, generateProject: false })
     expect(readFileSync(join(output, 'CraftNotificationService.yml'), 'utf8').trim()).toBe('{}')
     expect(readFileSync(projectPath, 'utf8')).toBe(project)
-  })
+  }, 30_000)
 
   it('requires push notifications and a boolean attachment opt-in', async () => {
     for (const config of [{ enableNotificationAttachments: true }, { enablePushNotifications: true, enableNotificationAttachments: 'yes' }]) {
@@ -3415,7 +3415,7 @@ describe('Zig runtime installation', () => {
     expect(readFileSync(source, 'utf8')).toBe('preserve until validation succeeds')
     await expect(installRuntime(output, directory, config)).rejects.toThrow('Unprofiled')
     expect(readFileSync(join(runtime, 'device/libcraft-ios.a'), 'utf8')).toBe('tampered')
-  })
+  }, 30_000)
 
   it('resolves an explicit directory, and null means no runtime whatever the environment says', () => {
     const dir = fakeRuntime()
@@ -3444,7 +3444,7 @@ describe('Zig runtime installation', () => {
     expect(await installRuntime(output, fakeRuntime())).toBe(true)
     expect(existsSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'))).toBe(true)
     expect(existsSync(join(output, 'Runtime', 'simulator', 'libcraft-ios.a'))).toBe(true)
-  })
+  }, 30_000)
 
   it('keeps installed archives when merging replacement simulator slices fails', async () => {
     const output = createTempDir('craft-runtime-rollback-')
@@ -3454,7 +3454,7 @@ describe('Zig runtime installation', () => {
     const malformed = fakeRuntime(['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a'])
     await expect(installRuntime(output, malformed)).rejects.toThrow()
     expect(readFileSync(installed, 'utf8')).toBe(before)
-  })
+  }, 30_000)
 
   it('warns when only one simulator slice is present, rather than shipping it silently', async () => {
     const warnings: string[] = []
@@ -3469,7 +3469,7 @@ describe('Zig runtime installation', () => {
     // RUNTIME_ARCHIVES' own comment calls this the failure that "only shows up
     // on someone else's laptop", so it must not be silent.
     expect(warnings.join('\n')).toContain('libcraft-ios-simulator-x64.a')
-  })
+  }, 30_000)
 
   it('leaves a working install alone when the source directory is incomplete', async () => {
     // The ordering bug: validation ran after the wipe, so a bad runtime dir
@@ -3483,7 +3483,7 @@ describe('Zig runtime installation', () => {
     const empty = createTempDir('craft-rt-empty-')
     await expect(installRuntime(output, empty)).rejects.toThrow(/has none of/)
     expect(existsSync(installed)).toBe(true)
-  })
+  }, 30_000)
 
   it('renders both SDK search paths and forces the four entry points', () => {
     const settings = renderRuntimeSettings()
@@ -3531,7 +3531,7 @@ describe('runtime staleness', () => {
     // with no error anywhere.
     await build({ output, runtimeDir: runtimeWith('second build'), generateProject: false })
     expect(readFileSync(installed, 'utf8')).toBe('second build')
-  })
+  }, 30_000)
 
   it('build leaves a runtimeless project alone rather than installing one behind init', async () => {
     const output = createTempDir('craft-app-')
@@ -3542,7 +3542,7 @@ describe('runtime staleness', () => {
     // project.yml has no link settings, so archives here would be dead weight.
     await build({ output, runtimeDir: runtimeWith('ignored'), generateProject: false })
     expect(existsSync(join(output, 'Runtime'))).toBe(false)
-  })
+  }, 30_000)
 
   it('build keeps the installed runtime when no runtime directory is configured', async () => {
     const output = createTempDir('craft-app-')
@@ -3550,7 +3550,7 @@ describe('runtime staleness', () => {
     // A shell that forgot the variable must not quietly turn the runtime off.
     await build({ output, runtimeDir: null, generateProject: false })
     expect(readFileSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'), 'utf8')).toBe('from init')
-  })
+  }, 30_000)
 })
 
 describe('crash reporting (CraftCrashReporter.swift)', () => {

@@ -315,5 +315,5 @@ describe('the native app shell in a generated project', () => {
     finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

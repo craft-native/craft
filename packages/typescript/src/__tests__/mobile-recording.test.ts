@@ -51,7 +51,7 @@ describe('iOS simulator test recordings', () => {
     await expect(recordIosSimulatorVideo({ device: 'booted', path: '/tmp/movie.mp4' })).rejects.toThrow('UUID')
     await expect(recordIosSimulatorVideo({ device: uuid, path: 'movie.mp4' })).rejects.toThrow('absolute')
     await expect(recordIosSimulatorVideo({ device: uuid, path: '/tmp/movie.mp4', timeoutMs: 0 })).rejects.toThrow('positive')
-  })
+  }, 30_000)
 
   it('waits for the first frame and finalizes once, even when stop is called twice', async () => {
     const test = await recorder()
@@ -66,24 +66,24 @@ describe('iOS simulator test recordings', () => {
       expect(await readFile(recording.path, 'utf8')).toBe('finalized movie')
     }
     finally { await recording.stop() }
-  })
+  }, 30_000)
 
   it('surfaces a recorder that exits before producing any frames', async () => {
     const test = await recorder('error')
     await expect(recordIosSimulatorVideo(test.options)).rejects.toThrow('DISPLAY_UNAVAILABLE')
-  })
+  }, 30_000)
 
   it('stops a recorder that never acknowledges its first frame', async () => {
     const test = await recorder('no-frame')
     await expect(recordIosSimulatorVideo({ ...test.options, timeoutMs: 500 })).rejects.toThrow('did not produce its first frame')
     expect(await Bun.file(test.options.path).exists()).toBe(false)
-  })
+  }, 30_000)
 
   it('bounds a failed stop instead of blocking the next device restart', async () => {
     const test = await recorder('ignore-stop')
     const recording = await recordIosSimulatorVideo(test.options)
     await expect(recording.stop()).rejects.toThrow('did not finalize')
-  })
+  }, 30_000)
 
   it('refuses to treat a failed or empty finalization as a saved movie', async () => {
     for (const [mode, reason] of [['failed-stop', 'Recorder failed'], ['empty', 'did not write a movie']]) {

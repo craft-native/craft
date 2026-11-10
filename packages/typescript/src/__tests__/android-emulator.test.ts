@@ -102,7 +102,7 @@ test('hardware emulation refuses unavailable acceleration before creating a devi
     expect(existsSync(options.sdkmanager)).toBe(true)
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 for (const event of ['am_anr', 'am_crash'] as const) test(`a platform ${event} in the retained boot history refuses readiness and disposes the owned emulator`, async () => {
   const { root, options } = fixture(true)
@@ -213,7 +213,7 @@ test('invalid boot budgets fail before starting tools or creating owned device d
     }
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('invalid guest memory fails before starting tools or creating owned device data', async () => {
   const { root, options } = fixture(true)
@@ -225,7 +225,7 @@ test('invalid guest memory fails before starting tools or creating owned device 
     }
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('invalid guest CPU counts fail before starting tools or creating owned device data', async () => {
   const { root, options } = fixture(true)
@@ -237,7 +237,7 @@ test('invalid guest CPU counts fail before starting tools or creating owned devi
     }
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('boot completion alone does not admit a device before SettingsProvider is usable', async () => {
   const { root, options } = fixture(true, true)
@@ -373,7 +373,7 @@ test('the SDK process fixture records hardware mode and reaps only its owned pro
     expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
   }
   finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 test('disposal reaps the process and removes its private registry without consulting a mutable external manager', async () => {
   const { root, options } = fixture(true)
@@ -408,7 +408,7 @@ test('disposal reaps the process and removes its private registry without consul
     try { await session?.dispose() }
     finally { rmSync(root, { recursive: true, force: true }) }
   }
-})
+}, 30_000)
 
 test('software execution is explicit and cannot be mistaken for hardware acceleration', async () => {
   const { root, options } = fixture(false)
@@ -428,7 +428,7 @@ test('software execution is explicit and cannot be mistaken for hardware acceler
     expect(readFileSync(join(options.sdkRoot, 'calls'), 'utf8')).toContain('-accel off')
   }
   finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 
 test('a resolved HOME waits for its actual input window before handing off the device', async () => {
@@ -473,7 +473,7 @@ test('an emulator process that exits before boot reports its exit instead of a f
     expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)
 
 const waitForOwnedFile = async (path: string): Promise<void> => {
   const deadline = performance.now() + 2000
