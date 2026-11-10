@@ -1,7 +1,8 @@
 # Releasing Craft
 
 `bun run release:patch` bumps the public workspace and Zig versions, commits the
-changelog, creates a tag, and pushes both. Run it only from a clean `main` that
+changelog, creates a tag, pushes both, and waits for that exact tag's Releaser
+run to finish. Run it only from a clean `main` that
 matches `origin/main`, after the SDK, package, lint, and type checks are green.
 Run `bun run test:release` too; it exercises the release gates and performs an
 isolated bumpx commit/tag rehearsal without publishing or pushing a tag.
@@ -23,7 +24,10 @@ deduplicates repeated issue references, and links the previous and new tags.
 Do not run the hook again after it has written the section.
 
 The tag starts [Releaser](../.github/workflows/release.yml); pushing a tag is
-the publication trigger, not proof that the release finished.
+the publication trigger, not proof that the release finished. The command
+returns success only after the complete workflow succeeds. If your terminal
+disconnects, run `bun run release:finish` from the existing release commit;
+this resumes observation without changing a version or creating another tag.
 
 Both release and CI setup pin Pantry CLI 0.11.120 as well as the Pantry action
 revision; leaving the CLI at `latest` would add a GitHub API lookup before the
@@ -53,7 +57,14 @@ Discord is notified only after the complete release is public, never from an
 individual platform's staging job.
 The npm preparation job builds and scans the exact public JavaScript archives.
 The npm publication job waits for the verified GitHub release to become public
-and publishes those scanned archives without rebuilding them.
+and publishes those scanned archives without rebuilding them. npm's acceptance
+response is not an availability receipt: publish-time scanning can leave a
+version returning 404. The job allows up to an hour for that scan, checks public
+metadata, downloads each public archive anonymously, and matches its SHA-256
+against the scanned artifact. It respects `Retry-After` and fails visibly if
+availability never arrives or the bytes differ. After npm resolves a delayed
+upload, `bun scripts/publish-npm-archives.ts <archive-dir> --verify-only` verifies
+the retained, hash-checked release archives without publishing again.
 
 Watch the entire Releaser run, not just the release page. Confirm its final
 status is green, the page contains all four `craft-*.zip` archives plus the
