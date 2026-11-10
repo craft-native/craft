@@ -98,6 +98,47 @@ interface Leg {
   requireZigDispatch: boolean
 }
 
+/**
+ * The processes whose log lines decide whether a notification tap launches an
+ * app. Deliberately a filter and not the whole log: this simulator writes
+ * about three thousand lines a second, and an unfiltered window would be
+ * hundreds of megabytes an invocation.
+ */
+const LAUNCH_LOG_PROCESSES = ['SpringBoard', 'backboardd', 'runningboardd', 'usernotificationsd', 'launchd_sim', APP_NAME] as const
+
+/** `log show --start` wants local wall-clock, to the second. */
+export function logShowStart(at: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
+}
+
+/** The predicate limiting a captured window to the launch decision. */
+export function launchLogPredicate(): string {
+  return LAUNCH_LOG_PROCESSES.map(name => `process == "${name}"`).join(' OR ')
+}
+
+/**
+ * Keep the system's own account of the window an invocation ran in.
+ *
+ * #450 is down to one question — why SpringBoard accepted a tap on a
+ * resolved, enabled banner and began no launch — and only SpringBoard can
+ * answer it. The job-level diagnostics step cannot: it runs `log show
+ * --last 10m` at teardown, by which time this device has written millions of
+ * lines and the window is long gone. Both retained occurrences of #450 have a
+ * system log that starts minutes *after* the failure for exactly that reason.
+ *
+ * Run here instead, seconds after the invocation ends and bounded by when it
+ * began, the window still exists.
+ */
+async function captureLaunchLog(udid: string, since: Date, outPath: string): Promise<void> {
+  await command([
+    'xcrun', 'simctl', 'spawn', udid, 'log', 'show',
+    '--start', logShowStart(since),
+    '--predicate', launchLogPredicate(),
+    '--style', 'compact',
+  ], { allowFailure: true, outPath })
+}
+
 export function iosRuntimeLegs(runtimeDir: string | null, runtimeSource?: string | null): Leg[] {
   if (runtimeDir && runtimeSource) throw new Error('Choose --ios-runtime-source or --ios-runtime, not both')
   return [
@@ -333,6 +374,7 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   // process has exited, and this one waits on the pushes.
   const notificationLog = join(evidence, 'xcodebuild-notification.log')
   const notificationEvidence = `${label}/xcodebuild-notification.log`
+  const notificationStartedAt = new Date()
   const tapping = Bun.spawn(uiTest('NotificationTapColdStartTests'), {
     cwd: project,
     env: {
@@ -365,6 +407,8 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   if (tapping.exitCode !== 0)
     failures.push(`notification UI test exited ${tapping.exitCode}; see ${notificationEvidence}`)
   await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'notification-screen.png')], { allowFailure: true })
+  // Before the terminate, and before anything else writes to the log store.
+  await captureLaunchLog(device.udid, notificationStartedAt, join(evidence, 'springboard-notification.log'))
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
   const notificationOutput = readFileSync(notificationLog, 'utf8')
   if (!pushed.includes('cold')) {
