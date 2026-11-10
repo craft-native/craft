@@ -1241,6 +1241,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var synchronizingTabs = false
     private var accessoryModel: CraftChrome.Tab?
     private let accessoryButton = UIButton(type: .system)
+    // UIKit retains its shelf's content view across removal animations. Never
+    // reparent that same button into floating chrome: the shelf can take it
+    // back after our layout, leaving a perfectly sized but empty capsule.
+    private let shelfAccessoryButton = UIButton(type: .system)
     private var companionButtons: [UIButton] = []
     private var companionModels: [CraftChrome.Tab] = []
     private var companionGlasses: [UIVisualEffectView] = []
@@ -1310,6 +1314,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         CraftChromeFonts.apply(to: tabBar)
         accessoryButton.accessibilityIdentifier = "craft-tab-accessory"
         accessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
+        shelfAccessoryButton.accessibilityIdentifier = "craft-tab-accessory"
+        shelfAccessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
         chromeSubscription = CraftChrome.shared.objectWillChange.sink { [weak self] in
             guard let self, !self.chromeUpdatePending else { return }
             self.chromeUpdatePending = true
@@ -1528,10 +1534,12 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             configuration.title = model.iconOnly ? nil : model.displayTitle
             configuration.subtitle = model.iconOnly ? nil : model.badge
             configuration.imagePadding = model.iconOnly ? 0 : 8
-            accessoryButton.configuration = configuration
-            accessoryButton.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
-            accessoryButton.accessibilityValue = model.badge
-            accessoryButton.accessibilityTraits = chrome.accessorySelected(model) ? [.button, .selected] : [.button]
+            for button in [accessoryButton, shelfAccessoryButton] {
+                button.configuration = configuration
+                button.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
+                button.accessibilityValue = model.badge
+                button.accessibilityTraits = chrome.accessorySelected(model) ? [.button, .selected] : [.button]
+            }
         }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *), model?.iconOnly != true {
@@ -1541,7 +1549,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 accessoryButton.removeFromSuperview()
             }
             if (model == nil) != (bottomAccessory == nil) {
-                bottomAccessory = model.map { _ in UITabAccessory(contentView: accessoryButton) }
+                bottomAccessory = model.map { _ in UITabAccessory(contentView: shelfAccessoryButton) }
             }
             accessoryModel = model
             for nav in stacks.values { nav.additionalSafeAreaInsets.bottom = 0 }
@@ -2636,8 +2644,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             // Craft's content swipe must not steal their drag/hold gestures.
             let point = gestureRecognizer.location(in: view)
             if !tabBar.isHidden, tabBar.frame.contains(point) { return false }
-            if !accessoryButton.isHidden, accessoryButton.window != nil,
-               accessoryButton.convert(accessoryButton.bounds, to: view).contains(point) { return false }
+            if [accessoryButton, shelfAccessoryButton].contains(where: { !$0.isHidden && $0.window != nil && $0.convert($0.bounds, to: view).contains(point) }) { return false }
             if companionButtons.contains(where: { !$0.isHidden && $0.window != nil && $0.convert($0.bounds, to: view).contains(point) }) { return false }
             // A swipe may begin while the last one settles: it catches it.
             guard activeTabSwipeTarget == nil || tabSwipeSettling,

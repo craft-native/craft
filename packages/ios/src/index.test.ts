@@ -215,7 +215,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(shell).toContain('CraftHybridController: UITabBarController, UITabBarControllerDelegate')
     expect(shell).toContain('setViewControllers(controllers, animated: false)')
     expect(shell).toContain('item.badgeValue = tab.badge')
-    expect(shell).toContain('UITabAccessory(contentView: accessoryButton)')
+    expect(shell).toContain('UITabAccessory(contentView: shelfAccessoryButton)')
     expect(shell).toContain('tabBarMinimizeBehavior = .never')
     expect(shell).toContain('iconOnly')
     expect(shell).toContain('accessoryBadge')

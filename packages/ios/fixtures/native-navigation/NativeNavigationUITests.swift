@@ -746,6 +746,7 @@ final class NativeNavigationUITests: XCTestCase {
         app.buttons["details-add-menu"].tap()
         let add = app.buttons["craft-tab-companion:/add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["craft-tab-accessory"].isHittable, "both controls must remain on screen after leaving the system shelf")
         let groupShot = XCTAttachment(screenshot: app.screenshot())
         groupShot.name = "Vertical native material capsule"
         groupShot.lifetime = .keepAlways

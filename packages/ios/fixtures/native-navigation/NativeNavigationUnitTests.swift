@@ -939,6 +939,9 @@ final class NativeNavigationUnitTests: XCTestCase {
     func testGroupedAccessorySharesOneMaterialAndRetainsActionsAcrossLayoutChanges() async throws {
         let home = try XCTUnwrap(stack("/"))
         let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left'}})")
+        await displayWait("standard shelf is installed") { CraftChrome.shared.tabAccessory?.iconOnly == false }
+        await renderFrames()
         func button(_ id: String, in view: UIView) -> UIButton? {
             if let found = view as? UIButton, found.accessibilityIdentifier == id { return found }
             return view.subviews.compactMap { button(id, in: $0) }.first
@@ -952,6 +955,8 @@ final class NativeNavigationUnitTests: XCTestCase {
         await apply("vertical")
         let add = try XCTUnwrap(button("craft-tab-companion:/add", in: shell.view))
         let messages = try XCTUnwrap(button("craft-tab-accessory", in: shell.view))
+        XCTAssertTrue(messages.superview === shell.view, "UIKit must not take the floating button back into its old shelf")
+        XCTAssertNotNil(messages.window)
         XCTAssertEqual(add.frame.minX, messages.frame.minX, accuracy: 0.5)
         XCTAssertEqual(add.frame.maxY, messages.frame.minY, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(add.frame.height, 44)
