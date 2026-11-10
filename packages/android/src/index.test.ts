@@ -1066,7 +1066,7 @@ describe('Craft Android builder', () => {
     expect(shell).toContain('screenBackgroundColor = options.opt("backgroundColor")')
     expect(shell).toContain('val background = screenBackgroundColor ?: ContextCompat.getColor(context, R.color.background)')
     expect(shell).toContain('largeTitleView.setBackgroundColor(background)')
-    expect(shell).toContain('refreshColors()\n    }\n\n    fun selectTab')
+    expect(shell).toMatch(/fun apply\([\s\S]*?refreshColors\(\)\n    }/)
   })
 
   it('rejects Android API levels below the runtime floor before writing a project', async () => {

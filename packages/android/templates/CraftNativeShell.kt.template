@@ -971,6 +971,7 @@ internal class CraftNativeChrome(
     private val fonts: CraftNativeChromeFonts = CraftNativeChromeFonts(),
 ) : LinearLayout(context) {
     val content = FrameLayout(context)
+    private val body = FrameLayout(context)
     private val bar = LinearLayout(context)
     private val backButton = ImageView(context)
     private val leadingButtons = LinearLayout(context)
@@ -981,6 +982,7 @@ internal class CraftNativeChrome(
     private val tabRow = LinearLayout(context)
     private val accessory = FrameLayout(context)
     private val companionRow = LinearLayout(context)
+    private val accessoryGroup = LinearLayout(context)
     private val companionViews = mutableListOf<Pair<FrameLayout, JSONObject>>()
     private var renderedCompanionSpecs = ""
     private val accessoryIcon = ImageView(context)
@@ -1061,7 +1063,8 @@ internal class CraftNativeChrome(
         largeTitleView.ellipsize = TextUtils.TruncateAt.END
         largeTitleView.setPadding(dp(16), 0, dp(16), dp(8))
         addView(largeTitleView, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        addView(content, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        body.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(body, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         tabBar.orientation = HORIZONTAL
         tabBar.gravity = Gravity.CENTER
         tabs.forEachIndexed { index, tab ->
@@ -1111,7 +1114,9 @@ internal class CraftNativeChrome(
         tabRow.addView(tabBar, LayoutParams(0, dp(64), 1f))
         companionRow.orientation = HORIZONTAL
         companionRow.gravity = Gravity.CENTER_VERTICAL
-        tabRow.addView(companionRow, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(64)))
+        accessoryGroup.orientation = HORIZONTAL
+        accessoryGroup.gravity = Gravity.CENTER
+        accessoryGroup.addView(companionRow, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         accessory.addView(accessoryIcon, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
         accessoryBadge.textSize = 10f
         accessoryBadge.gravity = Gravity.CENTER
@@ -1121,7 +1126,8 @@ internal class CraftNativeChrome(
         accessory.addView(accessoryBadge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(18), Gravity.TOP or Gravity.END))
         accessory.setOnClickListener { accessorySpec?.optString("path")?.let { onAccessory?.invoke(it) } }
         accessory.visibility = View.GONE
-        tabRow.addView(accessory, LayoutParams(dp(64), dp(64)).apply { marginStart = dp(8) })
+        accessoryGroup.addView(accessory, LayoutParams(dp(64), dp(64)).apply { marginStart = dp(8) })
+        tabRow.addView(accessoryGroup, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(tabRow, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)))
         tabRow.visibility = if (tabs.isEmpty()) View.GONE else View.VISIBLE
         refreshColors()
@@ -1133,7 +1139,8 @@ internal class CraftNativeChrome(
                 val overHorizontalScroll = onTabSwipeShouldDefer?.invoke(event.x, event.y) == true
                 horizontalScrollDeferred = overHorizontalScroll
                 if (overHorizontalScroll) parent?.requestDisallowInterceptTouchEvent(true)
-                swipeTracking = tabs.size > 1 && tabSwipeEnabled && !overHorizontalScroll && tabRow.visibility == View.VISIBLE && event.y < tabRow.top
+                val overActions = android.graphics.Rect().let { accessoryGroup.getGlobalVisibleRect(it) && it.contains(event.rawX.toInt(), event.rawY.toInt()) }
+                swipeTracking = tabs.size > 1 && tabSwipeEnabled && !overActions && !overHorizontalScroll && tabRow.visibility == View.VISIBLE && event.y < tabRow.top
                 swipeIntercepted = false
                 swipeDownX = event.x
                 swipeDownY = event.y
@@ -1277,8 +1284,43 @@ internal class CraftNativeChrome(
             accessoryBadge.text = it.optString("badge").takeUnless { badge -> badge == "null" }.orEmpty().take(8)
             accessoryBadge.visibility = if (accessoryBadge.text.isEmpty()) View.GONE else View.VISIBLE
         }
+        layoutAccessoryGroup(tabBarHidden)
         tabSwipeEnabled = options.optBoolean("tabSwipeEnabled", true)
         refreshColors()
+    }
+
+    /** The same actions and popup anchors survive switching between grouped and separate chrome. */
+    private fun layoutAccessoryGroup(hidden: Boolean) {
+        val layout = accessorySpec?.optString("layout").orEmpty()
+        val grouped = layout == "vertical" || layout == "horizontal"
+        val parent = if (grouped) body else tabRow
+        if (accessoryGroup.parent !== parent) {
+            (accessoryGroup.parent as? ViewGroup)?.removeView(accessoryGroup)
+            if (grouped) body.addView(accessoryGroup, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
+                marginEnd = dp(20)
+                bottomMargin = dp(8)
+            }) else tabRow.addView(accessoryGroup, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val vertical = layout == "vertical"
+        accessoryGroup.orientation = if (vertical) VERTICAL else HORIZONTAL
+        companionRow.orientation = accessoryGroup.orientation
+        accessoryGroup.setPadding(if (grouped) dp(2) else 0, if (grouped) dp(2) else 0, if (grouped) dp(2) else 0, if (grouped) dp(2) else 0)
+        accessoryGroup.visibility = if (accessorySpec == null || hidden || tabs.isEmpty()) View.GONE else View.VISIBLE
+        accessoryGroup.tag = if (grouped) "craft-tab-accessory-group" else null
+        accessoryGroup.elevation = if (grouped) dp(6).toFloat() else 0f
+        accessoryGroup.clipToOutline = grouped
+        companionViews.forEach { (action, _) ->
+            action.layoutParams = LayoutParams(dp(48), dp(48)).apply { marginStart = if (grouped) 0 else dp(8) }
+        }
+        accessory.layoutParams = LayoutParams(dp(if (grouped) 48 else 64), dp(if (grouped) 48 else 64)).apply { marginStart = if (grouped) 0 else dp(8) }
+        val divider = GradientDrawable().apply { setColor(Color.argb(48, 128, 128, 128)); setSize(dp(1), dp(1)) }
+        for (row in listOf(accessoryGroup, companionRow)) {
+            row.showDividers = if (grouped) SHOW_DIVIDER_MIDDLE else SHOW_DIVIDER_NONE
+            row.dividerDrawable = if (grouped) divider.constantState?.newDrawable() else null
+            row.dividerPadding = dp(12)
+        }
+        // An empty companion row must not leave a divider above a single icon.
+        companionRow.visibility = if (companionViews.isEmpty()) View.GONE else View.VISIBLE
     }
 
     fun selectTab(index: Int) {
@@ -1375,16 +1417,18 @@ internal class CraftNativeChrome(
         largeTitleView.setTextColor(navigationTitleColor ?: text)
         backButton.imageTintList = ColorStateList.valueOf(accent)
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
+        val grouped = accessoryGroup.parent === body
+        accessoryGroup.background = if (grouped) GradientDrawable().apply { setColor(surface); cornerRadius = dp(26).toFloat() } else null
         tabBar.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
         val primarySelected = accessorySpec?.let { isAccessorySelected(it) } == true
         accessory.isSelected = primarySelected
         companionViews.forEach { (action, item) ->
             val selected = isAccessorySelected(item)
             action.isSelected = selected
-            action.background = GradientDrawable().apply { setColor(if (selected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
+            action.background = if (grouped) rippleBackground() else GradientDrawable().apply { setColor(if (selected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
             (action.getChildAt(0) as ImageView).setImageDrawable(CraftNativeIcons.drawable(context, null, item.optString("symbol"), if (selected) accent else text))
         }
-        accessory.background = GradientDrawable().apply { setColor(if (primarySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
+        accessory.background = if (grouped) rippleBackground() else GradientDrawable().apply { setColor(if (primarySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
         accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), if (primarySelected) accent else text)) }
         tabViews.forEachIndexed { index, (icon, label) ->
             tabBar.getChildAt(index).isSelected = index == selectedTab && !accessorySelected

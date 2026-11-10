@@ -1187,6 +1187,44 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun groupedAccessoryRetainsSeparateActionsAndSwitchesLayoutWithoutShrinkingTabs() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            instrumentation.runOnMainSync {
+                val chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                val spec = org.json.JSONObject("""{"path":"/capabilities","title":"Messages","symbol":"message","layout":"vertical","badge":"3","companions":[{"path":"/add","title":"Add","symbol":"plus","menu":[{"path":"/details","title":"Workout"}]}]}""")
+                val options = org.json.JSONObject().put("tabAccessory", spec)
+                chrome.apply(options, 0, "Home")
+                val group = find(chrome, "craft-tab-accessory-group") as LinearLayout
+                val companions = group.getChildAt(0) as LinearLayout
+                val add = companions.getChildAt(0)
+                val messages = group.getChildAt(1)
+                assertEquals(LinearLayout.VERTICAL, group.orientation)
+                assertEquals("Add", add.contentDescription)
+                assertEquals("Messages, 3", messages.contentDescription)
+                assertEquals(add.layoutParams.height, messages.layoutParams.height)
+                assertTrue(group.parent !== find(chrome, "craft-tab-/")?.parent)
+                spec.put("layout", "horizontal")
+                chrome.apply(options, 0, "Home")
+                assertSame(group, find(chrome, "craft-tab-accessory-group"))
+                assertSame(add, companions.getChildAt(0))
+                assertSame(messages, group.getChildAt(1))
+                assertEquals(LinearLayout.HORIZONTAL, group.orientation)
+                chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject.NULL), 0, "Home")
+                assertEquals(View.GONE, group.visibility)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun liveTabUpdatesRetainToolbarViewsAndActionsUntilTheirSpecsChange() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
