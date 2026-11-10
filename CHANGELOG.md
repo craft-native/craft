@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.492...v0.0.495)
+
+## 🐛 Bug Fixes
+
+- **release**: preserve version and preview arguments in the runner ([029fbac](https://github.com/craft-native/craft/commit/029fbac)) _(by Chris Breuer)_
+- **release**: rehearse CI deadline guards before tagging ([e71e1a5](https://github.com/craft-native/craft/commit/e71e1a5)) _(by Chris Breuer)_
+- **release**: wait for verified publication from release commands ([d2f2a6e](https://github.com/craft-native/craft/commit/d2f2a6e)) _(by Chris Breuer)_
+- **release**: verify public npm archives after upload acceptance ([d60edfe](https://github.com/craft-native/craft/commit/d60edfe)) _(by Chris Breuer)_
+
+## 🧹 Chores
+
+- release v0.0.494 ([28e1eda](https://github.com/craft-native/craft/commit/28e1eda)) _(by Chris Breuer)_
+- release v0.0.493 ([13c381a](https://github.com/craft-native/craft/commit/13c381a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.492...v0.0.494)
 
 ## 🐛 Bug Fixes
