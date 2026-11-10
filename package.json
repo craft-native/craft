@@ -61,9 +61,9 @@
     "changelog:preview": "bun scripts/changelog-preview.ts",
     "changelog:generate": "bun scripts/generate-release-changelog.ts",
     "test:release": "bun test ./scripts/managed-git.test.ts ./scripts/changelog-preview.test.ts ./scripts/release-workflow.test.ts ./scripts/release-manifest.test.ts ./scripts/verify-sbom.test.ts ./scripts/release-version.test.ts ./scripts/zig.test.ts ./scripts/native-renderer-contract.test.ts ./scripts/native/windows-vulkan-driver.test.ts ./scripts/release-complete.test.ts ./scripts/scan-release-artifacts.test.ts ./scripts/test-deadline-budgets.test.ts ./scripts/test-region-markers.test.ts ./scripts/test-reachability.test.ts ./scripts/workflow-hang-guards.test.ts",
-    "release": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx prompt --recursive --commit --tag --push --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\" && bun run release:finish",
-    "release:patch": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx patch --recursive --commit --tag --push --yes --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\" && bun run release:finish",
-    "release:version": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx --recursive --commit --tag --push --yes --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\" && bun run release:finish",
+    "release": "bun scripts/release-cli.ts prompt",
+    "release:patch": "bun scripts/release-cli.ts patch",
+    "release:version": "bun scripts/release-cli.ts version",
     "release:finish": "bun scripts/release-complete.ts"
   },
   "devDependencies": {

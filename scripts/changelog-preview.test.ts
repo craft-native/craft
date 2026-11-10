@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { dedupeChangelogReferences, previewChangelog } from './changelog-preview'
 import { generateReleaseChangelog } from './generate-release-changelog'
+import { bumpxReleaseCommand } from './release-cli'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -126,9 +127,9 @@ test('release notes can include changes since the last published release after a
 test('patch release uses the guarded changelog generator before committing', () => {
   const project = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf8'))
   expect(project.scripts['changelog:generate']).toBe('bun scripts/generate-release-changelog.ts')
-  for (const name of ['release', 'release:patch', 'release:version']) {
-    const command = project.scripts[name] as string
-    expect(command).toContain('bun scripts/release-version.ts --preflight')
+  for (const [name, mode] of [['release', 'prompt'], ['release:patch', 'patch'], ['release:version', 'version']] as const) {
+    expect(project.scripts[name]).toBe(`bun scripts/release-cli.ts ${mode}`)
+    const command = bumpxReleaseCommand(mode, []).join(' ')
     expect(command).toContain('--no-changelog')
     expect(command).not.toContain('--files')
     expect(command).toContain('bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts')

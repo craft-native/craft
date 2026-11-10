@@ -28,6 +28,9 @@ the publication trigger, not proof that the release finished. The command
 returns success only after the complete workflow succeeds. If your terminal
 disconnects, run `bun run release:finish` from the existing release commit;
 this resumes observation without changing a version or creating another tag.
+Release arguments go directly to Bumpx, including an explicit version for
+`release:version`. Preview and local-only options such as `--dry-run` and
+`--no-push` do not start a publication wait.
 
 Both release and CI setup pin Pantry CLI 0.11.120 as well as the Pantry action
 revision; leaving the CLI at `latest` would add a GitHub API lookup before the
