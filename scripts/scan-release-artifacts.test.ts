@@ -181,10 +181,10 @@ test('availability respects Retry-After and retries temporary network errors', a
   let time = 0
   let first = true
   await verifyNpmAvailability(root, {
-    now: () => time, sleep: async ms => { time += ms }, timeoutMs: 20_000, intervalMs: 10,
+    now: () => time, sleep: async ms => { time += ms }, timeoutMs: 2000, intervalMs: 10,
     request: async (url) => {
       if (first) { first = false; throw new Error('temporary network failure') }
-      if (!time) return new Response(null, { status: 429, headers: { 'retry-after': '10' } })
+      if (!time) return new Response(null, { status: 429, headers: { 'retry-after': '1' } })
       const path = new URL(url).pathname
       const download = path.startsWith('/-/')
       const name = decodeURIComponent(path.slice(download ? 3 : 1).split('/')[0]!)
@@ -193,7 +193,7 @@ test('availability respects Retry-After and retries temporary network errors', a
         : Response.json({ name, version: item.version, dist: { tarball: `https://registry.npmjs.org/-/${encodeURIComponent(name)}` } })
     },
   })
-  expect(time).toBe(10_000)
+  expect(time).toBe(1000)
 })
 
 test('availability fails closed for authorization errors, foreign archives and locally changed archives', async () => {
