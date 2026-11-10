@@ -143,6 +143,11 @@ jobs:
           - os: windows-latest
             tools: bun.com@1.4.3 git-scm.org@2.53.0 ziglang.org@0.18.0-dev.146+35accc06e
     runs-on: ${{ matrix.os }}
+    # Hang guard, not a budget: 8 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -241,6 +246,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
+    # Hang guard, not a budget: 16 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v6
@@ -569,6 +579,11 @@ jobs:
   typescript-sdk:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 2 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -615,6 +630,11 @@ jobs:
   ios-builder:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v6
@@ -642,6 +662,11 @@ jobs:
   ios-native-templates:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: macos-latest
+    # Hang guard, not a budget: 64 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v6
@@ -693,6 +718,11 @@ jobs:
   android-builder:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 23 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v6
@@ -744,6 +774,11 @@ jobs:
   create-craft:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v6
@@ -763,6 +798,11 @@ jobs:
   ts-maps:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v6
@@ -790,6 +830,11 @@ jobs:
   lint:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -833,6 +878,12 @@ jobs:
 
       - name: Test that a published declaration build cannot compile a test file
         run: bun test ./scripts/declaration-program.test.ts
+
+      # A job with no timeout takes GitHub's 360-minute default, and a push to
+      # main does not cancel in progress, so one wedged job holds the only
+      # running slot for six hours.
+      - name: Test that every gate job declares a hang guard
+        run: bun test ./scripts/workflow-hang-guards.test.ts
 
       - name: Test host-neutral native renderer contract
         run: bun test ./scripts/native-renderer-contract.test.ts
@@ -910,6 +961,11 @@ jobs:
   integration:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 19 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 45
     needs: [zig-core, typescript-sdk, create-craft, ts-maps]
 
     steps:
@@ -967,6 +1023,11 @@ jobs:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     needs: [browser-checkpoints, android-sdk-emulator, zig-core, windows-multi-window, windows-native-vulkan, typescript-sdk, typescript-sdk-macos, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6

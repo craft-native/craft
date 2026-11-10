@@ -891,6 +891,11 @@ jobs:
     name: Mobile E2E summary
     needs: [harness, ios-native, ios-metal, ios-hybrid, ios-simulator, android-emulator, ios-zig-slice, android-navigation, android-vulkan, android-checkpoints, media-cache]
     runs-on: ubuntu-latest
+    # Hang guard, not a budget: 1 min was the slowest of the last six
+    # successful runs. Without it the job takes GitHub's 360-minute default, and a
+    # push to main does not cancel in progress, so one wedged job holds this
+    # workflow's only running slot for six hours while every later push waits.
+    timeout-minutes: 15
     if: always()
 
     steps:
