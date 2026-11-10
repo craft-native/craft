@@ -15,8 +15,32 @@ test('a benchmark-only High is inventory, not a failure', () => {
 })
 
 test('the Electron benchmark stays outside the vulnerable release line', () => {
-  const packageJson = JSON.parse(readFileSync(join(import.meta.dir, '..', 'benchmarks/apps/electron/package.json'), 'utf8')) as { dependencies?: { electron?: string } }
-  expect(packageJson.dependencies?.electron).toBe('^42.0.1')
+  // This used to pin the literal `^42.0.1`, which is a floor OSV reports
+  // thirteen advisories for: it named the release line and admitted the
+  // vulnerable start of it. 42.11.18 is the version OSV was asked about and
+  // answered with none (#399). The floor may rise; it may not fall below that.
+  const clean = [42, 11, 18] as const
+  const version = (text: string | undefined): number[] | null => {
+    const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(text ?? '')
+    return parts ? parts.slice(1).map(Number) : null
+  }
+  const atLeast = (left: number[], right: readonly number[]): boolean => {
+    for (let at = 0; at < 3; at += 1) if (left[at] !== right[at]) return left[at]! > right[at]!
+    return true
+  }
+  const app = join(import.meta.dir, '..', 'benchmarks/apps/electron')
+  const packageJson = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { dependencies?: { electron?: string } }
+  const declared = packageJson.dependencies?.electron ?? ''
+  expect(declared, 'a caret range, so the floor is what the range says').toMatch(/^\^\d+\.\d+\.\d+$/)
+  const floor = version(declared.slice(1))!
+  expect(atLeast(floor, clean), `the declared floor ${declared} admits a version below ${clean.join('.')}`).toBe(true)
+
+  // And what the benchmark installs is inside the range it declares: the two
+  // drifted apart once already, with the manifest naming a floor nothing used.
+  const locked = version(/"electron": \["electron@([\d.]+)"/.exec(readFileSync(join(app, 'bun.lock'), 'utf8'))?.[1])
+  expect(locked, 'the lockfile must resolve electron').not.toBeNull()
+  expect(locked![0], 'a caret range stays on its major').toBe(floor[0]!)
+  expect(atLeast(locked!, floor), `the lockfile resolves ${locked!.join('.')}, below the declared ${declared}`).toBe(true)
 })
 
 test('the Go runtime inside the compiler binary is inventory', () => {
