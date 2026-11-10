@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -82,3 +82,91 @@ test('the ten-second deadline and the frame count are untouched', () => {
   expect(host).toContain('withTimeInterval: 1.0 / 30')
   expect(host, 'all 61 native frames still run').toContain('frame == 61')
 })
+
+/**
+ * Both halves of the fixture report, not just the one #452 was filed against.
+ *
+ * The iOS half gained the observed label; the macOS half kept the same
+ * blindness for another week because it waits through `expectation(for:)` and
+ * `waitForExpectations(timeout:)`, which takes no message, so a timeout
+ * printed only the predicate's own description.
+ *
+ * Worse, its predicates were `NSPredicate { _, _ in … }` blocks that read
+ * `status.value` *and* `status.label` on every evaluation — two fresh remote
+ * queries onto the app's main run loop per poll. That is the operation #452
+ * showed can stall and lose an observation that was already valid, so the
+ * macOS half was running the exact pattern the iOS half was repaired for.
+ *
+ * The fixtures are discovered rather than named: a third host added here is
+ * covered the moment its file lands.
+ */
+const fixtureDir = join(import.meta.dir, '../fixtures/metal-surface')
+function uiFixtures(): { name: string, code: string }[] {
+  return readdirSync(fixtureDir)
+    .filter(name => name.endsWith('UITests.swift'))
+    .sort()
+    .map(name => ({ name, code: readFileSync(join(fixtureDir, name), 'utf8').replace(/^\s*\/\/[^\n]*$/gm, '') }))
+}
+
+/** Every `XCTAssert…(…)`/`XCTFail(…)` call in `source`, as source text. */
+function callsIn(source: string, prefix: RegExp): string[] {
+  const calls: string[] = []
+  for (const found of source.matchAll(prefix)) {
+    const open = source.indexOf('(', found.index!)
+    if (open < 0) continue
+    let depth = 0, quoted = false
+    for (let index = open; index < source.length; index++) {
+      const character = source[index]
+      if (character === '"' && source[index - 1] !== '\\') quoted = !quoted
+      if (quoted) continue
+      if (character === '(') depth++
+      else if (character === ')' && --depth === 0) { calls.push(source.slice(found.index!, index + 1)); break }
+    }
+  }
+  return calls
+}
+
+test('both Metal UI fixtures exist and are scanned', () => {
+  // A floor: a broken glob must not make every case below pass by finding
+  // nothing, and the macOS half must not quietly stop being checked.
+  expect(uiFixtures().map(entry => entry.name))
+    .toEqual(['MacMetalSurfaceUITests.swift', 'MetalSurfaceUITests.swift'])
+})
+
+for (const { name } of uiFixtures()) {
+  test(`${name} reports what it read when a wait fails`, () => {
+    const { code } = uiFixtures().find(entry => entry.name === name)!
+    expect(code.indexOf('private func observedStatus('), `${name} must be able to report what it read`).toBeGreaterThan(0)
+    // Derived from the calls, not from a list of them: any wait that can fail
+    // has to say what the element read instead.
+    const waits = callsIn(code, /XCTAssert\w+/g).filter(call => call.includes('waitForExistence('))
+    expect(waits.length, `${name} must still wait on something`).toBeGreaterThan(0)
+    for (const call of waits)
+      expect(call, `this wait fails without saying what it read:\n${call}`).toContain('observedStatus(app)')
+    for (const call of callsIn(code, /XCTFail/g))
+      expect(call, `this failure says nothing about the app:\n${call}`).toContain('observedStatus(app)')
+  })
+
+  test(`${name} does not re-query the status element inside a predicate`, () => {
+    const { code } = uiFixtures().find(entry => entry.name === name)!
+    // A block predicate runs locally and queries the app again on every
+    // evaluation. The reading must come from the snapshot that matched, which
+    // is what a format predicate does.
+    for (const block of code.matchAll(/NSPredicate\s*\{[^}]*\}/g)) {
+      expect(block[0], `this predicate re-queries the status element every evaluation:\n${block[0]}`)
+        .not.toMatch(/status\s*\.\s*(?:value|label)/)
+    }
+    // And no wait may be left with no way to carry a message.
+    expect(code, `${name} must not wait through waitForExpectations, which takes no message`)
+      .not.toContain('waitForExpectations(')
+  })
+
+  test(`${name} keeps its ten-second waits`, () => {
+    const { code } = uiFixtures().find(entry => entry.name === name)!
+    // #452 forbids growing the wait. Every explicit timeout in these fixtures
+    // is ten seconds or less, and the one-second negative check stays one.
+    const timeouts = [...code.matchAll(/timeout: (\d+)/g)].map(found => Number(found[1]))
+    expect(timeouts.length, `${name} must declare its deadlines`).toBeGreaterThan(0)
+    expect(timeouts.filter(value => value > 10), `${name} grew a deadline`).toEqual([])
+  })
+}

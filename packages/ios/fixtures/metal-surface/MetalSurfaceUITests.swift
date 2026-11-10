@@ -20,6 +20,32 @@ final class MetalSurfaceUITests: XCTestCase {
         return "the status label read \"\(status.label)\" when this was reported"
     }
 
+    /// The status element, matched only when its label satisfies `predicate`.
+    ///
+    /// Same single-snapshot rule as `verifiedFrame`: identity and reading come
+    /// from one remote query. A block predicate reading `status.label` runs
+    /// locally and queries the app again on every evaluation, which is the
+    /// operation #452 showed can stall and lose a valid observation.
+    private func statusMatching(_ predicate: NSPredicate, in app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(identifier: "metal-status").matching(predicate).firstMatch
+    }
+
+    /// Wait on a condition that is not a snapshot attribute, with a message.
+    ///
+    /// `waitForExpectations(timeout:)` takes no message, so a timeout reported
+    /// only the predicate's own description — the blindness this issue is
+    /// about, which the frame acknowledgements were given a cure for while
+    /// these waits kept it. The expectation is built directly rather than
+    /// through `expectation(for:evaluatedWith:)`, which would also register it
+    /// with the test case and must not then be waited on twice.
+    private func waitFor(_ description: String, in app: XCUIApplication, timeout: TimeInterval = 10,
+                         file: StaticString = #filePath, line: UInt = #line, until condition: @escaping () -> Bool) {
+        let wanted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+        if XCTWaiter().wait(for: [wanted], timeout: timeout) != .completed {
+            XCTFail("\(description) within \(Int(timeout)) seconds; \(observedStatus(app))", file: file, line: line)
+        }
+    }
+
     private func verifiedFrame(_ frame: UInt32, in app: XCUIApplication) -> XCUIElement {
         // Match identity and acknowledgement in the same remote snapshot. In
         // #452 the existence query already returned frame 60; a second query
@@ -49,23 +75,29 @@ final class MetalSurfaceUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         let status = app.staticTexts["metal-status"]
-        let verified = NSPredicate { _, _ in status.label.hasPrefix("Verified frame ") }
+        let acknowledged = NSPredicate(format: "label BEGINSWITH %@", "Verified frame ")
         XCTAssertTrue(verifiedFrame(60, in: app).waitForExistence(timeout: 10),
                       "The native surface must acknowledge exactly frame 60 within ten seconds; \(observedStatus(app))")
         XCTAssertEqual(app.webViews.count, 0)
         let canvas = app.otherElements["metal-canvas"]
-        XCTAssertTrue(canvas.exists)
+        XCTAssertTrue(canvas.exists, "The native canvas must exist; \(observedStatus(app))")
         try compareScreenPixels(canvas, app: app, name: "Native Metal initial frame")
         app.buttons["metal-resize"].tap()
-        expectation(for: NSPredicate { _, _ in abs(canvas.frame.width - 160) < 0.1 }, evaluatedWith: canvas)
-        waitForExpectations(timeout: 10)
-        XCTAssertTrue(verified.evaluate(with: status), status.label)
+        // The canvas width is not a snapshot attribute a format predicate can
+        // read, so this one stays a block — it does not touch the status
+        // element, which is what must not be re-queried.
+        waitFor("The resize must reach 160 points wide", in: app) { abs(canvas.frame.width - 160) < 0.1 }
+        XCTAssertTrue(statusMatching(acknowledged, in: app).exists,
+                      "The resize must keep a frame acknowledged; \(observedStatus(app))")
         try compareScreenPixels(canvas, app: app, name: "Native Metal resized frame")
         let before = status.label
         XCUIDevice.shared.press(.home)
         app.activate()
-        expectation(for: NSPredicate { _, _ in status.label.hasPrefix("Verified frame ") && status.label != before }, evaluatedWith: status)
-        waitForExpectations(timeout: 10)
+        // One snapshot decides both halves: still acknowledging, and a
+        // different frame from the one before backgrounding.
+        let advanced = NSPredicate(format: "label BEGINSWITH %@ AND label != %@", "Verified frame ", before)
+        XCTAssertTrue(statusMatching(advanced, in: app).waitForExistence(timeout: 10),
+                      "Resuming must acknowledge a frame after \"\(before)\" within ten seconds; \(observedStatus(app))")
         try compareScreenPixels(canvas, app: app, name: "Native Metal resumed frame")
     }
 
