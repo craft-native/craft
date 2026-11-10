@@ -833,6 +833,11 @@ jobs:
       - name: Test that every test runs somewhere
         run: bun test ./scripts/test-reachability.test.ts
 
+      # The capture that answers #450 is taken by the mobile harness, so its
+      # bounds are checked here rather than only when a mobile leg runs.
+      - name: Test the mobile launch-log capture bounds
+        run: bun test ./scripts/mobile-e2e/launch-log.test.ts
+
       - name: Test native Windows C++ toolchain discovery
         run: bun test ./scripts/native/windows-vulkan-driver.test.ts
 

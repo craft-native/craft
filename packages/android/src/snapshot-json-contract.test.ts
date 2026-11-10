@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 import { runKotlinFixture } from './testing'
 
 /**
@@ -13,52 +12,29 @@ import { runKotlinFixture } from './testing'
  * rejected was written here and the two hosts disagreed about whether a
  * checkpoint had been kept (#396).
  *
- * The oracle is Foundation itself, not a restatement of it. Every case below
- * is run through real `JSONSerialization` with `swiftc` and through the
- * scanner extracted from the Android template with Kotlin, and the two
- * verdicts must agree. That matters because Foundation's grammar is **not**
- * RFC 8259 and the difference is not guessable: it accepts one trailing comma
- * in an object or array, so a strict parser would have diverged in the
- * opposite direction to the defect it was fixing.
+ * The verdicts in `snapshot-json-cases.json` are Foundation's own, not a
+ * restatement of the JSON standard — which matters, because Foundation's
+ * grammar is **not** RFC 8259: it accepts one trailing comma in an object or
+ * array, so a strict parser would have diverged in the opposite direction to
+ * the defect it was fixing.
  *
- * A disagreement names the input and both verdicts rather than reporting a
- * count, because the whole point is which payload the hosts differ on.
+ * The contract has two halves and they run in different places, because no
+ * CI job has both Swift and Kotlin:
+ *
+ *  - this file runs the scanner against the recorded verdicts wherever Gradle
+ *    is, which is the Linux `Test Android builder` job;
+ *  - `packages/ios/src/snapshot-json-oracle.test.ts` re-runs the payloads
+ *    through real `JSONSerialization` on macOS and requires the recording to
+ *    still be right.
+ *
+ * An earlier version of this did both at once behind a `darwin` gate, which
+ * meant it ran in no CI job at all — `packages/android`'s suite is Linux.
+ * `scripts/test-reachability.test.ts` caught that.
  */
 const template = readFileSync(join(import.meta.dir, '../templates/CraftNativeShell.kt.template'), 'utf8')
 
-/**
- * Payloads, chosen to walk the grammar rather than to pass.
- *
- * Real snapshots, every scalar fragment, both trailing-comma forms and their
- * malformed neighbours, surrogate pairing, control characters, the number
- * grammar's edges, and the lenient spellings `org.json` would wrongly admit.
- */
-const payloads: string[] = [
-  // Ordinary documents.
-  '{}', '[]', '{"a":1}', '{"a":[1,{"b":null}]}', '{"a":{"b":{"c":[1,2,3]}}}',
-  '[{"a":1},{"b":2}]', '{"":1}', '{"a":1,"a":2}', '[[[[1]]]]',
-  // Fragments: UIKit allows them, android.util.JsonReader in strict mode does not.
-  '"text"', '42', '-0.5', '1e10', 'true', 'false', 'null',
-  // Trailing commas: one is accepted, which is the surprising part.
-  '{"a":1,}', '[1,]', '{"a":1,,}', '[1,,2]', '[,1]', '{,"a":1}',
-  // Nothing at all.
-  '', '   ',
-  // Spellings org.json's JSONTokener would admit and Foundation will not.
-  '{a:1}', "{'a':1}", "'single'", '`backtick`', 'undefined',
-  // Numbers.
-  '0', '00', '0.0', '-1', '-1.5e-3', '1E+2', '[01]', '[+1]', '[.5]', '[1.]',
-  '[NaN]', '[Infinity]', '1.0e',
-  // Strings and escapes.
-  '"\\t"', '"\\/"', '"\\\\"', '"\\u0041"', '"\\u00zz"', '"\\q"',
-  '"\\ud83d\\ude00"', '"\\ud83d"', '"\\ude00"', '"\\ud83da"',
-  '"tab\there"', '"unterminated',
-  // Trailing content.
-  '[1,2]extra', '[]extra', '{"a":1}{"b":2}', 'truex', 'nul',
-  // Surrounding whitespace is fine.
-  ' {"a":1} ', '\t{"a":1}',
-  // Malformed members.
-  '{"a":}', '{:1}', '{"a"}',
-]
+interface Recorded { note: string, cases: { payload: string, accepted: boolean }[] }
+const recorded = JSON.parse(readFileSync(join(import.meta.dir, 'snapshot-json-cases.json'), 'utf8')) as Recorded
 
 /** The scanner's source, lifted from the template rather than retyped. */
 function scannerSource(): string {
@@ -68,6 +44,23 @@ function scannerSource(): string {
   expect(to).toBeGreaterThan(from)
   return template.slice(from, to).replace(/^private /gm, '')
 }
+
+test('the recorded payloads still walk the grammar', () => {
+  const payloads = recorded.cases.map(entry => entry.payload)
+  expect(payloads.length).toBeGreaterThanOrEqual(60)
+  // Both verdicts well represented: a table that is all accepts, or all
+  // rejects, would pass against a scanner that always says one thing.
+  const accepted = recorded.cases.filter(entry => entry.accepted).length
+  expect(accepted).toBeGreaterThan(20)
+  expect(recorded.cases.length - accepted).toBeGreaterThan(20)
+  // The surprise, named so nobody "corrects" the recording to match the
+  // standard instead of Foundation.
+  expect(recorded.cases.find(entry => entry.payload === '{"a":1,}')?.accepted,
+    'Foundation accepts one trailing comma').toBe(true)
+  expect(recorded.cases.find(entry => entry.payload === '{"a":1,,}')?.accepted, 'but not two').toBe(false)
+  expect(recorded.cases.find(entry => entry.payload === '42')?.accepted,
+    'and accepts top-level fragments').toBe(true)
+})
 
 test('the Android snapshot write refuses what UIKit refuses', () => {
   // Comments stripped: a note about validating is not a validation.
@@ -82,47 +75,16 @@ test('the Android snapshot write refuses what UIKit refuses', () => {
   expect(setSnapshot).toContain('isSnapshotName(name)')
 })
 
-test.skipIf(process.platform !== 'darwin')('Kotlin and Foundation agree on every payload', async () => {
-  const dir = createTempDir('craft-snapshot-json-')
-  let expected: boolean[] = []
-  try {
-    // Foundation's own verdict, from the framework the host actually uses.
-    const probe = join(dir, 'main.swift'), binary = join(dir, 'probe'), input = join(dir, 'cases.json')
-    writeFileSync(probe, `import Foundation
-let raw = try! Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
-let cases = try! JSONSerialization.jsonObject(with: raw) as! [String]
-for text in cases {
-    let ok = (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil
-    print(ok ? "accept" : "reject")
-}
-`)
-    writeFileSync(input, JSON.stringify(payloads))
-    const build = Bun.spawnSync(['swiftc', probe, '-o', binary], { stdout: 'pipe', stderr: 'pipe', timeout: 120_000 })
-    expect(build.exitCode, build.stderr.toString()).toBe(0)
-    const run = Bun.spawnSync([binary, input], { stdout: 'pipe', stderr: 'pipe', timeout: 60_000 })
-    expect(run.exitCode, run.stderr.toString()).toBe(0)
-    const verdicts = run.stdout.toString().trim().split('\n')
-    expect(verdicts.length, 'every payload must get a verdict').toBe(payloads.length)
-    expected = verdicts.map(verdict => verdict === 'accept')
-
-    // The grammar's surprise, asserted so a future reader cannot mistake
-    // these for oversights in the table.
-    expect(expected[payloads.indexOf('{"a":1,}')], 'Foundation accepts one trailing comma').toBe(true)
-    expect(expected[payloads.indexOf('{"a":1,,}')], 'but not two').toBe(false)
-    expect(expected[payloads.indexOf('42')], 'and accepts top-level fragments').toBe(true)
-  }
-  finally { removeTempDir(dir) }
-
-  const literal = (text: string): string => JSON.stringify(text)
-    .replace(/\$/g, '\\$')
+test('the Kotlin scanner agrees with every recorded verdict', async () => {
+  const literal = (text: string): string => JSON.stringify(text).replace(/\$/g, '\\$')
   await runKotlinFixture(`
 ${scannerSource()}
 
 fun craftNativeIsJsonText(text: String): Boolean = CraftNativeJsonScanner(text).validate()
 
 fun main() {
-    val cases = listOf(${payloads.map(literal).join(',\n        ')})
-    val expected = listOf(${expected.join(', ')})
+    val cases = listOf(${recorded.cases.map(entry => literal(entry.payload)).join(',\n        ')})
+    val expected = listOf(${recorded.cases.map(entry => entry.accepted).join(', ')})
     val wrong = cases.indices.filter { craftNativeIsJsonText(cases[it]) != expected[it] }
     if (wrong.isNotEmpty()) {
         val detail = wrong.joinToString("; ") {
@@ -132,7 +94,7 @@ fun main() {
         }
         throw AssertionError("Kotlin and Foundation disagree on " + wrong.size + " payload(s): " + detail)
     }
-    println("Kotlin and Foundation agree on all " + cases.size + " snapshot payloads")
+    println("Kotlin matches Foundation on all " + cases.size + " snapshot payloads")
 }
 `)
 }, 300_000)
