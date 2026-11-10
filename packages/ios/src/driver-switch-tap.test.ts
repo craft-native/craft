@@ -40,3 +40,46 @@ print("driver switch tap passed")
   }
   finally { removeTempDir(dir) }
 }, 60_000)
+
+const template = readFileSync(join(import.meta.dir, '../templates/testing/DriverTests.swift.template'), 'utf8')
+/** The driver's source with comments stripped: prose is not behaviour. */
+const driver = template.replace(/^\s*\/\/[^\n]*$/gm, '')
+const tapidCase = driver.slice(driver.indexOf('case "tapid":'), driver.indexOf('case "longpressid":'))
+
+test('the switch gesture aims at a control that has stopped moving', () => {
+  // A journey that flicks the page (`swipe up` is `app.swipeUp()`, which
+  // unlike `scrollto` and `drag` does not end with a hold) leaves the scroll
+  // view decelerating. A touch landing on a decelerating scroll view stops
+  // the scroll instead of reaching the control, which is the shape of HQ
+  // agreement job 7570: first switch after the flick dropped, second one
+  // seconds later fine (#449).
+  expect(tapidCase, 'the frame must be read once it is stable').toContain('settledFrame(target)')
+  // Waiting is allowed; a second gesture is not. Both still hold.
+  expect(tapidCase).not.toContain('for _ in')
+  expect(tapidCase.match(/press\(target\)/g)?.length).toBe(2)
+})
+
+test('settling only ever waits', () => {
+  const start = driver.indexOf('    func settledFrame(')
+  expect(start, 'the driver must be able to wait for a control to come to rest').toBeGreaterThan(0)
+  const body = driver.slice(start, driver.indexOf('\n    }', start))
+  // The one thing this helper must never do.
+  for (const gesture of ['.tap()', 'press(', 'swipe', 'coordinate(']) {
+    expect(body, `settledFrame must not ${gesture}`).not.toContain(gesture)
+  }
+  // It returns as soon as two consecutive reads agree, rather than always
+  // spending its budget.
+  expect(body).toContain('if next.equalTo(frame) { return frame }')
+})
+
+test('the observation can tell a moving control from an ignored tap', () => {
+  // frameBefore alone cannot: a control that was still in flight when it was
+  // tapped and one that sat still and dropped the touch look identical.
+  expect(tapidCase).toContain('"frameBefore"')
+  expect(tapidCase).toContain('"frameAfter"')
+  // Read after the settle window, so it reflects where the control came to
+  // rest rather than where it was when the gesture was synthesised.
+  const after = tapidCase.indexOf('let frameAfter = target.frame')
+  const settleLoop = tapidCase.indexOf('} while !flipped && Date() < settle')
+  expect(after, 'frameAfter must be read after the settle loop').toBeGreaterThan(settleLoop)
+})

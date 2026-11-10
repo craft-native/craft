@@ -354,6 +354,30 @@ final class DriverTests: XCTestCase {
         lastTappedInput = input
     }
 
+    /// `target`'s frame once it has stopped moving, or its last reading at
+    /// the deadline. This only ever waits — it never taps.
+    ///
+    /// A journey that flicks the page before touching a control leaves the
+    /// scroll view decelerating, and a touch that lands on a decelerating
+    /// scroll view stops the scroll instead of reaching the control. HQ's
+    /// agreement journey does exactly that: `swipe up`, then `tapid` the
+    /// first switch, which stayed off while the second one — tapped seconds
+    /// later — turned on (#449). `scrollto` and `drag` both end with a hold
+    /// that leaves the content at rest; `swipe` is a flick and does not.
+    ///
+    /// Waiting before the one gesture is not a second gesture.
+    func settledFrame(_ target: XCUIElement, within seconds: TimeInterval = 1.0) -> CGRect {
+        var frame = target.frame
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            let next = target.frame
+            if next.equalTo(frame) { return frame }
+            frame = next
+        }
+        return frame
+    }
+
     func answerOpenPrompt() {
         // A direct app link has already arrived. Querying an invisible
         // SpringBoard here can stall its accessibility snapshot on iOS 27.
@@ -517,7 +541,7 @@ final class DriverTests: XCTestCase {
                 // renderer or hit-testing failure (HQ agreement job 7570).
                 let before = target.value as? String
                 let enabledBefore = target.isEnabled
-                let frameBefore = target.frame
+                let frameBefore = settledFrame(target)
                 press(target)
                 let settle = Date().addingTimeInterval(1.5)
                 var flipped = false
@@ -525,11 +549,17 @@ final class DriverTests: XCTestCase {
                     flipped = switchFlipped(from: before, to: target.value as? String)
                     if !flipped { Thread.sleep(forTimeInterval: 0.25) }
                 } while !flipped && Date() < settle
+                let frameAfter = target.frame
                 let observation: [String: Any] = [
                     "id": arg, "gestures": 1, "flipped": flipped,
                     "enabledBefore": enabledBefore, "enabledAfter": target.isEnabled,
                     "valueBefore": before ?? "unknown", "valueAfter": target.value as? String ?? "unknown",
                     "frameBefore": [frameBefore.origin.x, frameBefore.origin.y, frameBefore.width, frameBefore.height],
+                    // Without this a control that was still moving when it
+                    // was tapped looks exactly like one that sat still and
+                    // ignored the tap, which is where #449 ran out of
+                    // evidence.
+                    "frameAfter": [frameAfter.origin.x, frameAfter.origin.y, frameAfter.width, frameAfter.height],
                 ]
                 lastBooleanTap = observation
                 if let data = try? JSONSerialization.data(withJSONObject: observation, options: [.sortedKeys]),
