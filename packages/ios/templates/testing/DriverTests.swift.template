@@ -342,7 +342,19 @@ final class DriverTests: XCTestCase {
     }
 
     /// Deliver one gesture; the command's observation determines success.
-    func press(_ element: XCUIElement) {
+    ///
+    /// Waits for the target to come to rest first (`settledFrame`) and returns
+    /// the frame it settled on. Every tap command goes through here, so a
+    /// control touched straight after a flick cannot be hit while the scroll
+    /// view is still decelerating — whichever command did the tapping. #449
+    /// settled only the boolean `tapid` branch, which left `tap`, `tapif`,
+    /// `tapexact` and non-boolean `tapid` with the same exposure.
+    ///
+    /// Waiting before the one gesture is not a second gesture, and for a
+    /// control already at rest this costs one 0.1s read.
+    @discardableResult
+    func press(_ element: XCUIElement) -> CGRect {
+        let settled = settledFrame(element)
         // Resolve this before activation: a menu item can disappear as soon
         // as its gesture completes (for example Select All).
         let input = [.textField, .secureTextField, .textView, .searchField].contains(element.elementType)
@@ -352,6 +364,7 @@ final class DriverTests: XCTestCase {
         // A tap on a read-only text view need not open the keyboard. Only a
         // following type command observes whether this target took focus.
         lastTappedInput = input
+        return settled
     }
 
     /// `target`'s frame once it has stopped moving, or its last reading at
@@ -541,8 +554,9 @@ final class DriverTests: XCTestCase {
                 // renderer or hit-testing failure (HQ agreement job 7570).
                 let before = target.value as? String
                 let enabledBefore = target.isEnabled
-                let frameBefore = settledFrame(target)
-                press(target)
+                // press settles before it taps and hands back the frame it
+                // settled on, so this is one read rather than two.
+                let frameBefore = press(target)
                 let settle = Date().addingTimeInterval(1.5)
                 var flipped = false
                 repeat {
