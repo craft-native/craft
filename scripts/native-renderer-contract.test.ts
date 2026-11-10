@@ -2858,6 +2858,19 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).toContain('if (!kept) removePartial(file)')
   })
 
+  it('reads files.write base64 itself on both native hosts instead of trusting the platform decoder', () => {
+    // The platform decoders disagree with `atob` in opposite directions:
+    // Foundation refuses unpadded text, Android's skips characters it does
+    // not know. Each host reads the text to one grammar first; the behaviour
+    // is run against `atob` in each package's base64-contract test.
+    expect(iosFiles).toContain('guard let decoded = decodeBase64(text) else {')
+    expect(iosFiles).not.toContain('Data(base64Encoded: text')
+    expect(androidCapabilities).toContain('"base64" -> decodeBase64(data) ?: return failure("INVALID_ARGUMENT", "files.write base64 is invalid")')
+    // Exactly one call to each platform decoder for file contents, inside the reader.
+    expect(androidCapabilities.match(/Base64\.decode\(data\.toString\(\), Base64\.DEFAULT\)/g)?.length).toBe(1)
+    expect(androidCapabilities).not.toContain('Base64.decode(data, Base64.DEFAULT)')
+  })
+
   it('refuses a malformed audio.setVolume on both hosts instead of muting on one', () => {
     const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
     // Android has always refused it and left the sound alone.

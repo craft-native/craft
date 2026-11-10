@@ -52,3 +52,28 @@ tasks.register('runFixture', JavaExec) {
     await rm(directory, { recursive: true, force: true })
   }
 }
+
+/**
+ * One member function of a Kotlin class in a template, as shipped, so a
+ * fixture can run the real text rather than a copy of it. Members sit at four
+ * spaces; the function is everything deeper, to its closing brace when it has
+ * a block body.
+ */
+export function liftKotlinMember(template: string, name: string): string {
+  const lines = template.split('\n')
+  const start = lines.findIndex(line => line.startsWith(`    private fun ${name}(`))
+  if (start < 0) throw new Error(`${name} is no longer a member function in this template`)
+  const body = [lines[start]!]
+  for (let at = start + 1; at < lines.length; at += 1) {
+    const line = lines[at]!
+    // A deeper line belongs to the function, whichever kind of body it has,
+    // and so does a blank line with more of the body after it.
+    if (line.startsWith('        ') || (line === '' && lines[at + 1]?.startsWith('        '))) { body.push(line); continue }
+    // The end of a signature that ran over several lines.
+    if (line.startsWith('    )')) { body.push(line); continue }
+    // A block body ends on its own brace; an expression body just stops.
+    if (line === '    }') body.push(line)
+    break
+  }
+  return body.join('\n')
+}

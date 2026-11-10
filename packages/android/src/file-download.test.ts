@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { runKotlinFixture } from './testing'
+import { liftKotlinMember, runKotlinFixture } from './testing'
 
 /**
  * `craft.files.download` on Android answers as the other hosts do, and leaves
@@ -35,24 +35,7 @@ import { runKotlinFixture } from './testing'
 const template = readFileSync(join(import.meta.dir, '../templates/CraftNativeCapabilities.kt.template'), 'utf8')
 
 /** One member function of the capabilities class, as shipped. */
-function lift(name: string): string {
-  const lines = template.split('\n')
-  const start = lines.findIndex(line => line.startsWith(`    private fun ${name}(`))
-  expect(start, `${name} must still be a member of CraftNativeCapabilities`).toBeGreaterThan(0)
-  const body = [lines[start]!]
-  for (let at = start + 1; at < lines.length; at += 1) {
-    const line = lines[at]!
-    // A deeper line belongs to the function, whichever kind of body it has,
-    // and so does a blank line with more of the body after it.
-    if (line.startsWith('        ') || (line === '' && lines[at + 1]?.startsWith('        '))) { body.push(line); continue }
-    // The end of a signature that ran over several lines.
-    if (line.startsWith('    )')) { body.push(line); continue }
-    // A block body ends on its own brace; an expression body just stops.
-    if (line === '    }') body.push(line)
-    break
-  }
-  return body.join('\n')
-}
+const lift = (name: string): string => liftKotlinMember(template, name)
 
 const lifted = ['download', 'refusedDownload', 'downloadName', 'percentDecoded', 'removePartial', 'descriptor', 'safeFileName', 'validURL', 'success', 'failure']
 

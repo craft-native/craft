@@ -542,8 +542,7 @@ internal class CraftNativeCapabilities(
             val options = args.optJSONObject(2) ?: JSONObject()
             val bytes = when (options.optString("encoding", "utf8")) {
                 "utf8" -> data.toByteArray(Charsets.UTF_8)
-                "base64" -> runCatching { Base64.decode(data, Base64.DEFAULT) }
-                    .getOrElse { return failure("INVALID_ARGUMENT", "files.write base64 is invalid") }
+                "base64" -> decodeBase64(data) ?: return failure("INVALID_ARGUMENT", "files.write base64 is invalid")
                 else -> return failure("INVALID_ARGUMENT", "files.write encoding is 'utf8' or 'base64'")
             }
             store(bytes, name, options.optString("type").ifBlank { URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream" })
@@ -555,6 +554,30 @@ internal class CraftNativeCapabilities(
         "download" -> download(requestToken, args)
             else -> failure("UNKNOWN_ACTION", "Unsupported Files method")
         }
+    }
+
+    /**
+     * Base64 as `atob` reads it, which is what the browser host runs and what
+     * UIKit is held to: the alphabet, ASCII white space anywhere, padding
+     * optional but right when it is there, and nothing else. Android's own
+     * decoder skips any character it does not know, so the `-` and `_` of a
+     * URL-safe encoding would vanish and a wrong file be written with no
+     * error. It is handed only what has already been read as valid.
+     */
+    private fun decodeBase64(text: String): ByteArray? {
+        val data = StringBuilder(text.length)
+        var padding = 0
+        for (letter in text) {
+            when {
+                letter == ' ' || letter == '\t' || letter == '\n' || letter == '\u000C' || letter == '\r' -> Unit
+                letter == '=' -> padding += 1
+                padding > 0 -> return null
+                letter in 'A'..'Z' || letter in 'a'..'z' || letter in '0'..'9' || letter == '+' || letter == '/' -> data.append(letter)
+                else -> return null
+            }
+        }
+        if (padding > 2 || data.length % 4 == 1 || (padding > 0 && (data.length + padding) % 4 != 0)) return null
+        return runCatching { Base64.decode(data.toString(), Base64.DEFAULT) }.getOrNull()
     }
 
     private fun download(requestToken: String, args: JSONArray): CraftNativeCapabilityResult {

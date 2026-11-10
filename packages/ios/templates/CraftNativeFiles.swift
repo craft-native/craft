@@ -866,6 +866,30 @@ enum CraftNativeFiles {
         }
     }
 
+    /// Base64 as `atob` reads it, which is what the browser host runs and
+    /// what Android is held to: the alphabet, ASCII white space anywhere,
+    /// padding optional but right when it is there, and nothing else.
+    /// Foundation alone wants the padding present and lets a third `=` by.
+    static func decodeBase64(_ text: String) -> Data? {
+        var data = [UInt8]()
+        data.reserveCapacity(text.utf8.count + 2)
+        var padding = 0
+        for byte in text.utf8 {
+            switch byte {
+            case 0x20, 0x09, 0x0A, 0x0C, 0x0D: continue
+            case UInt8(ascii: "="): padding += 1
+            case _ where padding > 0: return nil
+            case UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"),
+                 UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "+"), UInt8(ascii: "/"):
+                data.append(byte)
+            default: return nil
+            }
+        }
+        guard padding <= 2, data.count % 4 != 1, padding == 0 || (data.count + padding) % 4 == 0 else { return nil }
+        data.append(contentsOf: repeatElement(UInt8(ascii: "="), count: (4 - data.count % 4) % 4))
+        return Data(base64Encoded: Data(data))
+    }
+
     /// What a screen made itself (a CSV export, a route it built) written as
     /// a file for the share sheet: `data` is text (`encoding: 'utf8'`, the
     /// default, so a CSV crosses the bridge once and no larger) or base64
@@ -883,7 +907,7 @@ enum CraftNativeFiles {
         case "utf8":
             bytes = Data(text.utf8)
         case "base64":
-            guard let decoded = Data(base64Encoded: text.filter { !$0.isWhitespace }) else {
+            guard let decoded = decodeBase64(text) else {
                 return .failure(CraftNativeActionError(code: "INVALID_ARGUMENT", message: "files.write was given base64 it could not read"))
             }
             bytes = decoded

@@ -1671,6 +1671,18 @@ class NativeCapabilitiesTest {
                 .put("invalid.txt")
                 .put("data")
                 .put(JSONObject().put("encoding", "hex"))).code)
+            // Base64 is read as atob reads it: URL-safe text is refused rather
+            // than written with its dash skipped, and padding is optional.
+            assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray()
+                .put("urlsafe.bin")
+                .put("YW-j")
+                .put(JSONObject().put("encoding", "base64"))).code)
+            val unpadded = call(capabilities, "Files", "write", JSONArray()
+                .put("unpadded.bin")
+                .put("YQ")
+                .put(JSONObject().put("encoding", "base64")))
+            assertNull(unpadded.code)
+            assertEquals(1L, (unpadded.data as JSONObject).getLong("size"))
             assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "download", JSONArray().put("file:///tmp/not-http" )).code)
 
             val result = call(capabilities, "Network", "fetch", JSONArray().put(JSONObject()

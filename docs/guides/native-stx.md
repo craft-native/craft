@@ -1808,7 +1808,10 @@ host; transport failures still reject with the native network error codes and
 leave no partial file behind. The file is kept under the `name` option, else
 the server's `Content-Disposition` name, else the address's last path segment
 with its percent-encoding decoded. A name is cut to what the disk takes and
-keeps its extension.
+keeps its extension. `craft.files.write` with `encoding: 'base64'` reads its
+contents as `atob` does on every host: the standard alphabet, ASCII white space
+ignored and padding optional. Anything else, URL-safe base64 included, rejects
+with `INVALID_ARGUMENT` and writes nothing.
 
 Both maintained native hosts implement `craft.files.pickFile`. Android maps the
 shared MIME, UTI, and common extension filters to `ACTION_OPEN_DOCUMENT`, copies

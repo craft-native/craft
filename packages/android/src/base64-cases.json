@@ -1,0 +1,11 @@
+{
+  "note": "Payloads only. The verdict for each is whatever atob gives when the test runs, so there is no recording to drift: the browser host calls atob, and the two native hosts are held to it.",
+  "cases": [
+    "", "YQ==", "YQ", "YWI=", "YWI", "YWJj", "YWJjZA", "YWJjZGU", "YWJjZGVm", "aGVsbG8gd29ybGQ", "aGVsbG8gd29ybGQ=",
+    "////", "++++", "AAAA", "/+/+",
+    "Y", "YWJjZ", "YQ=", "YQ===", "YQ====", "=", "==", "====", "A===", "AAAA=", "AAAA==", "=YQ=", "YQ==YQ==", "Y=Q=", "AB=C", "YQ= =", "YQ=\n=",
+    "Y Q = =", "YW\nJj", "YW Jj\r\n", "\tYWJj\f", "  ", "YQ==\n", " Y Q ",
+    "-_-_", "YW-j", "YW_j", "!!!!", "YWJj!", "YWJj.", "YW,Jj", "YWJj ", "YQ​==", "é", "YWJj\u000b", "YWJj\u0085", "YW\u0000Jj", "😀",
+    "YR==", "YWJ=", "YWK="
+  ]
+}
