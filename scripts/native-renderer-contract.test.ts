@@ -4615,6 +4615,39 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).toContain('CRAFT_NATIVE_FILE_DEFAULT_MAX_PIXELS = 2048')
     expect(android).toContain('capabilities.onActivityResult(requestCode, resultCode, data)')
   })
+  it('a multiline field starts its text at the top on both hosts', () => {
+    // #501 and #502 are the same defect with different symptoms. On iOS a
+    // UILabel placeholder centred itself in a frame as tall as the box while
+    // the UITextView behind it laid glyphs from the top, so the two disagreed.
+    // On Android the platform's `Widget.EditText` carries
+    // `gravity = center_vertical`, so the hint and the text agree with each
+    // other and both sit in the middle. The web and iOS start at the top, so
+    // Android has to as well.
+    //
+    // Comments stripped on both sides: a note naming the rule is not the rule.
+    const iosCode = ios.replace(/^\s*\/\/[^\n]*$/gm, '')
+    const androidCode = android.replace(/^\s*\/\/[^\n]*$/gm, '')
+
+    // iOS: the placeholder is anchored at the text inset's top edge and given
+    // only the height its own text needs, so there is no spare height to
+    // centre within.
+    expect(iosCode, 'the iOS placeholder must sit at the top of the text')
+      .toContain('y: inset.top')
+    expect(iosCode, 'and must be no taller than the text it holds')
+      .toContain('height: min(max(0, fittedHeight), available)')
+
+    // Android: the field takes a vertical gravity from whether it is
+    // multiline, rather than inheriting the theme's centred one.
+    expect(androidCode, 'an Android field must choose its own vertical gravity')
+      .toContain('craftNativeVerticalGravity(gravity, multiline)')
+    expect(androidCode, 'multiline tops, single line stays centred')
+      .toContain('if (multiline) Gravity.TOP else Gravity.CENTER_VERTICAL')
+
+    // Neither host may answer this by centring. A single-line field on Android
+    // is legitimately centred, so the ban is on the multiline branch only.
+    expect(iosCode, 'the iOS placeholder must not be given the whole box again')
+      .not.toContain('height: max(0, bounds.height - inset.top - inset.bottom)')
+  })
 })
 
 describe('mobile acceptance scopes', () => {
@@ -4663,3 +4696,4 @@ describe('mobile acceptance scopes', () => {
     })
   }
 })
+

@@ -150,6 +150,27 @@ private fun craftNativeBoolean(value: Any?, fallback: Boolean = false): Boolean 
 private fun craftNativeInt(value: Any?, fallback: Int): Int = (value as? Number)?.toInt() ?: fallback
 
 /**
+ * Where a field's text and hint begin, vertically.
+ *
+ * The platform's `Widget.EditText` carries `gravity = center_vertical`, and
+ * nothing between it and this app overrides it: `Theme.CraftApp` inherits
+ * `Theme.Material3.DayNight.NoActionBar`, no Material3 theme binds
+ * `android:editTextStyle`, and AppCompat binds it to
+ * `Widget.AppCompat.EditText`, whose chain reaches `android:Widget.EditText`
+ * without touching gravity. A single-line field is never taller than its
+ * text, so the centring cannot show; a field given a `minHeight` drew its
+ * first line — and its hint — halfway down the box, where iOS and the web
+ * both start at the top (#502).
+ *
+ * Only the vertical bits are replaced. The horizontal ones are left exactly
+ * as they were, because `textAlign` resolves through `textAlignment`, whose
+ * default of `TEXT_ALIGNMENT_INHERIT` can still fall back to this gravity.
+ */
+private fun craftNativeVerticalGravity(current: Int, multiline: Boolean): Int =
+    (current and Gravity.VERTICAL_GRAVITY_MASK.inv()) or (if (multiline) Gravity.TOP else Gravity.CENTER_VERTICAL)
+
+
+/**
  * A scroll event's geometry in density-independent units.
  *
  * UIKit reports `contentOffset`, `contentSize` and `layoutMeasurement` in
@@ -6689,6 +6710,8 @@ class MainActivity : AppCompatActivity() {
                 if (isSingleLine == multiline) isSingleLine = !multiline
                 val wantedLines = if (multiline) craftNativeInt(props.opt("numberOfLines"), Int.MAX_VALUE).coerceAtLeast(1) else 1
                 if (maxLines != wantedLines) maxLines = wantedLines
+                val wantedGravity = craftNativeVerticalGravity(gravity, multiline)
+                if (gravity != wantedGravity) gravity = wantedGravity
                 isEnabled = craftNativeBoolean(props.opt("editable"), true)
                 configureTextStyle(this, style)
                 // The style's padding is where the text starts, as on iOS and
