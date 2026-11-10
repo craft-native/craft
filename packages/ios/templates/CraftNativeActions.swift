@@ -2007,8 +2007,9 @@ enum CraftSnapshots {
                 // after a failure finds the previous value, because `pending`
                 // was cleared above and the cache was only refilled on success.
                 // Posting only on success left a failed checkpoint on screen as
-                // though it had been kept; Android already restores it
-                // (`changed("snapshots", name, if (ok) json else previous, null)`).
+                // though it had been kept; Android restores it by sending what
+                // a read gives once the write settles
+                // (`changed("snapshots", name, current, null)`).
                 NotificationCenter.default.post(name: changed, object: nil, userInfo: ["name": name])
                 completion?(ok)
             }

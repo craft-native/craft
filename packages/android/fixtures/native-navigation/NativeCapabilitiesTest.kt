@@ -1134,6 +1134,51 @@ class NativeCapabilitiesTest {
     }
 
     @Test
+    fun aCheckpointIsReadAndSeededBeforeItReachesTheDisk() {
+        val base = instrumentation.targetContext
+        val root = java.io.File(base.cacheDir, "snapshot-pending-${UUID.randomUUID()}").apply { check(mkdirs()) }
+        val destination = java.io.File(root, "craft-snapshots/campaign.json").apply {
+            check(parentFile!!.mkdirs())
+            writeText("{\"tick\":24}")
+        }
+        val context = object : android.content.ContextWrapper(base) {
+            override fun getApplicationContext(): android.content.Context = this
+            override fun getFilesDir() = root
+        }
+        // The write is held, so the test stands in the window a screen pushed
+        // in the same turn as a checkpoint is built in.
+        val held = CountDownLatch(1)
+        val files = CraftSnapshotFile(write = { file, bytes ->
+            held.await(10, TimeUnit.SECONDS)
+            file.writeBytes(bytes)
+        })
+        val constructor = CraftNativeStores::class.java.getDeclaredConstructor(
+            android.content.Context::class.java, Boolean::class.javaPrimitiveType, CraftSnapshotFile::class.java,
+        ).apply { isAccessible = true }
+        val stores = constructor.newInstance(context, false, files)
+        val complete = CountDownLatch(1)
+        var accepted: Boolean? = null
+        try {
+            assertEquals("{\"tick\":24}", stores.snapshot("campaign"))
+            stores.setSnapshot("campaign", "{\"tick\":25}", null) {
+                accepted = it
+                complete.countDown()
+            }
+            assertEquals("{\"tick\":24}", destination.readText())
+            assertEquals("{\"tick\":25}", stores.snapshot("campaign"))
+            assertEquals("{\"tick\":25}", stores.preload().getJSONObject("snapshots").getString("campaign"))
+            held.countDown()
+            assertTrue("held snapshot did not settle", complete.await(5, TimeUnit.SECONDS))
+            assertEquals(true, accepted)
+            assertEquals("{\"tick\":25}", destination.readText())
+            assertEquals("{\"tick\":25}", stores.snapshot("campaign"))
+        } finally {
+            held.countDown()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun secureUuidUsesTheNativePlatformWithoutJavaScriptEntropy() {
         val capabilities = CraftNativeCapabilities(instrumentation.targetContext, JSONObject())
         try {

@@ -366,6 +366,30 @@ internal class CraftNativeStores private constructor(
     }
 
     /**
+     * Checkpoints that have been asked for and are not on disk yet, the
+     * newest per name; a null is one being deleted. A read finds these first,
+     * as UIKit's `CraftSnapshots.read` finds its `pending`, so a screen opened
+     * right after a checkpoint is seeded with it, and one opened right after
+     * a sign-out is not seeded with the account that just left (#507). The
+     * number is which request put the entry there. Guarded by itself.
+     */
+    private val pendingSnapshots = HashMap<String, Pair<Long, String?>>()
+    private var snapshotRevision = 0L
+
+    /** What a read gives now: the snapshots on disk with those on their way laid over them. */
+    private fun currentSnapshots(): Map<String, String> {
+        synchronized(pendingSnapshots) {
+            if (pendingSnapshots.isEmpty()) return snapshotCache
+            val current = HashMap(snapshotCache)
+            for ((name, waiting) in pendingSnapshots) {
+                val json = waiting.second
+                if (json == null) current.remove(name) else current[name] = json
+            }
+            return current
+        }
+    }
+
+    /**
      * Everything an isolate needs before its first line runs, as JSON text:
      * `{ storage: { key: json }, secure: { key: value }, snapshots: { name: json } }`.
      * Values stay JSON text; the isolate parses what it reads. Built off the
@@ -388,7 +412,7 @@ internal class CraftNativeStores private constructor(
         out.append(',')
         section("secure", runCatching { secure?.all?.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }?.toMap() }.getOrNull() ?: emptyMap())
         out.append(',')
-        section("snapshots", snapshotCache)
+        section("snapshots", currentSnapshots())
         out.append('}')
         return out.toString()
     }
@@ -396,7 +420,12 @@ internal class CraftNativeStores private constructor(
     /** The same, parsed (tests and small hosts). */
     fun preload(): JSONObject = JSONObject(preloadText())
 
-    fun snapshot(name: String): String? = snapshotCache[name]
+    fun snapshot(name: String): String? {
+        synchronized(pendingSnapshots) {
+            val waiting = pendingSnapshots[name]
+            return if (waiting != null) waiting.second else snapshotCache[name]
+        }
+    }
 
     /**
      * One secure value, read directly rather than through the preload.
@@ -432,44 +461,72 @@ internal class CraftNativeStores private constructor(
             main.post { done(false) }
             return
         }
-        writer.execute {
-            val file = snapshotFile(name)
-            val previous = snapshotCache[name]
-            val ok = runCatching {
-                if (json == null) {
-                    !file.exists() || file.delete()
-                } else {
-                    snapshotFiles.set(file, json)
-                    true
+        // Admitting the write and queueing it are one step, as on UIKit:
+        // apart, an older request could reach the disk after a newer one
+        // while readers were already being given the newer value.
+        synchronized(pendingSnapshots) {
+            snapshotRevision += 1
+            val mine = snapshotRevision
+            pendingSnapshots[name] = mine to json
+            writer.execute {
+                val file = snapshotFile(name)
+                val ok = runCatching {
+                    if (json == null) {
+                        !file.exists() || file.delete()
+                    } else {
+                        snapshotFiles.set(file, json)
+                        true
+                    }
+                }.getOrDefault(false)
+                if (ok) {
+                    if (json == null) snapshotCache.remove(name) else snapshotCache[name] = json
                 }
-            }.getOrDefault(false)
-            if (ok) {
-                if (json == null) snapshotCache.remove(name) else snapshotCache[name] = json
-            }
-            main.post {
-                // Isolates optimistically display their write. Restore the
-                // confirmed value before rejecting an unsuccessful checkpoint.
-                changed("snapshots", name, if (ok) json else previous, null)
-                done(ok)
+                val current = synchronized(pendingSnapshots) {
+                    if (pendingSnapshots[name]?.first == mine) pendingSnapshots.remove(name)
+                    snapshot(name)
+                }
+                main.post {
+                    // Isolates optimistically display their write. Each is
+                    // told what a read gives now: the checkpoint when it was
+                    // kept, the confirmed value when it was not, and a newer
+                    // one still on its way in either case, so an older write
+                    // settling cannot set a screen back behind it.
+                    changed("snapshots", name, current, null)
+                    done(ok)
+                }
             }
         }
     }
 
     /** `craft.snapshots.clear(keep)`: every snapshot but those named, as a sign-out does. */
     fun clearSnapshots(keep: Set<String>, done: (Boolean) -> Unit) {
-        writer.execute {
-            val removed = mutableListOf<String>()
-            var ok = true
-            snapshotsDir.listFiles()?.forEach { file ->
-                if (!file.name.endsWith(".json")) return@forEach
-                val name = snapshotName(file) ?: return@forEach
-                if (name in keep) return@forEach
-                if (file.delete()) removed.add(name) else ok = false
-            }
-            removed.forEach(snapshotCache::remove)
-            main.post {
-                removed.forEach { changed("snapshots", it, null, null) }
-                done(ok)
+        synchronized(pendingSnapshots) {
+            // Gone for a reader from this moment, as on UIKit, where a clear
+            // is a delete of every name.
+            snapshotRevision += 1
+            val mine = snapshotRevision
+            val doomed = currentSnapshots().keys.filter { it !in keep }
+            doomed.forEach { pendingSnapshots[it] = mine to null }
+            writer.execute {
+                val removed = mutableListOf<String>()
+                var ok = true
+                snapshotsDir.listFiles()?.forEach { file ->
+                    if (!file.name.endsWith(".json")) return@forEach
+                    val name = snapshotName(file) ?: return@forEach
+                    if (name in keep) return@forEach
+                    if (file.delete()) removed.add(name) else ok = false
+                }
+                removed.forEach(snapshotCache::remove)
+                val current = synchronized(pendingSnapshots) {
+                    doomed.forEach { if (pendingSnapshots[it]?.first == mine) pendingSnapshots.remove(it) }
+                    // One that could not be deleted is still there, and one
+                    // written since the clear was asked for is on its way.
+                    (removed + doomed).distinct().associateWith { snapshot(it) }
+                }
+                main.post {
+                    current.forEach { (name, json) -> changed("snapshots", name, json, null) }
+                    done(ok)
+                }
             }
         }
     }

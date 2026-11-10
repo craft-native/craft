@@ -165,6 +165,22 @@ describe('native renderer component contract', () => {
    * failure path that disagreed with the other host rather than with the
    * platform.
    */
+  it('lets a read find a checkpoint that is not on disk yet, on both hosts', () => {
+    // UIKit reads through `pending`; Android seeds each new isolate, so the
+    // seed and the single read both go through the same overlay (#507). The
+    // behaviour is run in packages/android's snapshot-read-your-writes test.
+    expect(iosActions).toContain('if let waiting = pending[name] { return waiting }')
+    expect(androidShell).toContain('section("snapshots", currentSnapshots())')
+    expect(androidShell, 'a new screen must not be seeded from the settled cache alone').not.toContain('section("snapshots", snapshotCache)')
+    // A clear is a delete of every name on UIKit, so it is pending there too.
+    const iosClear = iosActions.slice(iosActions.indexOf('static func clear(keeping keep: Set<String>'), iosActions.indexOf('enum CraftHaptics'))
+    expect(iosClear).toContain('write(name, json: nil)')
+    const androidClear = androidShell.slice(androidShell.indexOf('fun clearSnapshots('), androidShell.indexOf('fun changed(store: String'))
+    expect(androidClear).toContain('doomed.forEach { pendingSnapshots[it] = mine to null }')
+    // Admission and queueing are one step on both, so requests reach the disk in the order readers were given them.
+    expect(androidShell.match(/synchronized\(pendingSnapshots\) \{[\s\S]{0,400}?writer\.execute \{/g)?.length).toBe(2)
+  })
+
   /**
    * A failed checkpoint write must not leave the optimistic value on screen.
    *
@@ -175,8 +191,16 @@ describe('native renderer component contract', () => {
    * the platform state on exactly the failure path #396 asks about.
    */
   it('tells readers to re-read after a failed checkpoint write on both hosts', () => {
-    // Android restores the confirmed value in the same post as the rejection.
-    expect(androidShell).toContain('changed("snapshots", name, if (ok) json else previous, null)')
+    // Android tells every isolate what a read gives once the write settles,
+    // in the same post as the rejection: the confirmed value after a failure,
+    // or a newer checkpoint still on its way. The value is taken after this
+    // write's own pending entry is dropped, or a failure would re-send itself.
+    const settle = androidShell.slice(androidShell.indexOf('fun setSnapshot('), androidShell.indexOf('fun clearSnapshots('))
+    expect(settle.length).toBeGreaterThan(400)
+    expect(settle).toContain('changed("snapshots", name, current, null)')
+    expect(settle.indexOf('if (pendingSnapshots[name]?.first == mine) pendingSnapshots.remove(name)')).toBeGreaterThan(0)
+    expect(settle.indexOf('if (pendingSnapshots[name]?.first == mine) pendingSnapshots.remove(name)'))
+      .toBeLessThan(settle.indexOf('snapshot(name)\n                }'))
 
     // UIKit posts regardless of the outcome; the notification carries only the
     // name, so the reader's own `read` supplies the value.

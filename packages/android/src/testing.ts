@@ -54,19 +54,24 @@ tasks.register('runFixture', JavaExec) {
 }
 
 /**
- * One member function of a Kotlin class in a template, as shipped, so a
- * fixture can run the real text rather than a copy of it. Members sit at four
- * spaces; the function is everything deeper, to its closing brace when it has
- * a block body.
+ * One member of a Kotlin class in a template, as shipped, so a fixture can run
+ * the real text rather than a copy of it: a function, or a property with its
+ * initialiser. Members sit at four spaces; the member is everything deeper,
+ * to its closing brace when it has a block body.
  */
 export function liftKotlinMember(template: string, name: string): string {
   const lines = template.split('\n')
-  const start = lines.findIndex(line => line.startsWith(`    private fun ${name}(`))
-  if (start < 0) throw new Error(`${name} is no longer a member function in this template`)
+  const opening = new RegExp(`^ {4}(?:private |internal )?(?:fun ${name}\\(|va[lr] ${name}\\b)`)
+  const starts = lines.flatMap((line, at) => opening.test(line) ? [at] : [])
+  if (starts.length === 0) throw new Error(`${name} is no longer a member in this template`)
+  // Two classes in one template can each have a member of this name, and
+  // quietly taking the first would test the wrong one.
+  if (starts.length > 1) throw new Error(`${name} is a member ${starts.length} times in this template; lift it from a slice`)
+  const start = starts[0]!
   const body = [lines[start]!]
   for (let at = start + 1; at < lines.length; at += 1) {
     const line = lines[at]!
-    // A deeper line belongs to the function, whichever kind of body it has,
+    // A deeper line belongs to the member, whichever kind of body it has,
     // and so does a blank line with more of the body after it.
     if (line.startsWith('        ') || (line === '' && lines[at + 1]?.startsWith('        '))) { body.push(line); continue }
     // The end of a signature that ran over several lines.
