@@ -294,6 +294,8 @@ internal class CraftNativeRoutes(config: JSONObject) {
 /** One process-wide boundary for committed storage reads and mutations. */
 internal object CraftNativeStorage {
     val lock = Any()
+    /** The secure store's writes, one at a time across every host in the process: a rollback restores what it read. */
+    val secureLock = Any()
     fun jsonEqual(left: Any?, right: Any?): Boolean {
         if (left == null || left === JSONObject.NULL) return right == null || right === JSONObject.NULL
         if (left is Boolean || right is Boolean) return left is Boolean && right is Boolean && left == right

@@ -2895,6 +2895,32 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).not.toContain('Base64.decode(data, Base64.DEFAULT)')
   })
 
+  it('refuses a secure-storage removal that did not reach the store, on both hosts', () => {
+    // UIKit refuses a Keychain delete that failed. Android answered with
+    // whatever commit() returned and told every isolate the value was gone
+    // either way, so a failed sign-out looked like one until the next launch.
+    // The behaviour is run in packages/android's secure-storage-failure test.
+    const iosSecure = iosActions.slice(iosActions.indexOf('private static func secureStorage(method: String'), iosActions.indexOf('private static func', iosActions.indexOf('private static func secureStorage(method: String') + 40))
+    expect(iosSecure.length).toBeGreaterThan(800)
+    expect(iosSecure).toContain('failure("SECURE_STORAGE_ERROR", "Secure storage could not be removed")')
+    expect(iosSecure).toContain('failure("SECURE_STORAGE_ERROR", "Secure storage could not be cleared")')
+
+    const androidSecure = androidCapabilities.slice(androidCapabilities.indexOf('private fun secureStorage(method: String'), androidCapabilities.indexOf('private fun biometrics('))
+    expect(androidSecure.length).toBeGreaterThan(800)
+    expect(androidSecure).toContain('failure("SECURE_STORAGE_ERROR", "Secure storage could not be removed")')
+    expect(androidSecure).toContain('failure("SECURE_STORAGE_ERROR", "Secure storage could not be cleared")')
+    // Every write goes through the commit that puts memory back on failure,
+    // and none answers with the bare result of a commit or announces before it.
+    expect(androidSecure.match(/CraftNativeStorage\.commit\(encryptedSecureStorage\)/g)?.length).toBe(3)
+    expect(androidSecure).not.toContain('.commit().also')
+    expect(androidSecure).not.toMatch(/encryptedSecureStorage\.edit\(\)/)
+    // And only a kept write is announced: each observer call follows its commit.
+    for (const call of androidSecure.matchAll(/storeObserver\?\.invoke\("secure"/g)) {
+      const before = androidSecure.slice(0, call.index)
+      expect(before.lastIndexOf('CraftNativeStorage.commit(encryptedSecureStorage)'), 'a secure change is announced before it is committed').toBeGreaterThan(before.lastIndexOf('storeObserver?.invoke("secure"'))
+    }
+  })
+
   it('refuses a malformed audio.setVolume on both hosts instead of muting on one', () => {
     const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
     // Android has always refused it and left the sound alone.

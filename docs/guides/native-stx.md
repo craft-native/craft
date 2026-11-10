@@ -1719,7 +1719,10 @@ process. The Android receiver is registered only for native-renderer projects.
 explicit configuration gates. `enableSecureStorage` and `enableBiometric` gate
 the corresponding secure-storage and biometric methods. Secure storage accepts
 string values and persists them in the iOS Keychain or Android encrypted
-preferences. The `badge` capability is iOS-only and does not request notification
+preferences. A secure write that does not reach the store, a removal or a
+clear included, rejects with `SECURE_STORAGE_ERROR` on both hosts and changes
+nothing: the value stays readable as it was and no screen is told the session
+moved, so a sign-out that failed is not shown as one. The `badge` capability is iOS-only and does not request notification
 authorization; `craft.badge.set(count)` and `craft.badge.clear()` update the app
 icon without requiring local notifications.
 On Android, `enableHealthConnect` keeps the HealthKit-shaped workout methods on

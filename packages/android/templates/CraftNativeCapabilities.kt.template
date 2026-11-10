@@ -1194,10 +1194,18 @@ internal class CraftNativeCapabilities(
         }
     }
 
-    private fun secureStorage(method: String, args: JSONArray): CraftNativeCapabilityResult {
+    private fun secureStorage(method: String, args: JSONArray): CraftNativeCapabilityResult = synchronized(CraftNativeStorage.secureLock) {
+        // A write that did not reach the disk is a failure, and nothing is told
+        // it happened: the store's own memory is put back (a failed commit
+        // has already changed it), no isolate hears of it, and the caller is
+        // refused, as UIKit refuses a Keychain delete that failed. Answering
+        // `false` and telling every isolate the token was gone made a failed
+        // sign-out look like a sign-out until the next launch read the disk.
         if (method == "clear") {
             return try {
-                success(encryptedSecureStorage.edit().clear().commit().also { storeObserver?.invoke("secure", null, null) })
+                if (!CraftNativeStorage.commit(encryptedSecureStorage) { it.clear() }) return failure("SECURE_STORAGE_ERROR", "Secure storage could not be cleared")
+                storeObserver?.invoke("secure", null, null)
+                success(true)
             } catch (error: Exception) {
                 failure("SECURE_STORAGE_ERROR", error.message ?: "Secure storage could not be cleared")
             }
@@ -1207,14 +1215,18 @@ internal class CraftNativeCapabilities(
             when (method) {
                 "set" -> {
                     if (args.length() != 2 || args.opt(1) !is String) return failure("INVALID_ARGUMENT", "SecureStorage.set needs a key and string value")
-                    if (encryptedSecureStorage.edit().putString(key, args.getString(1)).commit()) {
-                        storeObserver?.invoke("secure", key, args.getString(1))
+                    val value = args.getString(1)
+                    if (CraftNativeStorage.commit(encryptedSecureStorage) { it.putString(key, value) }) {
+                        storeObserver?.invoke("secure", key, value)
                         success(true)
                     }
                     else failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
                 }
                 "get" -> success(encryptedSecureStorage.getString(key, null) ?: JSONObject.NULL)
-                "remove" -> success(encryptedSecureStorage.edit().remove(key).commit().also { storeObserver?.invoke("secure", key, null) })
+                "remove" -> if (CraftNativeStorage.commit(encryptedSecureStorage) { it.remove(key) }) {
+                    storeObserver?.invoke("secure", key, null)
+                    success(true)
+                } else failure("SECURE_STORAGE_ERROR", "Secure storage could not be removed")
                 else -> failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
             }
         } catch (error: Exception) {
