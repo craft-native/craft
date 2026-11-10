@@ -53,32 +53,25 @@ const esbuildDevServer: RetainedAdvisory[] = [
   },
 ]
 
-/**
- * Svelte is a peer and dev dependency of `@craft-native/svelte`, whose
- * published `files` are `dist` and `src`. The framework itself is never
- * bundled, so an installed Craft package carries no Svelte code; the version a
- * consumer runs is the one they chose, and these advisories are theirs to
- * resolve against their own Svelte.
+/*
+ * The six Svelte renderer advisories that lived here are gone, not waived.
  *
- * Every one is an SSR or DOM-clobbering issue in Svelte's own renderer, which
- * the binding does not call: it wraps the Craft bridge, not Svelte's compiler
- * or its server renderer.
+ * They were retained because "there is nothing to move to inside the supported
+ * range": the first unaffected version was 5.55.7 and the declared peer range
+ * stopped at `^4.0.0`. The note added that closing them "means widening that
+ * range to Svelte 5, which breaks every consumer on 3.x or 4.x", and left it as
+ * an API decision.
  *
- * Kept rather than remedied because there is nothing to move to inside the
- * supported range. The advisories reach up to 5.55.6, so the first unaffected
- * version is 5.55.7 — outside the declared peer range `^3.0.0 || ^4.0.0`
- * entirely. Closing them means widening that range to Svelte 5, which breaks
- * every consumer on 3.x or 4.x. That is an API decision about what the binding
- * supports, and it should be made for its own reasons rather than to satisfy a
- * scanner about code Craft does not ship.
+ * That premise was wrong. Widening to `^3.0.0 || ^4.0.0 || ^5.0.0` adds a major
+ * rather than dropping two, so no consumer on 3.x or 4.x loses anything — the
+ * cap was what held them on a vulnerable Svelte, which is the opposite of what
+ * the retention assumed. The range was widened in ba5cb82f and the adapter's
+ * own devDependency now resolves 5.57.3, so the advisories no longer match any
+ * installed version and this file's own stale-retention check reported them.
+ *
+ * The retention's other reasoning held up and is worth keeping on record:
+ * Svelte is never bundled into a published Craft artifact, so a consumer's
+ * exposure was always their own Svelte rather than ours.
  */
-const svelteRenderer: RetainedAdvisory[] = [
-  { id: 1113416, package: 'svelte', ghsa: 'GHSA-crpf-4hrx-3jrp', reason: 'SSR attribute spreading; Svelte is a peer dependency and is bundled in no published artifact.', reviewed: '2026-09-25', expires: '2026-12-31' },
-  { id: 1113418, package: 'svelte', ghsa: 'GHSA-m56q-vw4c-c2cp', reason: 'SSR dynamic element tag names; peer dependency only, and the binding never invokes Svelte SSR.', reviewed: '2026-09-25', expires: '2026-12-31' },
-  { id: 1113419, package: 'svelte', ghsa: 'GHSA-f7gr-6p89-r883', reason: 'XSS via SSR spread attributes; peer dependency only, not bundled.', reviewed: '2026-09-25', expires: '2026-12-31' },
-  { id: 1120446, package: 'svelte', ghsa: 'GHSA-rcqx-6q8c-2c42', reason: 'DOM clobbering of Svelte internal state; peer dependency only, and no patched version exists inside the supported range.', reviewed: '2026-09-25', expires: '2026-12-31' },
-  { id: 1120449, package: 'svelte', ghsa: 'GHSA-pr6f-5x2q-rwfp', reason: 'XSS via SSR spread attributes; peer dependency only, and no patched version exists inside the supported range.', reviewed: '2026-09-25', expires: '2026-12-31' },
-  { id: 1114402, package: 'svelte', ghsa: 'GHSA-phwv-c562-gvmh', reason: 'XSS during SSR with contenteditable bindings; peer dependency only, and the binding exposes no such binding.', reviewed: '2026-09-25', expires: '2026-12-31' },
-]
 
-export const retainedAdvisories: RetainedAdvisory[] = [...esbuildDevServer, ...svelteRenderer]
+export const retainedAdvisories: RetainedAdvisory[] = [...esbuildDevServer]

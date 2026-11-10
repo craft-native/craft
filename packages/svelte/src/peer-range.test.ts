@@ -45,7 +45,15 @@ function svelteImports(): { specifier: string, named: string[] }[] {
   return found
 }
 
-/** What `svelte/store` has exported continuously through Svelte 3, 4 and 5. */
+/**
+ * What `svelte/store` has exported continuously through Svelte 3, 4 and 5.
+ *
+ * Svelte 3 and 4 cannot be resolved from here — only one version is
+ * installed — so this half is a claim. The half that matters is not:
+ * `the adapter's imports exist in the installed Svelte` below asks the
+ * installed package what it actually exports, so widening the range cannot
+ * rest on my reading of a changelog.
+ */
 const storeSurface = new Set(['writable', 'readable', 'derived', 'readonly', 'get', 'Readable', 'Writable', 'Unsubscriber', 'StartStopNotifier'])
 
 test('the adapter only uses svelte/store', () => {
@@ -79,4 +87,37 @@ test('the peer range reaches the majors where the advisories are fixed', () => {
   // Without dropping the consumers who are still on 3 or 4.
   expect(range).toContain('^3.0.0')
   expect(range).toContain('^4.0.0')
+})
+
+test('the adapter builds against the major its range points consumers at', async () => {
+  // The defect this closes: the peer range was widened to `^5.0.0` while the
+  // devDependency stayed `^4.0.0`, so nothing ever built or tested the adapter
+  // against the major being advertised — and the installed Svelte still
+  // carried the six advisories the widening was for (#399).
+  const installed = JSON.parse(readFileSync(join(root, '../../node_modules/svelte/package.json'), 'utf8')) as { version: string }
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+    devDependencies?: Record<string, string>
+    peerDependencies?: Record<string, string>
+  }
+  const range = manifest.peerDependencies?.svelte ?? ''
+  const highest = [...range.matchAll(/\^(\d+)\./g)].map(found => Number(found[1])).sort((a, b) => b - a)[0]
+  expect(highest, 'the peer range must name a major').toBeGreaterThan(0)
+  expect(Number(installed.version.split('.')[0]),
+    `the range offers ^${highest}.x but the adapter is built against Svelte ${installed.version}`).toBe(highest)
+  // And the devDependency, not just whatever happens to be hoisted.
+  expect(manifest.devDependencies?.svelte).toBe(`^${highest}.0.0`)
+})
+
+test("the adapter's imports exist in the installed Svelte", async () => {
+  // Asked of the package rather than asserted from a list, so the range rests
+  // on what Svelte exports instead of on what I believed it exports.
+  const store = await import('svelte/store') as Record<string, unknown>
+  const exported = new Set(Object.keys(store))
+  expect(exported.size, 'svelte/store must export something').toBeGreaterThan(0)
+  const wanted = [...new Set(svelteImports().flatMap(entry => entry.named))]
+    // Type-only names are not runtime exports.
+    .filter(name => !/^[A-Z]/.test(name))
+  expect(wanted.length, 'the adapter must import runtime names').toBeGreaterThan(0)
+  const missing = wanted.filter(name => !exported.has(name))
+  expect(missing, `the installed Svelte does not export ${missing.join(', ')}`).toEqual([])
 })
