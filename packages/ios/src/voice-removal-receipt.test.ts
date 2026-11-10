@@ -64,3 +64,40 @@ test('the deletion still runs off the caller and off the audio queue', () => {
   expect(clear, 'the removal still happens on the file queue').toContain('Self.fileQueue.async {')
   expect(clear).toContain('CraftNativeFiles.remove(file.path)')
 })
+
+/**
+ * The failure line says what was observed, not just that time ran out.
+ *
+ * `fulfillment(of:timeout:)` takes no message, so a timeout reported only
+ * `Exceeded timeout of 2 seconds, with unfulfilled expectations: "real file
+ * removal observed before encoder release"`. Deciding from that whether the
+ * deletion was slow or never admitted cost a 16MB artifact download — twice,
+ * on #490. The trail and the receipt were already being collected and
+ * attached; they just were not in the sentence the reader sees first.
+ */
+const audioFixture = readFileSync(join(import.meta.dir, '../fixtures/native-screen/NativeAudioUnitTests.swift'), 'utf8')
+  .replace(/^\s*\/\/[^\n]*$/gm, '')
+
+test('a timed-out removal reports the trail and the receipt', () => {
+  const guarded = audioFixture.slice(audioFixture.indexOf('XCTWaiter().fulfillment(of: [erased, removalObserved]'))
+    .slice(0, 1200)
+  expect(guarded, 'the wait must be able to report, which fulfillment(of:) cannot')
+    .toContain('XCTWaiter().fulfillment(of: [erased, removalObserved], timeout: 2)')
+  // The three numbers that decide starved from stalled.
+  for (const field of ['queueMilliseconds', 'submitMilliseconds', 'removalMilliseconds']) {
+    expect(guarded, `the failure must carry ${field}`).toContain(field)
+  }
+  // And the phase trail, including the case where no receipt arrived at all —
+  // which is itself the answer, and used to look identical to a slow one.
+  expect(guarded).toContain('no removal receipt arrived')
+  expect(guarded).toContain('observed \\(trail)')
+})
+
+test('surfacing it did not relax the bound or the expectations', () => {
+  // #490 forbids buying green by moving a number. The budget stays 2s, both
+  // expectations are still required, and a timeout is still a failure.
+  expect(audioFixture).toContain('of: [erased, removalObserved], timeout: 2)')
+  expect(audioFixture, 'a timeout must still fail the test').toContain('XCTFail(')
+  expect(audioFixture, 'no longer budget may be introduced here')
+    .not.toMatch(/of: \[erased, removalObserved\], timeout: (?!2\))/)
+})

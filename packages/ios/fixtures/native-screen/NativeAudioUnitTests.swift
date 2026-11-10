@@ -501,7 +501,22 @@ final class NativeAudioUnitTests: XCTestCase {
             !observe("file-absence-predicate")
         }, object: nil)
         // Both observations share the original bound; no extra cleanup wait.
-        await fulfillment(of: [erased, removalObserved], timeout: 2)
+        //
+        // Waited through XCTWaiter rather than `fulfillment(of:timeout:)`,
+        // which takes no message: a timeout there reports only "Exceeded
+        // timeout of 2 seconds", and deciding whether the deletion was slow
+        // or never admitted then costs a 16MB artifact download (#490). The
+        // bound, the expectations and the failure are unchanged — only what
+        // the failure says.
+        if await XCTWaiter().fulfillment(of: [erased, removalObserved], timeout: 2) != .completed {
+            let trail = receiptLock.withLock { observations }
+                .map { "\($0["phase"] ?? "?")@\(Int(($0["milliseconds"] as? Double ?? 0).rounded()))ms exists=\($0["exists"] ?? "?")" }
+                .joined(separator: ", ")
+            let removal = receiptLock.withLock { removalReceipt }
+                .map { "queue=\(Int($0.queueMilliseconds.rounded()))ms submit=\(Int($0.submitMilliseconds.rounded()))ms removal=\(Int($0.removalMilliseconds.rounded()))ms removed=\($0.removed)" }
+                ?? "no removal receipt arrived"
+            XCTFail("the real file was not removed before the encoder was released within 2s; \(removal); observed \(trail)")
+        }
         XCTAssertFalse(observe("before-encoder-release"))
         let receipt = receiptLock.withLock { removalReceipt }
         XCTAssertEqual(receipt?.ownedBefore, true)
