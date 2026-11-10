@@ -966,7 +966,7 @@ final class CraftChrome: ObservableObject {
         if let item, let path = item["path"] as? String,
            path.hasPrefix("/"), !path.hasPrefix("//"),
            let title = item["title"] as? String {
-            next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "message",
+            next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "bubble.left",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
                 accessibilityLabel: item["accessibilityLabel"] as? String,
                 iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal"].contains(item["layout"] as? String ?? ""),

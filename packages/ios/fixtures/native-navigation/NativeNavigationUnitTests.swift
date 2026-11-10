@@ -882,7 +882,7 @@ final class NativeNavigationUnitTests: XCTestCase {
         let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
         shell.view.layoutIfNeeded()
         let originalSafeArea = screen.view.safeAreaInsets.bottom
-        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true,companions:[{path:'/linked-details',title:'Nutrition',symbol:'fork.knife',accessibilityLabel:'Food log'}]}})")
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',badge:'3',iconOnly:true,companions:[{path:'/linked-details',title:'Nutrition',symbol:'fork.knife',accessibilityLabel:'Food log'}]}})")
         await displayWait("compact accessory appears") { CraftChrome.shared.tabAccessory?.iconOnly == true }
         shell.view.layoutIfNeeded()
         func accessory(_ view: UIView) -> UIButton? {
@@ -944,7 +944,7 @@ final class NativeNavigationUnitTests: XCTestCase {
             return view.subviews.compactMap { button(id, in: $0) }.first
         }
         func apply(_ layout: String) async {
-            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',layout:'\(layout)',companions:[{path:'/add',title:'Add',symbol:'plus',menu:[{path:'/linked-details',title:'Workout'}]}]}})")
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',badge:'3',layout:'\(layout)',companions:[{path:'/add',title:'Add',symbol:'plus',menu:[{path:'/linked-details',title:'Workout'}]}]}})")
             await displayWait("group layout updates") { CraftChrome.shared.tabAccessory?.accessoryLayout == layout }
             await renderFrames()
             shell.view.layoutIfNeeded()
@@ -956,6 +956,8 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(add.frame.maxY, messages.frame.minY, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(add.frame.height, 44)
         XCTAssertEqual(messages.accessibilityValue, "3")
+        XCTAssertNotNil(messages.configuration?.image, "the primary action must have a visible native symbol")
+        XCTAssertNotNil(add.configuration?.image, "the companion must have a visible native symbol")
         XCTAssertTrue(add.showsMenuAsPrimaryAction)
         XCTAssertEqual((add.menu?.children.first as? UIAction)?.title, "Workout")
         let material = try XCTUnwrap(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && $0.frame.contains(add.frame) && $0.frame.contains(messages.frame) })
@@ -996,7 +998,7 @@ final class NativeNavigationUnitTests: XCTestCase {
         // Repeated full-width -> compact -> absent transitions must remove
         // UIKit's accessory container and any old manually reserved shelf.
         for _ in 0..<2 {
-            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3'}})")
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',badge:'3'}})")
             await displayWait("standard accessory") { CraftChrome.shared.tabAccessory?.iconOnly == false }
             await renderFrames()
 #if compiler(>=6.2)
@@ -1005,7 +1007,7 @@ final class NativeNavigationUnitTests: XCTestCase {
 #else
             XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 44)
 #endif
-            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true}})")
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',badge:'3',iconOnly:true}})")
             await displayWait("floating accessory") { CraftChrome.shared.tabAccessory?.iconOnly == true }
             await renderFrames()
             XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)

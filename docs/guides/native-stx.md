@@ -1069,7 +1069,7 @@ craft.navigation.setOptions({
   tabAccessory: {
     path: '/messages',
     title: 'Messages',
-    symbol: 'message',
+    symbol: 'bubble.left',
     badge: '3',
   },
 })
@@ -1099,7 +1099,7 @@ or reserve a full-width content inset. A single action remains a circle.
 ```ts
 craft.navigation.setChrome({
   tabAccessory: {
-    path: '/messages', title: 'Messages', symbol: 'message', badge: '3',
+    path: '/messages', title: 'Messages', symbol: 'bubble.left', badge: '3',
     layout: 'vertical',
     companions: [{
       path: '/add', title: 'Add', symbol: 'plus',
