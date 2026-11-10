@@ -9423,7 +9423,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case ("Audio", "resume"):
             reply(.success(sounds.resume(id: id)))
         case ("Audio", "setVolume"):
-            reply(.success(sounds.setVolume(id: id, volume: number(1), fade: number(2, "fade") / 1000)))
+            // A missing or non-numeric volume used to arrive here as 0 — the
+            // `number` helper's fallback — which silenced the sound and
+            // answered true. Android refuses it and leaves the sound as it
+            // was (`!volume.isFinite() || !fade.isFinite() || fade < 0`), so a
+            // malformed call muted on one host and did nothing on the other.
+            let fade = number(2, "fade")
+            guard args.count > 1, let volume = craftNativeNumber(args[1])?.doubleValue,
+                  volume.isFinite, fade.isFinite, fade >= 0 else {
+                reply(.success(false))
+                return true
+            }
+            reply(.success(sounds.setVolume(id: id, volume: volume, fade: fade / 1000)))
         case ("Audio", "stop"):
             reply(.success(sounds.stop(id: id, fadeOut: number(1, "fadeOut") / 1000)))
         case ("Audio", "stopAll"):

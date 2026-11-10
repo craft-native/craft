@@ -26,7 +26,17 @@ internal class CraftNativeSounds(
 ) {
     private data class Sound(
         val player: MediaPlayer,
+        /** Where the player is right now, part-way through a fade included. */
         var volume: Float,
+        /**
+         * The volume that was asked for. A fade moves `volume` toward or away
+         * from this and must not overwrite it: with one number for both, a
+         * pause during a fade left the sound at whatever fraction the fade had
+         * reached, and `resume` played it there for the rest of its life —
+         * `play({ volume: 1, fadeIn: 2000 })` paused at 500 ms came back at
+         * 0.25. UIKit keeps the two apart and resumes at the asked-for volume.
+         */
+        var asked: Float,
         var paused: Boolean = false,
         var interrupted: Boolean = false,
         var prepared: Boolean = false,
@@ -66,7 +76,7 @@ internal class CraftNativeSounds(
         // Its player, pending load and cancellation handle still belong to it.
         stop(id, 0.0)
         val player = MediaPlayer()
-        val sound = Sound(player, if (fadeIn > 0) 0f else volume, pending = done)
+        val sound = Sound(player, if (fadeIn > 0) 0f else volume, asked = volume, pending = done)
         sounds[id] = sound
         fun settle(result: CraftNativeCapabilityResult) {
             val answer = sound.pending ?: return
@@ -144,7 +154,19 @@ internal class CraftNativeSounds(
     fun resume(id: String): Boolean {
         val sound = sounds[id] ?: return false
         if (focusSuspended) return false
-        if (sound.prepared) runCatching { sound.player.start() }.onFailure { return false }
+        // UIKit answers false for a sound that is not paused, and a caller
+        // reading the answer to learn whether anything was resumed should not
+        // get a different one here.
+        if (!sound.paused) return false
+        if (sound.prepared) {
+            // A pause cancels a fade where it stands. Land on the volume that
+            // was asked for rather than on the fraction the fade had reached.
+            // Left alone until the player is prepared: a fade-in that has not
+            // begun yet still starts from silence when it does.
+            sound.volume = sound.asked
+            applyVolume(sound)
+            runCatching { sound.player.start() }.onFailure { return false }
+        }
         sound.paused = false
         sound.interrupted = false
         return true
@@ -154,6 +176,7 @@ internal class CraftNativeSounds(
         val sound = sounds[id] ?: return false
         if (!volume.isFinite() || !fade.isFinite() || fade < 0) return false
         val target = volume.coerceIn(0.0, 1.0).toFloat()
+        sound.asked = target
         sound.fade?.let(main::removeCallbacks)
         sound.fade = null
         if (fade > 0 && !sound.paused) ramp(sound, target, fade / 1000.0)

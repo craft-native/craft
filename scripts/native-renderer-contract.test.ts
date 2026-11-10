@@ -2829,6 +2829,34 @@ describe('native renderer component contract', () => {
     expect(readFileSync(join(root, 'packages/ios/templates/CraftNativeUI.swift'), 'utf8')).toContain('craftNativeNumber(options["pointSize"])')
   })
 
+  it('refuses a malformed audio.setVolume on both hosts instead of muting on one', () => {
+    const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
+    // Android has always refused it and left the sound alone.
+    expect(androidSounds).toContain('if (!volume.isFinite() || !fade.isFinite() || fade < 0) return false')
+    expect(android).toContain('screen.sounds.setVolume(id, args.optDouble(1, Double.NaN)')
+    // UIKit read a missing volume as 0, silenced the sound and answered true.
+    const setVolume = ios.slice(ios.indexOf('case ("Audio", "setVolume"):'), ios.indexOf('case ("Audio", "stop"):'))
+    expect(setVolume).toContain('let volume = craftNativeNumber(args[1])?.doubleValue')
+    expect(setVolume).toContain('volume.isFinite, fade.isFinite, fade >= 0')
+    expect(setVolume).toContain('reply(.success(false))')
+    // And never through the helper whose fallback is the 0 that muted it.
+    expect(setVolume.replace(/^\s*\/\/[^\n]*$/gm, '')).not.toContain('volume: number(1)')
+  })
+
+  it('resumes a sound at the volume that was asked for on both hosts', () => {
+    const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
+    const iosServices = readFileSync(join(root, 'packages/ios/templates/CraftNativeServices.swift'), 'utf8')
+    // UIKit keeps the asked-for volume apart from the fade and restores it.
+    expect(iosServices).toContain('/// The volume asked for; a fade in or out moves toward or away from it.')
+    expect(iosServices).toContain('sound.player.volume = sound.volume')
+    // Android wrote the fade into the only number it had; it has two now.
+    expect(androidSounds).toContain('var asked: Float,')
+    expect(androidSounds).toContain('sound.volume = sound.asked')
+    // Both answer false for a sound that is not paused.
+    expect(iosServices).toContain('guard !Self.sessionInterrupted, let sound = sounds[id], sound.paused else { return false }')
+    expect(androidSounds).toContain('if (!sound.paused) return false')
+  })
+
   it('tells the script when the media server takes a sound away on both hosts', () => {
     // Android has always had this: MediaPlayer raises MEDIA_ERROR_SERVER_DIED
     // through the error listener, which removes the sound and emits `error`.
