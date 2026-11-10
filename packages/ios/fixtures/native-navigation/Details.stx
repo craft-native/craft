@@ -73,7 +73,7 @@ function incrementDetails() {
 
 function useAddMenu() {
   globalThis.craft.navigation.setOptions({ tabAccessory: {
-    path: '/capabilities', title: 'Messages', symbol: 'message', iconOnly: true,
+    path: '/capabilities', title: 'Messages', symbol: 'message', layout: 'vertical',
     companions: [{ path: '/add', title: 'Add', symbol: 'plus', menu: [
       { path: '/identity', title: 'Habit', symbol: 'checkmark.circle' },
       { path: '/capabilities', title: 'Nutrition', symbol: 'fork.knife' },

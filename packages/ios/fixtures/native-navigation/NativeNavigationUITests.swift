@@ -739,12 +739,17 @@ final class NativeNavigationUITests: XCTestCase {
     func testFloatingCompanionMenuDismissesWithoutNavigationAndOpensOnlyItsChoice() {
         let app = XCUIApplication()
         app.launch()
-        let details = app.buttons["navigation-open-details"]
+        let details = app.buttons["craft-tab-/details"]
         XCTAssertTrue(details.waitForExistence(timeout: 15))
         details.tap()
+        XCTAssertTrue(app.buttons["details-add-menu"].waitForExistence(timeout: 10))
         app.buttons["details-add-menu"].tap()
         let add = app.buttons["craft-tab-companion:/add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
+        let groupShot = XCTAttachment(screenshot: app.screenshot())
+        groupShot.name = "Vertical native material capsule"
+        groupShot.lifetime = .keepAlways
+        self.add(groupShot)
         add.tap()
         XCTAssertTrue(app.buttons["Habit"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Nutrition"].exists)

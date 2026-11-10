@@ -819,6 +819,8 @@ final class CraftChrome: ObservableObject {
         var image: String? = nil
         /// A compact floating icon, instead of the system full-width accessory shelf.
         var iconOnly = false
+        /// A shared material capsule; nil keeps separate floating buttons.
+        var accessoryLayout: String? = nil
         var companions: [Tab] = []
         /// A tap opens these destinations in a compact menu instead of navigating.
         var menu: [TabMenuItem] = []
@@ -967,7 +969,8 @@ final class CraftChrome: ObservableObject {
             next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "message",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
                 accessibilityLabel: item["accessibilityLabel"] as? String,
-                iconOnly: item["iconOnly"] as? Bool ?? false,
+                iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal"].contains(item["layout"] as? String ?? ""),
+                accessoryLayout: (item["layout"] as? String).flatMap { ["vertical", "horizontal"].contains($0) ? $0 : nil },
                 companions: ((item["companions"] as? [[String: Any]]) ?? []).prefix(2).compactMap { action in
                     guard let companionPath = action["path"] as? String,
                           companionPath.hasPrefix("/"), !companionPath.hasPrefix("//"), companionPath != path,

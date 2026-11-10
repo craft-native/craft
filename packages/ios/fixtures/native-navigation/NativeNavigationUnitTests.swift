@@ -936,6 +936,41 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
     }
 
+    func testGroupedAccessorySharesOneMaterialAndRetainsActionsAcrossLayoutChanges() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        func button(_ id: String, in view: UIView) -> UIButton? {
+            if let found = view as? UIButton, found.accessibilityIdentifier == id { return found }
+            return view.subviews.compactMap { button(id, in: $0) }.first
+        }
+        func apply(_ layout: String) async {
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',layout:'\(layout)',companions:[{path:'/add',title:'Add',symbol:'plus',menu:[{path:'/linked-details',title:'Workout'}]}]}})")
+            await displayWait("group layout updates") { CraftChrome.shared.tabAccessory?.accessoryLayout == layout }
+            await renderFrames()
+            shell.view.layoutIfNeeded()
+        }
+        await apply("vertical")
+        let add = try XCTUnwrap(button("craft-tab-companion:/add", in: shell.view))
+        let messages = try XCTUnwrap(button("craft-tab-accessory", in: shell.view))
+        XCTAssertEqual(add.frame.minX, messages.frame.minX, accuracy: 0.5)
+        XCTAssertEqual(add.frame.maxY, messages.frame.minY, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(add.frame.height, 44)
+        XCTAssertEqual(messages.accessibilityValue, "3")
+        XCTAssertTrue(add.showsMenuAsPrimaryAction)
+        XCTAssertEqual((add.menu?.children.first as? UIAction)?.title, "Workout")
+        let material = try XCTUnwrap(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && $0.frame.contains(add.frame) && $0.frame.contains(messages.frame) })
+        XCTAssertEqual(material.layer.cornerRadius, 26)
+        XCTAssertEqual(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.filter { !$0.isHidden }.count, 1)
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+        await apply("horizontal")
+        XCTAssertTrue(button("craft-tab-companion:/add", in: shell.view) === add)
+        XCTAssertTrue(button("craft-tab-accessory", in: shell.view) === messages)
+        XCTAssertEqual(add.frame.minY, messages.frame.minY, accuracy: 0.5)
+        XCTAssertEqual(add.frame.maxX, messages.frame.minX, accuracy: 0.5)
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
+        await displayWait("group material is removed") { CraftChrome.shared.tabAccessory == nil && (material.isHidden || material.superview == nil) }
+    }
+
     func testCompactAccessoryModeChangesKeepNativeAndWebInsetsAtTheTabBar() async throws {
         final class PageLoad: NSObject, WKNavigationDelegate {
             let finished = XCTestExpectation(description: "layout observer page loaded")

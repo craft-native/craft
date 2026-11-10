@@ -1087,6 +1087,37 @@ Omitting `iconOnly` retains the standard accessory presentation and spacing.
 The `@stacksjs/stx/native` navigation/chrome types carry the same `iconOnly`
 option; no separate compiler or compact-accessory prop is needed.
 
+For a Maps-style group of floating actions, set `layout: 'vertical'` (or
+`'horizontal'`). This implies `iconOnly` and joins the icons in one material
+capsule, above the trailing edge of the tab bar. Companions appear first,
+then the primary action; omitting `layout` keeps the separate-button style.
+iOS uses one system glass/material surface, Android uses a native elevated
+surface, and the STX browser host uses the same layout and accessible actions.
+Every icon retains a 48-point touch target; grouping does not shrink the tabs
+or reserve a full-width content inset. A single action remains a circle.
+
+```ts
+craft.navigation.setChrome({
+  tabAccessory: {
+    path: '/messages', title: 'Messages', symbol: 'message', badge: '3',
+    layout: 'vertical',
+    companions: [{
+      path: '/add', title: 'Add', symbol: 'plus',
+      menu: [
+        { path: '/habits/new', title: 'Habit', symbol: 'checkmark.circle' },
+        { path: '/nutrition', title: 'Nutrition', symbol: 'fork.knife' },
+        { path: '/workouts/new', title: 'Workout', symbol: 'dumbbell' },
+      ],
+    }],
+  },
+})
+```
+
+The Add popup anchors to its own button. Messages, unread badges, menu
+dismissal and VoiceOver/TalkBack remain independent of the group material.
+Requires a Craft host with grouped-accessory support and the matching STX
+`NativeTabAccessory` type; it is native chrome, not an embedded web control.
+
 Paths must begin with one `/` and are handled by the app's native route
 resolver. The button is cleared when a pushed screen goes away, so a
 destination cannot remain over another route. The browser native renderer

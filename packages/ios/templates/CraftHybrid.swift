@@ -1244,6 +1244,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var companionButtons: [UIButton] = []
     private var companionModels: [CraftChrome.Tab] = []
     private var companionGlasses: [UIVisualEffectView] = []
+    private var accessorySeparators: [UIView] = []
     private let accessoryBadge = UILabel()
     private let accessoryGlass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
     private static let tabPictures = NSCache<NSURL, UIImage>()
@@ -1474,6 +1475,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 let button = UIButton(type: .system)
                 var configuration = UIButton.Configuration.plain()
                 configuration.image = UIImage(systemName: action.symbol)
+                configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
                 button.configuration = configuration
                 button.accessibilityIdentifier = "craft-tab-companion:" + action.id
                 button.accessibilityLabel = action.accessibilityLabel ?? action.title
@@ -1506,9 +1508,23 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         for (index, action) in companionModels.enumerated() {
             companionButtons[index].accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
         }
+        let grouped = model?.accessoryLayout != nil
+        for glass in companionGlasses { glass.isHidden = grouped }
+        for button in companionButtons { button.tintColor = grouped ? .label : nil }
+        accessoryButton.tintColor = grouped ? .label : nil
+        for separator in accessorySeparators { separator.removeFromSuperview() }
+        accessorySeparators = grouped ? companionButtons.map { _ in
+            let separator = UIView()
+            separator.backgroundColor = .separator
+            separator.isUserInteractionEnabled = false
+            separator.isAccessibilityElement = false
+            view.addSubview(separator)
+            return separator
+        } : []
         if let model {
             var configuration = UIButton.Configuration.plain()
             configuration.image = UIImage(systemName: model.symbol)
+            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
             configuration.title = model.iconOnly ? nil : model.displayTitle
             configuration.subtitle = model.iconOnly ? nil : model.badge
             configuration.imagePadding = model.iconOnly ? 0 : 8
@@ -1549,7 +1565,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         accessoryButton.isHidden = model == nil
         accessoryGlass.isHidden = model == nil
         accessoryGlass.isUserInteractionEnabled = false
-        accessoryGlass.layer.cornerRadius = 24
+        accessoryGlass.layer.cornerRadius = grouped ? 26 : 24
         accessoryGlass.clipsToBounds = true
         accessoryButton.backgroundColor = .clear
         accessoryButton.layer.cornerRadius = 24
@@ -1563,6 +1579,15 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         accessoryBadge.clipsToBounds = true
         accessoryBadge.isAccessibilityElement = false
         accessoryModel = model
+        // The shared material must stay behind every button, even after a
+        // companion-only update creates new controls or a shelf changes mode.
+        if accessoryGlass.superview === view {
+            view.bringSubviewToFront(accessoryGlass)
+            for button in companionButtons { view.bringSubviewToFront(button) }
+            view.bringSubviewToFront(accessoryButton)
+            for separator in accessorySeparators { view.bringSubviewToFront(separator) }
+            view.bringSubviewToFront(accessoryBadge)
+        }
         for nav in stacks.values { nav.additionalSafeAreaInsets.bottom = safeAreaForTabBar() }
         view.setNeedsLayout()
     }
@@ -1586,14 +1611,30 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let iconOnly = accessoryModel?.iconOnly == true
         let height: CGFloat = iconOnly ? 48 : 44
         let width: CGFloat = iconOnly ? 48 : max(0, view.bounds.width - 32)
-        let x = iconOnly ? view.bounds.maxX - view.safeAreaInsets.right - width - 20 : 16
+        let trailingX = view.effectiveUserInterfaceLayoutDirection == .rightToLeft
+            ? view.safeAreaInsets.left + 20 : view.bounds.maxX - view.safeAreaInsets.right - width - 20
+        let x = iconOnly ? trailingX : 16
         accessoryButton.frame = CGRect(x: x, y: tabBar.frame.minY - height - (iconOnly ? 8 : 0), width: width, height: height)
         accessoryGlass.frame = accessoryButton.frame
+        let layout = accessoryModel?.accessoryLayout
         for (index, button) in companionButtons.enumerated() {
-            // Array order reads left to right, ending at the primary action.
-            button.frame = accessoryButton.frame.offsetBy(dx: -CGFloat(companionButtons.count - index) * (width + 12), dy: 0)
+            let offset = CGFloat(companionButtons.count - index)
+            if layout == "vertical" {
+                button.frame = accessoryButton.frame.offsetBy(dx: 0, dy: -offset * height)
+            } else {
+                let direction: CGFloat = view.effectiveUserInterfaceLayoutDirection == .rightToLeft ? 1 : -1
+                button.frame = accessoryButton.frame.offsetBy(dx: direction * offset * (width + (layout == nil ? 12 : 0)), dy: 0)
+            }
             companionGlasses[index].frame = button.frame
+            if layout != nil {
+                accessoryGlass.frame = accessoryGlass.frame.union(button.frame)
+                let line = 1 / (view.window?.screen.scale ?? 2)
+                accessorySeparators[index].frame = layout == "vertical"
+                    ? CGRect(x: button.frame.minX + 12, y: button.frame.maxY - line / 2, width: width - 24, height: line)
+                    : CGRect(x: view.effectiveUserInterfaceLayoutDirection == .rightToLeft ? button.frame.minX : button.frame.maxX - line / 2, y: button.frame.minY + 12, width: line, height: height - 24)
+            }
         }
+        if layout != nil { accessoryGlass.frame = accessoryGlass.frame.insetBy(dx: -2, dy: -2) }
         let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
         accessoryBadge.frame = CGRect(x: accessoryButton.frame.maxX - badgeWidth + 4, y: accessoryButton.frame.minY - 3, width: badgeWidth, height: 18)
         // A compact action floats over the page, not across its whole width.
@@ -2597,6 +2638,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             if !tabBar.isHidden, tabBar.frame.contains(point) { return false }
             if !accessoryButton.isHidden, accessoryButton.window != nil,
                accessoryButton.convert(accessoryButton.bounds, to: view).contains(point) { return false }
+            if companionButtons.contains(where: { !$0.isHidden && $0.window != nil && $0.convert($0.bounds, to: view).contains(point) }) { return false }
             // A swipe may begin while the last one settles: it catches it.
             guard activeTabSwipeTarget == nil || tabSwipeSettling,
                   hybrid.tabIds.count > 1, let nav = visibleStack, let top = nav.topViewController else { return false }
