@@ -14,6 +14,7 @@ jobs:
   validate-release:
     name: validate release identity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -121,6 +122,9 @@ jobs:
           - { os: macos-26, name: darwin-arm64, deps: '' }
           - { os: ubuntu-latest, name: linux-x86-64, deps: 'sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev' }
     runs-on: ${{ matrix.platform.os }}
+    # A hang guard, not a budget: the slowest of nine was 44 minutes, and the
+    # macOS leg may spend up to 30 of its own waiting on notarization below.
+    timeout-minutes: 90
     permissions:
       contents: write
       id-token: write
@@ -495,6 +499,7 @@ jobs:
     needs: [validate-release, pantry]
     if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.pantry.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
 
@@ -555,6 +560,7 @@ jobs:
     needs: [validate-release, publish-release]
     if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -578,6 +584,7 @@ jobs:
     needs: [publish-release, publish-pantry]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.publish-pantry.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions: {}
     steps:
       # Tell the registry this version exists, with the token this workflow
@@ -683,6 +690,7 @@ jobs:
           - { os: macos-15, name: darwin-arm64 }
           - { os: macos-15-intel, name: darwin-x64 }
     runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 15
     # write, though this job only downloads: the release is still a draft
     # here, and GitHub hides drafts from read-only tokens, so `gh release
     # download` answered "release not found" (v0.0.106).
@@ -724,6 +732,7 @@ jobs:
           - { os: ubuntu-latest, name: linux-x64 }
           - { os: windows-2025, name: windows-x64 }
     runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 20
     # write, though this job only downloads: the release is still a draft
     # here, and GitHub hides drafts from read-only tokens, so `gh release
     # download` answered "release not found" (v0.0.106).
@@ -771,6 +780,7 @@ jobs:
     needs: [pantry, release-sbom]
     if: ${{ !cancelled() && needs.pantry.result == 'success' && needs.release-sbom.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -804,6 +814,7 @@ jobs:
     needs: [validate-release, release-sbom]
     if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -844,6 +855,7 @@ jobs:
     needs: [validate-release, source-acceptance, source-suite, native-acceptance, native-suite, verify-release, verify-macos-downloads, verify-desktop-downloads, attach-release-sbom, prepare-npm]
     if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.source-acceptance.result == 'success' && needs.native-acceptance.result == 'success' && (needs.source-acceptance.outputs.reused == 'true' || needs.source-suite.result == 'success') && (needs.native-acceptance.outputs.reused == 'true' || needs.native-suite.result == 'success') && needs.verify-release.result == 'success' && needs.verify-macos-downloads.result == 'success' && needs.verify-desktop-downloads.result == 'success' && needs.attach-release-sbom.result == 'success' && needs.prepare-npm.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -892,6 +904,7 @@ jobs:
     needs: [validate-release, release-sbom, prepare-npm, publish-release]
     if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.prepare-npm.result == 'success' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write

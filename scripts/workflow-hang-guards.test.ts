@@ -29,11 +29,13 @@ import { join, resolve } from 'node:path'
  * uncapped. The two that gate main carry the reasoning above; the rest simply
  * should not hold a runner for six hours.
  *
- * `release.yml` is the one exclusion, and it is counted rather than waved
- * through (#504). Its two acceptance jobs spend 87 to 119 minutes *waiting* on
- * other runs, so their cap is a decision about how long a release may wait
- * rather than a measurement, and it belongs to whoever owns the release path.
- * Until then no uncapped job may be added there.
+ * `release.yml` is under the same rule (#504), with one difference that is
+ * named rather than waved through. A release run starts from its tag and
+ * shares no concurrency group with main, so it cannot hold main's slot, and
+ * its two acceptance jobs do nothing but wait on the CI and Mobile E2E runs
+ * for the release commit. Their cap is therefore a statement of how long a
+ * release may wait on those runs, not a measurement of work, and it may exceed
+ * the three-hour ceiling below. Nothing else may.
  */
 const root = resolve(import.meta.dir, '..')
 const gates = ['.github/workflows/ci.yml', '.github/workflows/mobile-e2e.yml']
@@ -42,14 +44,17 @@ const workflows = readdirSync(join(root, '.github/workflows'))
   .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort()
   .map(name => `.github/workflows/${name}`)
-/**
- * The release jobs that had no cap when the rest were given one. A ratchet:
- * the set may shrink as they are capped and may not grow.
- */
 const release = '.github/workflows/release.yml'
-const releaseUncapped = ['attach-release-sbom', 'notify-registry', 'npm', 'pantry', 'prepare-npm', 'publish-pantry', 'publish-release', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release']
+/**
+ * The jobs that only wait on other runs, and so may carry a cap above the
+ * ceiling. The slowest of seventeen was 119 minutes; the longest job in the
+ * runs they wait on is capped at 120, and such a run can queue behind another.
+ */
+const waiters: Record<string, string[]> = { [release]: ['source-acceptance', 'native-acceptance'] }
+/** Above this a cap is the default with extra steps. */
+const ceiling = 180
 
-interface Job { name: string, head: string, caller: boolean, timeout: number | null }
+interface Job { name: string, head: string, body: string, caller: boolean, timeout: number | null }
 
 /** Each job in a workflow, with the text above its `steps:`. */
 function jobs(source: string): Job[] {
@@ -67,6 +72,7 @@ function jobs(source: string): Job[] {
     found.push({
       name,
       head,
+      body: body.join('\n'),
       // A job that calls a reusable workflow cannot declare timeout-minutes at
       // all, so requiring one of it would be requiring invalid YAML.
       caller: /^ {4}uses:/m.test(head),
@@ -107,20 +113,7 @@ test('the workflows are found, and the gates are among them', () => {
   for (const path of [...gates, release]) expect(workflows).toContain(path)
 })
 
-test('release.yml gains no uncapped job while its caps are undecided', () => {
-  const uncapped = jobs(readFileSync(join(root, release), 'utf8'))
-    .filter(job => !job.caller && job.timeout === null)
-    .map(job => job.name)
-    .sort()
-  expect(uncapped.filter(name => !releaseUncapped.includes(name)),
-    'a release job was added with no timeout-minutes; the exclusion covers the eleven that predate #504, not new ones')
-    .toEqual([])
-  // When the last of them is capped this exclusion is dead weight: delete it
-  // and let release.yml fall under the rule like every other workflow.
-  expect(uncapped.length, 'every release job is capped now; remove the release.yml exclusion from this file').toBeGreaterThan(0)
-})
-
-for (const path of workflows.filter(entry => entry !== release)) {
+for (const path of workflows) {
   test(`every job in ${path.split('/').pop()} declares a hang guard`, () => {
     const uncapped = jobs(readFileSync(join(root, path), 'utf8'))
       .filter(job => !job.caller && job.timeout === null)
@@ -133,12 +126,57 @@ for (const path of workflows.filter(entry => entry !== release)) {
   test(`no hang guard in ${path.split('/').pop()} is set so high it stops guarding`, () => {
     // 180 minutes is already three hours of a held slot. A cap above it is not
     // a guard; it is the default with extra steps.
+    const allowed = waiters[path] ?? []
     const loose = jobs(readFileSync(join(root, path), 'utf8'))
-      .filter(job => job.timeout !== null && job.timeout > 180)
+      .filter(job => job.timeout !== null && job.timeout > ceiling && !allowed.includes(job.name))
       .map(job => `${job.name} at ${job.timeout} minutes`)
     expect(loose).toEqual([])
   })
 }
+
+test('a job allowed past the ceiling is still one that only waits', () => {
+  // The allowance is for waiting on other runs. If a named job is capped under
+  // the ceiling, or stops being a job, the entry is stale and should go; if it
+  // starts doing work of its own, it needs a real guard like every other job.
+  for (const [path, names] of Object.entries(waiters)) {
+    const found = jobs(readFileSync(join(root, path), 'utf8'))
+    for (const name of names) {
+      const job = found.find(entry => entry.name === name)
+      expect(job, `${name} is no longer a job in ${path}; remove it from the allowance`).toBeDefined()
+      expect(job!.timeout, `${name} must still declare a cap`).not.toBeNull()
+      expect(job!.timeout!, `${name} is under the ceiling now; remove it from the allowance`).toBeGreaterThan(ceiling)
+      // Read off what the job runs rather than off its name: every command
+      // in it must be the script that waits for main's run of this commit.
+      const commands = [...job!.body.matchAll(/^ {8}run:\s*(.+)$/gm)].map(match => match[1]!)
+      expect(commands.length, `${name} must run something`).toBeGreaterThan(0)
+      for (const command of commands) {
+        expect(command, `${name} does work of its own now, so it needs a guard sized to that work`)
+          .toMatch(/^bun scripts\/release-acceptance\.ts \S+$/)
+      }
+    }
+  }
+})
+
+test('a cap leaves room for the longest wait its own job declares', () => {
+  // `notarytool --wait --timeout 30m` is a wait the workflow itself asks for.
+  // A cap that does not clear it, with as much again for the work around it,
+  // would kill a release that was behaving exactly as written.
+  let waits = 0
+  for (const path of workflows) {
+    for (const job of jobs(readFileSync(join(root, path), 'utf8'))) {
+      if (job.timeout === null) continue
+      const declared = [...job.body.matchAll(/--timeout\s+(\d+)m\b/g)].map(match => Number(match[1]))
+      for (const minutes of declared) {
+        waits += 1
+        expect(job.timeout, `${job.name} in ${path} waits up to ${minutes} minutes in one step`)
+          .toBeGreaterThanOrEqual(minutes * 2)
+      }
+    }
+  }
+  // A floor: the notarization wait exists today, so finding none means the
+  // pattern stopped matching rather than that there is nothing to check.
+  expect(waits, 'no declared in-step wait was found').toBeGreaterThan(0)
+})
 
 test('a reusable-workflow caller is exempt rather than overlooked', () => {
   // mobile-e2e's media-cache job is `uses:`-based. The rule has to know the
