@@ -287,6 +287,22 @@ describe('native renderer component contract', () => {
     expect(ios).not.toContain('if tabBarHidden, isMovingFromParent')
   })
 
+  it('refuses a snapshot payload that is not JSON on both hosts', () => {
+    // UIKit fails the write before touching the disk when
+    // JSONSerialization cannot parse the payload. Android had no such check,
+    // so a checkpoint iOS refused was kept here and the hosts disagreed about
+    // whether it had been saved (#396).
+    const iosCode = iosActions.replace(/^\s*\/\/[^\n]*$/gm, '')
+    const androidCode = androidChrome.replace(/^\s*\/\/[^\n]*$/gm, '')
+    expect(iosCode).toContain('JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])')
+    expect(androidCode, 'Android must refuse the same payloads').toContain('craftNativeIsJsonText(json)')
+    // Foundation's grammar is not RFC 8259 — it allows one trailing comma —
+    // so the Kotlin side is held to Foundation itself by
+    // packages/android/src/snapshot-json-contract.test.ts rather than to a
+    // restatement of the standard. Pinned here so the pair stays findable.
+    expect(androidCode).toContain('private class CraftNativeJsonScanner(')
+  })
+
   it('cancels a screen\'s outstanding native work when the screen closes', () => {
     // #495 was filed claiming Android cancelled only audio at screen close.
     // It does not: `Screen.close()` drains the audio cancellers, and the

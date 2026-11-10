@@ -425,6 +425,13 @@ internal class CraftNativeStores private constructor(
             main.post { done(false) }
             return
         }
+        // UIKit refuses a payload that is not JSON before it touches the
+        // disk, and a checkpoint kept on one host and refused on the other is
+        // the divergence this contract exists to prevent (#396).
+        if (json != null && !craftNativeIsJsonText(json)) {
+            main.post { done(false) }
+            return
+        }
         writer.execute {
             val file = snapshotFile(name)
             val previous = snapshotCache[name]
@@ -2140,3 +2147,182 @@ internal object CraftNativeIcons {
         override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
     }
 }
+
+/**
+ * Whether `text` is JSON that UIKit's own writer would also accept.
+ *
+ * UIKit refuses a snapshot whose payload is not JSON, before it touches the
+ * disk: `JSONSerialization.jsonObject(with:options: [.fragmentsAllowed])`
+ * returning nil fails the write. Android had no such check, so a payload iOS
+ * rejected was written here and the two hosts disagreed about whether a
+ * checkpoint had been kept (#396).
+ *
+ * The grammar is Foundation's, measured rather than assumed, because it is
+ * not RFC 8259 and a strict parser would have diverged in the other
+ * direction:
+ *
+ *  - top-level fragments are allowed (`42`, `"text"`, `null`);
+ *  - **one** trailing comma is allowed in an object or array — `{"a":1,}`
+ *    and `[1,]` are accepted, `{"a":1,,}` and `[,1]` are not;
+ *  - a lone surrogate escape is rejected, a matched pair accepted;
+ *  - a raw control character inside a string is rejected, its escape is not;
+ *  - `00`, `+1`, `.5`, `1.`, `1.0e`, `NaN` and `Infinity` are all rejected;
+ *  - trailing content after the value is rejected, surrounding space is not.
+ *
+ * `org.json` cannot stand in for this: `JSONTokener` accepts unquoted keys,
+ * single quotes and more, so it would admit payloads UIKit refuses.
+ * `android.util.JsonReader` in strict mode refuses top-level fragments that
+ * UIKit accepts. Both are wrong in a direction that matters, which is why
+ * this is scanned here and pinned against Foundation itself by
+ * `packages/android/src/snapshot-json-contract.test.ts`.
+ */
+private class CraftNativeJsonScanner(private val text: String) {
+    private var at = 0
+
+    fun validate(): Boolean {
+        skipWhitespace()
+        if (!value()) return false
+        skipWhitespace()
+        return at == text.length
+    }
+
+    private fun skipWhitespace() {
+        while (at < text.length && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) at++
+    }
+
+    private fun value(): Boolean {
+        if (at >= text.length) return false
+        return when (text[at]) {
+            '{' -> obj()
+            '[' -> arr()
+            '"' -> string()
+            't' -> literal("true")
+            'f' -> literal("false")
+            'n' -> literal("null")
+            else -> number()
+        }
+    }
+
+    private fun literal(word: String): Boolean {
+        if (!text.startsWith(word, at)) return false
+        at += word.length
+        return true
+    }
+
+    /** After a member, consume the separator. Returns null when malformed. */
+    private fun afterMember(closing: Char): Boolean? {
+        skipWhitespace()
+        if (at >= text.length) return null
+        return when (text[at]) {
+            ',' -> {
+                at++
+                skipWhitespace()
+                // Foundation allows exactly one trailing comma before the
+                // close. A second comma, or a close that never comes, is not.
+                if (at < text.length && text[at] == closing) { at++; true } else false
+            }
+            closing -> { at++; true }
+            else -> null
+        }
+    }
+
+    private fun obj(): Boolean {
+        at++
+        skipWhitespace()
+        if (at < text.length && text[at] == '}') { at++; return true }
+        while (true) {
+            skipWhitespace()
+            if (at >= text.length || text[at] != '"') return false
+            if (!string()) return false
+            skipWhitespace()
+            if (at >= text.length || text[at] != ':') return false
+            at++
+            skipWhitespace()
+            if (!value()) return false
+            val done = afterMember('}') ?: return false
+            if (done) return true
+        }
+    }
+
+    private fun arr(): Boolean {
+        at++
+        skipWhitespace()
+        if (at < text.length && text[at] == ']') { at++; return true }
+        while (true) {
+            skipWhitespace()
+            if (!value()) return false
+            val done = afterMember(']') ?: return false
+            if (done) return true
+        }
+    }
+
+    private fun string(): Boolean {
+        at++
+        var pendingHighSurrogate = false
+        while (at < text.length) {
+            val character = text[at]
+            when {
+                character == '"' -> { at++; return !pendingHighSurrogate }
+                character == '\\' -> {
+                    at++
+                    if (at >= text.length) return false
+                    val escape = text[at]
+                    if (escape == 'u') {
+                        if (at + 4 >= text.length) return false
+                        var code = 0
+                        for (offset in 1..4) {
+                            val digit = Character.digit(text[at + offset], 16)
+                            if (digit < 0) return false
+                            code = code * 16 + digit
+                        }
+                        at += 5
+                        val high = code in 0xD800..0xDBFF
+                        val low = code in 0xDC00..0xDFFF
+                        // A low surrogate is only legal directly after a high
+                        // one, and a high one must be followed by a low one.
+                        if (pendingHighSurrogate != low) return false
+                        pendingHighSurrogate = high
+                        continue
+                    }
+                    if (pendingHighSurrogate) return false
+                    if (escape !in listOf('"', '\\', '/', 'b', 'f', 'n', 'r', 't')) return false
+                    at++
+                }
+                character.code < 0x20 -> return false
+                else -> {
+                    if (pendingHighSurrogate) return false
+                    at++
+                }
+            }
+        }
+        return false
+    }
+
+    private fun number(): Boolean {
+        val start = at
+        if (at < text.length && text[at] == '-') at++
+        val integerStart = at
+        while (at < text.length && text[at] in '0'..'9') at++
+        if (at == integerStart) return false
+        // A leading zero may not be followed by another digit.
+        if (text[integerStart] == '0' && at - integerStart > 1) return false
+        if (at < text.length && text[at] == '.') {
+            at++
+            val fractionStart = at
+            while (at < text.length && text[at] in '0'..'9') at++
+            if (at == fractionStart) return false
+        }
+        if (at < text.length && (text[at] == 'e' || text[at] == 'E')) {
+            at++
+            if (at < text.length && (text[at] == '+' || text[at] == '-')) at++
+            val exponentStart = at
+            while (at < text.length && text[at] in '0'..'9') at++
+            if (at == exponentStart) return false
+        }
+        return at > start
+    }
+}
+
+/** Whether a snapshot payload is JSON both hosts accept. */
+private fun craftNativeIsJsonText(text: String): Boolean = CraftNativeJsonScanner(text).validate()
+
