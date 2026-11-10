@@ -1,5 +1,37 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.490...v0.0.491)
+
+## 🐛 Bug Fixes
+
+- **ios**: stop re-querying the Metal status element while waiting on it ([0b28dc2](https://github.com/craft-native/craft/commit/0b28dc2)) _(by glennmichael123)_ ([#452](https://github.com/craft-native/craft/issues/452))
+- derive a spawning test from its imports instead of a list of names ([4f725dd](https://github.com/craft-native/craft/commit/4f725dd)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- **svelte**: build the adapter against the major its peer range offers ([beb761d](https://github.com/craft-native/craft/commit/beb761d)) _(by glennmichael123)_
+- keep test files out of the published declaration builds ([c08554d](https://github.com/craft-native/craft/commit/c08554d)) _(by glennmichael123)_
+- **ios**: recover the audio the media server takes away when it restarts ([b617543](https://github.com/craft-native/craft/commit/b617543)) _(by glennmichael123)_
+- **ios**: say where a slow voice-file deletion spent its wait ([829a7e7](https://github.com/craft-native/craft/commit/829a7e7)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- **svelte**: let consumers reach the Svelte majors that carry the fixes ([ba5cb82](https://github.com/craft-native/craft/commit/ba5cb82)) _(by glennmichael123)_ ([#399](https://github.com/craft-native/craft/issues/399))
+- **android**: refuse the snapshot payloads UIKit refuses ([5a14a17](https://github.com/craft-native/craft/commit/5a14a17)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **android**: start a multiline field's text at the top of its box ([45a749d](https://github.com/craft-native/craft/commit/45a749d)) _(by glennmichael123)_ ([#502](https://github.com/craft-native/craft/issues/502), [#501](https://github.com/craft-native/craft/issues/501))
+- **ios**: aim the switch gesture at a control that has stopped moving ([d024df0](https://github.com/craft-native/craft/commit/d024df0)) _(by glennmichael123)_ ([#449](https://github.com/craft-native/craft/issues/449))
+- **mobile-e2e**: keep the launch log while the window still exists ([0e7a796](https://github.com/craft-native/craft/commit/0e7a796)) _(by glennmichael123)_ ([#450](https://github.com/craft-native/craft/issues/450))
+- **package**: eject the installer image by its device, not its mount point ([0fd6185](https://github.com/craft-native/craft/commit/0fd6185)) _(by Chris Breuer)_
+- **ios**: delete a cancelled recording at user-initiated priority ([7036d78](https://github.com/craft-native/craft/commit/7036d78)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: say what was observed when the voice removal misses its bound ([0fd35fc](https://github.com/craft-native/craft/commit/0fd35fc)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+- run the snapshot JSON contract where CI can actually reach it ([e02fd3f](https://github.com/craft-native/craft/commit/e02fd3f)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396), [#450](https://github.com/craft-native/craft/issues/450), [#494](https://github.com/craft-native/craft/issues/494))
+
+## 🤖 Continuous Integration
+
+- give every gate job a hang guard so one wedged job cannot hold main ([239fd82](https://github.com/craft-native/craft/commit/239fd82)) _(by glennmichael123)_ ([#447](https://github.com/craft-native/craft/issues/447))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.489...v0.0.490)
 
 ## 🚀 Features
