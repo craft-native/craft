@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.492...v0.0.493)
+
+## 🐛 Bug Fixes
+
+- **release**: wait for verified publication from release commands ([d2f2a6e](https://github.com/craft-native/craft/commit/d2f2a6e)) _(by Chris Breuer)_
+- **release**: verify public npm archives after upload acceptance ([d60edfe](https://github.com/craft-native/craft/commit/d60edfe)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.491...v0.0.492)
 
 ## 🚀 Features
