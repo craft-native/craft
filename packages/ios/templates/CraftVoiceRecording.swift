@@ -15,7 +15,12 @@ extension AVAudioRecorder: CraftVoiceRecorder {}
 /// is starting, so a late permission/encoder answer cannot resurrect it.
 final class CraftVoiceRecording {
     static let shared = CraftVoiceRecording()
-    private static let fileQueue = DispatchQueue(label: "craft.voice-recording-files", qos: .utility)
+    /// Deleting a recording somebody just cancelled is work they are waiting
+    /// on: until it is gone, what they decided not to send still exists. At
+    /// `.utility` a busy device could leave the removal queued for seconds
+    /// behind everything else (it missed a two-second bound on a loaded CI
+    /// simulator while every other step of the cancellation was on time).
+    private static let fileQueue = DispatchQueue(label: "craft.voice-recording-files", qos: .userInitiated)
     private static let launchCleanup: Void = discardAbandonedRecordings(includeLegacy: false)
     private static let legacyCleanup: Void = discardAbandonedRecordings()
     private static let folderName = "voice-recordings"
