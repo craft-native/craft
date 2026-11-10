@@ -10,6 +10,7 @@ import { nativeTestResultBundle } from '../packages/ios/scripts/native-test-resu
 afterAll(removeAllTempDirs)
 
 type Job = {
+  'timeout-minutes'?: number
   env?: Record<string, string>
   needs?: string | string[]
   if?: string
@@ -700,6 +701,7 @@ test('the native Pantry receipt has its authored script and Bun on a fresh notif
 })
 
 test('npm publication follows artifact validation, and macOS downloads run on both matching architectures', () => {
+  expect(release.jobs.npm['timeout-minutes']).toBeGreaterThan(60)
   const prepare = release.jobs['prepare-npm'].steps!
   const verify = prepare.findIndex(step => step.run === 'bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"')
   const scan = prepare.findIndex(step => step.run === 'bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"')

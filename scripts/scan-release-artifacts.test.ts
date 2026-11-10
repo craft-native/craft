@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { publishNpmArchives } from './publish-npm-archives'
+import { publishNpmArchives, verifyNpmAvailability } from './publish-npm-archives'
 import { expectedNpmPackages, npmConsumerManifest, nativeInventory, readArchiveManifest, summarizeBunAudit } from './scan-release-artifacts'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
 
@@ -128,6 +128,83 @@ test('publisher rechecks transferred npm archives before any registry call', () 
   writeFileSync(join(downloaded, packages[0]!.file), 'changed after upload')
   expect(() => publishNpmArchives(downloaded, command)).toThrow('hash mismatch')
   expect(calls).toHaveLength(0)
+})
+
+test('accepted uploads stay pending until metadata and the exact public archive are downloadable', async () => {
+  const root = fixture()
+  const packages = archives(root)
+  let time = 0
+  const downloads: string[] = []
+  await verifyNpmAvailability(root, {
+    now: () => time, intervalMs: 10, timeoutMs: 100,
+    sleep: async ms => { time += ms },
+    request: async (url) => {
+      const path = new URL(url).pathname
+      const download = path.startsWith('/-/')
+      const name = decodeURIComponent(path.slice(download ? 3 : 1).split('/')[0]!)
+      const item = packages.find(item => item.name === name)!
+      if (time === 0 || (download && time === 10)) return new Response(null, { status: 404 })
+      if (download) {
+        downloads.push(name)
+        return new Response(readFileSync(join(root, item.file)))
+      }
+      return Response.json({ name, version: item.version, dist: { tarball: `https://registry.npmjs.org/-/${encodeURIComponent(name)}` } })
+    },
+  })
+  expect(time).toBe(20)
+  expect(downloads.sort()).toEqual(packages.map(item => item.name).sort())
+})
+
+test('an existing version with changed public bytes fails instead of silently skipping', async () => {
+  const root = fixture()
+  const packages = archives(root)
+  const item = packages[0]!
+  await expect(verifyNpmAvailability(root, { request: async url => new URL(url).pathname.startsWith('/-/')
+    ? new Response('tampered archive')
+    : Response.json({ name: item.name, version: item.version, dist: { tarball: 'https://registry.npmjs.org/-/archive' } }) })).rejects.toThrow('hash differs')
+})
+
+test('availability times out with a verification-only recovery command and no new publication', async () => {
+  const root = fixture()
+  archives(root)
+  let time = 0
+  await expect(verifyNpmAvailability(root, {
+    request: async () => new Response(null, { status: 404 }),
+    now: () => time, sleep: async ms => { time += ms }, timeoutMs: 25, intervalMs: 10,
+  })).rejects.toThrow('--verify-only')
+  expect(time).toBe(25)
+})
+
+test('availability respects Retry-After and retries temporary network errors', async () => {
+  const root = fixture()
+  const packages = archives(root)
+  let time = 0
+  let first = true
+  await verifyNpmAvailability(root, {
+    now: () => time, sleep: async ms => { time += ms }, timeoutMs: 20_000, intervalMs: 10,
+    request: async (url) => {
+      if (first) { first = false; throw new Error('temporary network failure') }
+      if (!time) return new Response(null, { status: 429, headers: { 'retry-after': '10' } })
+      const path = new URL(url).pathname
+      const download = path.startsWith('/-/')
+      const name = decodeURIComponent(path.slice(download ? 3 : 1).split('/')[0]!)
+      const item = packages.find(item => item.name === name)!
+      return download ? new Response(readFileSync(join(root, item.file)))
+        : Response.json({ name, version: item.version, dist: { tarball: `https://registry.npmjs.org/-/${encodeURIComponent(name)}` } })
+    },
+  })
+  expect(time).toBe(10_000)
+})
+
+test('availability fails closed for authorization errors, foreign archives and locally changed archives', async () => {
+  const root = fixture()
+  const [item] = archives(root)
+  await expect(verifyNpmAvailability(root, { request: async () => new Response(null, { status: 403 }) })).rejects.toThrow('403')
+  await expect(verifyNpmAvailability(root, { request: async () => Response.json({ name: item!.name, version: item!.version, dist: { tarball: 'https://example.com/archive.tgz' } }) })).rejects.toThrow('unexpected npm archive URL')
+  writeFileSync(join(root, item!.file), 'changed')
+  let requested = false
+  await expect(verifyNpmAvailability(root, { request: async () => { requested = true; return new Response() } })).rejects.toThrow('hash mismatch')
+  expect(requested).toBe(false)
 })
 
 // The scan exists to inspect the exact archives about to be published, so it
