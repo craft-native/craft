@@ -690,6 +690,15 @@ test('registry indexing waits for the public release and all of its verification
   expect((stage?.with as Record<string, unknown>)?.['discord-webhook']).toBeUndefined()
 })
 
+test('the native Pantry receipt has its authored script and Bun on a fresh notification runner', () => {
+  const job = release.jobs['notify-registry']
+  const receipt = job.steps!.findIndex(step => step.name === 'Record native Pantry availability')
+  expect(receipt).toBeGreaterThanOrEqual(0)
+  const prerequisites = job.steps!.slice(0, receipt)
+  expect(prerequisites.some(step => step.uses?.startsWith('actions/checkout@'))).toBe(true)
+  expect(prerequisites.some(step => step.uses?.startsWith('oven-sh/setup-bun@') && step.with?.['bun-version'])).toBe(true)
+})
+
 test('npm publication follows artifact validation, and macOS downloads run on both matching architectures', () => {
   const prepare = release.jobs['prepare-npm'].steps!
   const verify = prepare.findIndex(step => step.run === 'bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"')

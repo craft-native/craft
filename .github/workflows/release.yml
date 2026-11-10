@@ -585,8 +585,14 @@ jobs:
     if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.publish-pantry.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v6
+      - name: Set up Bun for the native availability receipt
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
       # Tell the registry this version exists, with the token this workflow
       # already holds to publish to it.
       #
