@@ -21,10 +21,10 @@ function executable(body: string): string {
 
 test('accepts a running native CLI with the requested version', () => {
   expect(() => verifyNativeStartup(executable("printf 'craft version 1.2.3\\nBuilt with Zig\\n'"), '1.2.3')).not.toThrow()
-})
+}, 30_000)
 
 test('rejects a stale binary, startup failure, and missing executable', () => {
   expect(() => verifyNativeStartup(executable("printf 'craft version 1.2.2\\n'"), '1.2.3')).toThrow('reported')
   expect(() => verifyNativeStartup(executable('exit 7'), '1.2.3')).toThrow('failed to start')
   expect(() => verifyNativeStartup('/path/that/does/not/exist', '1.2.3')).toThrow()
-})
+}, 30_000)

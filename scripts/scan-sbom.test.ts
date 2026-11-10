@@ -47,7 +47,7 @@ test('scanner execution failures cannot pass even with an old valid report', () 
   writeFileSync(join(f.root, 'vulnerabilities.txt'), 'stale successful summary')
   expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow('exit code 7')
   expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
-})
+}, 30_000)
 
 test('successful exit without valid output cannot reuse stale or malformed reports', () => {
   for (const source of ['process.exit(0)', 'await Bun.write(process.argv[process.argv.indexOf("--file") + 1], "not json")', 'await Bun.write(process.argv[process.argv.indexOf("--file") + 1], "{}")']) {
@@ -57,7 +57,7 @@ test('successful exit without valid output cannot reuse stale or malformed repor
     expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow()
     expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
   }
-})
+}, 30_000)
 
 test('valid scanner output produces a matching text report; empty SBOMs are refused', () => {
   const f = fixture(`await Bun.write(process.argv[process.argv.indexOf('--file') + 1], ${JSON.stringify(JSON.stringify(report([match('High')])))});`)
@@ -67,7 +67,7 @@ test('valid scanner output produces a matching text report; empty SBOMs are refu
   expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow('populated CycloneDX')
   expect(existsSync(join(f.root, 'vulnerabilities.json'))).toBe(false)
   expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
-})
+}, 30_000)
 
 test('invalid input clears previous reports before failing', () => {
   const f = fixture('throw new Error("scanner must not run")')
@@ -78,7 +78,7 @@ test('invalid input clears previous reports before failing', () => {
     expect(existsSync(join(f.root, 'vulnerabilities.json'))).toBe(false)
     expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
   }
-})
+}, 30_000)
 
 test('refuses an input that aliases a scanner output without deleting it', () => {
   const f = fixture('process.exit(0)')
@@ -87,4 +87,4 @@ test('refuses an input that aliases a scanner output without deleting it', () =>
   writeFileSync(input, content)
   expect(() => scanSbom(input, f.root, f.executable)).toThrow('must not be a scanner output')
   expect(readFileSync(input, 'utf8')).toBe(content)
-})
+}, 30_000)

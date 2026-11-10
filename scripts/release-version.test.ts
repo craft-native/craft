@@ -98,7 +98,7 @@ exit "\${CRAFT_FORMAT_RESULT:-0}"
   expect(() => validateReleaseFormatting(root, { ...env, CRAFT_FORMAT_RESULT: '23' })).toThrow('Release Zig formatting check failed')
   writeFileSync(compiler, script.replace(version, '0.17.0'))
   expect(() => validateReleaseFormatting(root, { ...env, CRAFT_ALLOW_UNPINNED_ZIG: '1' })).toThrow('Zig version mismatch')
-})
+}, 30_000)
 
 test('release Git preflight requires clean main and checks the current remote', () => {
   // This integration fixture creates two real checkouts and a bare remote;

@@ -85,4 +85,4 @@ test('forwards arguments, core working directory, package version and compiler e
   expect(JSON.parse(readFileSync(f.env.ZIG_TEST_LOG, 'utf8'))).toEqual({ cwd: join(f.root, 'packages/zig'), args: ['fmt', 'src/'] })
   expect(runZig(f.root, ['fmt', 'src/'], f.env)).toBe(23)
   expect(JSON.parse(readFileSync(f.env.ZIG_TEST_LOG, 'utf8'))).toEqual({ cwd: f.root, args: ['fmt', 'src/'] })
-})
+}, 30_000)

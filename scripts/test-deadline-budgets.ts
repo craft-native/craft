@@ -295,6 +295,118 @@ export function findUndeclaredSpawnBudgets(file: string, source: string): { file
     .map(block => ({ file, test: named(block) }))
 }
 
+/** The body of a function or arrow constant named `name` in `source`. */
+function declaredBody(source: string, name: string): string | null {
+  const code = blankLiterals(source)
+  const declared = new RegExp(`(?:^|[^\\w.])(?:async\\s+)?function\\s*\\*?\\s*${name}\\s*[(<]|(?:const|let|var)\\s+${name}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?(?:\\(|[\\w$]+\\s*=>)`).exec(code)
+  if (!declared) return null
+  // The parameter list can hold braces of its own (destructuring, default
+  // objects), so the body starts at the first brace after it closes.
+  const params = code.indexOf('(', declared.index)
+  let at = params < 0 ? declared.index : params
+  if (params >= 0) {
+    for (let depth = 0; at < code.length; at++) {
+      if (code[at] === '(') depth++
+      else if (code[at] === ')' && --depth === 0) break
+    }
+  }
+  const open = code.indexOf('{', at)
+  if (open < 0) return null
+  for (let depth = 0, index = open; index < code.length; index++) {
+    if (code[index] === '{') depth++
+    else if (code[index] === '}' && --depth === 0) return source.slice(open, index + 1)
+  }
+  return null
+}
+
+/**
+ * Whether calling `name` from `source` can start a real process.
+ *
+ * By default this asks only whether the function's own body does. With
+ * `throughHelpers` it also follows the helpers that body calls in the same
+ * module, which is the stricter question and deliberately not the enforced
+ * one: measured on this repository it takes the finding from 51 tests to 133,
+ * and 77 of the extra ones are `init(...)`, which reaches `lipo` only through
+ * `installRuntime`'s two-slice branch — a branch the suite's own fixture
+ * avoids by being single-slice. A budget declared on 77 tests that never
+ * spawn says less than no budget at all.
+ */
+export function functionSpawns(source: string, name: string, throughHelpers = false, seen: Set<string> = new Set()): boolean {
+  if (seen.has(name)) return false
+  seen.add(name)
+  const body = declaredBody(source, name)
+  if (body === null) return false
+  if (spawnsRealProcess(body, spawnNames(source))) return true
+  if (!throughHelpers) return false
+  const code = blankLiterals(body)
+  const called = new Set([...code.matchAll(/(?<![\w.$])([A-Za-z_$][\w$]*)\s*(?:<[^<>()]*>)?\(/g)].map(found => found[1]!))
+  for (const helper of called)
+    if (helper !== name && functionSpawns(source, helper, true, seen)) return true
+  return false
+}
+
+/**
+ * Tests that reach a real process through a function they import.
+ *
+ * `findUndeclaredSpawnBudgets` reads the test's own body, so a test that
+ * calls `installRuntime(...)` looked like one that spawns nothing — while
+ * `installRuntime` runs `lipo`. On a cold macOS runner `/usr/bin/lipo` is the
+ * Xcode shim, its first `xcrun` resolution took nine seconds, and
+ * `keeps installed archives when merging replacement simulator slices fails`
+ * was killed at Bun's inherited 5000 ms. That failed v0.0.491's source
+ * acceptance gate on a commit that changed nothing but version numbers
+ * (#506). Reproduced by putting a nine-second `lipo` first on PATH: the same
+ * test reports `timed out after 5000ms` at 9708 ms.
+ *
+ * So the question is asked of the imported function's own source, one module
+ * away. It is not a call graph, and the edges are stated rather than hidden:
+ * a function that spawns on one branch counts whichever branch the test
+ * takes, which is deliberate — declaring a budget asserts no duration, so a
+ * false positive costs one number and the false negative cost a release. A
+ * spawn reached through a further helper is *not* followed; see
+ * `functionSpawns` for the measurement behind that, and for the flag that
+ * follows it when the trade changes.
+ *
+ * `load` returns the source of a relative import, or null for anything that
+ * is not this repository's code.
+ */
+export function findIndirectSpawnBudgets(
+  file: string,
+  source: string,
+  load: (specifier: string) => string | null,
+): { file: string, test: string, via: string, line: number }[] {
+  // Comments only: blanking literals would blank the specifiers.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*$/gm, '')
+  const imported: { local: string, exported: string, specifier: string }[] = []
+  for (const found of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    if (!found[2]!.startsWith('.')) continue
+    for (const part of found[1]!.split(',')) {
+      const [exported, local] = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/)
+      if (exported) imported.push({ local: (local ?? exported).trim(), exported: exported.trim(), specifier: found[2]! })
+    }
+  }
+  const verdicts = new Map<string, boolean>()
+  const spawning = (entry: { exported: string, specifier: string }): boolean => {
+    const key = `${entry.specifier}#${entry.exported}`
+    if (!verdicts.has(key)) {
+      const module = load(entry.specifier)
+      verdicts.set(key, module !== null && functionSpawns(module, entry.exported))
+    }
+    return verdicts.get(key)!
+  }
+  const direct = spawnNames(source)
+  const found: { file: string, test: string, via: string, line: number }[] = []
+  for (const block of [...readTestBlocks(source), ...readHookBlocks(source)]) {
+    // A declared budget settles it, and a direct spawn is the other rule's.
+    if (block.timeoutMs !== null || spawnsRealProcess(block.body, direct)) continue
+    const body = blankLiterals(block.body)
+    const via = imported.find(entry => new RegExp(`(?<![\\w.$])${entry.local.replace(/\$/g, '\\$')}\\s*(?:<[^<>()]*>)?\\(`).test(body) && spawning(entry))
+    const line = source.slice(0, block.start).split('\n').length
+    if (via) found.push({ file, test: block.name || `hook at line ${line}`, via: via.exported, line })
+  }
+  return found
+}
+
 /** Tests whose own deadline leaves no room for the deadline they assert about. */
 export function findDeadlineBudgetConflicts(file: string, source: string): DeadlineBudgetConflict[] {
   return readTestBlocks(source).flatMap((block) => {

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
-import { resolve } from 'node:path'
-import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, findUndeclaredSpawnBudgets, readBudgets, readHookBlocks, readTestBlocks, requiredHeadroomMs, spawnNames, spawningTestTimeoutMs, spawnsRealProcess } from './test-deadline-budgets'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, findIndirectSpawnBudgets, findUndeclaredSpawnBudgets, functionSpawns, readBudgets, readHookBlocks, readTestBlocks, requiredHeadroomMs, spawnNames, spawningTestTimeoutMs, spawnsRealProcess } from './test-deadline-budgets'
 
 const root = resolve(import.meta.dir, '..')
 
@@ -195,4 +196,93 @@ test('the derivation reads the local name, not the exported one', () => {
   // Unrelated modules contribute nothing, however similarly named.
   expect(spawnNames('import { spawn } from \'./my-child_process\'')).toEqual([])
   expect(spawnNames('import { join } from \'node:path\'')).toEqual([])
+})
+
+/**
+ * A test that reaches a process through a function it imports is still a
+ * spawning test.
+ *
+ * The rule above reads the test's own body, so `installRuntime(...)` looked
+ * like a call that starts nothing while `installRuntime` runs `lipo`. On a
+ * cold macOS runner that resolution took nine seconds and the test died at
+ * Bun's inherited 5000 ms — on v0.0.491's bump commit, which failed its source
+ * acceptance gate with nothing changed but version numbers (#506).
+ */
+const library = [
+  'import { $ } from \'bun\'',
+  'export async function merges(out: string) { await $`lipo -create a b -output ${out}`.quiet() }',
+  'export function copies(out: string) { return out.length }',
+  'export const arrow = async (out: string) => { Bun.spawnSync([\'lipo\', out]) }',
+  'function run(args: string[]) { return Bun.spawnSync(args) }',
+  'export function wraps(out: string) { return run([\'lipo\', out]) }',
+].join('\n')
+const load = (specifier: string): string | null => specifier === './library' ? library : null
+
+test('a test that calls an imported spawning function needs a budget', () => {
+  const calling = (name: string, imports: string, timeout = '') => `import { ${imports} } from './library'\ntest('calls', async () => {\n  await ${name}('out')\n}${timeout})\n`
+  expect(findIndirectSpawnBudgets('a.test.ts', calling('merges', 'merges'), load))
+    .toEqual([{ file: 'a.test.ts', test: 'calls', via: 'merges', line: 2 }])
+  // An arrow constant is a function too.
+  expect(findIndirectSpawnBudgets('a.test.ts', calling('arrow', 'arrow'), load).map(entry => entry.via)).toEqual(['arrow'])
+  // An alias binds a different local name; the finding names the real one.
+  expect(findIndirectSpawnBudgets('a.test.ts', calling('join', 'merges as join'), load).map(entry => entry.via)).toEqual(['merges'])
+  // A declared budget settles it.
+  expect(findIndirectSpawnBudgets('a.test.ts', calling('merges', 'merges', `, ${spawningTestTimeoutMs}`), load)).toEqual([])
+  // Importing a spawning function without calling it is not a spawn.
+  expect(findIndirectSpawnBudgets('a.test.ts', calling('copies', 'copies, merges'), load)).toEqual([])
+  // Nor is a call that only appears inside a fixture string.
+  expect(findIndirectSpawnBudgets('a.test.ts', `import { merges } from './library'\ntest('quoted', () => { const text = 'merges(x)'; expect(text).toBeString() })\n`, load)).toEqual([])
+})
+
+test('a package import is not this repository\'s code to read', () => {
+  const source = 'import { merges } from \'some-package\'\ntest(\'calls\', async () => { await merges(\'out\') })\n'
+  let asked = 0
+  expect(findIndirectSpawnBudgets('a.test.ts', source, () => { asked++; return library })).toEqual([])
+  expect(asked, 'a bare specifier must not be loaded at all').toBe(0)
+})
+
+test('a spawn behind a further helper is seen only when asked for', () => {
+  // The enforced question is whether the function's own body spawns. Following
+  // helpers is available and deliberately not the default: on this repository
+  // it takes 51 findings to 133, and 77 of the extra ones are `init(...)`,
+  // which reaches `lipo` only on a branch its single-slice fixture avoids.
+  expect(functionSpawns(library, 'merges')).toBe(true)
+  expect(functionSpawns(library, 'copies')).toBe(false)
+  expect(functionSpawns(library, 'wraps')).toBe(false)
+  expect(functionSpawns(library, 'wraps', true)).toBe(true)
+  expect(functionSpawns(library, 'copies', true)).toBe(false)
+  expect(functionSpawns(library, 'missing', true)).toBe(false)
+  // And it terminates on recursion.
+  expect(functionSpawns('function a() { return b() }\nfunction b() { return a() }', 'a', true)).toBe(false)
+})
+
+/** The source of a relative import from `file`, or null. */
+function relativeSource(file: string): (specifier: string) => string | null {
+  return (specifier) => {
+    const base = resolve(dirname(resolve(root, file)), specifier)
+    for (const candidate of [base, `${base}.ts`, base.replace(/\.js$/, '.ts'), join(base, 'index.ts')])
+      if (candidate.endsWith('.ts') && existsSync(candidate)) return readFileSync(candidate, 'utf8')
+    return null
+  }
+}
+
+test('the scanner still sees the spawn that failed the release gate', () => {
+  // A floor against the real source, so a change to the scanner cannot make
+  // the repository-wide rule below pass by going blind. If `installRuntime`
+  // stops running `lipo`, this is the line to update, deliberately.
+  const builder = readFileSync(resolve(root, 'packages/ios/src/index.ts'), 'utf8')
+  expect(functionSpawns(builder, 'installRuntime'), 'installRuntime merges simulator slices with lipo').toBe(true)
+  // And the measured reason helper-following is not enforced still holds.
+  expect(functionSpawns(builder, 'init'), 'init does not spawn in its own body').toBe(false)
+  expect(functionSpawns(builder, 'init', true), 'but reaches a spawn through its helpers').toBe(true)
+})
+
+test('no test in this repository reaches a real process through an import under the inherited default', () => {
+  const files = [...new Bun.Glob('{scripts,packages,src,benchmarks}/**/*.test.ts').scanSync({ cwd: root })]
+    .filter(file => !file.includes('node_modules') && !file.includes('/dist/'))
+    .sort()
+  expect(files.length).toBeGreaterThan(50)
+  const undeclared = files.flatMap(file => findIndirectSpawnBudgets(file, readFileSync(resolve(root, file), 'utf8'), relativeSource(file)))
+  expect(undeclared.map(entry => `${entry.file}:${entry.line} "${entry.test}" starts a process through ${entry.via}(); declare a timeout of ${spawningTestTimeoutMs} ms`))
+    .toEqual([])
 })
