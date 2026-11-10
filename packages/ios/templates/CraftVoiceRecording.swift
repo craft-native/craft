@@ -111,7 +111,16 @@ final class CraftVoiceRecording {
     private let startupTimeout: TimeInterval
     private let stopTimeout: TimeInterval
     struct FileRemovalReceipt: Encodable {
+        /// From deciding to delete to the block actually running: the trace,
+        /// the submission, and the wait for a thread.
         let queueMilliseconds: Double
+        /// The first of those three alone. A run where `queueMilliseconds` is
+        /// seconds and this is near zero spent them waiting for GCD to admit
+        /// the block; one where this carries most of them spent them in
+        /// `trace`, which takes a process-wide lock and then logs
+        /// synchronously. Without it the two are indistinguishable, which is
+        /// where #490 ran out of evidence at 7638ms of queue for 3ms of work.
+        let submitMilliseconds: Double
         let removalMilliseconds: Double
         let ownedBefore: Bool
         let removed: Bool
@@ -183,12 +192,14 @@ final class CraftVoiceRecording {
             let queued = ProcessInfo.processInfo.systemUptime
             let observed = fileRemovalObserved
             Self.trace("cancel \(session.key.prefix(8)): file removal queued")
+            let submitted = ProcessInfo.processInfo.systemUptime
             Self.fileQueue.async {
                 let began = ProcessInfo.processInfo.systemUptime
                 let owned = CraftNativeFiles.owned(file.path) != nil
                 let removed = CraftNativeFiles.remove(file.path)
                 let receipt = FileRemovalReceipt(
                     queueMilliseconds: (began - queued) * 1000,
+                    submitMilliseconds: (submitted - queued) * 1000,
                     removalMilliseconds: (ProcessInfo.processInfo.systemUptime - began) * 1000,
                     ownedBefore: owned, removed: removed,
                     existsAfter: FileManager.default.fileExists(atPath: file.path))
