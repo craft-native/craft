@@ -204,17 +204,71 @@ export function readBudgets(body: string): number[] {
  */
 export const spawningTestTimeoutMs = 30_000
 
-/** Ways a test body starts a real process. */
-const spawnCalls = /\b(?:Bun\.spawnSync|Bun\.spawn|spawnSync|execFileSync|execSync)\b/
+/** Ways a test body starts a real process without importing anything. */
+const spawnCalls = /\bBun\.(?:spawnSync|spawn)\b|\bBun\.\$|\b(?:spawnSync|execFileSync|execSync)\b/
+
+/** `child_process`, with or without the `node:` prefix. */
+const processModule = /^(?:node:)?child_process$/
+
+/**
+ * The names *this file* can start a process with, derived from its imports.
+ *
+ * The list above used to be the whole rule, and a list is the wrong shape here
+ * twice over. It missed `execFile`, `exec`, `fork`, node's bare `spawn` and
+ * `Bun.$`, so a test using any of them ran under the inherited default again.
+ * And it cannot simply be extended, because `\bexec\b` matches every
+ * `RegExp.prototype.exec` in the repository and `exec` is far more often a
+ * regex than a subprocess.
+ *
+ * A bare name is a spawn only when the file imported it from `child_process`,
+ * so that is what decides it. Aliases are followed (`spawn as launch`), and
+ * both spellings of the specifier count — `updater-macos-bundle.test.ts`
+ * imports `execFileSync` from `'child_process'` with no `node:` prefix, so a
+ * rule keyed on the prefixed form alone would miss the file that produced the
+ * 30002 ms occurrence in #490.
+ */
+export function spawnNames(source: string): string[] {
+  // Comments only: blanking string literals would blank the specifier being
+  // matched here, which is inside one.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*$/gm, '')
+  const names = new Set<string>()
+  for (const found of code.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    if (!processModule.test(found[2]!)) continue
+    for (const part of found[1]!.split(','))
+      // `spawn as launch` binds `launch`; the local name is what appears in
+      // the body.
+      names.add(part.trim().split(/\s+as\s+/).pop()!.trim())
+  }
+  // A namespace or default import, and the require form: any member call on
+  // the binding starts a process as far as this rule is concerned.
+  for (const pattern of [/import\s+(?:\*\s*as\s+)?(\w+)\s*from\s*['"]([^'"]+)['"]/g, /(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/g]) {
+    for (const found of code.matchAll(pattern))
+      if (processModule.test(found[2]!)) names.add(`${found[1]!}.`)
+  }
+  // `import { $ } from 'bun'` is a shell, and a shell runs processes.
+  for (const found of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]bun['"]/g))
+    for (const part of found[1]!.split(','))
+      if (part.trim().split(/\s+as\s+/).pop()!.trim() === '$') names.add('$')
+  return [...names].filter(name => name.length > 0).sort()
+}
 
 /**
  * Whether a test body starts a real process.
  *
  * Read off blanked source, so a spawn named inside a fixture's embedded script
- * is not mistaken for one the test performs.
+ * is not mistaken for one the test performs. `names` are the file's own
+ * process-starting bindings from `spawnNames`.
  */
-export function spawnsRealProcess(body: string): boolean {
-  return spawnCalls.test(blankLiterals(body))
+export function spawnsRealProcess(body: string, names: readonly string[] = []): boolean {
+  const code = blankLiterals(body)
+  if (spawnCalls.test(code)) return true
+  return names.some(name => name.endsWith('.')
+    // A namespace binding: any member call on it.
+    ? new RegExp(`\\b${name.slice(0, -1)}\\.\\w+\\s*\\(`).test(code)
+    : name === '$'
+      // The shell is a tag, not a call.
+      ? /(?<![\w.$])\$\s*`/.test(code)
+      : new RegExp(`(?<![\\w.])${name}\\s*\\(`).test(code))
 }
 
 /**
@@ -237,7 +291,7 @@ export function findUndeclaredSpawnBudgets(file: string, source: string): { file
   const named = (block: TestBlock) => block.name
     || `${/(beforeAll|beforeEach|afterAll|afterEach)\s*\($/.exec(source.slice(0, block.start + 1))?.[1] ?? 'hook'}() at line ${source.slice(0, block.start).split('\n').length}`
   return [...readTestBlocks(source), ...readHookBlocks(source)]
-    .filter(block => block.timeoutMs === null && spawnsRealProcess(block.body))
+    .filter(block => block.timeoutMs === null && spawnsRealProcess(block.body, spawnNames(source)))
     .map(block => ({ file, test: named(block) }))
 }
 

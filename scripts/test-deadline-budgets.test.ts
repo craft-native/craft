@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, findUndeclaredSpawnBudgets, readBudgets, readHookBlocks, readTestBlocks, requiredHeadroomMs, spawningTestTimeoutMs, spawnsRealProcess } from './test-deadline-budgets'
+import { blankLiterals, bunDefaultTestTimeoutMs, describeConflict, findDeadlineBudgetConflicts, findUndeclaredSpawnBudgets, readBudgets, readHookBlocks, readTestBlocks, requiredHeadroomMs, spawnNames, spawningTestTimeoutMs, spawnsRealProcess } from './test-deadline-budgets'
 
 const root = resolve(import.meta.dir, '..')
 
@@ -138,4 +138,61 @@ test('every test in this repository that spawns a process declares a budget', as
     .sort()
   const undeclared = (await Promise.all(files.map(async file => findUndeclaredSpawnBudgets(file, await Bun.file(resolve(root, file)).text())))).flat()
   expect(undeclared.map(entry => `${entry.file} › ${entry.test}`), 'these tests drive a real subprocess under Bun\'s inherited 5000 ms default').toEqual([])
+})
+
+/**
+ * A spawn is recognised from the file's own imports, not from a list of names.
+ *
+ * The previous rule listed five: `Bun.spawnSync`, `Bun.spawn`, `spawnSync`,
+ * `execFileSync` and `execSync`. `execFile`, `exec`, `fork`, node's bare
+ * `spawn` and `Bun.$` all escaped it, so a test using any of them ran under
+ * the inherited 5000 ms default — the very thing this rule exists to prevent.
+ *
+ * Extending the list is not the fix. `\bexec\b` matches every
+ * `RegExp.prototype.exec` in the repository, and `exec` is far more often a
+ * regex than a subprocess, so a bare name is only a spawn when the file
+ * imported it from `child_process`.
+ */
+test('a spawn is derived from what the file imported', () => {
+  const cases: [string, string, boolean][] = [
+    // Each of these escaped the five-name list.
+    ['import { execFile } from \'node:child_process\'', 'execFile(bin, [], () => {})', true],
+    ['import { spawn } from \'node:child_process\'', 'const p = spawn(bin, [])', true],
+    ['import { fork } from \'node:child_process\'', 'fork(worker)', true],
+    ['import { exec } from \'child_process\'', 'exec("ls", () => {})', true],
+    // Both spellings of the specifier. updater-macos-bundle.test.ts — the file
+    // behind #490's 30002 ms occurrence — uses the unprefixed one, so a rule
+    // keyed on `node:child_process` alone would miss it.
+    ['import { execFileSync } from \'child_process\'', 'execFileSync(bin, [])', true],
+    // Aliases bind a different local name.
+    ['import { spawn as launch } from \'node:child_process\'', 'launch(bin, [])', true],
+    // Namespace and require forms: any member call counts.
+    ['import * as cp from \'node:child_process\'', 'cp.execFile(bin, [])', true],
+    ['const cp = require(\'node:child_process\')', 'cp.spawnSync(bin, [])', true],
+    // Bun's own routes, which need no import.
+    ['', 'Bun.$`ls`', true],
+    ['import { $ } from \'bun\'', '$`ls`', true],
+    ['', 'Bun.spawnSync([bin])', true],
+    // The false positives that forbid simply listing the names.
+    ['', 'const m = /x/.exec(text)', false],
+    ['', 'expect(pattern.exec(line)).toBeNull()', false],
+    // And a regex `exec` stays a regex even where the file imports the real one.
+    ['import { exec } from \'node:child_process\'', 'const m = /x/.exec(text)', false],
+    // A spawn named inside an embedded fixture script is not performed.
+    ['', 'const script = `Bun.spawnSync(["ls"])`', false],
+    ['', 'expect(1).toBe(1)', false],
+  ]
+  const wrong = cases
+    .filter(([imports, body, want]) => spawnsRealProcess(body, spawnNames(imports)) !== want)
+    .map(([imports, body, want]) => `${want ? 'missed' : 'false positive on'} ${JSON.stringify(body)} with ${JSON.stringify(imports)}`)
+  expect(wrong).toEqual([])
+})
+
+test('the derivation reads the local name, not the exported one', () => {
+  expect(spawnNames('import { spawn as launch, execFile } from \'node:child_process\'')).toEqual(['execFile', 'launch'])
+  // A namespace binding is recorded with its dot, so any member call matches.
+  expect(spawnNames('import * as cp from \'node:child_process\'')).toEqual(['cp.'])
+  // Unrelated modules contribute nothing, however similarly named.
+  expect(spawnNames('import { spawn } from \'./my-child_process\'')).toEqual([])
+  expect(spawnNames('import { join } from \'node:path\'')).toEqual([])
 })
