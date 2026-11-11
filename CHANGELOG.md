@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.496...v0.0.497)
+
+## 🚀 Features
+
+- **ios**: draw grouped floating actions as one glass control ([04a865e](https://github.com/craft-native/craft/commit/04a865e)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.492...v0.0.496)
 
 ## 🐛 Bug Fixes
