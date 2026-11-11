@@ -33,7 +33,9 @@ if (!isWindows && !process.env.DISPLAY)
 const windowTitle = 'Craft Bridge Smoke'
 const instanceId = `craft-bridge-smoke-${randomUUID()}`
 const deepLink = `craftbridgesmoke://second/${randomUUID()}`
-const workDir = realpathSync(mkdtempSync(join(tmpdir(), 'craft-bridge-smoke-')))
+// The native spelling: on Windows the temp directory is often an 8.3 short
+// path (RUNNER~1), and a file dialog answers with the long one.
+const workDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'craft-bridge-smoke-')))
 const pickDir = join(workDir, 'pick')
 mkdirSync(pickDir)
 const pickFile = join(pickDir, 'chosen.txt')
@@ -279,6 +281,10 @@ const mainPage = `<!doctype html><title>${windowTitle}</title>
     // ---- File drop ---------------------------------------------------------
     const drops = []
     craft.onFileDrop(detail => drops.push(detail.paths))
+    // What an app does on macOS and Linux, where Craft leaves the page's own
+    // drag handling alone: without this the web view navigates to the file.
+    window.addEventListener('dragover', event => event.preventDefault())
+    window.addEventListener('drop', event => event.preventDefault())
     window.__craftDeliverFileDrop(['/tmp/contract'])
     if (drops.length !== 1 || drops[0][0] !== '/tmp/contract') throw new Error('craft.onFileDrop did not receive a native delivery')
     if (!isWindows) {
