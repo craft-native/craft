@@ -10,8 +10,16 @@ test('required UI groups cover every actual navigation test exactly once', () =>
   const core = nativeNavigationGroup(source, 'core')
   const controls = nativeNavigationGroup(source, 'controls')
   expect(all.length).toBeGreaterThanOrEqual(19)
-  expect(core.length).toBe(all.length - 1)
-  expect(controls).toEqual(['NativeNavigationUITests/NativeNavigationUITests/testPushNativeBackSwipeReplaceAndRetainedHomeState'])
+  // The controls journeys were one case of 697 lines (#505). They are five,
+  // in the order they run, and the journey the old name described keeps it.
+  expect(controls).toEqual([
+    'testImagesListsAndControlStylesReconcile',
+    'testGridFlexAndMeasuredLayoutFrames',
+    'testLinksPressablesAndAccessibilityState',
+    'testSwitchPickerModalSliderAndIndicators',
+    'testPushNativeBackSwipeReplaceAndRetainedHomeState',
+  ].map(name => `NativeNavigationUITests/NativeNavigationUITests/${name}`))
+  expect(core.length).toBe(all.length - controls.length)
   expect([...core, ...controls].sort()).toEqual(all.sort())
   expect(new Set([...core, ...controls]).size).toBe(all.length)
 })
@@ -24,7 +32,11 @@ test('new UI cases join required coverage without updating a selector list', () 
 test('invalid, empty or ambiguous native UI coverage fails closed', () => {
   expect(() => nativeNavigationGroup(source, 'optional')).toThrow('Unknown')
   expect(() => nativeNavigationGroup('', 'core')).toThrow('coverage')
-  expect(() => nativeNavigationGroup(source.replace('func testPushNativeBackSwipeReplaceAndRetainedHomeState', 'func noControlsJourney'), 'controls')).toThrow('coverage')
+  // Any one controls journey going missing fails closed, in either group.
+  for (const journey of nativeNavigationGroup(source, 'controls').map(selector => selector.split('/').pop()!)) {
+    for (const group of ['controls', 'core'])
+      expect(() => nativeNavigationGroup(source.replace(`func ${journey}`, 'func renamedAway'), group), `${journey} renamed, ${group}`).toThrow('coverage')
+  }
   expect(() => nativeNavigationGroup(`${source}\nfunc testTabSwipeSwitchesNativeRootsAndReturns() {}`, 'core')).toThrow('coverage')
 })
 

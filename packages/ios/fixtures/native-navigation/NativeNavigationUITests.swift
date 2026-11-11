@@ -965,7 +965,14 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(waitForLabel(nestedButtonTaps, "Nested button taps: 2"), "nested Button action was lost or duplicated")
     }
 
-    func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
+    /// Images, lists and the styles of static controls on the home screen.
+    /// 
+    /// This and the four cases after it were one case of 697 lines, 350
+    /// assertions and 173 waits (#505): a single missed wait reported one line
+    /// and no verdict for the rest, under a name that described only the last
+    /// of them. Every assertion and timeout is as it was; each case now
+    /// launches the app and arrives at the home screen itself.
+    func testImagesListsAndControlStylesReconcile() throws {
         let app = XCUIApplication()
         app.launch()
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
@@ -1113,6 +1120,14 @@ final class NativeNavigationUITests: XCTestCase {
         scroll.swipeUp()
         XCTAssertTrue(scrollEnd.waitForExistence(timeout: 5))
         XCTAssertTrue(scrollEnd.isHittable, "native ScrollView did not reveal overflow content")
+    }
+
+    /// Grid and flex frames, and the layouts a screen measures and reports.
+    func testGridFlexAndMeasuredLayoutFrames() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
 
         let grid = app.otherElements["grid-wrap"]
         XCTAssertTrue(grid.waitForExistence(timeout: 5))
@@ -1224,6 +1239,100 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertGreaterThan(reverseWrapThird.frame.minY, reverseWrapFirst.frame.minY, "row-reverse reversed wrapped line order")
         XCTAssertLessThanOrEqual(reverseWrapFourth.frame.maxY, reverseWrap.frame.maxY, "row-reverse wrapped line escaped its container")
 
+        let wrapped = app.otherElements["layout-wrap"]
+        XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Layout width: 240"].waitForExistence(timeout: 5), "native onLayout did not report a frame")
+        let layoutWidthToggle = app.buttons["toggle-layout-width"]
+        reveal(layoutWidthToggle, in: rootScroll)
+        layoutWidthToggle.tap()
+        XCTAssertTrue(app.staticTexts["Layout width: 180"].waitForExistence(timeout: 5), "native onLayout did not report the responsive width")
+        XCTAssertTrue(app.staticTexts["Transformed layout width: 100"].waitForExistence(timeout: 5), "onLayout must report the untransformed layout width")
+        XCTAssertTrue(app.staticTexts["Hidden layout events: 0"].waitForExistence(timeout: 5), "hidden descendants must not emit onLayout")
+        let bounded = app.staticTexts["layout-min"]
+        XCTAssertTrue(bounded.exists)
+        XCTAssertEqual(bounded.frame.width, 140, accuracy: 2, "maxWidth was not applied")
+        let absoluteRatio = app.otherElements["layout-absolute-ratio"]
+        XCTAssertTrue(absoluteRatio.waitForExistence(timeout: 5))
+        XCTAssertEqual(absoluteRatio.frame.width, 156, accuracy: 2, "absolute left/right anchors were not resolved")
+        XCTAssertEqual(absoluteRatio.frame.height, 39, accuracy: 2, "absolute aspect ratio was not resolved from anchored width")
+        let absoluteHeightRatio = app.otherElements["layout-absolute-height-ratio"]
+        XCTAssertTrue(absoluteHeightRatio.waitForExistence(timeout: 5))
+        XCTAssertEqual(absoluteHeightRatio.frame.width, 40, accuracy: 2, "absolute aspect ratio did not derive width from authored height")
+        XCTAssertEqual(absoluteHeightRatio.frame.height, 20, accuracy: 2, "absolute authored height was not preserved")
+        let percentWidth = app.staticTexts["percent-width"]
+        XCTAssertTrue(percentWidth.waitForExistence(timeout: 5))
+        XCTAssertEqual(percentWidth.frame.width, 120, accuracy: 2, "percentage width was not resolved against the parent")
+        let percentBasisFirst = app.staticTexts["percent-basis-first"]
+        let percentBasisSecond = app.staticTexts["percent-basis-second"]
+        XCTAssertTrue(percentBasisFirst.waitForExistence(timeout: 5))
+        XCTAssertTrue(percentBasisSecond.waitForExistence(timeout: 5))
+        XCTAssertEqual(percentBasisFirst.frame.width, 120, accuracy: 2, "percentage flex-basis was not resolved on the first child")
+        XCTAssertEqual(percentBasisSecond.frame.width, 120, accuracy: 2, "percentage flex-basis was not resolved on the second child")
+        let independentGapFirst = app.staticTexts["independent-gap-first"]
+        let independentGapSecond = app.staticTexts["independent-gap-second"]
+        let independentGapThird = app.staticTexts["independent-gap-third"]
+        XCTAssertTrue(independentGapThird.waitForExistence(timeout: 5))
+        XCTAssertEqual(independentGapSecond.frame.minX - independentGapFirst.frame.minX, 50, accuracy: 2, "column gap was not shared through the native layout ABI")
+        XCTAssertEqual(independentGapThird.frame.minY - independentGapFirst.frame.minY, 22, accuracy: 2, "row gap was not shared through the native layout ABI")
+        let nestedSharedFirst = app.staticTexts["nested-shared-first"]
+        let nestedSharedSecond = app.staticTexts["nested-shared-second"]
+        let nestedSharedSibling = app.otherElements["nested-shared-sibling"]
+        XCTAssertTrue(nestedSharedSecond.waitForExistence(timeout: 5))
+        XCTAssertEqual(nestedSharedSecond.frame.minY - nestedSharedFirst.frame.minY, 18, accuracy: 2, "nested column gap was not preserved")
+        XCTAssertEqual(nestedSharedSibling.frame.minX - app.otherElements["nested-shared-column"].frame.minX, 80, accuracy: 2, "nested row gap was not preserved")
+        let nestedPercentParent = app.otherElements["nested-percent-parent"]
+        let nestedPercentChild = app.otherElements["nested-percent-child"]
+        XCTAssertTrue(nestedPercentChild.waitForExistence(timeout: 5))
+        XCTAssertEqual(nestedPercentParent.frame.width, 80, accuracy: 2)
+        XCTAssertEqual(nestedPercentChild.frame.width, 36, accuracy: 2, "nested percentage width used the outer parent")
+        XCTAssertEqual(nestedPercentChild.frame.height, 26, accuracy: 2, "nested percentage height used the outer parent")
+        let booleanWidthText = app.staticTexts["boolean-width-text"]
+        XCTAssertTrue(booleanWidthText.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(booleanWidthText.frame.width, 20, "boolean width was treated as a numeric layout length")
+        let booleanFontSizeText = app.staticTexts["boolean-font-size-text"]
+        XCTAssertTrue(booleanFontSizeText.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(booleanFontSizeText.frame.height, 10, "boolean font size was treated as a numeric style")
+        let booleanNumberLines = app.staticTexts["boolean-number-lines"]
+        XCTAssertTrue(booleanNumberLines.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(booleanNumberLines.frame.height, 24, "boolean numberOfLines was treated as numeric")
+        let nestedShrinkRowText = app.staticTexts["nested-shrink-row-text"]
+        let nestedShrinkColumnText = app.staticTexts["nested-shrink-column-text"]
+        XCTAssertTrue(nestedShrinkColumnText.waitForExistence(timeout: 5))
+        XCTAssertEqual(nestedShrinkRowText.frame.width, 60, accuracy: 2, "nested horizontal text did not use its parent flex-shrink default")
+        XCTAssertEqual(nestedShrinkColumnText.frame.height, 80, accuracy: 2, "nested vertical text incorrectly used a horizontal flex-shrink default")
+        let nestedGridFirst = app.otherElements["nested-grid-first"]
+        let nestedGridSecond = app.otherElements["nested-grid-second"]
+        let nestedGridThird = app.otherElements["nested-grid-third"]
+        let nestedGridSibling = app.otherElements["nested-grid-sibling"]
+        XCTAssertTrue(nestedGridThird.waitForExistence(timeout: 5))
+        XCTAssertEqual(nestedGridSecond.frame.minX - nestedGridFirst.frame.minX, 52, accuracy: 2, "nested grid columns were not shared through the tree ABI")
+        XCTAssertEqual(nestedGridThird.frame.minY - nestedGridFirst.frame.minY, 26, accuracy: 2, "nested grid rows were not shared through the tree ABI")
+        XCTAssertEqual(nestedGridSibling.frame.minX - app.otherElements["nested-grid"].frame.minX, 110, accuracy: 2, "nested grid parent placement was not preserved")
+        let nestedReverseFirst = app.staticTexts["nested-reverse-first"]
+        let nestedReverseSecond = app.staticTexts["nested-reverse-second"]
+        let nestedReverseSibling = app.otherElements["nested-reverse-sibling"]
+        XCTAssertTrue(nestedReverseSecond.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(nestedReverseFirst.frame.minY, nestedReverseSecond.frame.minY, "nested reverse flow did not use the shared v2 tree ABI")
+        XCTAssertEqual(nestedReverseSibling.frame.minX - app.otherElements["nested-reverse"].frame.minX, 56, accuracy: 2, "nested reverse parent placement was not preserved")
+        let nestedWrapReverseFirst = app.staticTexts["nested-wrap-reverse-first"]
+        let nestedWrapReverseSecond = app.staticTexts["nested-wrap-reverse-second"]
+        let nestedWrapReverseSibling = app.otherElements["nested-wrap-reverse-sibling"]
+        XCTAssertTrue(nestedWrapReverseSecond.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(nestedWrapReverseFirst.frame.minY, nestedWrapReverseSecond.frame.minY, "nested wrap-reverse flow did not use the shared v3 tree ABI")
+        XCTAssertEqual(nestedWrapReverseSibling.frame.minX - app.otherElements["nested-wrap-reverse"].frame.minX, 56, accuracy: 2, "nested wrap-reverse parent placement was not preserved")
+        let absolute = app.otherElements["layout-absolute"]
+        XCTAssertTrue(absolute.exists)
+        XCTAssertLessThanOrEqual(absolute.frame.maxX, wrapped.frame.maxX - 8)
+        XCTAssertLessThanOrEqual(absolute.frame.maxY, wrapped.frame.maxY - 8)
+    }
+
+    /// Links, pressables and long presses, with their accessibility state.
+    func testLinksPressablesAndAccessibilityState() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
+
         let link = app.staticTexts["native-link"]
         reveal(link, in: rootScroll)
         XCTAssertEqual(link.label, "Open native link")
@@ -1291,6 +1400,14 @@ final class NativeNavigationUITests: XCTestCase {
         link.tap()
         XCTAssertTrue(app.staticTexts["link pressed"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["justified-text"].waitForExistence(timeout: 5))
+    }
+
+    /// Switches, pickers, a modal, a slider and activity indicators.
+    func testSwitchPickerModalSliderAndIndicators() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
 
         let toggle = app.switches["native-switch"]
         reveal(toggle, in: rootScroll)
@@ -1403,92 +1520,15 @@ final class NativeNavigationUITests: XCTestCase {
         // display:none hides the view, and a hidden view is not in the
         // accessibility tree at all (Android checks View.GONE instead).
         XCTAssertFalse(app.activityIndicators["display-none-indicator"].exists)
+    }
 
-        let wrapped = app.otherElements["layout-wrap"]
-        XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Layout width: 240"].waitForExistence(timeout: 5), "native onLayout did not report a frame")
-        let layoutWidthToggle = app.buttons["toggle-layout-width"]
-        reveal(layoutWidthToggle, in: rootScroll)
-        layoutWidthToggle.tap()
-        XCTAssertTrue(app.staticTexts["Layout width: 180"].waitForExistence(timeout: 5), "native onLayout did not report the responsive width")
-        XCTAssertTrue(app.staticTexts["Transformed layout width: 100"].waitForExistence(timeout: 5), "onLayout must report the untransformed layout width")
-        XCTAssertTrue(app.staticTexts["Hidden layout events: 0"].waitForExistence(timeout: 5), "hidden descendants must not emit onLayout")
-        let bounded = app.staticTexts["layout-min"]
-        XCTAssertTrue(bounded.exists)
-        XCTAssertEqual(bounded.frame.width, 140, accuracy: 2, "maxWidth was not applied")
-        let absoluteRatio = app.otherElements["layout-absolute-ratio"]
-        XCTAssertTrue(absoluteRatio.waitForExistence(timeout: 5))
-        XCTAssertEqual(absoluteRatio.frame.width, 156, accuracy: 2, "absolute left/right anchors were not resolved")
-        XCTAssertEqual(absoluteRatio.frame.height, 39, accuracy: 2, "absolute aspect ratio was not resolved from anchored width")
-        let absoluteHeightRatio = app.otherElements["layout-absolute-height-ratio"]
-        XCTAssertTrue(absoluteHeightRatio.waitForExistence(timeout: 5))
-        XCTAssertEqual(absoluteHeightRatio.frame.width, 40, accuracy: 2, "absolute aspect ratio did not derive width from authored height")
-        XCTAssertEqual(absoluteHeightRatio.frame.height, 20, accuracy: 2, "absolute authored height was not preserved")
-        let percentWidth = app.staticTexts["percent-width"]
-        XCTAssertTrue(percentWidth.waitForExistence(timeout: 5))
-        XCTAssertEqual(percentWidth.frame.width, 120, accuracy: 2, "percentage width was not resolved against the parent")
-        let percentBasisFirst = app.staticTexts["percent-basis-first"]
-        let percentBasisSecond = app.staticTexts["percent-basis-second"]
-        XCTAssertTrue(percentBasisFirst.waitForExistence(timeout: 5))
-        XCTAssertTrue(percentBasisSecond.waitForExistence(timeout: 5))
-        XCTAssertEqual(percentBasisFirst.frame.width, 120, accuracy: 2, "percentage flex-basis was not resolved on the first child")
-        XCTAssertEqual(percentBasisSecond.frame.width, 120, accuracy: 2, "percentage flex-basis was not resolved on the second child")
-        let independentGapFirst = app.staticTexts["independent-gap-first"]
-        let independentGapSecond = app.staticTexts["independent-gap-second"]
-        let independentGapThird = app.staticTexts["independent-gap-third"]
-        XCTAssertTrue(independentGapThird.waitForExistence(timeout: 5))
-        XCTAssertEqual(independentGapSecond.frame.minX - independentGapFirst.frame.minX, 50, accuracy: 2, "column gap was not shared through the native layout ABI")
-        XCTAssertEqual(independentGapThird.frame.minY - independentGapFirst.frame.minY, 22, accuracy: 2, "row gap was not shared through the native layout ABI")
-        let nestedSharedFirst = app.staticTexts["nested-shared-first"]
-        let nestedSharedSecond = app.staticTexts["nested-shared-second"]
-        let nestedSharedSibling = app.otherElements["nested-shared-sibling"]
-        XCTAssertTrue(nestedSharedSecond.waitForExistence(timeout: 5))
-        XCTAssertEqual(nestedSharedSecond.frame.minY - nestedSharedFirst.frame.minY, 18, accuracy: 2, "nested column gap was not preserved")
-        XCTAssertEqual(nestedSharedSibling.frame.minX - app.otherElements["nested-shared-column"].frame.minX, 80, accuracy: 2, "nested row gap was not preserved")
-        let nestedPercentParent = app.otherElements["nested-percent-parent"]
-        let nestedPercentChild = app.otherElements["nested-percent-child"]
-        XCTAssertTrue(nestedPercentChild.waitForExistence(timeout: 5))
-        XCTAssertEqual(nestedPercentParent.frame.width, 80, accuracy: 2)
-        XCTAssertEqual(nestedPercentChild.frame.width, 36, accuracy: 2, "nested percentage width used the outer parent")
-        XCTAssertEqual(nestedPercentChild.frame.height, 26, accuracy: 2, "nested percentage height used the outer parent")
-        let booleanWidthText = app.staticTexts["boolean-width-text"]
-        XCTAssertTrue(booleanWidthText.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(booleanWidthText.frame.width, 20, "boolean width was treated as a numeric layout length")
-        let booleanFontSizeText = app.staticTexts["boolean-font-size-text"]
-        XCTAssertTrue(booleanFontSizeText.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(booleanFontSizeText.frame.height, 10, "boolean font size was treated as a numeric style")
-        let booleanNumberLines = app.staticTexts["boolean-number-lines"]
-        XCTAssertTrue(booleanNumberLines.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(booleanNumberLines.frame.height, 24, "boolean numberOfLines was treated as numeric")
-        let nestedShrinkRowText = app.staticTexts["nested-shrink-row-text"]
-        let nestedShrinkColumnText = app.staticTexts["nested-shrink-column-text"]
-        XCTAssertTrue(nestedShrinkColumnText.waitForExistence(timeout: 5))
-        XCTAssertEqual(nestedShrinkRowText.frame.width, 60, accuracy: 2, "nested horizontal text did not use its parent flex-shrink default")
-        XCTAssertEqual(nestedShrinkColumnText.frame.height, 80, accuracy: 2, "nested vertical text incorrectly used a horizontal flex-shrink default")
-        let nestedGridFirst = app.otherElements["nested-grid-first"]
-        let nestedGridSecond = app.otherElements["nested-grid-second"]
-        let nestedGridThird = app.otherElements["nested-grid-third"]
-        let nestedGridSibling = app.otherElements["nested-grid-sibling"]
-        XCTAssertTrue(nestedGridThird.waitForExistence(timeout: 5))
-        XCTAssertEqual(nestedGridSecond.frame.minX - nestedGridFirst.frame.minX, 52, accuracy: 2, "nested grid columns were not shared through the tree ABI")
-        XCTAssertEqual(nestedGridThird.frame.minY - nestedGridFirst.frame.minY, 26, accuracy: 2, "nested grid rows were not shared through the tree ABI")
-        XCTAssertEqual(nestedGridSibling.frame.minX - app.otherElements["nested-grid"].frame.minX, 110, accuracy: 2, "nested grid parent placement was not preserved")
-        let nestedReverseFirst = app.staticTexts["nested-reverse-first"]
-        let nestedReverseSecond = app.staticTexts["nested-reverse-second"]
-        let nestedReverseSibling = app.otherElements["nested-reverse-sibling"]
-        XCTAssertTrue(nestedReverseSecond.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(nestedReverseFirst.frame.minY, nestedReverseSecond.frame.minY, "nested reverse flow did not use the shared v2 tree ABI")
-        XCTAssertEqual(nestedReverseSibling.frame.minX - app.otherElements["nested-reverse"].frame.minX, 56, accuracy: 2, "nested reverse parent placement was not preserved")
-        let nestedWrapReverseFirst = app.staticTexts["nested-wrap-reverse-first"]
-        let nestedWrapReverseSecond = app.staticTexts["nested-wrap-reverse-second"]
-        let nestedWrapReverseSibling = app.otherElements["nested-wrap-reverse-sibling"]
-        XCTAssertTrue(nestedWrapReverseSecond.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(nestedWrapReverseFirst.frame.minY, nestedWrapReverseSecond.frame.minY, "nested wrap-reverse flow did not use the shared v3 tree ABI")
-        XCTAssertEqual(nestedWrapReverseSibling.frame.minX - app.otherElements["nested-wrap-reverse"].frame.minX, 56, accuracy: 2, "nested wrap-reverse parent placement was not preserved")
-        let absolute = app.otherElements["layout-absolute"]
-        XCTAssertTrue(absolute.exists)
-        XCTAssertLessThanOrEqual(absolute.frame.maxX, wrapped.frame.maxX - 8)
-        XCTAssertLessThanOrEqual(absolute.frame.maxY, wrapped.frame.maxY - 8)
+    /// What is typed and counted on the home screen survives a push, the
+    /// UIKit back button, the screen's own back, an edge swipe and a replace.
+    func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
 
         let field = app.textFields["name-input"]
         reveal(field, in: rootScroll)

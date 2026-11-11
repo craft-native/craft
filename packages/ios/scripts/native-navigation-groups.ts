@@ -1,13 +1,26 @@
-const controlsCase = 'testPushNativeBackSwipeReplaceAndRetainedHomeState'
+/**
+ * The home-screen controls journeys, which run in a leg of their own. They
+ * were one case (#505); a new case joins the core suite unless it is named
+ * here.
+ */
+const controlsCases = new Set([
+  'testImagesListsAndControlStylesReconcile',
+  'testGridFlexAndMeasuredLayoutFrames',
+  'testLinksPressablesAndAccessibilityState',
+  'testSwitchPickerModalSliderAndIndicators',
+  'testPushNativeBackSwipeReplaceAndRetainedHomeState',
+])
 
 /** Partition every UI case; new cases automatically join the core suite. */
 export function nativeNavigationGroup(source: string, group: string): string[] {
   if (group !== 'core' && group !== 'controls')
     throw new Error(`Unknown native navigation UI group: ${group}`)
   const cases = [...source.matchAll(/^\s*func\s+(test\w+)\s*\(/gm)].map(match => match[1]!)
-  if (cases.length < 2 || new Set(cases).size !== cases.length || !cases.includes(controlsCase))
-    throw new Error('Native navigation UI coverage must contain unique cases and the controls journey')
-  const selected = cases.filter(name => group === 'controls' ? name === controlsCase : name !== controlsCase)
+  // Every controls journey must be there: one renamed away would otherwise
+  // leave its leg quietly smaller, or move into the core leg unannounced.
+  if (cases.length < 2 || new Set(cases).size !== cases.length || [...controlsCases].some(name => !cases.includes(name)))
+    throw new Error('Native navigation UI coverage must contain unique cases and every controls journey')
+  const selected = cases.filter(name => controlsCases.has(name) === (group === 'controls'))
   if (!selected.length) throw new Error(`Empty native navigation UI group: ${group}`)
   return selected.map(name => `NativeNavigationUITests/NativeNavigationUITests/${name}`)
 }
