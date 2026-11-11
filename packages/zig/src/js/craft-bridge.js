@@ -757,7 +757,11 @@
   // shell — open URLs + spawn processes
   // -------------------------------------------------------------------------
   window.craft.shell = {
-    openExternal: function (url)              { return _send('shell', 'openUrl', _stringify({ url: String(url) })) },
+    // `_req`, not `_send`: native answers once the system took the URL, and
+    // rejects when the scheme is not one it opens or nothing could open it.
+    // Fire-and-forget resolved the moment the message was posted, so a refused
+    // URL looked exactly like one that opened.
+    openExternal: function (url)              { return _req('shell', 'openUrl', _stringify({ url: String(url) })).then(function () {}) },
     openPath:     function (path)             { return _send('shell', 'openPath', _stringify({ path: String(path) })) },
     showInFinder: function (path)             { return _send('shell', 'showInFinder', _stringify({ path: String(path) })) },
     // spawn(id, command, args, opts)

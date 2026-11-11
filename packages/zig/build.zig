@@ -1323,6 +1323,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Which URLs `shell.openExternal` hands to the system. The app-facing
+    // counterpart of the list above, and just as provable without a window.
+    const shell_url_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shell_url.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // Whether closing the last window quits the app. Pure rule, exhaustively
     // tested, so the default and its opt-out are stated once.
     const lifecycle_policy_tests = b.addTest(.{
@@ -2082,6 +2092,7 @@ pub fn build(b: *std.Build) void {
     const run_desktop_window_reads_tests = b.addRunArtifact(desktop_window_reads_tests);
     const run_desktop_script_encoding_tests = b.addRunArtifact(desktop_script_encoding_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
+    const run_shell_url_tests = b.addRunArtifact(shell_url_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
     const run_notification_actions_tests = b.addRunArtifact(notification_actions_tests);
@@ -2349,6 +2360,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_desktop_window_reads_tests.step);
     test_step.dependOn(&run_desktop_script_encoding_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
+    test_step.dependOn(&run_shell_url_tests.step);
     test_step.dependOn(&run_bridge_origin_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);

@@ -1366,6 +1366,7 @@ export type NativeBridgeErrorCode =
   | 'PERMISSION_DENIED'
   | 'TIMEOUT'
   | 'UNSAFE_COMMAND'
+  | 'URL_SCHEME_NOT_ALLOWED'
   | 'CAPABILITY_DISABLED';
 
 /** Native wire codes plus existing mobile/shim names retained for compatibility. */

@@ -41,6 +41,8 @@ pub const BridgeError = error{
     Timeout,
     /// Command contains unsafe shell metacharacters
     UnsafeCommand,
+    /// `shell.openExternal` was given a URL whose scheme it does not open.
+    UrlSchemeNotAllowed,
     /// The app's configuration did not enable this capability.
     ///
     /// Distinct from `PermissionDenied`, which is the *user* or the system
@@ -173,6 +175,7 @@ pub fn errorCodeString(err: BridgeError) []const u8 {
         BridgeError.PermissionDenied => "PERMISSION_DENIED",
         BridgeError.Timeout => "TIMEOUT",
         BridgeError.UnsafeCommand => "UNSAFE_COMMAND",
+        BridgeError.UrlSchemeNotAllowed => "URL_SCHEME_NOT_ALLOWED",
         BridgeError.CapabilityDisabled => "CAPABILITY_DISABLED",
     };
 }
@@ -201,6 +204,7 @@ pub fn errorMessage(err: BridgeError) []const u8 {
         BridgeError.PermissionDenied => "Permission denied",
         BridgeError.Timeout => "Operation timed out",
         BridgeError.UnsafeCommand => "Command contains unsafe shell metacharacters",
+        BridgeError.UrlSchemeNotAllowed => "This URL scheme is not allowed by shell.openExternal",
         BridgeError.CapabilityDisabled => "Capability is disabled",
     };
 }

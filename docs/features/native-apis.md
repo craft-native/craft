@@ -281,7 +281,15 @@ await shell.openExternal('https://example.com')
 
 // Open email
 await shell.openExternal('mailto:hello@example.com')
+
+// Open a System Settings pane (macOS)
+await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
 ```
+
+`openExternal` opens `http`, `https`, `file` and `mailto` URLs, and
+`x-apple.systempreferences` on macOS. Any other scheme rejects with
+`URL_SCHEME_NOT_ALLOWED`, and a URL the system cannot open rejects with
+`NATIVE_CALL_FAILED`, so `await` it and handle the failure.
 
 ### Open File
 

@@ -484,6 +484,40 @@ test "typed window getters wait for their correlated native result" {
     try testing.expectEqualStrings("600", try fx.text("String(measured.height)"));
 }
 
+test "shell.openExternal settles on what native says, not on posting" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var opened = 'pending', refused = 'pending';
+        \\window.craft.shell.openExternal('x-apple.systempreferences:com.apple.preference.security')
+        \\  .then(function () { opened = 'resolved' }, function () { opened = 'rejected' });
+        \\window.craft.shell.openExternal('javascript:alert(1)')
+        \\  .then(function () { refused = 'resolved' }, function (e) { refused = e.code });
+    );
+
+    try testing.expectEqualStrings("shell", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("openUrl", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings(
+        "x-apple.systempreferences:com.apple.preference.security",
+        try fx.text("JSON.parse(posted[0].d).url"),
+    );
+    // Posting is not opening: nothing has settled until native answers.
+    try testing.expectEqualStrings("pending", try fx.text("opened"));
+    try testing.expectEqualStrings("pending", try fx.text("refused"));
+
+    // The exact replies `bridge_shell.zig` and `bridge_error.zig` produce.
+    _ = try ctx.evaluate(
+        \\window.__craftBridgeError({ error: true, code: 'URL_SCHEME_NOT_ALLOWED', action: 'openUrl', message: 'refused', id: posted[1].i });
+        \\window.__craftBridgeResult('openUrl', { opened: true }, posted[0].i);
+    );
+    try testing.expectEqualStrings("resolved", try fx.text("opened"));
+    try testing.expectEqualStrings("URL_SCHEME_NOT_ALLOWED", try fx.text("refused"));
+}
+
 test "typed window mutations remain fire and forget" {
     var fx = try Fixture.init();
     defer fx.deinit();

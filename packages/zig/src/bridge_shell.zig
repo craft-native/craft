@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
 const io_context = @import("io_context.zig");
+const shell_url = @import("shell_url.zig");
 
 const BridgeError = bridge_error.BridgeError;
 
@@ -67,6 +68,7 @@ pub const ShellBridge = struct {
             BridgeError.MissingData => BridgeError.MissingData,
             BridgeError.InvalidJSON => BridgeError.InvalidJSON,
             BridgeError.UnsafeCommand => BridgeError.UnsafeCommand,
+            BridgeError.UrlSchemeNotAllowed => BridgeError.UrlSchemeNotAllowed,
             else => BridgeError.NativeCallFailed,
         };
         bridge_error.sendErrorToJS(self.allocator, action, bridge_err);
@@ -199,16 +201,14 @@ pub const ShellBridge = struct {
         }
     }
 
-    /// Validate that a URL has a safe scheme (http, https, or file).
+    /// Refuse a URL whose scheme `shell.openExternal` does not open.
+    ///
+    /// The list and the reasons for it live in `shell_url.zig`, where the
+    /// decision is a pure function and is tested as one.
     fn validateUrl(url: []const u8) BridgeError!void {
-        const valid_schemes = [_][]const u8{ "http://", "https://", "file://" };
-        for (valid_schemes) |scheme| {
-            if (url.len >= scheme.len and std.mem.eql(u8, url[0..scheme.len], scheme)) {
-                return; // valid scheme found
-            }
-        }
-        std.log.warn("bridge_shell: blocked URL with invalid scheme: {s}", .{url});
-        return BridgeError.UnsafeCommand;
+        if (shell_url.decide(url, builtin.os.tag) == .open) return;
+        std.log.warn("bridge_shell: refused to open URL with a scheme that is not allowed: {s}", .{url});
+        return BridgeError.UrlSchemeNotAllowed;
     }
 
     /// Validate that a path does not contain shell metacharacters. Same
@@ -440,8 +440,12 @@ pub const ShellBridge = struct {
         }
     }
 
-    /// Open URL in default browser
+    /// Open a URL with whatever the system uses for it.
     /// JSON: {"url": "https://example.com"}
+    ///
+    /// Always answers the page: a result once the system accepted the URL, an
+    /// error otherwise. It used to answer nothing either way, so a refused
+    /// scheme and a URL nothing could open both looked like success.
     fn openUrl(self: *Self, data: []const u8) !void {
         const OpenUrlParams = struct {
             url: []const u8 = "",
@@ -468,7 +472,7 @@ pub const ShellBridge = struct {
             const NSWorkspace = macos.getClass("NSWorkspace");
             const workspace = macos.msgSend0(NSWorkspace, "sharedWorkspace");
 
-            const url_z = @import("memory.zig").dupeZ(self.allocator, u8, url) catch return;
+            const url_z = @import("memory.zig").dupeZ(self.allocator, u8, url) catch return BridgeError.AllocationFailed;
             defer self.allocator.free(url_z);
             const NSString = macos.getClass("NSString");
             const url_str = macos.msgSend1(
@@ -476,11 +480,16 @@ pub const ShellBridge = struct {
                 "stringWithUTF8String:",
                 url_z.ptr,
             );
+            // Nil for bytes that are not UTF-8.
+            if (@intFromPtr(url_str) == 0) return BridgeError.InvalidParameter;
 
             const NSURL = macos.getClass("NSURL");
             const nsurl = macos.msgSend1(NSURL, "URLWithString:", url_str);
+            // Nil for a string NSURL cannot parse, and `openURL:` raises on nil.
+            if (@intFromPtr(nsurl) == 0) return BridgeError.InvalidParameter;
 
-            _ = macos.msgSend1(workspace, "openURL:", nsurl);
+            // NO when nothing on this Mac opens the URL.
+            if (!macos.msgSendBool1Id(workspace, "openURL:", nsurl)) return BridgeError.NativeCallFailed;
         } else if (comptime builtin.os.tag == .linux) {
             // Linux: use xdg-open
             // Use the same Zig-0.16 `std.process.spawn` API as exec/spawn —
@@ -493,7 +502,7 @@ pub const ShellBridge = struct {
                 .stdout = .ignore,
                 .stderr = .ignore,
                 .stdin = .ignore,
-            }) catch return;
+            }) catch return BridgeError.NativeCallFailed;
             _ = child.wait(io) catch |err| {
                 std.log.debug("child process wait failed: {}", .{err});
             };
@@ -501,6 +510,8 @@ pub const ShellBridge = struct {
             const argv = [_][]const u8{ "cmd", "/c", "start", url };
             self.fireAndForget(&argv);
         }
+
+        bridge_error.sendResultToJS(self.allocator, "openUrl", "{\"opened\":true}");
     }
 
     /// Open file/folder with default app

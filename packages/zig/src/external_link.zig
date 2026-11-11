@@ -25,7 +25,9 @@
 //!   - `javascript:` and `data:` are not the browser's to open at all.
 //!
 //! An app that genuinely wants a wider policy has `shell.openExternal`, where
-//! its own code decides. That is the difference this file is drawing.
+//! its own code decides. That is the difference this file is drawing; the
+//! list that call works from, wider than this one and still a list, is
+//! `shell_url.zig`.
 
 const std = @import("std");
 

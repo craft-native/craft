@@ -536,3 +536,25 @@ it('keeps Keychain authentication pending until macOS answers without timing out
   await expect(write).rejects.toThrow('user cancelled authentication')
   expect(Object.keys(h.win.__craftBridgeById)).toHaveLength(0)
 })
+
+it('rejects shell.openExternal when native refuses or cannot open the URL', async () => {
+  const h = loadBridge()
+  let opened = false
+  const settings = h.craft.shell.openExternal('x-apple.systempreferences:com.apple.preference.security')
+    .then(() => { opened = true })
+  await Promise.resolve()
+  expect(h.sent[0]).toMatchObject({ t: 'shell', a: 'openUrl' })
+  expect(opened).toBe(false)
+  h.reply('openUrl', { opened: true }, h.sent[0].i!)
+  await settings
+  expect(opened).toBe(true)
+
+  const refused = h.craft.shell.openExternal('javascript:alert(1)')
+  h.fail({ action: 'openUrl', code: 'URL_SCHEME_NOT_ALLOWED', message: 'This URL scheme is not allowed by shell.openExternal', id: h.sent[1].i! })
+  await expect(refused).rejects.toMatchObject({ code: 'URL_SCHEME_NOT_ALLOWED' })
+
+  const unopenable = h.craft.shell.openExternal('https://example.com')
+  h.fail({ action: 'openUrl', code: 'NATIVE_CALL_FAILED', message: 'Native API call failed', id: h.sent[2].i! })
+  await expect(unopenable).rejects.toMatchObject({ code: 'NATIVE_CALL_FAILED' })
+  expect(h.errors).toHaveLength(0)
+})
