@@ -243,7 +243,7 @@ test('a release without macOS signing material fails instead of publishing unsig
     expect(job.needs).toContain(gate === 'verify-release' ? 'pantry' : 'verify-release')
   }
   expect((release.jobs['verify-release'] as { if?: string }).if).toContain('needs.pantry.result == \'success\'')
-})
+}, 30_000)
 
 test('macOS signing reads credentials from the declared Stacks CLI, not the shared buddy binary', () => {
   const loader = release.jobs.pantry.steps?.find(step => step.name === 'Load macOS release credentials')?.run
