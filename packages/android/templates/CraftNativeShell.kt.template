@@ -58,12 +58,56 @@ internal object CraftNativeHub {
     private val receivers = ConcurrentHashMap<String, (String, JSONObject) -> Unit>()
     private val main = Handler(Looper.getMainLooper())
 
+    /** What was broadcast to an isolate that could not hear yet, in order. Guarded by itself. */
+    private val waiting = HashMap<String, ArrayList<Pair<String, JSONObject>>>()
+
     fun register(id: String, receiver: (String, JSONObject) -> Unit) {
         receivers[id] = receiver
     }
 
+    /**
+     * Registers an isolate whose prelude has not run yet.
+     *
+     * Such an isolate is registered before it is given its copy of the
+     * stores, and the copy is taken some time later, off the main thread. A
+     * change broadcast in between has nowhere to land: the prelude defines
+     * what receives it, so a message sent before the prelude runs is
+     * discarded, and the isolate goes on to start from a copy that may
+     * predate the change (#507). What is broadcast meanwhile is kept instead
+     * and handed over, in order, by [ready]. Changes are broadcast in the
+     * order they are made, so replaying them over a copy taken part-way
+     * through ends on the latest value.
+     */
+    fun registerWaiting(id: String, receiver: (String, JSONObject) -> Unit) {
+        synchronized(waiting) { waiting[id] = ArrayList() }
+        receivers[id] = { type, payload ->
+            val kept = synchronized(waiting) { waiting[id]?.also { it.add(type to payload) } }
+            if (kept == null) receiver(type, payload)
+        }
+    }
+
+    /**
+     * The isolate's prelude has run: it is given what was kept for it, then
+     * hears each broadcast as it is made. On the main thread, where
+     * broadcasts are delivered, so nothing can arrive between the two.
+     */
+    fun ready(id: String) {
+        val deliver = {
+            val kept = synchronized(waiting) { waiting.remove(id) }
+            val receiver = receivers[id]
+            if (kept != null && receiver != null) {
+                for ((type, payload) in kept) {
+                    runCatching { receiver(type, payload) }
+                        .onFailure { Log.w("CraftNativeAndroid", "Kept $type to $id failed", it) }
+                }
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) deliver() else main.post(deliver)
+    }
+
     fun unregister(id: String) {
         receivers.remove(id)
+        synchronized(waiting) { waiting.remove(id) }
     }
 
     /** Sends to every registered isolate but `except`, on the main thread. */

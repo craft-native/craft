@@ -273,7 +273,8 @@ internal class CraftNativeHeadlessApp(
                 if (entry.message.startsWith(prefix)) chunks.accept(entry.message.removePrefix(prefix))?.let(::receive)
                 else Log.i(TAG, "[background] ${entry.message}")
             })
-            CraftNativeHub.register(scope) { type, payload -> send(type, payload) }
+            // Not able to hear yet: its prelude is built and run below.
+            CraftNativeHub.registerWaiting(scope) { type, payload -> send(type, payload) }
             val names = capabilities.names().apply { services.names().forEach { put(it) } }
             val bridgeFields = """
                 platform: 'android',
@@ -300,6 +301,7 @@ internal class CraftNativeHeadlessApp(
                 if (closed) return@addListener
                 try {
                     setup.get()
+                    CraftNativeHub.ready(scope)
                     val load = created.evaluateJavaScriptAsync(bundle)
                     load.addListener({
                         try {

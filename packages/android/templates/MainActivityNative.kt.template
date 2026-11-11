@@ -5635,7 +5635,8 @@ class MainActivity : AppCompatActivity() {
             if (activeScreen.active) send(activeScreen, "SOUND_EVENT", payload)
         }
         screen = activeScreen
-        CraftNativeHub.register(activeScreen.capabilityScope) { type, payload ->
+        // Not able to hear yet: its prelude is built and run below.
+        CraftNativeHub.registerWaiting(activeScreen.capabilityScope) { type, payload ->
             if (activeScreen.active) send(activeScreen, type, payload)
         }
         if (!headless) {
@@ -5845,6 +5846,9 @@ class MainActivity : AppCompatActivity() {
             if (!activeScreen.active) return@addListener
             try {
                 setup.get()
+                // The prelude has run, so the isolate can hear: what changed
+                // while it was being built, before the bundle reads any of it.
+                CraftNativeHub.ready(activeScreen.capabilityScope)
                 val source = CraftNativeBundle.source(this, route)
                 if (source == null) {
                     if (activeScreen.active) showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")
@@ -5891,6 +5895,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }, executor)
             } catch (error: Exception) {
+                // Nothing will run in this isolate, so nothing is kept for it.
+                CraftNativeHub.ready(activeScreen.capabilityScope)
                 Log.e(TAG, "Native STX bridge failed", error)
                 showError("Native STX bridge failed: ${error.message}")
             }
