@@ -103,14 +103,18 @@ const mainPage = `<!doctype html><title>${windowTitle}</title>
     craft.menu.onAction(detail => actions.push(detail.id))
     let settingsOpened = 0
     craft.settings.onOpen(() => { settingsOpened++ })
-    const expectAction = async (id, label) => {
+    // The count is taken before the trigger: the action can arrive while the
+    // request that caused it is still being answered.
+    const expectAction = async (trigger, id, label) => {
       const before = actions.length
+      await trigger()
       await until(() => actions.length > before, label + ': no craft:menu:action arrived')
       const got = actions[actions.length - 1]
       if (got !== id) throw new Error(label + ': expected ' + id + ', got ' + got)
     }
-    const expectNoAction = async (label) => {
+    const expectNoAction = async (trigger, label) => {
       const before = actions.length
+      await trigger()
       await sleep(700)
       if (actions.length !== before) throw new Error(label + ': unexpected action ' + actions[actions.length - 1])
     }
@@ -140,24 +144,20 @@ const mainPage = `<!doctype html><title>${windowTitle}</title>
       if (file.join('|') !== 'New && Improved\\tCtrl+N||Toggle|Copy\\tCtrl+C|Preferences\\tCtrl+,')
         throw new Error('File menu items were ' + JSON.stringify(file))
       // Choosing an item with the pointer is a WM_COMMAND carrying its id.
-      await native('menu-command', { menu: '0', item: '2' })
-      await expectAction('toggle', 'chosen menu item')
+      await expectAction(() => native('menu-command', { menu: '0', item: '2' }), 'toggle', 'chosen menu item')
     }
 
     // Focus on the window itself, then on the page: on Windows those are two
     // different routes for a key press (the message loop, and WebView2).
-    await native('accelerator', { keys: 'ctrl+n' })
-    await expectAction('new', 'accelerator with focus on the window')
+    await expectAction(() => native('accelerator', { keys: 'ctrl+n' }), 'new', 'accelerator with focus on the window')
     await native('click-page')
-    await native('accelerator', { keys: 'ctrl+shift+z' })
-    await expectAction('zoom-in', 'accelerator with focus in the page')
+    await expectAction(() => native('accelerator', { keys: 'ctrl+shift+z' }), 'zoom-in', 'accelerator with focus in the page')
     await native('accelerator', { keys: 'ctrl+comma' })
     await until(() => settingsOpened === 1, 'the settings role did not raise craft:settings:open')
 
     await craft.menu.disableItem('new')
     await sleep(300)
-    await native('accelerator', { keys: 'ctrl+n' })
-    await expectNoAction('disabled item')
+    await expectNoAction(() => native('accelerator', { keys: 'ctrl+n' }), 'disabled item')
     await craft.menu.enableItem('new')
     await craft.menu.checkItem('toggle')
     await craft.menu.setItemLabel('toggle', 'Renamed')
@@ -170,14 +170,11 @@ const mainPage = `<!doctype html><title>${windowTitle}</title>
       if (!renamed || !renamed.checked) throw new Error('renamed item lost its check mark: ' + JSON.stringify(items))
       if (items.find(item => item.text.startsWith('New'))?.grayed) throw new Error('re-enabled item stayed grayed')
     }
-    await native('accelerator', { keys: 'ctrl+n' })
-    await expectAction('new', 're-enabled item')
-    await native('accelerator', { keys: 'ctrl+shift+a' })
-    await expectAction('added', 'added item')
+    await expectAction(() => native('accelerator', { keys: 'ctrl+n' }), 'new', 're-enabled item')
+    await expectAction(() => native('accelerator', { keys: 'ctrl+shift+a' }), 'added', 'added item')
     await craft.menu.removeItem('added')
     await sleep(300)
-    await native('accelerator', { keys: 'ctrl+shift+a' })
-    await expectNoAction('removed item')
+    await expectNoAction(() => native('accelerator', { keys: 'ctrl+shift+a' }), 'removed item')
     if (Math.abs(window.innerHeight - heightWithMenu) > 4) throw new Error('editing the menu changed the bar height')
     await report('menu')
 
