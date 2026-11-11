@@ -1,5 +1,31 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.497...v0.0.498)
+
+## 🚀 Features
+
+- **ios**: give grouped floating actions Maps' spacing and an on state ([2f16b71](https://github.com/craft-native/craft/commit/2f16b71)) _(by Chris Breuer)_
+- **ios**: draw grouped floating-action symbols at 15 points ([d2de2bd](https://github.com/craft-native/craft/commit/d2de2bd)) _(by glennmichael123)_
+- **ios**: draw grouped floating-action symbols at 17 points ([4e89506](https://github.com/craft-native/craft/commit/4e89506)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **android**: roll back a host's open transaction when the host closes ([8a5ede8](https://github.com/craft-native/craft/commit/8a5ede8)) _(by glennmichael123)_
+- **android**: count a background script's frames from its own first frame ([b32a3de](https://github.com/craft-native/craft/commit/b32a3de)) _(by glennmichael123)_ ([#395](https://github.com/craft-native/craft/issues/395))
+- roll back a transaction whose screen closed before finishing it ([ff8b589](https://github.com/craft-native/craft/commit/ff8b589)) _(by glennmichael123)_ ([#396](https://github.com/craft-native/craft/issues/396))
+- **svelte**: build the adapter against a floor with no known advisory ([9d321a1](https://github.com/craft-native/craft/commit/9d321a1)) _(by glennmichael123)_ ([#399](https://github.com/craft-native/craft/issues/399))
+- **android**: keep what is broadcast to an isolate before its prelude runs ([ec7fea7](https://github.com/craft-native/craft/commit/ec7fea7)) _(by glennmichael123)_ ([#507](https://github.com/craft-native/craft/issues/507))
+
+## 🧪 Tests
+
+- **android**: broadcast into the window before a new screen's prelude runs ([20c6722](https://github.com/craft-native/craft/commit/20c6722)) _(by glennmichael123)_
+- **android**: stall the readiness probe by count, not by a file the emulator is racing to create ([7e802f4](https://github.com/craft-native/craft/commit/7e802f4)) _(by glennmichael123)_ ([#490](https://github.com/craft-native/craft/issues/490))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.496...v0.0.497)
 
 ## 🚀 Features
