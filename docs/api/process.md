@@ -12,37 +12,41 @@ import { process } from 'craft-native'
 
 ### process.spawn(command, args?, options?)
 
-Spawn a new process with streaming output.
+Start a program on macOS. This is everything native `shell.spawn` does: the
+program is started, it can be killed, and that is all. It runs with Craft's
+own standard output and error. Nothing it writes reaches the page, and its
+exit is not reported.
 
 ```typescript
-const child = await process.spawn('node', ['script.js'])
+const child = process.spawn('open', ['-a', 'Preview', '/tmp/report.pdf'])
+await child.start()
 
-child.stdout.on('data', (data) => {
-  console.log('Output:', data)
-})
-
-child.stderr.on('data', (data) => {
-  console.error('Error:', data)
-})
-
-child.on('exit', (code) => {
-  console.log('Exited with code:', code)
-})
+// Later
+await child.kill()
 ```
+
+There is no `child.stdout`, no `onStdout`, `onStderr` or `onExit`, and no way
+to write to stdin. Earlier versions of this page and of the SDK described all
+of them. No native bridge ever sent the events behind them, so a handler
+registered that way was never called. To read a program's output:
+
+- use `process.exec()` when the command finishes and you want its output whole;
+- otherwise run it in your app's own backend process and send what you need to
+  the page.
+
+On Windows and Linux the `shell` namespace is not served at all, and `start()`
+rejects with `PLATFORM_NOT_SUPPORTED`.
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| command | `string` | Command to execute |
-| args | `string[]` | Command arguments |
+| command | `string` | Program to run. Not a command line: no shell splits it. |
+| args | `string[]` | Its arguments, passed as written |
 | options.cwd | `string` | Working directory |
-| options.env | `Record<string, string>` | Environment variables |
-| options.stdin | `'pipe' \| 'inherit' \| 'ignore'` | stdin handling |
-| options.stdout | `'pipe' \| 'inherit' \| 'ignore'` | stdout handling |
-| options.stderr | `'pipe' \| 'inherit' \| 'ignore'` | stderr handling |
+| options.shell | `boolean` | Run `command` as one command line through `/bin/sh`. Cannot be combined with `args`. |
 
-**Returns:** `Promise<ChildProcess>`
+**Returns:** `ChildProcess`
 
 ---
 
@@ -69,8 +73,11 @@ const result = await process.exec('bun install', {
 |------|------|-------------|
 | command | `string` | Command to execute (shell command) |
 | options.cwd | `string` | Working directory |
-| options.env | `Record<string, string>` | Environment variables |
-| options.timeout | `number` | Timeout in milliseconds |
+
+Inside a Craft window this is native `shell.exec` (macOS only), which runs the
+command through the shell, refuses shell metacharacters such as `;`, `|` and
+`$(`, and ignores `env` and `timeout`. Those two options apply only when the
+SDK runs under Bun or Node.
 
 **Returns:** `Promise<ExecResult>`
 
@@ -151,49 +158,22 @@ const arch = process.arch
 
 ---
 
-### child.kill(signal?)
+### child.kill()
 
-Kill a spawned process.
+Kill a spawned process. Native sends the platform's default termination;
+there is no signal to choose.
 
 ```typescript
-const child = await process.spawn('long-running-task')
+const child = process.spawn('long-running-task')
+await child.start()
 
 // Kill after 10 seconds
 setTimeout(() => {
-  child.kill('SIGTERM')
+  child.kill()
 }, 10000)
 ```
 
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| signal | `string` | Signal to send (default: 'SIGTERM') |
-
-**Returns:** `void`
-
----
-
-### child.write(data)
-
-Write to a process's stdin.
-
-```typescript
-const child = await process.spawn('cat', [], {
-  stdin: 'pipe'
-})
-
-child.write('Hello, World!\n')
-child.stdin.end()
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| data | `string \| Uint8Array` | Data to write |
-
-**Returns:** `void`
+**Returns:** `Promise<void>`
 
 ## Example Usage
 
@@ -214,46 +194,12 @@ async function runBuild() {
   console.log('Build output:', result.stdout)
 }
 
-// Long-running process with output streaming
-async function runDevServer() {
-  const server = await process.spawn('npm', ['run', 'dev'], {
-    cwd: '/path/to/project',
-    env: {
-      ...process.env,
-      NODE_ENV: 'development',
-      PORT: '3000'
-    }
-  })
-
-  server.stdout.on('data', (line) => {
-    console.log('[Server]', line)
-  })
-
-  server.stderr.on('data', (line) => {
-    console.error('[Server Error]', line)
-  })
-
-  server.on('exit', (code) => {
-    console.log('Server exited with code:', code)
-  })
-
-  return server
-}
-
-// Interactive process
-async function runInteractiveCommand() {
-  const child = await process.spawn('python', ['-i'], {
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe'
-  })
-
-  child.write('print("Hello from Python")\n')
-  child.write('exit()\n')
-
-  return new Promise((resolve) => {
-    child.on('exit', resolve)
-  })
+// A program that outlives the call. Its output goes wherever Craft's own
+// does; the page does not see it.
+async function openInEditor(file: string) {
+  const editor = process.spawn('code', [file])
+  await editor.start()
+  return editor
 }
 
 // Check if a command exists
@@ -286,10 +232,7 @@ function getShell(): string {
 ```typescript
 interface SpawnOptions {
   cwd?: string
-  env?: Record<string, string>
-  stdin?: 'pipe' | 'inherit' | 'ignore'
-  stdout?: 'pipe' | 'inherit' | 'ignore'
-  stderr?: 'pipe' | 'inherit' | 'ignore'
+  shell?: boolean
 }
 
 interface ExecOptions {
@@ -305,23 +248,9 @@ interface ExecResult {
 }
 
 interface ChildProcess {
-  pid: number
-  stdin: WritableStream | null
-  stdout: ReadableStream | null
-  stderr: ReadableStream | null
-  kill(signal?: string): void
-  write(data: string | Uint8Array): void
-  on(event: 'exit', callback: (code: number) => void): void
-  on(event: 'error', callback: (error: Error) => void): void
-}
-
-interface ReadableStream {
-  on(event: 'data', callback: (data: string) => void): void
-  on(event: 'end', callback: () => void): void
-}
-
-interface WritableStream {
-  write(data: string | Uint8Array): void
-  end(): void
+  /** Identifier the process is registered under, or null before start(). */
+  readonly pid: string | null
+  start(): Promise<void>
+  kill(): Promise<void>
 }
 ```

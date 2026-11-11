@@ -53,6 +53,12 @@ export const BridgeErrorCodes = {
   PROTOCOL_MISMATCH: -8,
   /** Bridge transitioned from connected to disconnected with requests in flight */
   DISCONNECTED: -9,
+  /**
+   * The native side received the request and refused or failed it. Not
+   * retried: asking again gets the same answer. `data.nativeCode` carries
+   * the bridge's own string code when it sent one.
+   */
+  NATIVE_ERROR: -10,
 } as const
 
 export type BridgeErrorCode = typeof BridgeErrorCodes[keyof typeof BridgeErrorCodes]
@@ -406,12 +412,12 @@ catch (error) {
    * BridgeError(PROTOCOL_MISMATCH) if the native side reports a version we
    * don't speak.
    *
-   * This is **opt-in** — you must call it explicitly. It assumes the host
-   * registers a `_handshake` handler; the Zig core's
-   * `Bridge.registerDefaults()` does this for you. If you're embedding Craft
-   * inside a host that hasn't wired `_handshake`, do not call this method
-   * (the timeout path will reject with TIMEOUT, which is louder than a
-   * silent mismatch but still a failure).
+   * This is **opt-in** — you must call it explicitly, and only against a
+   * host of your own that answers a `_handshake` request. Craft's own
+   * webview hosts do not: inside one, requests go through
+   * `window.craft.invoke`, which takes `namespace.action` names, and this
+   * call is rejected immediately instead of negotiating anything. Use
+   * `window.craft.capabilities` to ask a Craft host what it serves.
    */
   async handshake(): Promise<{ nativeVersion: number }> {
     const result = await this.request<{ sdkVersion: number }, { version: number }>(
@@ -713,6 +719,13 @@ else if (!this.batchTimer) {
 
     try {
       if (typeof window !== 'undefined') {
+        // Craft's own page bridge. Every Craft webview has it, and it is the
+        // only thing the native dispatcher answers, so a request goes
+        // through it whenever it is there.
+        if (message.type === 'request' && this.sendThroughInjectedBridge(message)) {
+          return true
+        }
+
         // iOS WKWebView
         if (window.webkit?.messageHandlers?.craft) {
           window.webkit.messageHandlers.craft.postMessage(message)
@@ -760,6 +773,55 @@ else if (!this.batchTimer) {
       ))
       return false
     }
+  }
+
+  /**
+   * Hand a request to `window.craft.invoke`, the dispatcher that
+   * `craft-bridge.js` injects into every Craft webview, and settle the
+   * pending entry with what native answers.
+   *
+   * This is the only path by which `request()` reaches native code. The
+   * `{id, type: 'request', method, params}` envelope this class builds is not
+   * something any Craft host parses: posted raw to the `craft` message
+   * handler it was dropped, and every `request()` waited out its timeout and
+   * its retries. The method name is used as written, `namespace.action`, so
+   * it has to be one the native bridge serves (`fs.readFile`,
+   * `shell.openUrl`, `dialog.openFile`); one it does not serve is rejected
+   * with `NATIVE_ERROR` straight away.
+   *
+   * Returns false when the injected bridge is not present, so the older
+   * transports below still get their turn in a host that provides one.
+   */
+  private sendThroughInjectedBridge(message: BridgeMessage): boolean {
+    const injected = (window as { craft?: { invoke?: (method: string, params?: unknown) => Promise<unknown> } }).craft
+    if (!injected || typeof injected.invoke !== 'function' || typeof message.method !== 'string') return false
+
+    let call: Promise<unknown>
+    try {
+      call = Promise.resolve(injected.invoke(message.method, message.params))
+    }
+    catch (e) {
+      call = Promise.reject(e)
+    }
+    call.then(
+      result => this.handleResponse({ id: message.id, type: 'response', result }),
+      (error: unknown) => {
+        const detail = (error ?? {}) as { code?: unknown, message?: unknown }
+        const text = typeof detail.message === 'string' && detail.message.length > 0
+          ? detail.message
+          : `Native bridge refused ${message.method}`
+        this.handleResponse({
+          id: message.id,
+          type: 'response',
+          error: {
+            code: BridgeErrorCodes.NATIVE_ERROR,
+            message: text,
+            data: { nativeCode: typeof detail.code === 'string' ? detail.code : undefined, method: message.method },
+          },
+        })
+      },
+    )
+    return true
   }
 
   /**

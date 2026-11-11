@@ -184,7 +184,9 @@ export interface ExecResult {
 
 export async function exec(command: string, options?: ExecOptions): Promise<ExecResult> {
   if (typeof window !== 'undefined' && window.craft) {
-    return callBridge<ExecResult>('process.exec', { command, ...options })
+    // `shell.exec` is the native name. It runs `command` through the platform
+    // shell, refuses shell metacharacters, and returns the captured output.
+    return callBridge<ExecResult>('shell.exec', { command, cwd: options?.cwd })
   }
 
   // Node.js fallback
@@ -215,7 +217,6 @@ catch (error: any) {
  */
 export interface SpawnOptions {
   cwd?: string
-  env?: Record<string, string>
   /**
    * Run `command` as a command line through a shell (cmd.exe on Windows,
    * /bin/sh elsewhere) instead of executing it directly.
@@ -230,15 +231,36 @@ export interface SpawnOptions {
   shell?: boolean
 }
 
+let nextProcessId = 0
+
+/**
+ * `window.craft.shell`, for the calls native performs without replying. A
+ * request sent for one of those would wait for an answer that never comes.
+ */
+function shellFacade(): { kill?: (id: string) => Promise<void>, openPath?: (path: string) => Promise<void> } | undefined {
+  return (window as { craft?: { shell?: { kill?: (id: string) => Promise<void>, openPath?: (path: string) => Promise<void> } } }).craft?.shell
+}
+
+/**
+ * A process started through the native bridge.
+ *
+ * What native `shell.spawn` does, and so all this class offers: start a
+ * program, and kill it. The child inherits Craft's own standard output and
+ * error. Nothing it writes is delivered to the page, and its exit is not
+ * reported.
+ *
+ * `onStdout`, `onStderr`, `onExit` and `write` used to be declared here. No
+ * native bridge ever emitted the events behind them or accepted input, so a
+ * handler registered with them was never called. They are removed rather than
+ * left as methods that accept a callback and stay silent. To read a child's
+ * output, run it in your app's backend process and send the result to the
+ * page; `exec()` covers a command that finishes and returns its output whole.
+ *
+ * Windows and Linux desktop builds do not serve the `shell` namespace at all:
+ * there `start()` rejects.
+ */
 export class ChildProcess {
   private processId: string | null = null
-  private onStdoutHandlers: ((_data: string) => void)[] = []
-  private onStderrHandlers: ((_data: string) => void)[] = []
-  private onExitHandlers: ((_code: number) => void)[] = []
-  // Tracked DOM listeners so we can detach them on exit/kill — without
-  // this, every spawn leaks 3 window listeners that pin closures forever.
-  private domListeners: Array<{ type: string; handler: EventListener }> = []
-  private exited = false
 
   constructor(
     private command: string,
@@ -246,61 +268,26 @@ export class ChildProcess {
     private options: SpawnOptions = {},
   ) {}
 
-  private addDomListener(type: string, handler: EventListener): void {
-    if (typeof window === 'undefined') return
-    window.addEventListener(type, handler)
-    this.domListeners.push({ type, handler })
-  }
-
-  private removeDomListeners(): void {
-    if (typeof window === 'undefined') return
-    for (const { type, handler } of this.domListeners) {
-      window.removeEventListener(type, handler)
-    }
-    this.domListeners = []
-  }
-
-  /** Pid assigned by the native bridge, or null before start(). */
+  /** Identifier this process is registered under, or null before start(). */
   get pid(): string | null {
     return this.processId
   }
 
   /**
-   * Start the process
+   * Start the process. Resolves once native has started it.
    */
   async start(): Promise<void> {
     if (typeof window !== 'undefined' && window.craft) {
-      const result = await callBridge<{ pid: string }>('process.spawn', {
+      nextProcessId += 1
+      const id = `sdk-${Date.now().toString(36)}-${nextProcessId}`
+      await callBridge('shell.spawn', {
+        id,
         command: this.command,
         args: this.args,
-        ...this.options,
+        cwd: this.options.cwd,
+        shell: this.options.shell,
       })
-      this.processId = result.pid
-
-      const stdoutHandler = ((event: CustomEvent) => {
-        if (event.detail.pid === this.processId) {
-          this.onStdoutHandlers.forEach(h => h(event.detail.data))
-        }
-      }) as EventListener
-      const stderrHandler = ((event: CustomEvent) => {
-        if (event.detail.pid === this.processId) {
-          this.onStderrHandlers.forEach(h => h(event.detail.data))
-        }
-      }) as EventListener
-      const exitHandler = ((event: CustomEvent) => {
-        if (event.detail.pid === this.processId) {
-          this.exited = true
-          this.onExitHandlers.forEach(h => h(event.detail.code))
-          // Once the process has exited, our listeners can never fire
-          // again — release them so the closures are GC-able.
-          this.removeDomListeners()
-        }
-      }) as EventListener
-
-      this.addDomListener('craft:process:stdout', stdoutHandler)
-      this.addDomListener('craft:process:stderr', stderrHandler)
-      this.addDomListener('craft:process:exit', exitHandler)
-
+      this.processId = id
       return
     }
 
@@ -308,57 +295,15 @@ export class ChildProcess {
   }
 
   /**
-   * Write to stdin
+   * Kill the process. Native sends the platform's default termination; there
+   * is no signal to choose.
    */
-  async write(data: string): Promise<void> {
+  async kill(): Promise<void> {
     if (typeof window !== 'undefined' && window.craft && this.processId) {
-      await callBridge('process.stdin', { pid: this.processId, data })
-    }
-  }
-
-  /**
-   * Kill the process
-   */
-  async kill(signal: string = 'SIGTERM'): Promise<void> {
-    if (typeof window !== 'undefined' && window.craft && this.processId) {
-      await callBridge('process.kill', { pid: this.processId, signal })
-      // The native side will still emit a final `exit` event; the exit
-      // handler removes listeners from there. Defensive cleanup here too
-      // in case the native bridge drops the exit event.
-      if (this.exited) this.removeDomListeners()
-    }
-  }
-
-  /**
-   * Listen for stdout data
-   */
-  onStdout(handler: (data: string) => void): () => void {
-    this.onStdoutHandlers.push(handler)
-    return () => {
-      const idx = this.onStdoutHandlers.indexOf(handler)
-      if (idx >= 0) this.onStdoutHandlers.splice(idx, 1)
-    }
-  }
-
-  /**
-   * Listen for stderr data
-   */
-  onStderr(handler: (data: string) => void): () => void {
-    this.onStderrHandlers.push(handler)
-    return () => {
-      const idx = this.onStderrHandlers.indexOf(handler)
-      if (idx >= 0) this.onStderrHandlers.splice(idx, 1)
-    }
-  }
-
-  /**
-   * Listen for exit
-   */
-  onExit(handler: (code: number) => void): () => void {
-    this.onExitHandlers.push(handler)
-    return () => {
-      const idx = this.onExitHandlers.indexOf(handler)
-      if (idx >= 0) this.onExitHandlers.splice(idx, 1)
+      // Native does not answer a kill, so this goes through the facade that
+      // does not wait for one.
+      await shellFacade()?.kill?.(this.processId)
+      this.processId = null
     }
   }
 }
@@ -389,7 +334,7 @@ export function cwd(): string {
  */
 export async function homeDir(): Promise<string> {
   if (typeof window !== 'undefined' && window.craft) {
-    return callBridge<string>('process.homeDir')
+    return (await callBridge<{ path?: string }>('fs.getHomeDir'))?.path || '/'
   }
 
   if (typeof process !== 'undefined') {
@@ -405,7 +350,7 @@ export async function homeDir(): Promise<string> {
  */
 export async function tempDir(): Promise<string> {
   if (typeof window !== 'undefined' && window.craft) {
-    return callBridge<string>('process.tempDir')
+    return (await callBridge<{ path?: string }>('fs.getTempDir'))?.path || '/tmp'
   }
 
   if (typeof process !== 'undefined') {
@@ -459,7 +404,12 @@ export function argv(): string[] {
  */
 export async function open(target: string): Promise<void> {
   if (typeof window !== 'undefined' && window.craft) {
-    await callBridge('process.open', { target })
+    // A URL goes to the system's handler for its scheme; anything else is a
+    // path for the default application.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) && !/^[a-z]:[\\/]/i.test(target))
+      await callBridge('shell.openUrl', { url: target })
+    else
+      await shellFacade()?.openPath?.(target)
     return
   }
 

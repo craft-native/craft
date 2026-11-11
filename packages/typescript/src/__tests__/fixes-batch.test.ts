@@ -361,13 +361,22 @@ describe('Item 13: process.open Windows path', () => {
 })
 
 // -------------------------------------------------------------------------
-// Item 14: ChildProcess removes its window listeners on exit.
+// Item 14: ChildProcess promises only what native shell.spawn does.
+//
+// This used to check that the class removed its `craft:process:*` window
+// listeners on exit. Nothing ever dispatched those events, so the listeners
+// and the onStdout/onStderr/onExit/write methods that fed them are gone, and
+// the check is that they stay gone until something native backs them.
 // -------------------------------------------------------------------------
-describe('Item 14: ChildProcess listener cleanup', () => {
-  it('source uses removeEventListener on exit handler', async () => {
+describe('Item 14: ChildProcess has no unbacked output API', () => {
+  it('declares no stream or exit handlers and listens for no process events', async () => {
+    const { ChildProcess } = await import('../api/process')
+    const child = new ChildProcess('true') as unknown as Record<string, unknown>
+    for (const name of ['onStdout', 'onStderr', 'onExit', 'write'])
+      expect(child[name]).toBeUndefined()
     const src = await Bun.file(new URL('../api/process.ts', import.meta.url)).text()
-    expect(src).toContain('removeDomListeners')
-    expect(src).toContain('this.removeDomListeners()')
+    expect(src).not.toContain('craft:process:')
+    expect(src).toContain('\'shell.spawn\'')
   })
 })
 
