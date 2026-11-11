@@ -944,6 +944,42 @@ Craft is **1351x**smaller than Electron,**2.4x**faster to start, and uses**4.3x*
 | **iOS** | 🚧 Preview | WKWebView | Partial |
 | **Android** | 🚧 Preview | WebView | Partial |
 
+### What `window.craft` serves on each desktop platform
+
+macOS has the whole bridge. On Windows and Linux Craft is a webview window
+with a small native bridge, and anything process-shaped (running programs,
+files, secrets) belongs in your app's own backend process.
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Windows: multi-window, controls, events | yes | yes | yes |
+| Clipboard text, notifications | yes | yes | yes |
+| Application menu, accelerators, item events | yes | yes | yes |
+| Context menus | yes | yes | yes |
+| Open, save and folder dialogs, alert, confirm | yes | yes | yes |
+| Deep links, with installer registration | yes | yes (MSI) | yes (`.desktop`) |
+| File drop with real paths | yes | yes, not covered by CI | yes |
+| Single-instance activation (`--single-instance`) | built into macOS | yes | yes |
+| `craft.app.relaunch()` for updaters | yes | yes | yes |
+| `fs`, `shell`, `keychain`, tray, global shortcuts, updater, system info, the AppKit native host | yes | no | no |
+
+A call into something marked "no" is rejected with `PLATFORM_NOT_SUPPORTED`.
+[`packages/zig/PLATFORM_SUPPORT.md`](packages/zig/PLATFORM_SUPPORT.md) has the
+per-namespace contract, the places the platforms differ, and which rows CI
+exercises on a real window and which it does not.
+
+Two things the SDK used to advertise and no longer does:
+
+- `ChildProcess` (`spawn()`) has no `onStdout`, `onStderr`, `onExit` or
+  `write`. Native `shell.spawn` starts a program with Craft's own standard
+  streams and reports neither output nor exit, so those callbacks never fired.
+  Use `exec()` for a command that finishes and returns its output, or run the
+  process in your backend.
+- `NativeBridge.request()` reaches native through `window.craft.invoke`, with
+  `namespace.action` method names the bridge actually serves. The request
+  envelope it used to post was parsed by no Craft host, so every request
+  timed out.
+
 ## Documentation
 
 - 📖 [API Reference](docs/API_REFERENCE.md) - Complete API documentation
