@@ -2919,6 +2919,22 @@ describe('native renderer component contract', () => {
     for (const host of [android, androidBridge]) expect(host).not.toContain('queryParameterNames')
   })
 
+  it('answers a stored value it cannot read as corrupt, and keeps listing and clearing beside it', () => {
+    // STORAGE_CORRUPT is what an app catches to start a value again;
+    // STORAGE_ERROR is a disk that failed. UIKit gave the second for a file
+    // that did not parse, and one such file failed keys() and clear() for
+    // everything else. Android gave the second from compareAndSet. Both are
+    // run in their package's corrupt-storage test.
+    const iosStorage = readFileSync(join(root, 'packages/ios/templates/CraftPersistentStorage.swift'), 'utf8')
+    expect(iosStorage).toContain('return (try? JSONSerialization.jsonObject(with: contents)) as? [String: Any]')
+    expect(iosStorage).toContain('guard let saved = try entry(at: source), saved["key"] as? String == key else {')
+    expect(iosStorage).toContain('guard let entry = try entry(at: source), let key = entry["key"] as? String else { continue }')
+    // No parse of a stored file may throw the disk's error again.
+    expect(iosStorage).not.toContain('try JSONSerialization.jsonObject(with: Data(contentsOf: source))')
+    expect(androidCapabilities).toContain('.getOrElse { return failure("STORAGE_CORRUPT", "Stored value is not valid JSON") }')
+    expect(androidCapabilities).not.toContain('CraftNativeStorage.jsonEqual(JSONTokener(current).nextValue(), args.opt(1))')
+  })
+
   it('stops a sound whatever fade it was given, on every host', () => {
     // Android answered false to a negative fadeOut, the answer for a sound
     // that does not exist, and left it playing. UIKit and the browser host

@@ -1213,7 +1213,12 @@ internal class CraftNativeCapabilities(
             "compareAndSet" -> {
                 if (args.length() != 3) return failure("INVALID_ARGUMENT", "Storage.compareAndSet needs a key, expected value and next value")
                 val current = storage.getString(key, null) ?: return success(false)
-                if (!CraftNativeStorage.jsonEqual(JSONTokener(current).nextValue(), args.opt(1))) return success(false)
+                // What `get` answers for a value it cannot read. Unparsed, it
+                // threw from here and reached the screen as STORAGE_ERROR,
+                // the code for a disk that failed.
+                val held = runCatching { JSONTokener(current).nextValue() }
+                    .getOrElse { return failure("STORAGE_CORRUPT", "Stored value is not valid JSON") }
+                if (!CraftNativeStorage.jsonEqual(held, args.opt(1))) return success(false)
                 val next = jsonString(args.opt(2)) ?: return failure("INVALID_ARGUMENT", "Storage values must be JSON serializable")
                 if (!CraftNativeStorage.commit(storage) { it.putString(key, next) }) return failure("STORAGE_ERROR", "Storage could not persist the checkpoint")
                 storeObserver?.invoke("storage", key, next)

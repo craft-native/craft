@@ -13,11 +13,22 @@ enum CraftPersistentStorage {
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent(digest + ".json")
     }
+    /// What an entry file holds, or nil when it is there and is not an entry.
+    ///
+    /// A file that cannot be parsed is a corrupt value, as one that parses to
+    /// the wrong thing is, and an app starts that value again. Only a file
+    /// that cannot be read at all is the disk failing, which an app retries;
+    /// that still throws. The two used to share the disk's answer.
+    private static func entry(at source: URL) throws -> [String: Any]? {
+        let contents = try Data(contentsOf: source)
+        return (try? JSONSerialization.jsonObject(with: contents)) as? [String: Any]
+    }
+
     static func get(_ key: String, prefix: String, storageDirectory: URL? = nil) throws -> Data? {
         lock.lock(); defer { lock.unlock() }
         let source = path(key, directory: storageDirectory ?? directory)
         if FileManager.default.fileExists(atPath: source.path) {
-            guard let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any], saved["key"] as? String == key else {
+            guard let saved = try entry(at: source), saved["key"] as? String == key else {
                 throw CraftNativeActionError(code: "STORAGE_CORRUPT", message: "Invalid stored value")
             }
             if saved["deleted"] as? Bool == true { return nil }
@@ -26,7 +37,9 @@ enum CraftPersistentStorage {
         }
         guard let legacy = UserDefaults.standard.data(forKey: prefix + key) else { return nil }
         // Only valid legacy JSON qualifies for deferred migration on I/O failure.
-        _ = try JSONSerialization.jsonObject(with: legacy, options: .fragmentsAllowed)
+        guard (try? JSONSerialization.jsonObject(with: legacy, options: .fragmentsAllowed)) != nil else {
+            throw CraftNativeActionError(code: "STORAGE_CORRUPT", message: "Stored value is not valid JSON")
+        }
         // Reading a valid legacy checkpoint must survive a full disk. Migration
         // can be retried on a later read; only a successful set promises a new
         // durable checkpoint and permits the application to acknowledge it.
@@ -84,9 +97,11 @@ enum CraftPersistentStorage {
         var result = Set(UserDefaults.standard.dictionaryRepresentation().keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
         if FileManager.default.fileExists(atPath: directory.path) {
             for source in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where source.pathExtension == "json" {
-                guard let entry = try JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any], let key = entry["key"] as? String else {
-                    throw CraftNativeActionError(code: "STORAGE_CORRUPT", message: "Invalid stored value")
-                }
+                // A file that is not an entry names no key. It used to fail
+                // the whole listing, and `clear` with it, over a value
+                // neither call had been asked about. `get` of its key still
+                // answers STORAGE_CORRUPT.
+                guard let entry = try entry(at: source), let key = entry["key"] as? String else { continue }
                 if entry["deleted"] as? Bool == true { result.remove(key) } else { result.insert(key) }
             }
         }
@@ -95,5 +110,13 @@ enum CraftPersistentStorage {
     static func clear(prefix: String) throws {
         lock.lock(); defer { lock.unlock() }
         for key in try keys(prefix: prefix) { try set(key, data: nil, prefix: prefix) }
+        // Clearing a key writes over its file, so what is still not an entry
+        // belongs to no key this store knows, and cannot be marked removed.
+        // It is deleted. No earlier value can come back in its place: every
+        // one this store mirrors was removed just above.
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        for source in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where source.pathExtension == "json" {
+            if try entry(at: source)?["key"] as? String == nil { try FileManager.default.removeItem(at: source) }
+        }
     }
 }

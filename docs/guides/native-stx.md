@@ -1762,6 +1762,10 @@ disposing its screen or host.
 Individual storage operations are atomic. A sequence of reads and writes is not
 a transaction: use `setIfAbsent` or `compareAndSet` when sessions can compete for
 the same checkpoint, and handle a `false` result as a conflict.
+A stored value that cannot be read rejects with `STORAGE_CORRUPT` from `get`
+and from `compareAndSet` on every host; `STORAGE_ERROR` is the disk failing.
+Start that value again with `set` or `remove`. A corrupt value does not stop
+`keys` or `clear` from working, and `clear` takes it with the rest.
 
 SQLite is stored
 in the app's persistent data directory and supports typed string, number,
