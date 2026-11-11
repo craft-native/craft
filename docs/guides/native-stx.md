@@ -1755,7 +1755,11 @@ notification schedules are persisted by the OS on iOS and through
 process. The Android receiver is registered only for native-renderer projects.
 
 `enableLocalDatabase`, `enableLocalNotifications`, and `enableDeepLinks` are
-explicit configuration gates. `enableSecureStorage` and `enableBiometric` gate
+explicit configuration gates. The local database is one connection shared by
+every screen. A second `beginTransaction` while one is open rejects with
+`DATABASE_ERROR` on both hosts, and a transaction whose screen closes before
+it commits or rolls back is rolled back, so it cannot hold later writes from
+other screens. `enableSecureStorage` and `enableBiometric` gate
 the corresponding secure-storage and biometric methods. Secure storage accepts
 string values and persists them in the iOS Keychain or Android encrypted
 preferences. A secure write that does not reach the store, a removal or a

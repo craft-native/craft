@@ -7035,6 +7035,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let timers = self.timers
         CraftNativeScriptThread.run { timers.pending.values.forEach { $0.cancel() } }
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
+        CraftNativeActions.endScope(capabilityScope)
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         if let deepLinkListener = deepLinkListener { DeepLinkManager.shared.removeNativeListener(deepLinkListener) }
     }
@@ -7298,6 +7299,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
         pendingCapabilityDeadlines.removeAll()
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
+        CraftNativeActions.endScope(capabilityScope)
         pendingCapabilityRequests.removeAll()
         if let owner = voiceRecordingOwner {
             voiceRecordingOwner = nil

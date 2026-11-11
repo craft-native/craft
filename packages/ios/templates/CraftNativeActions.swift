@@ -391,7 +391,7 @@ enum CraftNativeActions {
                 complete(requestToken, failure("CAPABILITY_DISABLED", "Local database is disabled"), completion)
                 return
             }
-            databaseQueue.async { complete(requestToken, database(method: method, args: args), completion) }
+            databaseQueue.async { complete(requestToken, database(requestToken: requestToken, method: method, args: args), completion) }
             return
         case ("Browser", "open"):
             // SFSafariViewController, or for `mode: 'auth'` the system's web
@@ -1275,7 +1275,47 @@ enum CraftNativeActions {
         #endif
     }
 
-    private static func database(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
+    /// A screen has gone. A transaction it began and never finished is rolled
+    /// back.
+    ///
+    /// The database is one connection shared by every screen, and a
+    /// transaction left open on it does not end with the screen that began
+    /// it: every later write joins it, reads back as written, and is gone
+    /// when the process exits, since nobody is left to commit; every later
+    /// `beginTransaction` is refused. Rolling back loses what the closed
+    /// screen had not committed, which is what closing mid-transaction means,
+    /// and gives every later write its own fate back. Queued behind whatever
+    /// that screen had already asked for.
+    static func endScope(_ scope: String) {
+        databaseQueue.async {
+            guard transactionScope == scope else { return }
+            transactionScope = nil
+            guard let database, sqlite3_get_autocommit(database) == 0 else { return }
+            _ = execute(sql: "ROLLBACK", params: [])
+        }
+    }
+
+    /// Which screen's transaction is open, read off the database around each
+    /// call rather than off the method's name, so a `BEGIN` sent through
+    /// `execute` is owned like one sent through `beginTransaction`: a call
+    /// that leaves a transaction open where there was none began it, and one
+    /// that leaves none ended it. The scope is the part of a request token
+    /// before its last `/`. Only touched on `databaseQueue`.
+    private static var transactionScope: String?
+
+    private static func database(requestToken: String, method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
+        let before = database.map { sqlite3_get_autocommit($0) == 0 } ?? false
+        let answer = databaseCall(method: method, args: args)
+        let after = database.map { sqlite3_get_autocommit($0) == 0 } ?? false
+        if after && !before {
+            transactionScope = requestToken.range(of: "/", options: .backwards).map { String(requestToken[..<$0.lowerBound]) } ?? ""
+        } else if !after {
+            transactionScope = nil
+        }
+        return answer
+    }
+
+    private static func databaseCall(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
         guard openDatabase() else { return failure("DATABASE_ERROR", "Could not open the local database") }
         switch method {
         case "execute":

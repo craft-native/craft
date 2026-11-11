@@ -1814,11 +1814,27 @@ class NativeCapabilitiesTest {
             assertNull(call(capabilities, "Database", "execute", JSONArray()
                 .put("INSERT INTO $table (name) VALUES (?)").put(JSONArray().put("Grace"))).code)
             assertNull(call(capabilities, "Database", "commit").code)
+            // A second transaction is refused while one is open, as SQLite
+            // refuses it on UIKit, instead of nesting inside the first.
+            assertNull(call(capabilities, "Database", "beginTransaction").code)
+            assertEquals("DATABASE_ERROR", call(capabilities, "Database", "beginTransaction").code)
+            assertNull(call(capabilities, "Database", "execute", JSONArray()
+                .put("INSERT INTO $table (name) VALUES (?)").put(JSONArray().put("Abandoned"))).code)
+            // The screen that began it closes before finishing it. These
+            // requests carry no scope, so theirs is the empty one. Its
+            // transaction is rolled back, and the next is not inside it.
+            capabilities.endScope("")
+            assertNull(call(capabilities, "Database", "beginTransaction").code)
+            assertNull(call(capabilities, "Database", "execute", JSONArray()
+                .put("INSERT INTO $table (name) VALUES (?)").put(JSONArray().put("Kept"))).code)
+            assertNull(call(capabilities, "Database", "commit").code)
             capabilities.close()
             capabilities = CraftNativeCapabilities(activity, config)
             val rows = call(capabilities, "Database", "query", JSONArray()
-                .put("SELECT name FROM $table").put(JSONArray())).data as JSONArray
+                .put("SELECT name FROM $table ORDER BY id").put(JSONArray())).data as JSONArray
+            assertEquals(2, rows.length())
             assertEquals("Grace", rows.getJSONObject(0).getString("name"))
+            assertEquals("Kept", rows.getJSONObject(1).getString("name"))
         }
         finally {
             capabilities.close()

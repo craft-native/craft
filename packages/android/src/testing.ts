@@ -61,7 +61,11 @@ tasks.register('runFixture', JavaExec) {
  */
 export function liftKotlinMember(template: string, name: string): string {
   const lines = template.split('\n')
-  const opening = new RegExp(`^ {4}(?:private |internal )?(?:fun ${name}\\(|va[lr] ${name}\\b)`)
+  // `fun database` or `var database` says which, where a class has both.
+  const kind = /^(fun|val|var) (.+)$/.exec(name)
+  const opening = kind
+    ? new RegExp(`^ {4}(?:private |internal )?${kind[1]} ${kind[2]}${kind[1] === 'fun' ? '\\(' : '\\b'}`)
+    : new RegExp(`^ {4}(?:private |internal )?(?:fun ${name}\\(|va[lr] ${name}\\b)`)
   const starts = lines.flatMap((line, at) => opening.test(line) ? [at] : [])
   if (starts.length === 0) throw new Error(`${name} is no longer a member in this template`)
   // Two classes in one template can each have a member of this name, and

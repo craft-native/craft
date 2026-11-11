@@ -2895,6 +2895,27 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).not.toContain('Base64.decode(data, Base64.DEFAULT)')
   })
 
+  it('rolls back a transaction whose screen closed, on both hosts', () => {
+    // One connection is shared by every screen, so a transaction left open
+    // by a screen that is gone swallows every later write until the process
+    // exits. Each host reads who owns the open transaction off the database
+    // around every call and ends it when that screen does. The behaviour is
+    // run in each package's database-transaction-owner test.
+    expect(iosActions).toContain('static func endScope(_ scope: String)')
+    expect(iosActions).toContain('let before = database.map { sqlite3_get_autocommit($0) == 0 } ?? false')
+    expect(iosActions).toContain('databaseQueue.async { complete(requestToken, database(requestToken: requestToken, method: method, args: args), completion) }')
+    expect(ios.match(/CraftNativeActions\.endScope\(capabilityScope\)/g)?.length, 'the disposal and the deinit both end the scope').toBe(2)
+
+    expect(androidCapabilities).toContain('fun endScope(scope: String)')
+    expect(androidCapabilities).toContain('complete(requestToken, database(requestToken, method, args), completion)')
+    expect(android.match(/capabilities\.endScope\(screen\.capabilityScope\)/g)?.length, 'before the isolate closes and after').toBe(2)
+    // Both hosts make a request token the same way, which is what the scope is read from.
+    expect(ios).toContain('let requestToken = "\\(capabilityScope)/\\(id)"')
+    expect(android).toContain('val token = "${screen.capabilityScope}/$id"')
+    // And Android answers a second begin as SQLite answers it on UIKit.
+    expect(androidCapabilities).toContain('"beginTransaction" -> if (db.inTransaction()) failure("DATABASE_ERROR", "cannot start a transaction within a transaction")')
+  })
+
   it('refuses a secure-storage removal that did not reach the store, on both hosts', () => {
     // UIKit refuses a Keychain delete that failed. Android answered with
     // whatever commit() returned and told every isolate the value was gone

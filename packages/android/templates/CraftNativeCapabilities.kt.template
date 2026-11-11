@@ -276,7 +276,7 @@ internal class CraftNativeCapabilities(
                     complete(requestToken, failure("CAPABILITY_DISABLED", "Local database is disabled"), completion)
                 }
                 else databaseExecutor.execute {
-                    complete(requestToken, database(method, args), completion)
+                    complete(requestToken, database(requestToken, method, args), completion)
                 }
             }
             "Lifecycle" -> complete(requestToken, if (method == "getState") success(activity?.nativeAppState ?: "background")
@@ -1292,7 +1292,50 @@ internal class CraftNativeCapabilities(
         }
     }
 
-    private fun database(method: String, args: JSONArray): CraftNativeCapabilityResult {
+    /**
+     * A screen has closed. A transaction it began and never finished is
+     * rolled back.
+     *
+     * The database is one connection shared by every screen, and a
+     * transaction left open on it does not end with the screen that began
+     * it: every later write joins it, reads back as written, and is gone
+     * when the process exits, since nobody is left to commit. Rolling back
+     * loses what the closed screen had not committed, which is what closing
+     * mid-transaction means, and gives every later write its own fate back.
+     * Queued behind whatever that screen had already asked for.
+     */
+    fun endScope(scope: String) {
+        if (closed.get()) return
+        runCatching {
+            databaseExecutor.execute {
+                if (transactionScope != scope) return@execute
+                transactionScope = null
+                val db = database ?: return@execute
+                runCatching { if (db.inTransaction()) db.endTransaction() }
+                    .onFailure { android.util.Log.w("CraftNativeAndroid", "A closed screen's transaction could not be rolled back", it) }
+            }
+        }
+    }
+
+    /**
+     * Which screen's transaction is open, read off the database around each
+     * call rather than off the method's name: a call that leaves a
+     * transaction open where there was none began it, and one that leaves
+     * none ended it. The scope is the part of a request token before its
+     * last `/`. Only touched on the database thread.
+     */
+    private var transactionScope: String? = null
+
+    private fun database(requestToken: String, method: String, args: JSONArray): CraftNativeCapabilityResult {
+        val before = runCatching { database?.inTransaction() == true }.getOrDefault(false)
+        val answer = databaseCall(method, args)
+        val after = runCatching { database?.inTransaction() == true }.getOrDefault(false)
+        if (after && !before) transactionScope = requestToken.substringBeforeLast('/', "")
+        else if (!after) transactionScope = null
+        return answer
+    }
+
+    private fun databaseCall(method: String, args: JSONArray): CraftNativeCapabilityResult {
         val db = database ?: runCatching {
             context.openOrCreateDatabase("craft-native.sqlite", Context.MODE_PRIVATE, null)
         }.getOrElse { return failure("DATABASE_ERROR", it.message ?: "Could not open the local database") }
@@ -1309,7 +1352,12 @@ internal class CraftNativeCapabilities(
                     if (sql.isEmpty()) return failure("INVALID_ARGUMENT", "Database.query needs a SQL statement")
                     query(db, sql, args.optJSONArray(1) ?: JSONArray())
                 }
-                "beginTransaction" -> { db.beginTransaction(); success(true) }
+                // SQLite refuses a transaction inside a transaction, and that
+                // is UIKit's answer. Android would nest it instead: the inner
+                // `commit` then makes nothing durable and reports that it did,
+                // and the outer one is some other caller's to finish.
+                "beginTransaction" -> if (db.inTransaction()) failure("DATABASE_ERROR", "cannot start a transaction within a transaction")
+                    else { db.beginTransaction(); success(true) }
                 "commit" -> {
                     if (!db.inTransaction()) failure("DATABASE_ERROR", "No transaction is active")
                     else { db.setTransactionSuccessful(); db.endTransaction(); success(true) }

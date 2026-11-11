@@ -9429,6 +9429,7 @@ class MainActivity : AppCompatActivity() {
         screen.capabilityTimeouts.clear()
         screen.pendingCapabilities.forEach(capabilities::cancel)
         screen.pendingCapabilities.clear()
+        capabilities.endScope(screen.capabilityScope)
         releaseViewState(screen, retainedViews(screen).toList())
         screen.inputWatchers.forEach { (input, watcher) -> input.removeTextChangedListener(watcher) }
         screen.inputWatchers.clear()
@@ -9469,6 +9470,8 @@ class MainActivity : AppCompatActivity() {
             screen.capabilityTimeouts.clear()
             screen.pendingCapabilities.forEach(capabilities::cancel)
             screen.pendingCapabilities.clear()
+            // Again: a transaction can be begun while the isolate is closing.
+            capabilities.endScope(screen.capabilityScope)
             done()
         }
     }
