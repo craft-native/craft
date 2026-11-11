@@ -91,6 +91,16 @@ pub fn decide(url: []const u8, os: std.Target.Os.Tag) Decision {
     return .refuse;
 }
 
+/// The command that opens `url` on Windows.
+///
+/// Not `cmd /c start <url>`: cmd parses its command line a second time, so the
+/// `&` in any ordinary query string ends the URL there and runs whatever
+/// follows as another command. The protocol handler takes the URL as a single
+/// argument and no shell ever reads it.
+pub fn windowsArgv(url: []const u8) [3][]const u8 {
+    return .{ "rundll32.exe", "url.dll,FileProtocolHandler", url };
+}
+
 const testing = std.testing;
 
 /// Every desktop the shell bridge runs on.
@@ -208,4 +218,16 @@ test "an absurdly long scheme is refused rather than truncated" {
     @memset(&buf, 'a');
     buf[255] = ':';
     try expectEverywhere(.refuse, &buf);
+}
+
+test "Windows opens a URL without a shell reading it" {
+    // `&` is a command separator to cmd and an ordinary character in a query
+    // string. The URL has to arrive whole, as its own argument.
+    const url = "https://example.com/?a=1&calc.exe";
+    const argv = windowsArgv(url);
+    try testing.expectEqualStrings(url, argv[argv.len - 1]);
+    for (argv) |arg| {
+        try testing.expect(!std.ascii.eqlIgnoreCase(arg, "cmd"));
+        try testing.expect(!std.ascii.eqlIgnoreCase(arg, "cmd.exe"));
+    }
 }

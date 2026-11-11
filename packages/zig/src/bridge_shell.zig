@@ -507,7 +507,7 @@ pub const ShellBridge = struct {
                 std.log.debug("child process wait failed: {}", .{err});
             };
         } else if (comptime builtin.os.tag == .windows) {
-            const argv = [_][]const u8{ "cmd", "/c", "start", url };
+            const argv = shell_url.windowsArgv(url);
             self.fireAndForget(&argv);
         }
 
