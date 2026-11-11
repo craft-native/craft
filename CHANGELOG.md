@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.498...v0.0.499)
+
+## 🐛 Bug Fixes
+
+- **shell**: open URLs on Windows without cmd parsing them ([8d65620](https://github.com/craft-native/craft/commit/8d65620)) _(by Chris Breuer)_
+- **shell**: open settings and mail URLs and reject a refused open ([b40de6a](https://github.com/craft-native/craft/commit/b40de6a)) _(by Chris Breuer)_
+- **ios**: a drag that scrolls the page does not also press what it began on ([cd5ae30](https://github.com/craft-native/craft/commit/cd5ae30)) _(by glennmichael123)_
+- **ios**: a screen that is leaving does not take the keyboard back ([358a5e3](https://github.com/craft-native/craft/commit/358a5e3)) _(by glennmichael123)_ ([#497](https://github.com/craft-native/craft/issues/497))
+- **android**: do not call a notification scheduled or cancelled when its write failed ([6bbd4ab](https://github.com/craft-native/craft/commit/6bbd4ab)) _(by glennmichael123)_
+- **ios**: keep storage listing and clearing when one stored value is damaged ([8e6dafc](https://github.com/craft-native/craft/commit/8e6dafc)) _(by glennmichael123)_
+- **android**: stop a sound whatever fade audio.stop was given ([ba1f67d](https://github.com/craft-native/craft/commit/ba1f67d)) _(by glennmichael123)_
+- refuse a files.write whose name or contents are not strings, on every host ([741b069](https://github.com/craft-native/craft/commit/741b069)) _(by glennmichael123)_
+- describe a link whatever its sender wrote, instead of closing the app ([b4207c2](https://github.com/craft-native/craft/commit/b4207c2)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ios**: split the 697-line navigation UI case into the five journeys it contained ([2e913a4](https://github.com/craft-native/craft/commit/2e913a4)) _(by glennmichael123)_ ([#505](https://github.com/craft-native/craft/issues/505))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.497...v0.0.498)
 
 ## 🚀 Features
