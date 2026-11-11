@@ -2919,6 +2919,18 @@ describe('native renderer component contract', () => {
     for (const host of [android, androidBridge]) expect(host).not.toContain('queryParameterNames')
   })
 
+  it('does not call a notification scheduled, or cancelled, when the write behind it failed', () => {
+    // UIKit answers NOTIFICATION_ERROR when the system refuses the request.
+    // Android stores what its receiver will show and set the alarm whether or
+    // not that was saved, and cancelled the alarm whether or not it was
+    // removed. Run in packages/android/src/notification-storage-failure.test.ts.
+    expect(iosActions).toContain('complete(requestToken, failure("NOTIFICATION_ERROR", addError.localizedDescription), completion)')
+    expect(androidCapabilities).toContain('if (!CraftNativeStorage.commit(notificationStorage) { it.putString(id, stored.toString()) }) {')
+    expect(androidCapabilities).toContain('return failure("NOTIFICATION_ERROR", "The notification could not be saved")')
+    expect(androidCapabilities).toContain('if (!CraftNativeStorage.commit(notificationStorage) { it.remove(id) }) return false')
+    expect(androidCapabilities).not.toMatch(/notificationStorage\.edit\(\)/)
+  })
+
   it('answers a stored value it cannot read as corrupt, and keeps listing and clearing beside it', () => {
     // STORAGE_CORRUPT is what an app catches to start a value again;
     // STORAGE_ERROR is a disk that failed. UIKit gave the second for a file

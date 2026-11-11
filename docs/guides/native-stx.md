@@ -1774,6 +1774,10 @@ lastInsertId }`; transaction methods resolve to `true` on success. Local
 notification schedules are persisted by the OS on iOS and through
 `AlarmManager` on Android, so they do not depend on a running JavaScript
 process. The Android receiver is registered only for native-renderer projects.
+A notification that could not be saved or handed to the system rejects with
+`NOTIFICATION_ERROR` and is not scheduled; on Android so does a `cancel` or
+`cancelAll` whose removal did not reach the disk, and what could not be
+removed stays scheduled.
 
 `enableLocalDatabase`, `enableLocalNotifications`, and `enableDeepLinks` are
 explicit configuration gates. The local database is one connection shared by

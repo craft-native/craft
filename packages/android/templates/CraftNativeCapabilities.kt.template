@@ -1529,13 +1529,10 @@ internal class CraftNativeCapabilities(
             "cancel" -> {
                 val id = validKey(args.opt(0))
                 complete(requestToken, if (id == null) failure("INVALID_ARGUMENT", "Notifications.cancel needs an id")
-                    else { cancelNotification(id); success(true) }, completion)
+                    else if (cancelNotification(id)) success(true)
+                    else failure("NOTIFICATION_ERROR", "The notification could not be cancelled"), completion)
             }
-            "cancelAll" -> {
-                notificationStorage.all.keys.forEach(::cancelNotification)
-                CraftNativeNotifications.cancelAll(context)
-                complete(requestToken, success(true), completion)
-            }
+            "cancelAll" -> complete(requestToken, cancelEveryNotification(), completion)
             "pending" -> complete(requestToken, success(JSONArray(notificationStorage.all.values.mapNotNull {
                 runCatching { JSONObject(it as String) }.getOrNull()
             })), completion)
@@ -1561,7 +1558,13 @@ internal class CraftNativeCapabilities(
         val id = validKey(value?.opt("id")) ?: UUID.randomUUID().toString()
         val fireAt = System.currentTimeMillis() + value!!.optLong("delay", 0).coerceAtLeast(0)
         val stored = JSONObject(value.toString()).put("id", id).put("fireAt", fireAt)
-        notificationStorage.edit().putString(id, stored.toString()).commit()
+        // What is stored under the id is what the receiver shows when the
+        // alarm fires, usually in a process started for it. Scheduled without
+        // being saved, the alarm fired, found nothing and showed nothing,
+        // after this had answered with the id.
+        if (!CraftNativeStorage.commit(notificationStorage) { it.putString(id, stored.toString()) }) {
+            return failure("NOTIFICATION_ERROR", "The notification could not be saved")
+        }
         scheduleStored(stored)
         return success(id)
     }
@@ -1583,14 +1586,34 @@ internal class CraftNativeCapabilities(
         )
     }
 
-    private fun cancelNotification(id: String) {
+    /**
+     * Cancels a scheduled notification. False when its removal did not reach
+     * the disk, and then nothing is cancelled.
+     *
+     * Every start schedules whatever is stored (`restoreNotifications`). The
+     * alarm used to be cancelled first and the failed removal ignored, so a
+     * reminder looked cancelled for the life of the process and was
+     * scheduled again by the next one. It is removed from storage first, and
+     * one that cannot be removed stays as it was, alarm included, and the
+     * call says so.
+     */
+    private fun cancelNotification(id: String): Boolean {
+        if (!CraftNativeStorage.commit(notificationStorage) { it.remove(id) }) return false
         CraftNativeNotifications.cancel(context, id)
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = notificationIntent(id)
         alarm.cancel(intent)
         intent.cancel()
-        notificationStorage.edit().remove(id).commit()
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id, 0)
+        return true
+    }
+
+    /** `cancelAll`: every scheduled notification, and an error naming how many could not be. */
+    private fun cancelEveryNotification(): CraftNativeCapabilityResult {
+        val left = notificationStorage.all.keys.toList().filterNot(::cancelNotification)
+        CraftNativeNotifications.cancelAll(context)
+        return if (left.isEmpty()) success(true)
+            else failure("NOTIFICATION_ERROR", "${left.size} scheduled notifications could not be cancelled")
     }
 
     private fun notificationIntent(id: String): PendingIntent = PendingIntent.getBroadcast(
