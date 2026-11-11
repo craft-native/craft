@@ -111,8 +111,10 @@ concurrency:
   # Releaser requires the exact release SHA. Give it its own pending slot,
   # just as Main CI does, so a newer push cannot replace native acceptance.
   group: "mobile-e2e-${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore: release v') && github.sha) || (github.head_ref || github.ref) }}-${{ inputs.scope || 'all' }}"
-  # Finish Main acceptance; newer commits replace the single pending run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push to main cancels the superseded commit's run, freeing its
+  # macOS runners; a release commit's run, in its own group, is never
+  # cancelled and cancels nothing (see ci.yml).
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore: release v')) }}"
 
 permissions:
   contents: read

@@ -108,12 +108,15 @@ jobs:
       enforce_high: false
 
   pantry:
-    # The reusable SBOM workflow includes the vulnerability scan. Publishing
+    # Built beside the two acceptance gates, not after them: this job only
+    # stages a draft, and `publish-release` is what waits for acceptance, so
+    # the 18 minutes of building and notarizing no longer follow the wait.
+    # A release that fails acceptance leaves a draft nobody publishes.
+    #
+    # The reusable SBOM workflow includes the vulnerability scan. Staging
     # must wait for its existing Critical gate, not merely attach it afterward.
-    needs: [validate-release, release-sbom, source-acceptance, source-suite, native-acceptance, native-suite]
-    # A reused acceptance skips its suite, which a plain needs would read as a
-    # reason to skip publishing too.
-    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.source-acceptance.result == 'success' && needs.native-acceptance.result == 'success' && (needs.source-acceptance.outputs.reused == 'true' || needs.source-suite.result == 'success') && (needs.native-acceptance.outputs.reused == 'true' || needs.native-suite.result == 'success') }}
+    needs: [validate-release, release-sbom]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}
     name: pantry (${{ matrix.platform.name }})
     strategy:
       fail-fast: false

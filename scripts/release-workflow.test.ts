@@ -270,14 +270,17 @@ test.each(['navigation', 'uikit'])('interrupted %s results survive temporary wor
   expect(readFileSync(join(destination, 'progress.log'), 'utf8')).toBe('unfinished XCTest evidence')
 })
 
-test.each(['ci.yml', 'mobile-e2e.yml'])('%s lets Main acceptance finish while superseding pull request runs', (file) => {
+test.each(['ci.yml', 'mobile-e2e.yml'])('%s cancels a superseded push or pull request run, and never a release commit\'s', (file) => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as {
     concurrency: { 'group': string, 'cancel-in-progress': boolean | string, 'queue'?: string }
   }
   const policy = workflow.concurrency
   const expression = String(policy['cancel-in-progress']).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
-  for (const [event, cancel] of [['push', false], ['workflow_dispatch', false], ['pull_request', true]] as const)
-    expect(runInNewContext(expression, { github: { event_name: event } }), `${file}: ${event}`).toBe(cancel)
+  const startsWith = (text: string, prefix: string) => String(text ?? '').startsWith(prefix)
+  // A newer ordinary push frees the superseded commit's runners; a release
+  // commit (in its own group) neither cancels nor is cancelled.
+  for (const [event, message, cancel] of [['push', 'fix(ios): something', true], ['push', 'chore: release v0.0.499', false], ['workflow_dispatch', '', false], ['pull_request', '', true]] as const)
+    expect(runInNewContext(expression, { startsWith, github: { event_name: event, event: { head_commit: { message } } } }), `${file}: ${event} ${message}`).toBe(cancel)
   // Keep one active run and GitHub's single pending slot, without adding runners.
   expect(policy.group).toContain('github.ref')
   expect(policy.queue ?? 'single').toBe('single')
@@ -642,7 +645,11 @@ test('tag publication requires the complete source and native acceptance workflo
   }
   // Publishing needs both gates, and each suite passed or was reused.
   const accepted = "needs.source-acceptance.result == 'success' && needs.native-acceptance.result == 'success' && (needs.source-acceptance.outputs.reused == 'true' || needs.source-suite.result == 'success') && (needs.native-acceptance.outputs.reused == 'true' || needs.native-suite.result == 'success')"
-  for (const name of ['pantry', 'publish-release']) {
+  // Only publishing: the binaries are built and staged as a draft beside the
+  // gates, so their 18 minutes do not follow the wait for acceptance.
+  expect(needs(release.jobs.pantry)).toEqual(['validate-release', 'release-sbom'])
+  expect(release.jobs.pantry.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}")
+  for (const name of ['publish-release']) {
     for (const job of ['source-acceptance', 'source-suite', 'native-acceptance', 'native-suite'])
       expect(needs(release.jobs[name])).toContain(job)
     expect(release.jobs[name].if).toContain(accepted)
@@ -659,7 +666,8 @@ test('tag publication requires the complete source and native acceptance workflo
     }
     return found
   }
-  for (const name of ['pantry', 'publish-release', 'publish-pantry', 'npm', 'notify-registry']) {
+  // Everything that makes a release public waits for both gates.
+  for (const name of ['publish-release', 'publish-pantry', 'npm', 'notify-registry']) {
     expect(prerequisites(name).has('source-acceptance')).toBe(true)
     expect(prerequisites(name).has('native-acceptance')).toBe(true)
   }

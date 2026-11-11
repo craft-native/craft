@@ -5,16 +5,13 @@ import { join, resolve } from 'node:path'
 /**
  * Every job on the gate workflows declares a hang guard.
  *
- * GitHub's default job timeout is **360 minutes**, and both gate workflows set
- * `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` — so on a
- * push to main it is false, and the concurrency group holds one running run
- * plus one pending run. A newer push replaces the pending one and cannot touch
- * the running one.
+ * GitHub's default job timeout is **360 minutes**. A release commit's run sits
+ * in a concurrency group of its own that nothing cancels, and the Releaser
+ * waits on it; until 2026-11-11 an ordinary push to main could not cancel the
+ * run before it either, so the group held one running run plus one pending.
  *
- * Those two facts compose badly. One wedged job holds main's only running slot
- * for up to six hours, every later push queues behind a verdict for a commit
- * nobody will release, and the pending slot keeps being overwritten so those
- * runs are cancelled without ever starting. That is not hypothetical: on
+ * That composed badly. One wedged job holds a run's slot for up to six hours,
+ * and a release waits on it for as long. That is not hypothetical: on
  * 2026-11-10 `ios-native-templates` ran past ninety minutes against a
  * six-run maximum of sixty-four, three commits deep, and had to be cancelled
  * by hand to let HEAD start — twice.
@@ -96,14 +93,14 @@ test('the scan finds the gate workflows\' jobs', () => {
   }
 })
 
-test('both gate workflows still decline to cancel a running push', () => {
-  // The caps only matter because of this. If a workflow ever starts cancelling
-  // in progress on push, the reasoning above changes and this should be
-  // re-read rather than silently kept.
+test('both gate workflows cancel a superseded push, and never a release commit\'s run', () => {
+  // The caps still matter: a release commit's run is in a group of its own
+  // that nothing cancels, so a wedged job there holds the release. If this
+  // policy changes, the reasoning above should be re-read rather than kept.
   for (const path of gates) {
     expect(readFileSync(join(root, path), 'utf8'),
       `${path} no longer matches the concurrency this rule reasons about`)
-      .toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
+      .toContain("cancel-in-progress: \"${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore: release v')) }}\"")
   }
 })
 

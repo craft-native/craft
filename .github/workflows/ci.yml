@@ -25,8 +25,12 @@ concurrency:
   # prevent that), so release commits get a group of their own: of twelve runs on
   # main, ten were dropped this way while v0.0.397 to v0.0.408 waited for theirs.
   group: "source-ci-${{ github.workflow }}-${{ inputs.software_cold_provisioning_diagnostic && 'software-cold-provisioning-diagnostic' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore: release v') && github.sha) || (github.head_ref || github.ref) }}"
-  # Finish Main acceptance; newer commits replace the single pending run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push to main cancels the run of the commit it supersedes: that
+  # verdict is for a commit nobody will release, and its macOS jobs were what a
+  # release commit's run queued behind (v0.0.497: 107 minutes at the gate, its
+  # longest job 39). A release commit is in its own group above, so nothing
+  # cancels it, and it cancels nothing.
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore: release v')) }}"
 
 defaults:
   run:
