@@ -9,6 +9,8 @@ const desktop_window_reads = @import("desktop_window_reads.zig");
 const json_utils = @import("json_utils.zig");
 const io_context = @import("io_context.zig");
 const desktop_deep_link = @import("desktop_deep_link.zig");
+const desktop_instance = @import("desktop_instance.zig");
+const linux_desktop = @import("linux_desktop.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -143,6 +145,16 @@ pub extern "c" fn webkit_javascript_result_get_js_value(result: *anyopaque) *any
 pub extern "c" fn jsc_value_to_json(value: *anyopaque, indent: c_uint) ?[*:0]u8;
 
 pub extern "c" fn gtk_container_add(container: *anyopaque, widget: *anyopaque) void;
+extern "c" fn gtk_box_new(orientation: c_int, spacing: c_int) *anyopaque;
+extern "c" fn gtk_box_pack_start(box: *anyopaque, child: *anyopaque, expand: c_int, fill: c_int, padding: c_uint) void;
+extern "c" fn gtk_widget_grab_focus(widget: *anyopaque) void;
+extern "c" fn g_application_activate(app: *anyopaque) void;
+extern "c" fn g_application_quit(app: *anyopaque) void;
+extern "c" fn g_simple_action_new(name: [*:0]const u8, parameter_type: ?*const anyopaque) *anyopaque;
+extern "c" fn g_action_map_add_action(map: *anyopaque, action: *anyopaque) void;
+extern "c" fn g_action_group_activate_action(group: *anyopaque, name: [*:0]const u8, parameter: ?*anyopaque) void;
+extern "c" fn g_variant_new_string(text: [*:0]const u8) *anyopaque;
+extern "c" fn g_variant_get_string(variant: *anyopaque, length: ?*usize) [*:0]const u8;
 
 pub extern "c" fn g_signal_connect_data(
     instance: *anyopaque,
@@ -329,6 +341,11 @@ pub fn getWindowCount() u32 {
     return @intCast(desktop_windows.count());
 }
 
+fn desktopTarget(id: u32) ?linux_desktop.Target {
+    const entry = desktop_windows.byId(id) orelse return null;
+    return .{ .window = entry.window, .webview = entry.webview };
+}
+
 fn registerWindow(gtk_window: *anyopaque, webview: *anyopaque) ?u32 {
     return desktop_windows.remember(@intFromPtr(gtk_window), @intFromPtr(webview));
 }
@@ -342,6 +359,7 @@ fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
         deliverWindowEvent(entry, "close", "");
     }
     const entry = desktop_windows.forgetWindow(@intFromPtr(widget)) orelse return;
+    linux_desktop.windowDestroyed(entry.id);
     const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
     window_registry.forgetOwner(entry.webview);
     window_registry.forget(entry.window);
@@ -463,12 +481,36 @@ fn onScriptMessage(_: *anyopaque, result: *anyopaque, user_data: ?*anyopaque) ca
         return;
     }
     if (!std.mem.eql(u8, envelope.kind, "window")) {
-        bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
+        handleDesktopAction(entry, envelope.kind, envelope.action, envelope.data) catch |err| {
+            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+        };
         return;
     }
     handleWindowAction(envelope.action, envelope.data) catch |err| {
         bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
     };
+}
+
+/// Namespaces beyond `window`, `clipboard` and `notification`. Anything not
+/// named here is not implemented on Linux and says so to the caller.
+fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    if (eql(u8, kind, "menu")) return linux_desktop.handleMenu(action, data, entry.id);
+    if (eql(u8, kind, "dialog")) return linux_desktop.queueDialog(action, data, entry.id);
+    if (eql(u8, kind, "nativeUI") and eql(u8, action, "showContextMenu"))
+        return linux_desktop.showContextMenu(data, entry.id);
+    if (eql(u8, kind, "app")) {
+        if (eql(u8, action, "quit")) {
+            if (app_instance) |app| g_application_quit(app);
+            return;
+        }
+        if (eql(u8, action, "relaunch")) {
+            try desktop_instance.spawnRelaunch(std.heap.c_allocator);
+            if (app_instance) |app| g_application_quit(app);
+            return;
+        }
+    }
+    return error.PlatformNotSupported;
 }
 
 fn namedWindowResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
@@ -807,6 +849,35 @@ fn onApplicationOpen(_: *anyopaque, files: [*]*anyopaque, count: c_int, _: [*:0]
     gtk_window_present(@ptrFromInt(entry.window));
 }
 
+/// A second launch of a `--single-instance` app arrives here, in the process
+/// that is already running: show its window and tell its page what the other
+/// launch was asked to do.
+fn onLaunchForwarded(_: *anyopaque, parameter: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    const variant = parameter orelse return;
+    const parsed = desktop_instance.decode(std.heap.c_allocator, std.mem.span(g_variant_get_string(variant, null))) catch return;
+    defer parsed.deinit();
+    const entry = desktop_windows.latest() orelse return;
+    gtk_window_present(@ptrFromInt(entry.window));
+    const allocator = std.heap.c_allocator;
+    if (parsed.value.url) |url| {
+        if (desktop_deep_link.deliveryScript(allocator, url)) |script| {
+            defer allocator.free(script);
+            runScript(entry.webview, script);
+        } else |_| {}
+    }
+    const script = desktop_instance.secondInstanceScript(allocator, parsed.value) catch return;
+    defer allocator.free(script);
+    runScript(entry.webview, script);
+}
+
+fn runScript(webview: usize, script: []const u8) void {
+    const script_z = @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script) catch return;
+    defer std.heap.c_allocator.free(script_z);
+    webkit_web_view_run_javascript(@ptrFromInt(webview), script_z, null, null, null);
+}
+
+const launch_action = "craft-launch";
+
 fn registerApplication() !?*anyopaque {
     if (app_instance != null) return null;
     gtk_init(null, null);
@@ -819,6 +890,12 @@ fn registerApplication() !?*anyopaque {
     if (g_signal_connect_data(app, "activate", @ptrCast(&onApplicationActivated), null, null, 0) == 0 or
         g_signal_connect_data(app, "open", @ptrCast(&onApplicationOpen), null, null, 0) == 0)
         return error.SignalConnectionFailed;
+    // Exported with the application, so a later launch can reach it by name.
+    const action = g_simple_action_new(launch_action, "s"); // G_VARIANT_TYPE_STRING
+    defer g_object_unref(action);
+    if (g_signal_connect_data(action, "activate", @ptrCast(&onLaunchForwarded), null, null, 0) == 0)
+        return error.SignalConnectionFailed;
+    g_action_map_add_action(app, action);
     if (g_application_register(app, null, null) == 0) return error.ApplicationRegistrationFailed;
     if (g_application_get_is_remote(app) != 0) return app;
     app_instance = app;
@@ -837,6 +914,30 @@ pub fn forwardDeepLinkIfRunning(url: []const u8) !bool {
     // GApplication queues remote Open calls on D-Bus. This forwarding process
     // does not run g_application_run(), whose shutdown normally flushes them.
     // Flush before unref/exit so a warm link cannot die in the sender's queue.
+    const connection = g_application_get_dbus_connection(remote) orelse return error.ApplicationBusUnavailable;
+    if (g_dbus_connection_flush_sync(connection, null, null) == 0) return error.DeepLinkDispatchFailed;
+    return true;
+}
+
+/// Hand this launch to the instance that is already running, if there is one.
+///
+/// With `--single-instance` the running page receives the launch's arguments
+/// and deep link as `craft.app.onSecondInstance`. Without it, the running
+/// window is only brought forward: the same executable showing the same page
+/// is already open, and GApplication will not register it twice.
+pub fn forwardLaunchIfRunning(args: []const []const u8, url: ?[]const u8) !bool {
+    const remote = try registerApplication() orelse return false;
+    defer g_object_unref(remote);
+    if (desktop_instance.isSingleInstance()) {
+        const allocator = std.heap.c_allocator;
+        const payload = try desktop_instance.encode(allocator, args, url);
+        defer allocator.free(payload);
+        const payload_z = try @import("memory.zig").dupeZ(allocator, u8, payload);
+        defer allocator.free(payload_z);
+        g_action_group_activate_action(remote, launch_action, g_variant_new_string(payload_z));
+    } else {
+        g_application_activate(remote);
+    }
     const connection = g_application_get_dbus_connection(remote) orelse return error.ApplicationBusUnavailable;
     if (g_dbus_connection_flush_sync(connection, null, null) == 0) return error.DeepLinkDispatchFailed;
     return true;
@@ -968,8 +1069,16 @@ pub const Window = struct {
             gtk_window_move(window, @intCast(x), @intCast(y));
         }
 
-        // Add WebView to window
-        gtk_container_add(window, webview);
+        // The web view sits in a vertical box so an application menu bar can
+        // be placed above it later (`linux_desktop.zig`).
+        const box = gtk_box_new(1, 0); // GTK_ORIENTATION_VERTICAL
+        gtk_box_pack_start(box, webview, 1, 1, 0);
+        gtk_container_add(window, box);
+        gtk_widget_show(box);
+        gtk_widget_show(webview);
+        gtk_widget_grab_focus(webview);
+        linux_desktop.lookup = &desktopTarget;
+        linux_desktop.attachFileDrop(webview);
 
         if (g_signal_connect_data(window, "focus-in-event", @ptrCast(&onWindowFocusIn), null, null, 0) == 0 or
             g_signal_connect_data(window, "focus-out-event", @ptrCast(&onWindowFocusOut), null, null, 0) == 0 or
@@ -1013,6 +1122,7 @@ pub const Window = struct {
         // Register the page API before any load. The user-content manager
         // reapplies this document-start script after navigation too.
         try created.injectScript(@embedFile("js/craft-bridge.js"));
+        try created.injectScript(@embedFile("js/craft-desktop.js"));
         if (try @import("desktop_deep_link.zig").initialScript(std.heap.c_allocator)) |script| {
             defer std.heap.c_allocator.free(script);
             try created.injectScript(script);
