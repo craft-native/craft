@@ -962,6 +962,12 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(messages.accessibilityValue, "3")
         XCTAssertNotNil(messages.configuration?.image, "the primary action must have a visible native symbol")
         XCTAssertNotNil(add.configuration?.image, "the companion must have a visible native symbol")
+        // Grouped symbols are 17 points at medium weight, inside actions that
+        // keep their 48 by 52. The comparison tells sizes apart.
+        let groupedSymbol = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+        XCTAssertNotEqual(groupedSymbol, UIImage.SymbolConfiguration(pointSize: 20, weight: .medium))
+        XCTAssertEqual(messages.configuration?.preferredSymbolConfigurationForImage, groupedSymbol)
+        XCTAssertEqual(add.configuration?.preferredSymbolConfigurationForImage, groupedSymbol)
         XCTAssertTrue(add.showsMenuAsPrimaryAction)
         XCTAssertEqual((add.menu?.children.first as? UIAction)?.title, "Workout")
         // One control: both actions live inside the shared surface, which
@@ -994,6 +1000,10 @@ final class NativeNavigationUnitTests: XCTestCase {
         await displayWait("group separates") { CraftChrome.shared.tabAccessory?.accessoryLayout == nil && add.superview === self.shell.view }
         XCTAssertTrue(messages.superview === shell.view)
         XCTAssertFalse(material.isUserInteractionEnabled)
+        // A separate action keeps the bar-button size and weight.
+        let separateSymbol = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+        XCTAssertEqual(messages.configuration?.preferredSymbolConfigurationForImage, separateSymbol)
+        XCTAssertEqual(add.configuration?.preferredSymbolConfigurationForImage, separateSymbol)
         screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
         await displayWait("group material is removed") { CraftChrome.shared.tabAccessory == nil && (material.isHidden || material.superview == nil) }
     }

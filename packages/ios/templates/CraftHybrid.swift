@@ -1597,10 +1597,13 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         view.setNeedsLayout()
     }
 
-    /// Symbols in a group carry the weight of the system's own map controls;
-    /// a separate action keeps the lighter bar-button weight.
+    /// Symbols in a group carry the weight of the system's own map controls,
+    /// and their size: at 20 points a symbol filled its 48-point action
+    /// where the ones in Maps leave half of theirs clear. The control and
+    /// its touch targets keep their size; only the symbol is smaller. A
+    /// separate action keeps the lighter bar-button weight.
     private static func accessorySymbol(grouped: Bool) -> UIImage.SymbolConfiguration {
-        UIImage.SymbolConfiguration(pointSize: grouped ? 20 : 22, weight: grouped ? .medium : .regular)
+        UIImage.SymbolConfiguration(pointSize: grouped ? 17 : 22, weight: grouped ? .medium : .regular)
     }
 
     /// The surface under the floating actions. A group is a capsule of
