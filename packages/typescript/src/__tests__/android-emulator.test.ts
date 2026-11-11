@@ -708,16 +708,37 @@ test('a timed-out owned ADB readiness probe is reaped and retried within the ori
   const { root, options } = fixture(true)
   options.bootTimeoutMs = 16000
   const adb = join(options.sdkRoot, 'platform-tools/adb')
-  writeFileSync(adb, readFileSync(adb, 'utf8').replace('if [ "$1" = devices ]; then', `if [ "$1" = devices ] && [ -f "$ANDROID_HOME/started" ] && [ ! -f "$ANDROID_HOME/probe-timed-out" ]; then
-  touch "$ANDROID_HOME/probe-timed-out"
-  sleep 30
+  // Which probe stalls is decided by counting them, not by looking for the
+  // emulator. The first `devices` call is the check that the serial is free,
+  // made before the emulator starts; the next is the first readiness probe,
+  // and that one stalls.
+  //
+  // This used to stall "the first probe that finds the emulator started", by
+  // testing for its marker file — and the script then tested for the same
+  // file again a few lines on, to decide whether to list the device. The
+  // emulator creates that file concurrently, so it could appear between the
+  // two tests: no stall, and the device listed at once. The session then
+  // booted in 110 ms with no probe ever timing out, and the assertion below
+  // failed a release-gating leg for a commit that had touched none of this.
+  writeFileSync(adb, readFileSync(adb, 'utf8').replace('if [ "$1" = devices ]; then', `if [ "$1" = devices ]; then
+  if [ -f "$ANDROID_HOME/serial-checked" ] && [ ! -f "$ANDROID_HOME/probe-timed-out" ]; then
+    touch "$ANDROID_HOME/probe-timed-out"
+    sleep 30
+  fi
+  touch "$ANDROID_HOME/serial-checked"
 fi
 if [ "$1" = devices ]; then`), { mode: 0o755 })
   let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
   try {
     session = await createAndroidEmulator(options)
+    // First that the fixture did its part, so a failure below is the SDK's.
+    expect(existsSync(join(options.sdkRoot, 'probe-timed-out')), 'the fixture never stalled a probe, so nothing here was tested').toBe(true)
     const trace = readFileSync(join(options.artifactsDirectory, 'device-commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
-    expect(trace.some(entry => entry.timedOut && entry.commandGroupDisposed)).toBe(true)
+    const stalled = trace.filter(entry => entry.timedOut)
+    expect(stalled.map(entry => entry.args.at(-1)), 'exactly the one stalled probe timed out').toEqual(['devices'])
+    expect(stalled[0].commandGroupDisposed).toBe(true)
+    // And it was retried: a later `devices` probe answered.
+    expect(trace.some(entry => entry.sequence > stalled[0].sequence && entry.args.at(-1) === 'devices' && !entry.timedOut && entry.code === 0)).toBe(true)
     expect(trace.some(entry => entry.args.includes('sys.boot_completed') && entry.code === 0)).toBe(true)
     const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
     expect(identity.bootElapsedMs).toBeLessThanOrEqual(options.bootTimeoutMs)
