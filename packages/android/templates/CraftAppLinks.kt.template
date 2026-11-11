@@ -17,6 +17,34 @@ internal fun craftAppLinkPathMatches(pattern: String, path: String): Boolean {
 
 /** Ordered website path rules, also publishable as Android 15 dynamic App Links. */
 internal object CraftAppLinks {
+    /**
+     * A link as a screen or a page hears it.
+     *
+     * A link is whatever its sender wrote. One written without `//`
+     * (`myapp:open?x=1`) is what Android calls opaque: it has no path or
+     * query of its own, and asking for its parameters throws. Both hosts
+     * asked on every link, on the main thread, so the app closed on being
+     * handed one. Its path and query are read from what follows the scheme,
+     * which is how UIKit reads the same link. A parameter named twice gives
+     * its first value.
+     */
+    fun describe(uri: Uri): JSONObject {
+        val rest = if (uri.isOpaque) uri.encodedSchemeSpecificPart.orEmpty() else null
+        val asked = if (rest == null) uri else Uri.parse("craft://link/?" + rest.substringAfter('?', ""))
+        // A link with nothing after its `?`, or no `?`, has no parameters;
+        // asked anyway, Android answers one with an empty name.
+        val named = if (asked.encodedQuery.isNullOrEmpty()) emptySet() else asked.queryParameterNames
+        return JSONObject()
+            .put("url", uri.toString())
+            .put("scheme", uri.scheme ?: "")
+            .put("host", uri.host ?: "")
+            .put("path", if (rest == null) uri.path ?: "" else Uri.decode(rest.substringBefore('?')))
+            .put("query", asked.query ?: "")
+            .put("queryParams", JSONObject().apply {
+                named.forEach { name -> put(name, asked.getQueryParameter(name) ?: "") }
+            })
+    }
+
     fun opensInBrowser(config: JSONObject?, uri: Uri): Boolean {
         if (uri.scheme != "https") return false
         val hosts = config?.optJSONArray("appLinks") ?: return false

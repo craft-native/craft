@@ -1244,7 +1244,10 @@ all: no `WKWebView` is ever created.
 - A deep link to a native path opens its screen in the tab that owns it. A
   universal link to the site's host that no screen draws opens in the in-app
   browser. Anything else reaches the screens as `DEEP_LINK`. A link that
-  launched the app waits for the shell.
+  launched the app waits for the shell. A link is described whatever its
+  sender wrote: `queryParams` gives the first value of a parameter named
+  more than once, and a link written without `//` (`myapp:open?x=1`) has its
+  path and parameters read the same way on both hosts.
 - Tab taps and completed left/right swipes switch stacks natively. In a hybrid
   app the gesture works over both native screens and the WebView; the page can
   disable it with `craft.tabBar.set(tabs, { swipeEnabled: false })`. A swipe

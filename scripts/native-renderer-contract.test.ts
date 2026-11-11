@@ -2902,6 +2902,23 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).not.toContain('Base64.decode(data, Base64.DEFAULT)')
   })
 
+  it('describes a link whatever its sender wrote, without closing the app', () => {
+    // A link is outside input. UIKit built its parameters with unique keys
+    // and trapped on one named twice; Android asked an opaque link
+    // (`myapp:open?x=1`) for its parameters and threw. Both are run: UIKit's
+    // describer against Foundation, Android's on the device.
+    const androidAppLinks = readFileSync(join(root, 'packages/android/templates/CraftAppLinks.kt.template'), 'utf8')
+    const androidBridge = readFileSync(join(root, 'packages/android/templates/CraftBridge.kt.template'), 'utf8')
+    expect(iosActions).toContain('uniquingKeysWith: { first, _ in first }),')
+    expect(iosActions).not.toContain('Dictionary(uniqueKeysWithValues: (components?.queryItems')
+    expect(androidAppLinks).toContain('val rest = if (uri.isOpaque) uri.encodedSchemeSpecificPart.orEmpty() else null')
+    // One describer on Android, used by the activity and by the page bridge:
+    // nothing else may ask a link it was handed for its parameters.
+    expect(android).toContain('internal fun deepLinkData(uri: android.net.Uri): JSONObject = CraftAppLinks.describe(uri)')
+    expect(androidBridge.match(/CraftAppLinks\.describe\(Uri\.parse\(/g)?.length).toBe(2)
+    for (const host of [android, androidBridge]) expect(host).not.toContain('queryParameterNames')
+  })
+
   it('rolls back a transaction whose screen closed, on both hosts', () => {
     // One connection is shared by every screen, so a transaction left open
     // by a screen that is gone swallows every later write until the process

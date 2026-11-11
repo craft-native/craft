@@ -5351,20 +5351,8 @@ class CraftBridge(
 
         activity.runOnUiThread {
             if (initialURL != null) {
-                val uri = Uri.parse(initialURL)
-                val json = JSONObject().apply {
-                    put("url", initialURL)
-                    put("scheme", uri.scheme ?: "")
-                    put("host", uri.host ?: "")
-                    put("path", uri.path ?: "")
-                    put("query", uri.query ?: "")
-                    // Parse query parameters
-                    val queryParams = JSONObject()
-                    uri.queryParameterNames.forEach { name ->
-                        queryParams.put(name, uri.getQueryParameter(name) ?: "")
-                    }
-                    put("queryParams", queryParams)
-                }
+                // Described where every link is: a link without `//` threw here.
+                val json = CraftAppLinks.describe(Uri.parse(initialURL)).put("url", initialURL)
                 evaluatePromiseJavascript(
                     "window._craftDeepLinkResolve && window._craftDeepLinkResolve($json)"
                 )
@@ -5415,21 +5403,7 @@ class CraftBridge(
     private fun dispatchDeepLink(url: String, initial: Boolean) {
         if (nativeDeepLinks && CraftNative.dispatchDeepLink(url, initial)) return
 
-        val uri = Uri.parse(url)
-        val json = JSONObject().apply {
-            put("url", url)
-            put("scheme", uri.scheme ?: "")
-            put("host", uri.host ?: "")
-            put("path", uri.path ?: "")
-            put("query", uri.query ?: "")
-            // Parse query parameters
-            val queryParams = JSONObject()
-            uri.queryParameterNames.forEach { name ->
-                queryParams.put(name, uri.getQueryParameter(name) ?: "")
-            }
-            put("queryParams", queryParams)
-            put("initial", initial)
-        }
+        val json = CraftAppLinks.describe(Uri.parse(url)).put("url", url).put("initial", initial)
 
         evaluateJavascriptUnlessClosed(
             "window.dispatchEvent(new CustomEvent('craftDeepLink', {detail: $json}));"

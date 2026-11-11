@@ -1537,7 +1537,11 @@ enum CraftNativeActions {
             "host": url.host ?? "",
             "path": url.path,
             "query": url.query ?? "",
-            "queryParams": Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") }),
+            // A link is whatever its sender wrote, and may name a parameter
+            // twice. Built with unique keys this trapped, and the app closed
+            // on being opened by such a link. The first value is kept, which
+            // is the one Android gives.
+            "queryParams": Dictionary((components?.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first }),
         ]
     }
 

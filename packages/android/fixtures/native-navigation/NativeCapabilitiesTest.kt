@@ -1844,6 +1844,45 @@ class NativeCapabilitiesTest {
     }
 
     /**
+     * A link is described whatever its shape, since a link is whatever its
+     * sender wrote. One written without `//` (`myapp:open?x=1`) is what
+     * Android calls opaque: it throws when asked for its parameters, and the
+     * activity asked on every link it was opened by.
+     */
+    @Test
+    fun aLinkIsDescribedWhateverItsShape() {
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            fun describe(link: String): JSONObject = activity.deepLinkData(android.net.Uri.parse(link))
+            fun params(link: String): Map<String, String> = describe(link).getJSONObject("queryParams").let { found ->
+                found.keys().asSequence().associateWith { found.getString(it) }
+            }
+            assertEquals(mapOf("tag" to "a", "id" to "7"), params("myapp://open?tag=a&id=7"))
+            // A parameter named twice gives its first value, as on UIKit.
+            assertEquals(mapOf("tag" to "a", "id" to "7"), params("myapp://open?tag=a&id=7&tag=b&id=8"))
+            assertEquals(mapOf("q" to "a b"), params("myapp://open?q=a%20b&q=c"))
+            assertEquals(emptyMap<String, String>(), params("myapp://open"))
+            assertEquals(emptyMap<String, String>(), params("myapp://open?"))
+            // Without `//`: the same answers, where this threw.
+            val opaque = describe("myapp:open?x=1&x=2&name=a%20b#top")
+            assertEquals("myapp", opaque.getString("scheme"))
+            assertEquals("", opaque.getString("host"))
+            assertEquals("open", opaque.getString("path"))
+            assertEquals(mapOf("x" to "1", "name" to "a b"), params("myapp:open?x=1&x=2&name=a%20b#top"))
+            assertEquals(emptyMap<String, String>(), params("myapp:open"))
+            assertEquals(emptyMap<String, String>(), params("myapp:open?"))
+            assertEquals(emptyMap<String, String>(), params("mailto:someone@example.com"))
+        }
+        finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    /**
      * A host that closes with a transaction open gives the database back.
      *
      * Each host has its own connection to the one database file: the

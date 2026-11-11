@@ -8871,15 +8871,8 @@ class MainActivity : AppCompatActivity() {
             else -> CraftNativeCapabilityResult(code = "UNKNOWN_ACTION", message = "Unsupported native API")
         }
 
-    internal fun deepLinkData(uri: android.net.Uri): JSONObject = JSONObject()
-        .put("url", uri.toString())
-        .put("scheme", uri.scheme ?: "")
-        .put("host", uri.host ?: "")
-        .put("path", uri.path ?: "")
-        .put("query", uri.query ?: "")
-        .put("queryParams", JSONObject().apply {
-            uri.queryParameterNames.forEach { name -> put(name, uri.getQueryParameter(name) ?: "") }
-        })
+    /** A link as the screens hear it: `CraftAppLinks.describe`, which the page bridge uses too. */
+    internal fun deepLinkData(uri: android.net.Uri): JSONObject = CraftAppLinks.describe(uri)
 
     /** App-wide news (the app's state, a link): every screen and the app script hear it. */
     private fun publish(type: String, payload: JSONObject) {
