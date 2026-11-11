@@ -1842,4 +1842,41 @@ class NativeCapabilitiesTest {
             instrumentation.waitForIdleSync()
         }
     }
+
+    /**
+     * A host that closes with a transaction open gives the database back.
+     *
+     * Each host has its own connection to the one database file: the
+     * activity's, and the script started for a background refresh with no
+     * activity. Closing a host mid-transaction must end the transaction, or
+     * the write lock it holds outlives the host and the next one cannot
+     * write.
+     */
+    @Test
+    fun aHostClosedMidTransactionLeavesTheDatabaseToTheNext() {
+        val config = JSONObject().put("enableLocalDatabase", true)
+        val table = "abandoned_${UUID.randomUUID().toString().replace("-", "")}"
+        val first = CraftNativeCapabilities(instrumentation.targetContext, config)
+        var second: CraftNativeCapabilities? = null
+        try {
+            assertNull(call(first, "Database", "execute", JSONArray()
+                .put("CREATE TABLE $table (id INTEGER PRIMARY KEY, name TEXT NOT NULL)").put(JSONArray())).code)
+            assertNull(call(first, "Database", "beginTransaction").code)
+            assertNull(call(first, "Database", "execute", JSONArray()
+                .put("INSERT INTO $table (name) VALUES (?)").put(JSONArray().put("Abandoned"))).code)
+            first.close()
+            val next = CraftNativeCapabilities(instrumentation.targetContext, config).also { second = it }
+            val write = call(next, "Database", "execute", JSONArray()
+                .put("INSERT INTO $table (name) VALUES (?)").put(JSONArray().put("Kept")))
+            assertNull("the next host could not write: ${write.code} ${write.message}", write.code)
+            val rows = call(next, "Database", "query", JSONArray()
+                .put("SELECT name FROM $table ORDER BY id").put(JSONArray())).data as JSONArray
+            assertEquals(1, rows.length())
+            assertEquals("Kept", rows.getJSONObject(0).getString("name"))
+        }
+        finally {
+            first.close()
+            second?.close()
+        }
+    }
 }

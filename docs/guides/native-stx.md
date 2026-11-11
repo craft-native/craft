@@ -1764,7 +1764,10 @@ explicit configuration gates. The local database is one connection shared by
 every screen. A second `beginTransaction` while one is open rejects with
 `DATABASE_ERROR` on both hosts, and a transaction whose screen closes before
 it commits or rolls back is rolled back, so it cannot hold later writes from
-other screens. `enableSecureStorage` and `enableBiometric` gate
+other screens. On Android the app script started with no activity has a
+connection of its own to the same file; a host that closes mid-transaction,
+that script or an activity being destroyed, rolls it back as well, so the
+next host does not find the database locked. `enableSecureStorage` and `enableBiometric` gate
 the corresponding secure-storage and biometric methods. Secure storage accepts
 string values and persists them in the iOS Keychain or Android encrypted
 preferences. A secure write that does not reach the store, a removal or a

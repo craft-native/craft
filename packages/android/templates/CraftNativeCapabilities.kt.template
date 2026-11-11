@@ -276,6 +276,9 @@ internal class CraftNativeCapabilities(
                     complete(requestToken, failure("CAPABILITY_DISABLED", "Local database is disabled"), completion)
                 }
                 else databaseExecutor.execute {
+                    // Asked before the host closed and reached after: it
+                    // must not reopen what closing is about to give back.
+                    if (closed.get()) return@execute
                     complete(requestToken, database(requestToken, method, args), completion)
                 }
             }
@@ -324,15 +327,40 @@ internal class CraftNativeCapabilities(
         runCatching { connectivity.unregisterNetworkCallback(networkWatch) }
         cancelled.clear()
         if (config.optBoolean("enableBluetooth")) bluetooth.disconnect()
-        databaseExecutor.shutdownNow()
+        closeDatabase()
         networkExecutor.shutdownNow()
         fetchConnections.values.forEach(HttpURLConnection::disconnect)
         fetchConnections.clear()
         onMain { dismissFilePick(); pendingPedometerPermission = null; pedometerPermissionInFlight = false }
-        database?.close()
-        database = null
         biometricPrompts.values.forEach { it.cancelAuthentication() }
         biometricPrompts.clear()
+    }
+
+    /**
+     * The database is closed on its own thread, and a transaction this host
+     * left open is rolled back there first.
+     *
+     * A transaction belongs to the thread that began it. Closing from the
+     * caller's thread could not end it, so its connection stayed open where
+     * nothing could reach it again, holding the write lock on the file. Each
+     * host has its own connection to that one file: the next activity, or
+     * the script started for a background refresh, answered every call with
+     * "database is locked" until the lost connection happened to be
+     * collected. Calls still queued behind this one are answering a closed
+     * host and do nothing.
+     */
+    private fun closeDatabase() {
+        runCatching {
+            databaseExecutor.execute {
+                val db = database ?: return@execute
+                database = null
+                transactionScope = null
+                runCatching { if (db.inTransaction()) db.endTransaction() }
+                    .onFailure { android.util.Log.w("CraftNativeAndroid", "A closed host's transaction could not be rolled back", it) }
+                runCatching { db.close() }
+            }
+        }
+        databaseExecutor.shutdown()
     }
 
     fun pedometerPermissionGranted(): Boolean = checkPedometerPermission?.invoke() ?: (Build.VERSION.SDK_INT < 29 ||
