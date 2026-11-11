@@ -321,12 +321,23 @@ export async function createBrowserPlatform(options: BrowserPlatformOptions = {}
           }
           catch (error) { release(); if (soundRequests.get(id) === request) soundRequests.delete(id); throw error }
         }
-        if (method === 'stopAll') { soundRequests.clear(); await Promise.all([...sounds.keys()].map(key => stopSound(key, Number(first.fadeOut ?? 0)))); return true }
-        if (method === 'stop') { soundRequests.delete(id); await stopSound(id, Number(object(args[1]).fadeOut ?? 0)); return Boolean(sound) }
+        // A fade is a number or it is none, as the native hosts read it:
+        // `Number("500")` faded where they stop at once.
+        const fadeOut = (options: Record<string, unknown>): number => typeof options.fadeOut === 'number' ? options.fadeOut : 0
+        if (method === 'stopAll') { soundRequests.clear(); await Promise.all([...sounds.keys()].map(key => stopSound(key, fadeOut(first)))); return true }
+        if (method === 'stop') { soundRequests.delete(id); await stopSound(id, fadeOut(object(args[1]))); return Boolean(sound) }
         if (!sound) return false
         if (method === 'pause') { sound.pause(); return true }
         if (method === 'resume') { await sound.play(); return true }
-        if (method === 'setVolume') { await fade(sound, Number(args[1]), Number(object(args[2]).fade ?? 0)); return true }
+        if (method === 'setVolume') {
+          // The native hosts answer false and leave the sound as it was for
+          // a volume that is not a finite number or a fade below zero.
+          // `Number(value)` made NaN of one, which an audio element refuses
+          // by throwing, and a negative fade set the volume at once.
+          const volume = args[1]; const asked = object(args[2]).fade; const milliseconds = typeof asked === 'number' ? asked : 0
+          if (typeof volume !== 'number' || !Number.isFinite(volume) || !Number.isFinite(milliseconds) || milliseconds < 0) return false
+          await fade(sound, volume, milliseconds); return true
+        }
       }
       if (module === 'Media') {
         if (!('caches' in window)) return unsupported(module, method)

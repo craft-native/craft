@@ -2919,6 +2919,23 @@ describe('native renderer component contract', () => {
     for (const host of [android, androidBridge]) expect(host).not.toContain('queryParameterNames')
   })
 
+  it('stops a sound whatever fade it was given, on every host', () => {
+    // Android answered false to a negative fadeOut, the answer for a sound
+    // that does not exist, and left it playing. UIKit and the browser host
+    // stop at once. The behaviour is run in the Android sound-stop-fade test
+    // and the browser audio test.
+    const browser = readFileSync(join(root, 'packages/typescript/src/browser.ts'), 'utf8')
+    const iosServices = readFileSync(join(root, 'packages/ios/templates/CraftNativeServices.swift'), 'utf8')
+    const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
+    expect(iosServices).toContain('guard fadeOut > 0, !sound.paused else { remove(id); return true }')
+    expect(androidSounds).toContain('if (fadeOut.isFinite() && fadeOut > 0 && !sound.paused) {')
+    expect(androidSounds).not.toContain('if (!fadeOut.isFinite() || fadeOut < 0) return false')
+    // And a fade is read as a number only where it is one.
+    expect(ios).toContain('reply(.success(sounds.stop(id: id, fadeOut: number(1, "fadeOut") / 1000)))')
+    expect(androidSounds).toContain('val asked = (options?.opt("fadeOut") as? Number)?.toDouble() ?: return 0.0')
+    expect(browser).toContain('typeof options.fadeOut === \'number\' ? options.fadeOut : 0')
+  })
+
   it('refuses a files.write whose name or contents are not strings, on every host', () => {
     // Reading an argument as "whatever it is, as text" wrote the digits of a
     // number, the word null, and the JSON of a byte array as files and called
@@ -2992,7 +3009,10 @@ describe('native renderer component contract', () => {
     const androidSounds = readFileSync(join(root, 'packages/android/templates/CraftNativeSounds.kt.template'), 'utf8')
     // Android has always refused it and left the sound alone.
     expect(androidSounds).toContain('if (!volume.isFinite() || !fade.isFinite() || fade < 0) return false')
-    expect(android).toContain('screen.sounds.setVolume(id, args.optDouble(1, Double.NaN)')
+    // A volume is a JSON number: read with optDouble, "0.5" was one too,
+    // where UIKit answers false for text.
+    expect(android).toContain('(args.opt(1) as? Number)?.toDouble() ?: Double.NaN,')
+    expect(android).not.toContain('args.optDouble(1, Double.NaN)')
     // UIKit read a missing volume as 0, silenced the sound and answered true.
     const setVolume = ios.slice(ios.indexOf('case ("Audio", "setVolume"):'), ios.indexOf('case ("Audio", "stop"):'))
     expect(setVolume).toContain('let volume = craftNativeNumber(args[1])?.doubleValue')

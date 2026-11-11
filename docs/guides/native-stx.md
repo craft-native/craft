@@ -1964,6 +1964,11 @@ load exactly once. This does not roll back a replacement after preparation or
 OS audio-focus admission fails.
 Control calls resolve `false` when their sound id is not owned by the screen,
 matching the browser host instead of reporting a false success.
+`stop` and `stopAll` always stop a sound the screen owns: a `fadeOut` that is
+not a positive number, a negative one or one given as text, is no fade and the
+sound stops at once. `setVolume` with a volume that is not a finite number, or
+with a negative `fade`, resolves `false` and leaves the sound as it was. These
+hold on iOS, Android and the browser host.
 
 The Android capability fixture exercises transient interruption through the real
 `AudioManager` focus stack using a second owned client in its foreground app. It

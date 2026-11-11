@@ -187,17 +187,36 @@ internal class CraftNativeSounds(
         return true
     }
 
+    /**
+     * The fade a `stop` asked for, in milliseconds: a JSON number that is
+     * finite and above zero, and otherwise none.
+     *
+     * `optDouble` also read "500" as a number, where UIKit reads only a
+     * number as one.
+     */
+    fun fadeOut(options: JSONObject?): Double {
+        val asked = (options?.opt("fadeOut") as? Number)?.toDouble() ?: return 0.0
+        return if (asked.isFinite() && asked > 0) asked else 0.0
+    }
+
+    /**
+     * Stops the sound, fading it out over `fadeOut` milliseconds first.
+     *
+     * Stopping is what was asked, and the fade is how. A `fadeOut` that is
+     * not a duration, a negative one say, used to be refused: the call
+     * answered `false`, which is the answer for a sound that does not exist,
+     * and the sound went on playing. UIKit and the browser host stop it at
+     * once, and so does this.
+     */
     fun stop(id: String, fadeOut: Double): Boolean {
         val sound = sounds[id] ?: return false
-        if (!fadeOut.isFinite() || fadeOut < 0) return false
-        if (fadeOut > 0 && !sound.paused) {
+        if (fadeOut.isFinite() && fadeOut > 0 && !sound.paused) {
             ramp(sound, 0f, fadeOut / 1000.0) { if (sounds[id] === sound) remove(id) }
         } else remove(id)
         return true
     }
 
     fun stopAll(fadeOut: Double): Boolean {
-        if (!fadeOut.isFinite() || fadeOut < 0) return false
         sounds.keys.toList().forEach { stop(it, fadeOut) }
         return true
     }

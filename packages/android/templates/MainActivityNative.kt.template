@@ -8729,9 +8729,13 @@ class MainActivity : AppCompatActivity() {
             }
             "pause" -> completion(CraftNativeCapabilityResult(data = screen.sounds.pause(id)))
             "resume" -> completion(CraftNativeCapabilityResult(data = screen.sounds.resume(id)))
-            "setVolume" -> completion(CraftNativeCapabilityResult(data = screen.sounds.setVolume(id, args.optDouble(1, Double.NaN), args.optJSONObject(2)?.optDouble("fade", 0.0) ?: 0.0)))
-            "stop" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stop(id, args.optJSONObject(1)?.optDouble("fadeOut", 0.0) ?: 0.0)))
-            "stopAll" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stopAll(args.optJSONObject(0)?.optDouble("fadeOut", 0.0) ?: 0.0)))
+            // A number is a JSON number: `optDouble` also read "0.5" as one,
+            // where UIKit answers false for a volume given as text.
+            "setVolume" -> completion(CraftNativeCapabilityResult(data = screen.sounds.setVolume(id,
+                (args.opt(1) as? Number)?.toDouble() ?: Double.NaN,
+                (args.optJSONObject(2)?.opt("fade") as? Number)?.toDouble() ?: 0.0)))
+            "stop" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stop(id, screen.sounds.fadeOut(args.optJSONObject(1)))))
+            "stopAll" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stopAll(screen.sounds.fadeOut(args.optJSONObject(0)))))
             else -> completion(CraftNativeCapabilityResult(code = "UNKNOWN_ACTION", message = "Unsupported Audio method"))
         }
     }
