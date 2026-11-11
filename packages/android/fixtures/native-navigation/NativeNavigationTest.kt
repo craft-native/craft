@@ -2771,6 +2771,71 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * What is broadcast while a new screen is still being set up reaches it,
+     * in order, on both bridges.
+     *
+     * A screen registers with the hub when it is opened, and its prelude is
+     * built and run later, from a listener on the main thread. A store
+     * update broadcast in between used to be sent to an isolate that had
+     * nothing to hear it with. Opening the screen and broadcasting in one
+     * main-thread turn is that window exactly: the listener cannot run
+     * until the turn ends. The keys exist nowhere but in these messages, so
+     * a value the screen reads can only have come from them.
+     */
+    @Test
+    fun aBroadcastBeforeANewScreensPreludeRunsReachesIt() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var activity: MainActivity
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            fun member(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+            val engine = member("sandbox").get(activity) as androidx.javascriptengine.JavaScriptSandbox
+            val bridges = buildList {
+                if (engine.isFeatureSupported(androidx.javascriptengine.JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)) add(true)
+                if (engine.isFeatureSupported(androidx.javascriptengine.JavaScriptSandbox.JS_FEATURE_CONSOLE_MESSAGING)) add(false)
+            }
+            assertTrue("The sandbox offers neither bridge", bridges.isNotEmpty())
+            val open = MainActivity::class.java.declaredMethods.single { it.name == "openScreen" }.apply { isAccessible = true }
+            fun update(key: String, value: String) = CraftNativeHub.broadcast("SYNC_UPDATE",
+                JSONObject().put("store", "storage").put("key", key).put("value", JSONObject.quote(value)))
+            val failures = mutableListOf<String>()
+            for (ports in bridges) {
+                val bridge = if (ports) "message ports" else "console callback"
+                val replaced = "window-replaced-${java.util.UUID.randomUUID()}"
+                val once = "window-once-${java.util.UUID.randomUUID()}"
+                lateinit var isolate: androidx.javascriptengine.JavaScriptIsolate
+                scenario.onActivity {
+                    member("useMessagePorts").setBoolean(activity, ports)
+                    val screen = requireNotNull(open.invoke(activity, "summary", JSONObject().put("name", bridge).put("count", 1), JSONObject(), false, true))
+                    isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+                    update(replaced, "first")
+                    update(once, "kept")
+                    update(replaced, "second")
+                }
+                fun read(): String = isolate.evaluateJavaScriptAsync(
+                    "globalThis.craft && craft.storage && craft.storage.getSync ? JSON.stringify([craft.storage.getSync(${JSONObject.quote(replaced)}), craft.storage.getSync(${JSONObject.quote(once)})]) : 'no bridge yet'"
+                ).get(5, java.util.concurrent.TimeUnit.SECONDS)
+                fun expectRead(expected: String, what: String) {
+                    val deadline = SystemClock.uptimeMillis() + 10_000
+                    var actual = read()
+                    while (actual != expected && SystemClock.uptimeMillis() < deadline) {
+                        SystemClock.sleep(50)
+                        actual = read()
+                    }
+                    // Both bridges are tried before either is reported.
+                    if (actual != expected) failures.add("$bridge: $what; it read $actual, not $expected")
+                }
+                expectRead("""["second","kept"]""", "a new screen did not hear, in order, what was broadcast before its prelude ran")
+                // And it goes on hearing once it is set up.
+                scenario.onActivity { update(replaced, "live") }
+                expectRead("""["live","kept"]""", "a screen did not hear a broadcast made after it was set up")
+            }
+            assertEquals(emptyList<String>(), failures)
+        } finally { scenario.close() }
+    }
+
     @Test
     fun nativeLinkOpensRoute() {
         val context = instrumentation.targetContext

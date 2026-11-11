@@ -21,9 +21,11 @@ import { runKotlinFixture } from './testing'
  * another thread" can be put in a definite order.
  *
  * What this cannot show is that the two hosts call `registerWaiting` and
- * `ready` at the right moments; that is pinned from their source below, and
- * the device suites are what would notice a screen that never became ready,
- * since it would hear nothing at all.
+ * `ready` at the right moments; that is pinned from their source below. For
+ * a screen the device shows it too: `aBroadcastBeforeANewScreensPreludeRunsReachesIt`
+ * opens one and broadcasts in the same main-thread turn, which is the window
+ * exactly. Run against the hub as it was, on an API 35 emulator whose
+ * sandbox has only the console bridge, the screen read `[null,null]`.
  */
 const shell = readFileSync(join(import.meta.dir, '../templates/CraftNativeShell.kt.template'), 'utf8')
 const activity = readFileSync(join(import.meta.dir, '../templates/MainActivityNative.kt.template'), 'utf8')
