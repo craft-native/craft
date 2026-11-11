@@ -1,0 +1,320 @@
+{
+  "about": "craft.files.write on every host: the arguments as they cross the bridge, and the bytes written (hex) or null where the call rejects with INVALID_ARGUMENT and writes nothing. Read by the Android, UIKit and browser tests.",
+  "cases": [
+    {
+      "label": "text",
+      "args": [
+        "a.txt",
+        "hi",
+        {}
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "no options",
+      "args": [
+        "a.txt",
+        "hi"
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "options null",
+      "args": [
+        "a.txt",
+        "hi",
+        null
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "encoding utf8",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": "utf8"
+        }
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "encoding null",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": null
+        }
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "empty contents",
+      "args": [
+        "a.txt",
+        "",
+        {}
+      ],
+      "bytes": ""
+    },
+    {
+      "label": "text beyond ASCII",
+      "args": [
+        "a.txt",
+        "né ☃",
+        {}
+      ],
+      "bytes": "6ec3a920e29883"
+    },
+    {
+      "label": "text that looks like JSON",
+      "args": [
+        "a.json",
+        "{\"0\":1}",
+        {}
+      ],
+      "bytes": "7b2230223a317d"
+    },
+    {
+      "label": "text that is the word null",
+      "args": [
+        "a.txt",
+        "null",
+        {}
+      ],
+      "bytes": "6e756c6c"
+    },
+    {
+      "label": "base64",
+      "args": [
+        "a.bin",
+        "aGk=",
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "base64 without padding",
+      "args": [
+        "a.bin",
+        "aGk",
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": "6869"
+    },
+    {
+      "label": "base64 of nothing",
+      "args": [
+        "a.bin",
+        "",
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": ""
+    },
+    {
+      "label": "number contents",
+      "args": [
+        "a.txt",
+        42,
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "boolean contents",
+      "args": [
+        "a.txt",
+        true,
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "null contents",
+      "args": [
+        "a.txt",
+        null,
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "missing contents",
+      "args": [
+        "a.txt"
+      ],
+      "bytes": null
+    },
+    {
+      "label": "bytes as they cross the bridge",
+      "args": [
+        "a.bin",
+        {
+          "0": 104,
+          "1": 105
+        },
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "array contents",
+      "args": [
+        "a.bin",
+        [
+          104,
+          105
+        ],
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "null contents as base64",
+      "args": [
+        "a.bin",
+        null,
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "number contents as base64",
+      "args": [
+        "a.bin",
+        1234,
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "empty name",
+      "args": [
+        "",
+        "hi",
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "blank name",
+      "args": [
+        "   ",
+        "hi",
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "number name",
+      "args": [
+        5,
+        "hi",
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "null name",
+      "args": [
+        null,
+        "hi",
+        {}
+      ],
+      "bytes": null
+    },
+    {
+      "label": "no arguments",
+      "args": [],
+      "bytes": null
+    },
+    {
+      "label": "encoding hex",
+      "args": [
+        "a.txt",
+        "6869",
+        {
+          "encoding": "hex"
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "encoding utf-8",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": "utf-8"
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "encoding in capitals",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": "UTF8"
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "encoding empty",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": ""
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "number encoding",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": 64
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "boolean encoding",
+      "args": [
+        "a.txt",
+        "hi",
+        {
+          "encoding": true
+        }
+      ],
+      "bytes": null
+    },
+    {
+      "label": "URL-safe base64",
+      "args": [
+        "a.bin",
+        "YW-j",
+        {
+          "encoding": "base64"
+        }
+      ],
+      "bytes": null
+    }
+  ]
+}

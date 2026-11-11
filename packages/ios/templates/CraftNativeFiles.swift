@@ -902,8 +902,15 @@ enum CraftNativeFiles {
         guard let text = data as? String else {
             return .failure(CraftNativeActionError(code: "INVALID_ARGUMENT", message: "files.write needs its contents as a string"))
         }
+        // Absent or null is utf8. Anything else that is not one of the two
+        // names is refused, a number included, rather than read as utf8.
+        let encoding: String?
+        switch options["encoding"] {
+        case nil, is NSNull: encoding = "utf8"
+        case let named: encoding = named as? String
+        }
         let bytes: Data
-        switch options["encoding"] as? String ?? "utf8" {
+        switch encoding {
         case "utf8":
             bytes = Data(text.utf8)
         case "base64":

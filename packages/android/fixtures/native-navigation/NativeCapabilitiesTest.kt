@@ -1716,6 +1716,28 @@ class NativeCapabilitiesTest {
                 .put("invalid.txt")
                 .put("data")
                 .put(JSONObject().put("encoding", "hex"))).code)
+            // The name and the contents are strings or the call is refused.
+            // A number, a null and bytes as they cross the bridge were each
+            // read as text, written, and answered as a success.
+            for (contents in listOf<Any>(42, true, JSONObject.NULL, JSONObject().put("0", 104).put("1", 105), JSONArray().put(104).put(105))) {
+                assertEquals("contents $contents", "INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray()
+                    .put("not-text.bin")
+                    .put(contents)).code)
+            }
+            assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray().put("no-contents.txt")).code)
+            assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray().put(5).put("data")).code)
+            assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray()
+                .put("numbered.txt")
+                .put("data")
+                .put(JSONObject().put("encoding", 64))).code)
+            // An encoding given as null is the default, as on UIKit.
+            val defaulted = call(capabilities, "Files", "write", JSONArray()
+                .put("defaulted.txt")
+                .put("null")
+                .put(JSONObject().put("encoding", JSONObject.NULL)))
+            assertNull(defaulted.code)
+            assertEquals(4L, (defaulted.data as JSONObject).getLong("size"))
+            call(capabilities, "Files", "remove", JSONArray().put((defaulted.data as JSONObject).getString("path")))
             // Base64 is read as atob reads it: URL-safe text is refused rather
             // than written with its dash skipped, and padding is optional.
             assertEquals("INVALID_ARGUMENT", call(capabilities, "Files", "write", JSONArray()

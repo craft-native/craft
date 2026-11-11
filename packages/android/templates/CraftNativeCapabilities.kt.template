@@ -563,18 +563,7 @@ internal class CraftNativeCapabilities(
 
     private fun files(requestToken: String, method: String, args: JSONArray): CraftNativeCapabilityResult {
         return when (method) {
-        "write" -> {
-            val name = args.optString(0).trim()
-            if (name.isBlank()) return failure("INVALID_ARGUMENT", "files.write needs a file name")
-            val data = args.optString(1, "")
-            val options = args.optJSONObject(2) ?: JSONObject()
-            val bytes = when (options.optString("encoding", "utf8")) {
-                "utf8" -> data.toByteArray(Charsets.UTF_8)
-                "base64" -> decodeBase64(data) ?: return failure("INVALID_ARGUMENT", "files.write base64 is invalid")
-                else -> return failure("INVALID_ARGUMENT", "files.write encoding is 'utf8' or 'base64'")
-            }
-            store(bytes, name, options.optString("type").ifBlank { URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream" })
-        }
+        "write" -> write(args)
         "remove" -> {
             val file = ownedFile(args.optString(0)) ?: return failure("INVALID_ARGUMENT", "files.remove needs a file made by craft.files")
             success(removeOwnedFile(file))
@@ -582,6 +571,30 @@ internal class CraftNativeCapabilities(
         "download" -> download(requestToken, args)
             else -> failure("UNKNOWN_ACTION", "Unsupported Files method")
         }
+    }
+
+    /**
+     * What a screen made itself, written as a file: text, or bytes as base64.
+     *
+     * The name and the contents are strings, and nothing else is read as
+     * one. `optString` reads anything: a number became its digits, `null`
+     * the four letters "null", and bytes handed over as they were (a
+     * `Uint8Array` crosses the bridge as `{"0":1,"1":2}`) became that JSON
+     * text, written to a file and answered as a success. UIKit refuses each
+     * of those, and so does this. An absent or `null` encoding is `utf8`.
+     */
+    private fun write(args: JSONArray): CraftNativeCapabilityResult {
+        val name = (args.opt(0) as? String)?.trim().orEmpty()
+        if (name.isBlank()) return failure("INVALID_ARGUMENT", "files.write needs a file name")
+        val data = args.opt(1) as? String ?: return failure("INVALID_ARGUMENT", "files.write needs its contents as a string")
+        val options = args.optJSONObject(2) ?: JSONObject()
+        val encoding = if (options.isNull("encoding")) "utf8" else options.opt("encoding") as? String
+        val bytes = when (encoding) {
+            "utf8" -> data.toByteArray(Charsets.UTF_8)
+            "base64" -> decodeBase64(data) ?: return failure("INVALID_ARGUMENT", "files.write base64 is invalid")
+            else -> return failure("INVALID_ARGUMENT", "files.write encoding is 'utf8' or 'base64'")
+        }
+        return store(bytes, name, options.optString("type").ifBlank { URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream" })
     }
 
     /**

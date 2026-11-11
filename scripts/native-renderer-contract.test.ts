@@ -2919,6 +2919,28 @@ describe('native renderer component contract', () => {
     for (const host of [android, androidBridge]) expect(host).not.toContain('queryParameterNames')
   })
 
+  it('refuses a files.write whose name or contents are not strings, on every host', () => {
+    // Reading an argument as "whatever it is, as text" wrote the digits of a
+    // number, the word null, and the JSON of a byte array as files and called
+    // each a success. The behaviour is run against one shared table of cases
+    // in each package's files-write-contract test and the browser files test.
+    const browser = readFileSync(join(root, 'packages/typescript/src/browser.ts'), 'utf8')
+    expect(iosFiles).toContain('guard let text = data as? String else {')
+    expect(androidCapabilities).toContain('val data = args.opt(1) as? String ?: return failure("INVALID_ARGUMENT", "files.write needs its contents as a string")')
+    expect(browser).toContain('if (typeof data !== \'string\') throw refuse(\'files.write needs its contents as a string\')')
+    // The coercions must not come back.
+    expect(androidCapabilities).not.toContain('args.optString(1, "")')
+    // The clipboard has a `write` too; this is the files one.
+    const filesWrite = browser.indexOf('const settings = object(args[2]); const [name, data] = args')
+    const browserWrite = browser.slice(filesWrite, browser.indexOf('if (method === \'remove\')', filesWrite))
+    expect(browserWrite.length, 'the browser host must still have a files.write to check').toBeGreaterThan(200)
+    expect(browserWrite).not.toContain('String(args[')
+    expect(browserWrite).not.toContain('String(data)')
+    // And the table all three are held to is the one file.
+    for (const reader of ['packages/android/src/files-write-contract.test.ts', 'packages/ios/src/files-write-contract.test.ts', 'packages/typescript/src/__tests__/browser-files.test.ts'])
+      expect(readFileSync(join(root, reader), 'utf8'), reader).toContain('files-write-cases.json')
+  })
+
   it('rolls back a transaction whose screen closed, on both hosts', () => {
     // One connection is shared by every screen, so a transaction left open
     // by a screen that is gone swallows every later write until the process

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createBrowserPlatform } from '../browser'
 
 async function fixture(run: (platform: Awaited<ReturnType<typeof createBrowserPlatform>>) => Promise<void>, extra: Record<string, unknown> = {}) {
@@ -24,6 +26,31 @@ async function fixture(run: (platform: Awaited<ReturnType<typeof createBrowserPl
 }
 
 describe('browser files across the JSON capability protocol', () => {
+  it('writes what the shared files.write cases say and refuses the rest, as the native hosts do', async () => {
+    // The same table the Android and UIKit tests run: the arguments as they
+    // cross the bridge, and the bytes written, or null where the call rejects.
+    // This host wrote "42", "null" and "[object Object]" as files, took any
+    // encoding it did not know for utf8, and let a bad base64 payload escape
+    // as a DOMException with no code.
+    const { cases } = JSON.parse(readFileSync(join(import.meta.dir, '../../../android/src/files-write-cases.json'), 'utf8')) as { cases: { label: string, args: unknown[], bytes: string | null }[] }
+    expect(cases.length).toBeGreaterThan(20)
+    await fixture(async (platform) => {
+      const signal = new AbortController().signal
+      const wrong: string[] = []
+      for (const row of cases) {
+        const expected = row.bytes === null ? 'INVALID_ARGUMENT' : `wrote ${row.bytes}`
+        let got: string
+        try {
+          const written = platform.resolveFile(await platform.call('Files', 'write', row.args, signal)) as File
+          got = `wrote ${[...new Uint8Array(await written.arrayBuffer())].map(byte => byte.toString(16).padStart(2, '0')).join('')}`
+        }
+        catch (error) { got = String((error as { code?: unknown }).code ?? `${(error as Error).name} with no code`) }
+        if (got !== expected) wrong.push(`${row.label}: expected ${expected}, browser ${got}`)
+      }
+      expect(wrong).toEqual([])
+    })
+  })
+
   it('materializes a descriptor back into a real File with unchanged bytes for multipart', async () => {
     await fixture(async (platform) => {
       const descriptor = await platform.call('Files', 'write', ['route.gpx', '<gpx/>', { type: 'application/gpx+xml' }], new AbortController().signal)

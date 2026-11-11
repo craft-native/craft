@@ -1874,7 +1874,12 @@ host; transport failures still reject with the native network error codes and
 leave no partial file behind. The file is kept under the `name` option, else
 the server's `Content-Disposition` name, else the address's last path segment
 with its percent-encoding decoded. A name is cut to what the disk takes and
-keeps its extension. `craft.files.write` with `encoding: 'base64'` reads its
+keeps its extension. `craft.files.write` takes its name and its contents as
+strings and its `encoding` as `'utf8'` (the default, also when given as
+`null`) or `'base64'`. Anything else rejects with `INVALID_ARGUMENT` on every
+host and writes nothing: a number, `null`, or bytes handed over as they are,
+which cross the bridge as an object and not as bytes, so encode those as
+base64 first. `craft.files.write` with `encoding: 'base64'` reads its
 contents as `atob` does on every host: the standard alphabet, ASCII white space
 ignored and padding optional. Anything else, URL-safe base64 included, rejects
 with `INVALID_ARGUMENT` and writes nothing.

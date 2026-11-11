@@ -241,7 +241,24 @@ export async function createBrowserPlatform(options: BrowserPlatformOptions = {}
           const body = await response.blob(); signal.throwIfAborted(); const disposition = response.headers.get('content-disposition') ?? ''; const name = typeof settings.name === 'string' ? settings.name : /filename="?([^";]+)/i.exec(disposition)?.[1] ?? 'download'
           return Object.assign(file([body], name, body.type), { ok: true, status: response.status })
         }
-        if (method === 'write') { const settings = object(args[2]); const contents = settings.encoding === 'base64' ? Uint8Array.from(atob(String(args[1])), letter => letter.charCodeAt(0)) : String(args[1]); return file([contents], String(args[0]), String(settings.type ?? 'application/octet-stream')) }
+        if (method === 'write') {
+          // The native hosts' contract: the name and the contents are
+          // strings, the encoding is one of two names, and anything else is
+          // refused. `String(value)` wrote "42", "null" and "[object Object]"
+          // as files and called each a success.
+          const settings = object(args[2]); const [name, data] = args
+          const refuse = (message: string) => Object.assign(new Error(message), { code: 'INVALID_ARGUMENT' })
+          if (typeof name !== 'string' || !name.trim()) throw refuse('files.write needs a file name')
+          if (typeof data !== 'string') throw refuse('files.write needs its contents as a string')
+          const encoding = settings.encoding ?? 'utf8'
+          if (encoding !== 'utf8' && encoding !== 'base64') throw refuse('files.write encoding is \'utf8\' or \'base64\'')
+          let contents: string | Uint8Array<ArrayBuffer> = data
+          if (encoding === 'base64') {
+            try { contents = Uint8Array.from(atob(data), letter => letter.charCodeAt(0)) }
+            catch { throw refuse('files.write base64 is invalid') }
+          }
+          return file([contents], name, String(settings.type ?? 'application/octet-stream'))
+        }
         if (method === 'remove') { const path = String(args[0]); const found = files.delete(path); if (found) URL.revokeObjectURL(path); return found }
       }
       if (module === 'Share' && method === 'share') {
