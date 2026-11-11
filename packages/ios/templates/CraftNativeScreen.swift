@@ -6930,6 +6930,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var runningAnimation: CraftNativeRunningAnimation?
     private var renderedRoot: RenderedNode?
     private weak var lastFocusedInput: UIView?
+    /// On its way off screen, or off it: from `viewWillDisappear` until the
+    /// screen is next about to appear.
+    ///
+    /// A screen ends editing as it starts to leave (#497), and its view stays
+    /// in the window for the length of the transition. Whatever put focus
+    /// back in that time brought the keyboard up for a screen that was then
+    /// removed, where nothing could put it away: a render, and a sign-in
+    /// screen makes one as it navigates; the acknowledgement an input had
+    /// scheduled a tenth of a second before; a modal closing; `autoFocus`.
+    /// Each of them asks this first.
+    private var isLeavingScreen = false
 
     /// The person put the keyboard away (Return, or a tap on nothing in a
     /// scroll view): the last input is let go. Kept, the next render or
@@ -7092,6 +7103,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isLeavingScreen = false
         if let navigationBarHidden, navigationController?.isNavigationBarHidden != navigationBarHidden {
             navigationController?.setNavigationBarHidden(navigationBarHidden, animated: animated)
         } else if navigationBarHidden == nil, navigationController?.isNavigationBarHidden == true,
@@ -7134,7 +7146,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         //
         // `lastFocusedInput` is deliberately left alone. A screen merely
         // covered by a push comes back, and restoreFocus putting the person
-        // back where they were is the behaviour that was already there.
+        // back where they were is the behaviour that was already there. It
+        // is not consulted again until the screen is coming back, or what
+        // is ended here would be started again a moment later.
+        isLeavingScreen = true
         view.endEditing(true)
         screenVisibilityChanged(false)
         stopCelebrations(in: view)
@@ -9309,7 +9324,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     reply(.failure(CraftNativeActionError(code: "UNSUPPORTED_TARGET", message: "Keyboard focus is supported only for text inputs")))
                     return true
                 }
-                guard node.view.becomeFirstResponder() else {
+                // A screen that is leaving does not open a keyboard it will
+                // not be there to close.
+                guard !isLeavingScreen, node.view.becomeFirstResponder() else {
                     reply(.failure(CraftNativeActionError(code: "FOCUS_FAILED", message: "The mounted view refused keyboard focus")))
                     return true
                 }
@@ -9654,6 +9671,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func restoreFocus(_ focused: UIView?) {
+        guard !isLeavingScreen else { return }
         guard let focused, focused.window != nil, !focused.isFirstResponder,
               lastFocusedInput === focused, firstResponder(in: rootStack) == nil else { return }
         var ancestor: UIView? = focused
@@ -9864,7 +9882,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)
             updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: field)
             if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
-                DispatchQueue.main.async { _ = field.becomeFirstResponder() }
+                DispatchQueue.main.async { [weak self] in
+                    guard self?.isLeavingScreen == false else { return }
+                    _ = field.becomeFirstResponder()
+                }
             }
         case "SegmentedControl":
             let control = result as! CraftNativeSegmentedControl
@@ -9984,7 +10005,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if !visible, wasVisible == true {
                 let restore = modalFocusRestore.removeValue(forKey: modalID)
                 DispatchQueue.main.async { [weak self, weak restore] in
-                    guard let self, let restore, restore.window != nil, restore.isDescendant(of: self.view) else { return }
+                    guard let self, !self.isLeavingScreen, let restore, restore.window != nil, restore.isDescendant(of: self.view) else { return }
                     self.lastFocusedInput = restore
                     _ = restore.becomeFirstResponder()
                 }
@@ -11187,7 +11208,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: textView)
         updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)
         if props["autoFocus"] as? Bool == true, !textView.isFirstResponder {
-            DispatchQueue.main.async { _ = textView.becomeFirstResponder() }
+            DispatchQueue.main.async { [weak self] in
+                guard self?.isLeavingScreen == false else { return }
+                _ = textView.becomeFirstResponder()
+            }
         }
     }
 

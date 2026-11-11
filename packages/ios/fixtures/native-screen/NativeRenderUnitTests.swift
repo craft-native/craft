@@ -4580,6 +4580,43 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(name.isFirstResponder)
     }
 
+    /// A screen that is leaving does not take the keyboard back.
+    ///
+    /// Signing in: the screen ends editing as it starts to leave, and its
+    /// view stays in the window while the transition runs. Its last render
+    /// (busy off, error cleared) and the acknowledgement the password field
+    /// scheduled a moment before each used to put focus back in the field,
+    /// and the keyboard stayed up over the next screen with nothing to
+    /// dismiss it.
+    func testALeavingScreenDoesNotTakeTheKeyboardBack() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let fields: [[String: Any]] = [
+            ["type": "TextInput", "props": ["key": "password"], "events": ["onChangeText": "passwordChanged"]],
+        ]
+        controller.render(document(fields))
+        let password = try XCTUnwrap(find(UITextField.self, key: "password", below: controller.view))
+        XCTAssertTrue(password.becomeFirstResponder())
+        password.text = "secret"
+        password.sendActions(for: .editingChanged)
+        // It starts to leave, as a navigation makes it.
+        controller.beginAppearanceTransition(false, animated: true)
+        XCTAssertFalse(password.isFirstResponder, "A leaving screen ends editing")
+        XCTAssertNotNil(password.window, "The view is still in the window for the transition, which is the case being tested")
+        // Its script's last render lands during the transition.
+        controller.render(document(fields + [["type": "Text", "props": ["key": "status"], "children": ["Signed in"]]]))
+        XCTAssertFalse(password.isFirstResponder, "A render during the transition brought the keyboard back")
+        XCTAssertTrue(find(UITextField.self, key: "password", below: controller.view) === password, "The render replaced the field, so its focus proved nothing")
+        // And so does the acknowledgement scheduled before it began to leave.
+        let settled = expectation(description: "input acknowledgement settled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { settled.fulfill() }
+        wait(for: [settled], timeout: 2)
+        XCTAssertFalse(password.isFirstResponder, "A delayed acknowledgement brought the keyboard back to a leaving screen")
+    }
+
     func testDelayedInputAcknowledgementDoesNotReopenADismissedKeyboard() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
