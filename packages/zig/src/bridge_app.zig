@@ -30,6 +30,7 @@ pub const A = struct {
     pub const hide_dock_icon = "hideDockIcon";
     pub const show_dock_icon = "showDockIcon";
     pub const quit = "quit";
+    pub const relaunch = "relaunch";
     pub const get_info = "getInfo";
     pub const icon = "icon";
     pub const notify = "notify";
@@ -42,6 +43,7 @@ pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.hide_dock_icon, .reply = .none },
     .{ .name = A.show_dock_icon, .reply = .none },
     .{ .name = A.quit, .reply = .none },
+    .{ .name = A.relaunch, .reply = .none },
     .{ .name = A.get_info, .reply = .result },
     .{ .name = A.icon, .reply = .result },
     .{ .name = A.notify, .reply = .none },
@@ -74,6 +76,12 @@ pub const AppBridge = struct {
         } else if (std.mem.eql(u8, action, A.show_dock_icon)) {
             try self.showDockIcon();
         } else if (std.mem.eql(u8, action, A.quit)) {
+            try self.quit();
+        } else if (std.mem.eql(u8, action, A.relaunch)) {
+            // Start the replacement first: once this process has begun to
+            // terminate there is nobody left to do it. See
+            // `desktop_instance.zig` for what is started.
+            try @import("desktop_instance.zig").spawnRelaunch(self.allocator);
             try self.quit();
         } else if (std.mem.eql(u8, action, A.get_info)) {
             try self.getInfo();

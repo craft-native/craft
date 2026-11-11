@@ -130,7 +130,12 @@ pub fn main(init: std.process.Init) !void {
     if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
         craft.desktop_deep_link.setInitial(options.deep_link);
         craft.desktop_deep_link.setPage(options.url);
+        craft.desktop_deep_link.setInstance(options.single_instance);
+        craft.desktop_instance.configure(options.single_instance != null, options.instance_args);
     }
+    // What `craft.app.relaunch()` runs again. `args` lives in the process
+    // arena, so it outlives every window.
+    craft.desktop_instance.setOriginalArgv(args);
 
     // Before anything builds a menu bar: `createApplicationMenu` reads the
     // process name once, and both branches below reach it.
@@ -197,11 +202,30 @@ pub fn main(init: std.process.Init) !void {
     // A registered URI invoked while this Linux app is open belongs to the
     // existing process. GApplication forwards it over the session bus, then
     // this short-lived activation process exits without creating a WebView.
-    if (builtin.os.tag == .linux and options.deep_link != null) {
-        if (try craft.desktop_linux.forwardDeepLinkIfRunning(options.deep_link.?)) return;
+    //
+    // A relaunch starts the new process before the old one has gone. Give the
+    // old one a moment to release the instance name first, or this process
+    // would hand its launch to the one it is replacing.
+    if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
+        if (options.relaunch_wait_pid) |pid| craft.desktop_instance.waitForExit(pid);
     }
-    if (builtin.os.tag == .windows and options.deep_link != null) {
-        if (try craft.desktop_windows.forwardDeepLinkIfRunning(options.deep_link.?)) return;
+    if (builtin.os.tag == .linux) {
+        if (options.single_instance != null) {
+            if (try craft.desktop_linux.forwardLaunchIfRunning(options.instance_args, options.deep_link)) return;
+        } else if (options.deep_link) |link| {
+            if (try craft.desktop_linux.forwardDeepLinkIfRunning(link)) return;
+        } else if (try craft.desktop_linux.forwardLaunchIfRunning(&.{}, null)) {
+            // GApplication registers one executable showing one page once.
+            // The window that is already open has been brought forward.
+            return;
+        }
+    }
+    if (builtin.os.tag == .windows) {
+        if (options.single_instance != null) {
+            if (try craft.desktop_windows.forwardLaunchIfRunning(options.instance_args, options.deep_link)) return;
+        } else if (options.deep_link) |link| {
+            if (try craft.desktop_windows.forwardDeepLinkIfRunning(link)) return;
+        }
     }
 
     var app = craft.App.init(allocator);
