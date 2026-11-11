@@ -6,6 +6,7 @@
 const controlsCases = new Set([
   'testImagesListsAndControlStylesReconcile',
   'testGridFlexAndMeasuredLayoutFrames',
+  'testAShortScrollFromAPressableDoesNotPressIt',
   'testLinksPressablesAndAccessibilityState',
   'testSwitchPickerModalSliderAndIndicators',
   'testPushNativeBackSwipeReplaceAndRetainedHomeState',

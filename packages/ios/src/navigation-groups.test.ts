@@ -10,11 +10,13 @@ test('required UI groups cover every actual navigation test exactly once', () =>
   const core = nativeNavigationGroup(source, 'core')
   const controls = nativeNavigationGroup(source, 'controls')
   expect(all.length).toBeGreaterThanOrEqual(19)
-  // The controls journeys were one case of 697 lines (#505). They are five,
-  // in the order they run, and the journey the old name described keeps it.
+  // The controls journeys were one case of 697 lines (#505), now five, in
+  // the order they run; the journey the old name described keeps it. A
+  // scroll that must not press is with them, on the same home screen.
   expect(controls).toEqual([
     'testImagesListsAndControlStylesReconcile',
     'testGridFlexAndMeasuredLayoutFrames',
+    'testAShortScrollFromAPressableDoesNotPressIt',
     'testLinksPressablesAndAccessibilityState',
     'testSwitchPickerModalSliderAndIndicators',
     'testPushNativeBackSwipeReplaceAndRetainedHomeState',

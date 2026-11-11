@@ -1326,6 +1326,50 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertLessThanOrEqual(absolute.frame.maxY, wrapped.frame.maxY - 8)
     }
 
+    /// A drag that scrolls the page is not also a press on what it began on.
+    ///
+    /// A row or a card that can be pressed is a view with a tap recognizer.
+    /// UIKit fails a tap the moment a scroll view's drag begins, unless the
+    /// two are told to run together, and the scroll view told every gesture
+    /// it met to run with its drag. A short flick is under a tap's own
+    /// allowance for movement, so it scrolled the page and pressed whatever
+    /// was under the finger.
+    func testAShortScrollFromAPressableDoesNotPressIt() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
+        let panel = app.otherElements["native-panel"]
+        let link = app.staticTexts["native-link"]
+        let status = app.staticTexts["native-link-status"]
+        var scrolls = 0
+        for distance in [16, 24, 36, 48] as [CGFloat] {
+            reveal(panel, in: rootScroll)
+            reveal(link, in: rootScroll)
+            // Whatever was pressed last, the link is now: each drag is judged
+            // from a status that is not the panel's.
+            link.tap()
+            XCTAssertTrue(waitForLabel(status, "link pressed"))
+            XCTAssertTrue(panel.isHittable, "the panel must be on screen to drag from")
+            let resting = panel.frame.minY
+            let start = panel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            // Down, a short quick drag upward, and off: a small flick.
+            start.press(forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)), withVelocity: .fast, thenHoldForDuration: 0)
+            let pressed = waitForLabel(status, "panel pressed", timeout: 1.5)
+            // The shortest of these may not move the page at all, and then it
+            // is a tap by UIKit's own allowance. Only a drag that scrolled is
+            // held to not pressing.
+            guard panel.frame.minY < resting - 1 else { continue }
+            scrolls += 1
+            XCTAssertFalse(pressed, "a \(Int(distance))-point scroll that began on a pressable pressed it")
+        }
+        XCTAssertGreaterThanOrEqual(scrolls, 2, "too few of the drags scrolled the page for this to have tested anything")
+        // A tap is still a press.
+        reveal(panel, in: rootScroll)
+        panel.tap()
+        XCTAssertTrue(waitForLabel(status, "panel pressed"), "a tap no longer presses a pressable inside a scroll view")
+    }
+
     /// Links, pressables and long presses, with their accessibility state.
     func testLinksPressablesAndAccessibilityState() throws {
         let app = XCUIApplication()

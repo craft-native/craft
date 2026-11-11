@@ -4798,14 +4798,23 @@ final class CraftPressFeedbackDelegate: NSObject, UIGestureRecognizerDelegate {
 
 /// Whether a scrolling view's gesture runs together with `other`. A scroll
 /// view is the delegate of its own pan as well as of its keyboard tap, so this
-/// answers for both. Everything runs together (the keyboard tap watches
+/// answers for both. Most things run together (the keyboard tap watches
 /// alongside a control's own gestures; the back-swipe and the tab swipe decide
-/// for themselves) except two scroll views' pans: run together, a drag on a
-/// nested scroll view scrolled its parent at the same time.
+/// for themselves), with two exceptions for a scroll view's pan.
+///
+/// Another scroll view's pan: run together, a drag on a nested scroll view
+/// scrolled its parent at the same time.
+///
+/// A press. A row or a card that can be pressed is a view with a tap
+/// recognizer, and UIKit fails a tap the moment a drag begins on the scroll
+/// view around it. That is what keeps a flick, or the touch that stops a
+/// moving list, from also pressing whatever is under the finger. Told to run
+/// together, both happened: a short scroll pressed the thing it began on.
 func craftScrollGesture(_ gesture: UIGestureRecognizer, runsWith other: UIGestureRecognizer) -> Bool {
-    guard let scroll = gesture.view as? UIScrollView, gesture === scroll.panGestureRecognizer,
-          let otherScroll = other.view as? UIScrollView, other === otherScroll.panGestureRecognizer else { return true }
-    return false
+    guard let scroll = gesture.view as? UIScrollView, gesture === scroll.panGestureRecognizer else { return true }
+    if let otherScroll = other.view as? UIScrollView, other === otherScroll.panGestureRecognizer { return false }
+    if other is UITapGestureRecognizer, other.delegate is CraftPressGestureDelegate { return false }
+    return true
 }
 
 /// Scroll containers observe taps without cancelling native input focus or

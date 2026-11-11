@@ -2902,6 +2902,26 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).not.toContain('Base64.decode(data, Base64.DEFAULT)')
   })
 
+  it('does not press what a scroll began on, and does not reopen a leaving screen\'s keyboard', () => {
+    // Both are UIKit's own rules, which the host had switched off for itself.
+    //
+    // A tap fails when a drag begins on the scroll view around it. The scroll
+    // view told every gesture to run with its pan, so a flick pressed the row
+    // it began on. Run in the navigation UI case
+    // testAShortScrollFromAPressableDoesNotPressIt.
+    expect(ios).toContain('if other is UITapGestureRecognizer, other.delegate is CraftPressGestureDelegate { return false }')
+    expect(iosFlatList).toContain('craftScrollGesture(gestureRecognizer, runsWith: otherGestureRecognizer)')
+    // A screen ends editing as it leaves. Its last render, or an input's
+    // delayed acknowledgement, put focus back while the view was still in the
+    // window, and the keyboard stayed over the next screen. Run in the unit
+    // case testALeavingScreenDoesNotTakeTheKeyboardBack.
+    expect(ios).toContain('isLeavingScreen = true\n        view.endEditing(true)')
+    const restore = ios.slice(ios.indexOf('    private func restoreFocus(_ focused: UIView?) {'))
+    expect(restore.split('\n')[1]).toBe('        guard !isLeavingScreen else { return }')
+    // Every place the screen takes focus on its own asks first.
+    expect(ios.match(/isLeavingScreen/g)?.length).toBeGreaterThanOrEqual(8)
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link
