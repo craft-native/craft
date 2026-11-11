@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Selects version 6 of the Windows common controls for craft.exe. That is the
+  version that has TaskDialogIndirect, which windows_desktop.zig uses for
+  craft.dialog.showAlert and showConfirm so custom button labels are drawn.
+  Nothing else is declared: DPI awareness in particular is left as it was.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+</assembly>

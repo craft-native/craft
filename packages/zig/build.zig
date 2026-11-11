@@ -212,6 +212,8 @@ pub fn build(b: *std.Build) void {
     });
 
     linkPlatformLibraries(b, craft_exe.root_module, target_os, macos_sdk);
+    // Version 6 common controls, for the task dialog behind craft.dialog.
+    if (target_os == .windows) craft_exe.win32_manifest = b.path("src/windows/craft.manifest");
     b.installArtifact(craft_exe);
 
     const run_craft_cmd = b.addRunArtifact(craft_exe);
@@ -1510,6 +1512,39 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // The Windows and Linux bridge contracts: menus, dialogs, single-instance
+    // activation and relaunch. Pure, so they run on every host, including the
+    // macOS one that never ships this code.
+    const desktop_menu_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_menu.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const desktop_dialog_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_dialog.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const desktop_instance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_instance.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const desktop_deep_link_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_deep_link.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     const desktop_bridge_text_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/desktop_bridge_text.zig"),
@@ -2088,6 +2123,10 @@ pub fn build(b: *std.Build) void {
     const run_desktop_window_evaluations_tests = b.addRunArtifact(desktop_window_evaluations_tests);
     const run_desktop_bridge_envelope_tests = b.addRunArtifact(desktop_bridge_envelope_tests);
     const run_desktop_bridge_text_tests = b.addRunArtifact(desktop_bridge_text_tests);
+    const run_desktop_menu_tests = b.addRunArtifact(desktop_menu_tests);
+    const run_desktop_dialog_tests = b.addRunArtifact(desktop_dialog_tests);
+    const run_desktop_instance_tests = b.addRunArtifact(desktop_instance_tests);
+    const run_desktop_deep_link_tests = b.addRunArtifact(desktop_deep_link_tests);
     const run_desktop_window_events_tests = b.addRunArtifact(desktop_window_events_tests);
     const run_desktop_window_reads_tests = b.addRunArtifact(desktop_window_reads_tests);
     const run_desktop_script_encoding_tests = b.addRunArtifact(desktop_script_encoding_tests);
@@ -2356,6 +2395,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_desktop_window_evaluations_tests.step);
     test_step.dependOn(&run_desktop_bridge_envelope_tests.step);
     test_step.dependOn(&run_desktop_bridge_text_tests.step);
+    test_step.dependOn(&run_desktop_menu_tests.step);
+    test_step.dependOn(&run_desktop_dialog_tests.step);
+    test_step.dependOn(&run_desktop_instance_tests.step);
+    test_step.dependOn(&run_desktop_deep_link_tests.step);
     test_step.dependOn(&run_desktop_window_events_tests.step);
     test_step.dependOn(&run_desktop_window_reads_tests.step);
     test_step.dependOn(&run_desktop_script_encoding_tests.step);

@@ -11,6 +11,8 @@ const desktop_window_registry = @import("desktop_window_registry.zig");
 const json_utils = @import("json_utils.zig");
 const io_context = @import("io_context.zig");
 const desktop_deep_link = @import("desktop_deep_link.zig");
+const desktop_instance = @import("desktop_instance.zig");
+const windows_desktop = @import("windows_desktop.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -130,6 +132,7 @@ pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_QUIT: UINT = 0x0012;
 const WM_COPYDATA: UINT = 0x004A;
+const WM_COMMAND: UINT = 0x0111;
 const SMTO_ABORTIFHUNG: UINT = 0x0002;
 const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
@@ -801,8 +804,15 @@ const WebMessageReceivedHandler = extern struct {
             };
             return S_OK;
         }
+        if (std.mem.eql(u8, envelope.kind, "fileDrop")) {
+            // The dropped files ride on the message as additional objects.
+            windows_desktop.deliverFileDrop(args, entry.webview);
+            return S_OK;
+        }
         if (!std.mem.eql(u8, envelope.kind, "window")) {
-            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
+            handleDesktopAction(entry, envelope.kind, envelope.action, envelope.data) catch |err| {
+                bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+            };
             return S_OK;
         }
         if (std.mem.eql(u8, envelope.action, "open") or std.mem.eql(u8, envelope.action, "create")) {
@@ -820,6 +830,60 @@ const WebMessageReceivedHandler = extern struct {
         return S_OK;
     }
 };
+
+/// Namespaces beyond `window`, `clipboard` and `notification`. Anything not
+/// named here is not implemented on Windows and says so to the caller.
+fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    if (eql(u8, kind, "menu")) return windows_desktop.handleMenu(action, data, entry.id);
+    if (eql(u8, kind, "dialog")) return windows_desktop.queueDialog(action, data, entry.id);
+    if (eql(u8, kind, "nativeUI") and eql(u8, action, "showContextMenu"))
+        return windows_desktop.queueContextMenu(data, entry.id);
+    if (eql(u8, kind, "app")) {
+        if (eql(u8, action, "quit")) return closeAllWindows();
+        if (eql(u8, action, "relaunch")) {
+            try desktop_instance.spawnRelaunch(std.heap.c_allocator);
+            return closeAllWindows();
+        }
+    }
+    return error.PlatformNotSupported;
+}
+
+/// Ask every window to close. The last one to go ends the message loop.
+fn closeAllWindows() void {
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    for (desktop_windows.liveWebviews(&handles)) |webview| {
+        const entry = desktop_windows.byWebview(webview) orelse continue;
+        _ = PostMessageW(@ptrFromInt(entry.window), WM_CLOSE, 0, 0);
+    }
+}
+
+fn desktopTarget(id: u32) ?windows_desktop.Target {
+    const entry = desktop_windows.byId(id) orelse return null;
+    return .{ .window = entry.window, .webview = entry.webview, .controller = entry.context };
+}
+
+fn desktopToggleFullscreen(id: u32) void {
+    const entry = desktop_windows.byId(id) orelse return;
+    setWindowFullscreen(entry, !entry.fullscreen) catch {};
+}
+
+fn desktopWindowId(window: usize) ?u32 {
+    const entry = desktop_windows.byWindow(window) orelse return null;
+    return entry.id;
+}
+
+/// Evaluate a script in one specific live web view, whatever its length.
+pub fn evalInWebview(webview_handle: usize, script: []const u8) void {
+    if (desktop_windows.byWebview(webview_handle) == null) return;
+    var wide = desktop_script_encoding.encode(std.heap.c_allocator, script) catch return;
+    defer wide.deinit(std.heap.c_allocator);
+    const webview: *ICoreWebView2 = @ptrFromInt(webview_handle);
+    const handler = std.heap.c_allocator.create(ExecuteScriptCompletedHandler) catch return;
+    handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };
+    _ = webview.lpVtbl.ExecuteScript(webview, wide.ptr(), handler);
+    _ = ExecuteScriptCompletedHandler.esRelease(handler);
+}
 
 // -- ExecuteScript completed handler (fire-and-forget) -----------------------
 
@@ -1136,6 +1200,85 @@ pub fn forwardDeepLinkIfRunning(url: []const u8) !bool {
         if (sent != 0 and received == 1) return true;
     }
     return false;
+}
+
+const LAUNCH_COPY_TAG: usize = 0x43525349; // "CRSI"
+const ERROR_ALREADY_EXISTS: DWORD = 183;
+extern "kernel32" fn CreateMutexW(attributes: ?*anyopaque, initial_owner: BOOL, name: LPCWSTR) callconv(.c) ?*anyopaque;
+extern "kernel32" fn GetLastError() callconv(.c) DWORD;
+extern "user32" fn GetWindowThreadProcessId(hwnd: HWND, process_id: ?*DWORD) callconv(.c) DWORD;
+extern "user32" fn AllowSetForegroundWindow(process_id: DWORD) callconv(.c) BOOL;
+extern "user32" fn SetForegroundWindow(hwnd: HWND) callconv(.c) BOOL;
+
+/// Held for the life of the first `--single-instance` process. A second one
+/// finds the name taken before the first has a window to forward to.
+var instance_mutex: ?*anyopaque = null;
+
+fn sendLaunch(hwnd: HWND, payload: []const u8) bool {
+    var owner: DWORD = 0;
+    _ = GetWindowThreadProcessId(hwnd, &owner);
+    // Windows lets only the process the user just started bring a window
+    // forward. Pass that right to the instance that owns the window.
+    if (owner != 0) _ = AllowSetForegroundWindow(owner);
+    var packet = COPYDATASTRUCT{ .dwData = LAUNCH_COPY_TAG, .cbData = @intCast(payload.len), .lpData = @ptrCast(payload.ptr) };
+    var received: usize = 0;
+    const sent = SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, @bitCast(@intFromPtr(&packet)), SMTO_ABORTIFHUNG, 5000, &received);
+    return sent != 0 and received == 1;
+}
+
+/// Hand this `--single-instance` launch to the instance already running, if
+/// there is one: its window comes forward and its page receives this launch's
+/// arguments and deep link as `craft.app.onSecondInstance`.
+pub fn forwardLaunchIfRunning(args: []const []const u8, url: ?[]const u8) !bool {
+    const allocator = std.heap.c_allocator;
+    const key = try applicationKey();
+    var name_buffer: [64]u8 = undefined;
+    const name = try std.fmt.bufPrint(&name_buffer, "Local\\CraftInstance-{x}", .{key});
+    const name_wide = try utf8ToUtf16Z(80, name);
+    const mutex = CreateMutexW(null, 0, @ptrCast(&name_wide));
+    const already_running = mutex != null and GetLastError() == ERROR_ALREADY_EXISTS;
+    if (!already_running) {
+        instance_mutex = mutex;
+        return false;
+    }
+    const payload = try desktop_instance.encode(allocator, args, url);
+    defer allocator.free(payload);
+    // The first instance may still be creating its window.
+    var attempt: usize = 0;
+    while (attempt < 100) : (attempt += 1) {
+        var previous: ?HWND = null;
+        while (FindWindowExW(null, previous, CLASS_NAME.ptr, null)) |hwnd| {
+            previous = hwnd;
+            const property = GetPropW(hwnd, DEEP_LINK_PROP.ptr) orelse continue;
+            if (@intFromPtr(property) != key) continue;
+            if (sendLaunch(hwnd, payload)) return true;
+        }
+        Sleep(100);
+    }
+    return error.InstanceUnreachable;
+}
+
+fn receiveForwardedLaunch(hwnd: HWND, packet: *const COPYDATASTRUCT) LRESULT {
+    const allocator = std.heap.c_allocator;
+    if (packet.cbData == 0 or packet.cbData > desktop_instance.max_payload_bytes) return 0;
+    const data = packet.lpData orelse return 0;
+    const bytes = @as([*]const u8, @ptrCast(data))[0..packet.cbData];
+    const parsed = desktop_instance.decode(allocator, bytes) catch return 0;
+    defer parsed.deinit();
+    const entry = desktop_windows.byWindow(@intFromPtr(hwnd)) orelse return 0;
+    if (IsIconic(hwnd) != 0) _ = ShowWindow(hwnd, 9); // SW_RESTORE
+    _ = ShowWindow(hwnd, SW_SHOW);
+    _ = SetForegroundWindow(hwnd);
+    if (parsed.value.url) |url| {
+        if (desktop_deep_link.deliveryScript(allocator, url)) |script| {
+            defer allocator.free(script);
+            evalInWebview(entry.webview, script);
+        } else |_| {}
+    }
+    const script = desktop_instance.secondInstanceScript(allocator, parsed.value) catch return 0;
+    defer allocator.free(script);
+    evalInWebview(entry.webview, script);
+    return 1;
 }
 
 // Native callbacks arrive with an HWND, not the stack value returned by
@@ -1923,6 +2066,15 @@ pub const Window = struct {
             _ = webview.lpVtbl.remove_NavigationStarting(webview, navigation_token);
             return error.WebMessageRegistrationFailed;
         }
+        windows_desktop.lookup = &desktopTarget;
+        windows_desktop.toggle_fullscreen = &desktopToggleFullscreen;
+        windows_desktop.quit = &closeAllWindows;
+        // Menu accelerators pressed while the page has focus arrive here and
+        // nowhere else. The controller holds the handler until it closes.
+        const accelerator_handler = try windows_desktop.AcceleratorKeyHandler.create(window_id);
+        var accelerator_token: EventRegistrationToken = .{ .value = 0 };
+        _ = controller.lpVtbl.add_AcceleratorKeyPressed(controller, @ptrCast(accelerator_handler), &accelerator_token);
+        _ = windows_desktop.AcceleratorKeyHandler.release(accelerator_handler);
         observeWindowGeometry(desktop_windows.byId(window_id).?);
         if (options.fullscreen) try setWindowFullscreen(desktop_windows.byId(window_id).?, true);
 
@@ -1941,6 +2093,7 @@ pub const Window = struct {
         // Install before the first Navigate/NavigateToString so every page
         // starts with the same bridge surface as a macOS Craft window.
         try window.injectScript(@embedFile("js/craft-bridge.js"));
+        try window.injectScript(@embedFile("js/craft-desktop.js"));
         if (try @import("desktop_deep_link.zig").initialScript(std.heap.c_allocator)) |script| {
             defer std.heap.c_allocator.free(script);
             try window.injectScript(script);
@@ -2130,6 +2283,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         WM_COPYDATA => {
             if (GetPropW(hwnd, DEEP_LINK_PROP.ptr) == null or lParam == 0) return 0;
             const packet: *const COPYDATASTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+            if (packet.dwData == LAUNCH_COPY_TAG) return receiveForwardedLaunch(hwnd, packet);
             if (packet.dwData != DEEP_LINK_COPY_TAG or packet.cbData == 0 or packet.cbData > 8192) return 0;
             const data = packet.lpData orelse return 0;
             const url = @as([*]const u8, @ptrCast(data))[0..packet.cbData];
@@ -2150,6 +2304,19 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         WM_CRAFT_OPEN_WINDOW => {
             processPendingOpens();
             return 0;
+        },
+        windows_desktop.WM_CRAFT_DESKTOP => {
+            windows_desktop.processPending();
+            return 0;
+        },
+        WM_COMMAND => {
+            // High word 0 and no control handle: a menu item, or an
+            // accelerator turned into one.
+            if ((wParam >> 16) == 0 and lParam == 0) {
+                if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                    if (windows_desktop.onCommand(entry.id, @truncate(wParam))) return 0;
+                }
+            }
         },
         WM_SIZE => {
             // A resize belongs to this HWND, not whichever window was created last.
@@ -2189,6 +2356,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
                 const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
                 discardPendingOpens(entry.id);
+                windows_desktop.windowDestroyed(entry.id);
                 const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
                 const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
                 window_registry.forgetOwner(entry.webview);
@@ -2220,6 +2388,7 @@ pub const App = struct {
         var msg: MSG = undefined;
 
         while (GetMessageW(&msg, null, 0, 0) != 0) {
+            if (windows_desktop.translateKeyMessage(&desktopWindowId, &msg)) continue;
             _ = TranslateMessage(&msg);
             _ = DispatchMessageW(&msg);
         }
@@ -2264,10 +2433,13 @@ pub fn evalJS(script: []const u8) !void {
     const target = window_reply_target.select(live, window_context.currentWebView(), if (latest) |entry| entry.webview else null) orelse
         return error.NoWebView;
     const webview: *ICoreWebView2 = @ptrFromInt(target);
-    var script_wide = try utf8ToUtf16Z(16384, script);
+    // Heap storage sized to the script: a reply listing many chosen files
+    // does not fit the fixed buffer this used to copy into.
+    var script_wide = try desktop_script_encoding.encode(std.heap.c_allocator, script);
+    defer script_wide.deinit(std.heap.c_allocator);
     const handler = try std.heap.c_allocator.create(ExecuteScriptCompletedHandler);
     handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };
-    const hr = webview.lpVtbl.ExecuteScript(webview, @ptrCast(&script_wide), handler);
+    const hr = webview.lpVtbl.ExecuteScript(webview, script_wide.ptr(), handler);
     _ = ExecuteScriptCompletedHandler.esRelease(handler);
     if (!succeeded(hr)) return error.ScriptExecutionFailed;
 }
