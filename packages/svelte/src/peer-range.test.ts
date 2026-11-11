@@ -104,8 +104,26 @@ test('the adapter builds against the major its range points consumers at', async
   expect(highest, 'the peer range must name a major').toBeGreaterThan(0)
   expect(Number(installed.version.split('.')[0]),
     `the range offers ^${highest}.x but the adapter is built against Svelte ${installed.version}`).toBe(highest)
-  // And the devDependency, not just whatever happens to be hoisted.
-  expect(manifest.devDependencies?.svelte).toBe(`^${highest}.0.0`)
+  // And the devDependency, not just whatever happens to be hoisted: a caret
+  // range on that major, so the floor is what the range says.
+  const declared = manifest.devDependencies?.svelte ?? ''
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(declared)?.slice(1).map(Number)
+  expect(floor, `the devDependency ${declared} must be a caret range`).toBeDefined()
+  expect(floor![0]).toBe(highest)
+  // This used to require `^5.0.0`, a floor OSV reports six advisories for:
+  // it named the right major and admitted the vulnerable start of it, so a
+  // fresh install without the lockfile could build against one of them.
+  // 5.55.7 is the first version OSV answers with none. The floor may rise
+  // from there and may not fall below it.
+  const clean = [5, 55, 7]
+  const atLeast = (left: number[], right: number[]): boolean => {
+    for (let at = 0; at < 3; at += 1) if (left[at] !== right[at]) return left[at]! > right[at]!
+    return true
+  }
+  expect(atLeast(floor!, clean), `the devDependency ${declared} admits a Svelte below ${clean.join('.')}`).toBe(true)
+  // And what is installed is inside the range that is declared.
+  expect(atLeast(installed.version.split('.').map(Number), floor!),
+    `Svelte ${installed.version} is installed, below the declared ${declared}`).toBe(true)
 })
 
 test("the adapter's imports exist in the installed Svelte", async () => {

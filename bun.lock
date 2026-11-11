@@ -85,7 +85,7 @@
         "craft-native": "workspace:*",
       },
       "devDependencies": {
-        "svelte": "^5.0.0",
+        "svelte": "^5.55.7",
         "tsup": "^8.0.0",
         "typescript": "7.1.0-dev.20261011.1",
       },
