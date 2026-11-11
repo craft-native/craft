@@ -989,7 +989,25 @@ final class NativeNavigationUnitTests: XCTestCase {
 #endif
         XCTAssertEqual(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.filter { !$0.isHidden }.count, 1)
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+        // Maps' proportions: the first and last symbols sit at the centres
+        // of the capsule's round ends, 55 points apart.
+        XCTAssertEqual(material.frame.height, 103, accuracy: 0.5)
+        XCTAssertEqual(add.convert(add.imageView?.frame ?? .zero, to: material).midY, 24, accuracy: 1)
+        XCTAssertEqual(messages.convert(messages.imageView?.frame ?? .zero, to: material).midY, 79, accuracy: 1)
+        // Off, an action is the label colour; on, it takes the tint, fills
+        // its symbol and says so to VoiceOver, whatever screen is showing.
+        XCTAssertEqual(messages.tintColor, .label)
+        XCTAssertFalse(messages.accessibilityTraits.contains(.selected))
+        let outline = messages.configuration?.image
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',layout:'vertical',selected:true,companions:[{path:'/add',title:'Add',symbol:'plus',menu:[{path:'/linked-details',title:'Workout'}]}]}})")
+        await displayWait("the primary action turns on") { CraftChrome.shared.tabAccessory?.active == true && messages.accessibilityTraits.contains(.selected) }
+        XCTAssertNotEqual(messages.tintColor, .label)
+        XCTAssertEqual(messages.tintColor, shell.tabBar.tintColor)
+        XCTAssertEqual(messages.configuration?.image, UIImage(systemName: "message.fill"))
+        XCTAssertNotEqual(messages.configuration?.image, outline)
+        XCTAssertEqual(add.tintColor, .label)
         await apply("horizontal")
+        XCTAssertFalse(messages.accessibilityTraits.contains(.selected))
         XCTAssertTrue(button("craft-tab-companion:/add", in: shell.view) === add)
         XCTAssertTrue(button("craft-tab-accessory", in: shell.view) === messages)
         XCTAssertEqual(add.frame.minY, messages.frame.minY, accuracy: 0.5)

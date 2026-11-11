@@ -1059,6 +1059,8 @@ internal class CraftNativeChrome(
         val path = item.optString("path")
         return visiblePath == path || visiblePath?.startsWith(path + "/") == true
     }
+    /** Drawn in the accent: its destination is showing, or the app says it is on. */
+    private fun isAccessoryActive(item: JSONObject): Boolean = item.optBoolean("selected") || isAccessorySelected(item)
     private var swipeTracking = false
     private var swipeIntercepted = false
     private var horizontalScrollDeferred = false
@@ -1458,10 +1460,10 @@ internal class CraftNativeChrome(
         val grouped = accessoryGroup.parent === body
         accessoryGroup.background = if (grouped) GradientDrawable().apply { setColor(surface); cornerRadius = dp(26).toFloat() } else null
         tabBar.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
-        val primarySelected = accessorySpec?.let { isAccessorySelected(it) } == true
+        val primarySelected = accessorySpec?.let { isAccessoryActive(it) } == true
         accessory.isSelected = primarySelected
         companionViews.forEach { (action, item) ->
-            val selected = isAccessorySelected(item)
+            val selected = isAccessoryActive(item)
             action.isSelected = selected
             action.background = if (grouped) rippleBackground() else GradientDrawable().apply { setColor(if (selected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
             (action.getChildAt(0) as ImageView).setImageDrawable(CraftNativeIcons.drawable(context, null, item.optString("symbol"), if (selected) accent else text))

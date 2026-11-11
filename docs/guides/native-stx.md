@@ -1099,11 +1099,18 @@ clipped. Nothing divides the actions; pass filled symbols (`map.fill`,
 `message.fill`) for the weight Maps uses. Before iOS 26 the capsule is the tab
 bar's thin material with a hairline. Android uses a native elevated surface,
 and the STX browser host the same layout and accessible actions.
-Each action is 48 points across and 52 along the group, and on iOS its symbol
-is 15 points at medium weight, which leaves the room around it that the
-symbols in Maps have; grouping does not
+The group is 48 points across. As in Maps, its first and last symbols sit at
+the centres of the capsule's round ends and symbols are 55 points apart, so
+two actions make a 48 by 103 point control; every point of it belongs to the
+nearest action. On iOS a symbol is 15 points at medium weight, which leaves
+the room around it that the symbols in Maps have. Grouping does not
 shrink the tabs or reserve a full-width content inset. A single action
-remains a circle, with a 22-point symbol. From STX, `<FloatingActions>` declares the group in a
+remains a circle, with a 22-point symbol.
+
+An action is drawn in the app's tint, filled where its symbol has a fill, and
+announced as selected while it is on: when the screen at its `path` is
+showing, or when it carries `selected: true` (a mode it switched, as Maps'
+location arrow turns blue while tracking). Off, it is the label colour. From STX, `<FloatingActions>` declares the group in a
 screen's markup and `floatingActions()` builds it for `setChrome`.
 
 ```ts

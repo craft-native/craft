@@ -1483,12 +1483,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 let button = UIButton(type: .system)
                 var configuration = UIButton.Configuration.plain()
                 configuration.image = UIImage(systemName: action.symbol)
-                configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
                 button.configuration = configuration
                 button.accessibilityIdentifier = "craft-tab-companion:" + action.id
                 button.accessibilityLabel = action.accessibilityLabel ?? action.title
                 button.accessibilityValue = action.badge
-                button.accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
                 if action.menu.isEmpty {
                     button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id) }, for: .touchUpInside)
                 } else {
@@ -1512,9 +1510,6 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 companionButtons.append(button)
             }
         }
-        for (index, action) in companionModels.enumerated() {
-            companionButtons[index].accessibilityTraits = chrome.accessorySelected(action) ? [.button, .selected] : [.button]
-        }
         let grouped = model?.accessoryLayout != nil
         // A group is one control, as the map controls in Maps are: its
         // actions live inside the shared surface, so the glass lights the
@@ -1522,16 +1517,12 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         // Separate actions stay in the shell, each on its own surface.
         let actionHost: UIView = grouped ? accessoryGlass.contentView : view
         for glass in companionGlasses { glass.isHidden = grouped }
-        for button in companionButtons {
+        for (index, button) in companionButtons.enumerated() {
             if button.superview !== actionHost { actionHost.addSubview(button) }
-            button.tintColor = grouped ? .label : nil
-            button.configuration?.preferredSymbolConfigurationForImage = Self.accessorySymbol(grouped: grouped)
+            styleAccessory(button, for: companionModels[index], grouped: grouped)
         }
-        accessoryButton.tintColor = grouped ? .label : nil
         if let model {
             var configuration = UIButton.Configuration.plain()
-            configuration.image = UIImage(systemName: model.symbol)
-            configuration.preferredSymbolConfigurationForImage = Self.accessorySymbol(grouped: grouped)
             configuration.title = model.iconOnly ? nil : model.displayTitle
             configuration.subtitle = model.iconOnly ? nil : model.badge
             configuration.imagePadding = model.iconOnly ? 0 : 8
@@ -1539,7 +1530,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 button.configuration = configuration
                 button.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
                 button.accessibilityValue = model.badge
-                button.accessibilityTraits = chrome.accessorySelected(model) ? [.button, .selected] : [.button]
+                styleAccessory(button, for: model, grouped: grouped)
             }
         }
 #if compiler(>=6.2)
@@ -1606,6 +1597,25 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         UIImage.SymbolConfiguration(pointSize: grouped ? 15 : 22, weight: grouped ? .medium : .regular)
     }
 
+    /// One action's symbol, tint and state. An action that is on (its
+    /// destination is showing, or the app says so) is drawn in the tint and,
+    /// where the symbol has one, filled: Maps' location arrow while tracking.
+    /// Off, a grouped action is the label colour, as the map controls are.
+    private func styleAccessory(_ button: UIButton, for action: CraftChrome.Tab, grouped: Bool) {
+        let active = CraftChrome.shared.accessoryActive(action)
+        let filled = active && !action.symbol.hasSuffix(".fill") ? UIImage(systemName: action.symbol + ".fill") : nil
+        let tint: UIColor = CraftChrome.shared.tint ?? config.tintColor.flatMap { UIColor(hex: $0) } ?? view.tintColor
+        button.configuration?.image = filled ?? UIImage(systemName: action.symbol)
+        button.configuration?.preferredSymbolConfigurationForImage = Self.accessorySymbol(grouped: grouped)
+        // Said to the configuration as well as the view: glass draws its
+        // content in the label colour unless the content names its own.
+        button.configuration?.baseForegroundColor = active ? tint : grouped ? .label : nil
+        // A group places each symbol itself, when it lays out.
+        if !grouped { button.configuration?.contentInsets = .zero }
+        button.tintColor = active ? tint : grouped ? .label : nil
+        button.accessibilityTraits = active ? [.button, .selected] : [.button]
+    }
+
     /// The surface under the floating actions. A group is a capsule of
     /// interactive Liquid Glass on iOS 26, shaped by the system so its rim,
     /// lensing and shadow are not clipped away; before iOS 26 it is the tab
@@ -1642,10 +1652,11 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
     }
 
-    /// A group's breadth, and each action's length along it: the system map
-    /// controls' proportions, every target at least 48 points.
+    /// A group's breadth, and the distance from one symbol to the next. As
+    /// in Maps, the first and last symbols sit at the centres of the
+    /// capsule's round ends, so two actions make a 48 by 103 point control.
     static let accessoryGroupBreadth: CGFloat = 48
-    static let accessoryGroupStep: CGFloat = 52
+    static let accessoryGroupStep: CGFloat = 55
 
     @objc private func openTabAccessory() {
         if let accessoryModel { hybrid.open(accessoryModel.id) }
@@ -1697,7 +1708,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let breadth = Self.accessoryGroupBreadth
         let step = Self.accessoryGroupStep
         let buttons = companionButtons + [accessoryButton]
-        let length = step * CGFloat(buttons.count)
+        let length = breadth + step * CGFloat(buttons.count - 1)
         let size = vertical ? CGSize(width: breadth, height: length) : CGSize(width: length, height: breadth)
         let rightToLeft = view.effectiveUserInterfaceLayoutDirection == .rightToLeft
         // The tab bar's own platter sits this far in from the screen's edge.
@@ -1705,10 +1716,21 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let x = rightToLeft ? view.safeAreaInsets.left + margin : view.bounds.maxX - view.safeAreaInsets.right - size.width - margin
         accessoryGlass.frame = CGRect(x: x, y: tabBar.frame.minY - size.height - 10, width: size.width, height: size.height)
         for (index, button) in buttons.enumerated() {
-            let place = CGFloat(rightToLeft && !vertical ? buttons.count - 1 - index : index) * step
+            // Every point of the capsule belongs to the nearest action; its
+            // symbol stays where Maps puts it, at the centre of a round end
+            // for the first and the last.
+            let place = rightToLeft && !vertical ? buttons.count - 1 - index : index
+            let centre = breadth / 2 + CGFloat(place) * step
+            let from = place == 0 ? 0 : centre - step / 2
+            let to = place == buttons.count - 1 ? length : centre + step / 2
             button.frame = vertical
-                ? CGRect(x: 0, y: place, width: breadth, height: step)
-                : CGRect(x: place, y: 0, width: step, height: breadth)
+                ? CGRect(x: 0, y: from, width: breadth, height: to - from)
+                : CGRect(x: from, y: 0, width: to - from, height: breadth)
+            let shift = 2 * (centre - from) - (to - from)
+            let before = max(0, shift), after = max(0, -shift)
+            button.configuration?.contentInsets = vertical
+                ? NSDirectionalEdgeInsets(top: before, leading: 0, bottom: after, trailing: 0)
+                : NSDirectionalEdgeInsets(top: 0, leading: rightToLeft ? after : before, bottom: 0, trailing: rightToLeft ? before : after)
         }
         let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
         let primary = accessoryButton.convert(accessoryButton.bounds, to: view)

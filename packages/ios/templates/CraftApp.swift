@@ -822,6 +822,9 @@ final class CraftChrome: ObservableObject {
         /// A shared material capsule; nil keeps separate floating buttons.
         var accessoryLayout: String? = nil
         var companions: [Tab] = []
+        /// A floating action that is on: a mode it switched (tracking in
+        /// Maps), drawn in the tint whatever screen is showing.
+        var active = false
         /// A tap opens these destinations in a compact menu instead of navigating.
         var menu: [TabMenuItem] = []
     }
@@ -846,6 +849,8 @@ final class CraftChrome: ObservableObject {
         guard let path = visiblePath else { return false }
         return path == accessory.id || path.hasPrefix(accessory.id + "/")
     }
+    /// Drawn in the tint: its destination is showing, or the app says it is on.
+    func accessoryActive(_ accessory: Tab) -> Bool { accessory.active || accessorySelected(accessory) }
     var highlightedTab: String? { accessorySelected ? nil : selected }
     let tabSwipeProgress = CraftTabSwipeProgress()
     private(set) var tabSwipePosition: CGFloat? {
@@ -977,13 +982,15 @@ final class CraftChrome: ObservableObject {
                           let companionTitle = action["title"] as? String else { return nil }
                     return Tab(id: companionPath, title: companionTitle, symbol: action["symbol"] as? String ?? "circle",
                         accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true,
+                        active: action["selected"] as? Bool ?? false,
                         menu: ((action["menu"] as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
                             guard let destination = choice["path"] as? String,
                                   destination.hasPrefix("/"), !destination.hasPrefix("//"),
                                   let label = choice["title"] as? String, !label.isEmpty else { return nil }
                             return TabMenuItem(id: destination, title: label, symbol: choice["symbol"] as? String ?? "circle")
                         })
-                })
+                },
+                active: item["selected"] as? Bool ?? false)
         } else {
             next = nil
         }
