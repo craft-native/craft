@@ -104,6 +104,8 @@ pub const Channel = enum {
     bonjour_lost,
     deeplink,
     filedrop,
+    /// Windows and Linux: another launch of a `--single-instance` app.
+    second_instance,
     fs_change,
     handoff_incoming,
     iap_failed,
@@ -155,6 +157,7 @@ pub const Channel = enum {
             .bonjour_lost => "craft:bonjour:lost",
             .deeplink => "craft:deepLink",
             .filedrop => "craft:fileDrop",
+            .second_instance => "craft:secondInstance",
             .fs_change => "craft:fs:change",
             .handoff_incoming => "craft:handoff:incoming",
             .iap_failed => "craft:iap:failed",

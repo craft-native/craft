@@ -7,6 +7,14 @@ pub const WindowOptions = struct {
     /// URL handed to this installed app by its registered protocol handler.
     /// It is page data, not the document Craft should navigate to.
     deep_link: ?[]const u8 = null,
+    /// Windows and Linux: the name all launches of this app share. A launch
+    /// that finds one already running hands it `instance_args` and
+    /// `deep_link`, brings its window forward, and exits.
+    single_instance: ?[]const u8 = null,
+    /// `--instance-arg` values, in order. Owned; freed by `freeOptionStrings`.
+    instance_args: []const []const u8 = &.{},
+    /// Set by a relaunch: the process to wait for before starting.
+    relaunch_wait_pid: ?u32 = null,
     html: ?[]const u8 = null,
     title: []const u8 = "Craft App",
     width: u32 = 1200,
@@ -87,6 +95,9 @@ pub const WindowOptions = struct {
     frame_autosave: ?[]const u8 = null,
 };
 
+/// The same bound `desktop_instance.zig` puts on a forwarded launch.
+const max_instance_args = 32;
+
 pub const CliError = error{
     InvalidArgument,
     MissingValue,
@@ -109,6 +120,9 @@ pub fn freeOptionStrings(allocator: std.mem.Allocator, options: *WindowOptions) 
     if (options.backend_executable) |s| allocator.free(s);
     if (options.url) |s| allocator.free(s);
     if (options.deep_link) |s| allocator.free(s);
+    if (options.single_instance) |s| allocator.free(s);
+    for (options.instance_args) |s| allocator.free(s);
+    if (options.instance_args.len > 0) allocator.free(options.instance_args);
     if (options.html) |s| allocator.free(s);
     if (!std.mem.eql(u8, options.title, "Craft App")) allocator.free(options.title);
     if (options.sidebar_config) |s| allocator.free(s);
@@ -510,6 +524,26 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             if (i >= args.len) return CliError.MissingValue;
             if (args[i].len == 0) return CliError.InvalidArgument;
             options.deep_link = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--single-instance")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            if (args[i].len == 0 or args[i].len > 200) return CliError.InvalidArgument;
+            if (options.single_instance) |previous| allocator.free(previous);
+            options.single_instance = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--instance-arg")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            if (options.instance_args.len >= max_instance_args) return CliError.InvalidArgument;
+            const grown = try allocator.alloc([]const u8, options.instance_args.len + 1);
+            errdefer allocator.free(grown);
+            @memcpy(grown[0..options.instance_args.len], options.instance_args);
+            grown[options.instance_args.len] = try allocator.dupe(u8, args[i]);
+            if (options.instance_args.len > 0) allocator.free(options.instance_args);
+            options.instance_args = grown;
+        } else if (std.mem.eql(u8, arg, "--relaunch-wait-pid")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            options.relaunch_wait_pid = std.fmt.parseInt(u32, args[i], 10) catch return CliError.InvalidNumber;
         } else if (std.mem.eql(u8, arg, "--html")) {
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
@@ -696,6 +730,9 @@ fn printHelp() void {
         \\Window Content:
         \\  -u, --url <URL>          Load URL in the window
         \\      --deep-link <URL>    Deliver a protocol URL to the page without navigating to it
+        \\      --single-instance <ID>  Windows and Linux: keep one running instance per ID; a
+        \\                           later launch brings it forward and hands it its arguments
+        \\      --instance-arg <VALUE>  An argument for the running instance (repeatable)
         \\      --html <HTML>        Load HTML content directly
         \\      --html-file <PATH>   Load HTML content from a file
         \\
@@ -944,6 +981,21 @@ test "logging is off unless asked for" {
 test "--log-file without a value is an error, not a silent default" {
     var args = [_][:0]const u8{ "craft", "--log-file" };
     try std.testing.expectError(CliError.MissingValue, parseArgs(std.testing.allocator, &args));
+}
+
+test "--single-instance collects the id and every instance argument" {
+    var args = [_][:0]const u8{ "craft", "--single-instance", "org.example.app", "--instance-arg", "/tmp/a b", "--instance-arg", "--flag", "--relaunch-wait-pid", "4242" };
+    var options = try parseArgs(std.testing.allocator, &args);
+    defer freeOptionStrings(std.testing.allocator, &options);
+    try std.testing.expectEqualStrings("org.example.app", options.single_instance.?);
+    try std.testing.expectEqual(@as(usize, 2), options.instance_args.len);
+    try std.testing.expectEqualStrings("/tmp/a b", options.instance_args[0]);
+    try std.testing.expectEqualStrings("--flag", options.instance_args[1]);
+    try std.testing.expectEqual(@as(?u32, 4242), options.relaunch_wait_pid);
+    var missing = [_][:0]const u8{ "craft", "--single-instance" };
+    try std.testing.expectError(CliError.MissingValue, parseArgs(std.testing.allocator, &missing));
+    var empty = [_][:0]const u8{ "craft", "--single-instance", "" };
+    try std.testing.expectError(CliError.InvalidArgument, parseArgs(std.testing.allocator, &empty));
 }
 
 test "--deep-link preserves the page URL and rejects a missing link" {

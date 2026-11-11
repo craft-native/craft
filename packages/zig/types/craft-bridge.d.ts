@@ -693,7 +693,16 @@ export interface AppBridge {
   getName(): Promise<{ name: string }>;
   getPath(options: { name: AppPath }): Promise<{ path: string }>;
   quit(): Promise<void>;
+  /**
+   * Start the app again and quit this process. Runs this process's own
+   * command line, or the launcher named in `CRAFT_RELAUNCH_EXECUTABLE`.
+   */
   relaunch(): Promise<void>;
+  /**
+   * Windows and Linux, for an app started with `--single-instance <id>`:
+   * another launch was handed to this one. Returns an unsubscribe.
+   */
+  onSecondInstance(callback: (launch: { args: string[]; url: string | null }) => void): () => void;
   hide(): Promise<void>;
   show(): Promise<void>;
   focus(): Promise<void>;

@@ -573,6 +573,24 @@
     notify:       function (opts) { return _send('app', 'notify', _stringify(opts || {})) },
     setBadge:     function (n)    { return _send('app', 'setBadge', _stringify({ count: Number(n) || 0 })) },
     bounce:       function (type) { return _send('app', 'bounce', _stringify({ type: String(type || 'informational') })) },
+    // Start the app again and quit this process: what an updater calls once
+    // the new version is staged. Takes no arguments on purpose. What gets
+    // started is this process's own command line, or the launcher that named
+    // itself in CRAFT_RELAUNCH_EXECUTABLE; a page cannot choose a program.
+    relaunch:     function () { return _send('app', 'relaunch') },
+    // Windows and Linux, for an app started with `--single-instance <id>`:
+    // another launch of the app was handed to this one instead of opening a
+    // second window. `args` are that launch's `--instance-arg` values and
+    // `url` its deep link (also delivered to craft.deepLink.onUrl). macOS
+    // never fires this: LaunchServices already keeps one instance, and a URL
+    // reaches craft.deepLink.
+    onSecondInstance: _evt('craft:secondInstance'),
+  }
+  window.__craftDeliverSecondInstance = function (launch) {
+    const detail = launch && typeof launch === 'object' ? launch : {}
+    window.dispatchEvent(new CustomEvent('craft:secondInstance', {
+      detail: { args: Array.isArray(detail.args) ? detail.args : [], url: typeof detail.url === 'string' ? detail.url : null },
+    }))
   }
 
   // -------------------------------------------------------------------------
