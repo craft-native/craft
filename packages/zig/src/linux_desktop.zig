@@ -41,7 +41,8 @@ extern "c" fn gtk_widget_destroy(widget: *anyopaque) void;
 extern "c" fn gtk_widget_show_all(widget: *anyopaque) void;
 extern "c" fn gtk_widget_set_sensitive(widget: *anyopaque, sensitive: c_int) void;
 extern "c" fn gtk_widget_get_window(widget: *anyopaque) ?*anyopaque;
-extern "c" fn gtk_widget_add_accelerator(widget: *anyopaque, signal: [*:0]const u8, group: *anyopaque, key: c_uint, modifiers: c_uint, flags: c_uint) void;
+extern "c" fn gtk_widget_show(widget: *anyopaque) void;
+extern "c" fn gdk_keyval_to_lower(keyval: c_uint) c_uint;
 extern "c" fn gtk_bin_get_child(bin: *anyopaque) ?*anyopaque;
 extern "c" fn gtk_box_pack_start(box: *anyopaque, child: *anyopaque, expand: c_int, fill: c_int, padding: c_uint) void;
 extern "c" fn gtk_box_reorder_child(box: *anyopaque, child: *anyopaque, position: c_int) void;
@@ -54,9 +55,6 @@ extern "c" fn gtk_menu_shell_append(shell: *anyopaque, child: *anyopaque) void;
 extern "c" fn gtk_menu_attach_to_widget(menu: *anyopaque, widget: *anyopaque, detacher: ?*anyopaque) void;
 extern "c" fn gtk_menu_popup_at_rect(menu: *anyopaque, rect_window: *anyopaque, rect: *const GdkRectangle, rect_anchor: c_int, menu_anchor: c_int, trigger_event: ?*anyopaque) void;
 extern "c" fn gtk_accel_label_set_accel(label: *anyopaque, key: c_uint, modifiers: c_uint) void;
-extern "c" fn gtk_accel_group_new() *anyopaque;
-extern "c" fn gtk_window_add_accel_group(window: *anyopaque, group: *anyopaque) void;
-extern "c" fn gtk_window_remove_accel_group(window: *anyopaque, group: *anyopaque) void;
 extern "c" fn gtk_window_close(window: *anyopaque) void;
 extern "c" fn gtk_window_iconify(window: *anyopaque) void;
 extern "c" fn gtk_window_maximize(window: *anyopaque) void;
@@ -125,18 +123,8 @@ fn dupeZ(text: []const u8) ?[:0]u8 {
 var model: ?desktop_menu.Model = null;
 var menu_host: ?u32 = null;
 var menu_bar: ?*anyopaque = null;
-var accel_group: ?*anyopaque = null;
-var accel_window: usize = 0;
 
 fn removeMenuWidgets() void {
-    if (accel_group) |group| {
-        // The group is only attached to a window that still exists: a
-        // destroyed host clears `accel_window` first.
-        if (accel_window != 0) gtk_window_remove_accel_group(@ptrFromInt(accel_window), group);
-        g_object_unref(group);
-        accel_group = null;
-    }
-    accel_window = 0;
     if (menu_bar) |bar| {
         gtk_widget_destroy(bar);
         menu_bar = null;
@@ -148,15 +136,16 @@ fn removeMenuWidgets() void {
 pub fn windowDestroyed(id: u32) void {
     if (menu_host != null and menu_host.? == id) {
         menu_bar = null;
-        accel_window = 0;
-        removeMenuWidgets();
         menu_host = null;
     }
     drop_cache.clear();
 }
 
 fn onMenuItemActivate(_: *anyopaque, user_data: ?*anyopaque) callconv(.c) void {
-    const command: u16 = @intCast(@intFromPtr(user_data));
+    activateCommand(@intCast(@intFromPtr(user_data)));
+}
+
+fn activateCommand(command: u16) void {
     const host = lookup(menu_host orelse return) orelse return;
     const current = if (model) |*value| value else return;
     const item = current.byCommand(command) orelse return;
@@ -198,8 +187,43 @@ fn performRole(host: Target, role: desktop_menu.Role) void {
     }
 }
 
-fn buildMenuItem(item: *const desktop_menu.Item, group: *anyopaque) ?*anyopaque {
-    if (item.separator) return gtk_separator_menu_item_new();
+/// The start of a `GdkEventKey`.
+const GdkEventKey = extern struct { event_type: c_int, window: ?*anyopaque, send_event: i8, time: u32, state: c_uint, keyval: c_uint };
+
+/// Menu accelerators, matched against the model before the key reaches the
+/// page. Connected to each window's `key-press-event`; a key that is not an
+/// accelerator of the window showing the menu bar goes on untouched.
+fn onWindowKeyPress(_: *anyopaque, event: *const GdkEventKey, user_data: ?*anyopaque) callconv(.c) c_int {
+    const id: u32 = @intCast(@intFromPtr(user_data));
+    if (menu_host == null or menu_host.? != id) return 0;
+    const current = if (model) |*value| value else return 0;
+    const key = gdk_keyval_to_lower(event.keyval);
+    // Shift, Control and Mod1 (Alt): the modifiers an accelerator can name.
+    const modifiers = event.state & 0b1101;
+    for (current.menus.items) |*menu| {
+        for (menu.items.items) |*item| {
+            const shortcut = item.shortcut orelse continue;
+            if (item.separator or !item.enabled) continue;
+            if (item.role) |role| if (role.isEditing()) continue;
+            if (shortcut.gdkKeyval() != key or shortcut.gdkModifiers() != modifiers) continue;
+            activateCommand(item.command);
+            return 1; // handled: the page does not also see it
+        }
+    }
+    return 0;
+}
+
+/// Watch a window's keys for menu accelerators.
+pub fn attachWindow(window: *anyopaque, id: u32) void {
+    _ = g_signal_connect_data(window, "key-press-event", @ptrCast(&onWindowKeyPress), @ptrFromInt(@as(usize, id)), null, 0);
+}
+
+fn buildMenuItem(item: *const desktop_menu.Item) ?*anyopaque {
+    if (item.separator) {
+        const separator = gtk_separator_menu_item_new();
+        gtk_widget_show(separator);
+        return separator;
+    }
     // GTK's check item toggles itself when chosen. The page decides what is
     // checked, so the mark is drawn from the model and never by the toolkit.
     var label_buffer: std.ArrayListUnmanaged(u8) = .empty;
@@ -211,17 +235,11 @@ fn buildMenuItem(item: *const desktop_menu.Item, group: *anyopaque) ?*anyopaque 
     const widget = gtk_menu_item_new_with_label(label);
     gtk_widget_set_sensitive(widget, if (item.enabled) 1 else 0);
     if (item.shortcut) |shortcut| {
-        const key = shortcut.gdkKeyval();
-        const modifiers = shortcut.gdkModifiers();
-        const editing = if (item.role) |role| role.isEditing() else false;
-        if (editing) {
-            // Drawn beside the item, not bound: the key stays with the page.
-            if (gtk_bin_get_child(widget)) |accel_label| gtk_accel_label_set_accel(accel_label, key, modifiers);
-        } else {
-            // GTK_ACCEL_VISIBLE
-            gtk_widget_add_accelerator(widget, "activate", group, key, modifiers, 1);
-        }
+        // Drawn beside the item. The binding itself is `onWindowKeyPress`.
+        if (gtk_bin_get_child(widget)) |accel_label|
+            gtk_accel_label_set_accel(accel_label, shortcut.gdkKeyval(), shortcut.gdkModifiers());
     }
+    gtk_widget_show(widget);
     _ = g_signal_connect_data(widget, "activate", @ptrCast(&onMenuItemActivate), @ptrFromInt(@as(usize, item.command)), null, 0);
     return widget;
 }
@@ -236,7 +254,6 @@ fn rebuildMenu() void {
     // has somewhere to go.
     const box = gtk_bin_get_child(window) orelse return;
 
-    const group = gtk_accel_group_new();
     const bar = gtk_menu_bar_new();
     for (current.menus.items) |*menu| {
         const title = dupeZ(menu.label) orelse continue;
@@ -244,7 +261,7 @@ fn rebuildMenu() void {
         const top = gtk_menu_item_new_with_label(title);
         const submenu = gtk_menu_new();
         for (menu.items.items) |*item| {
-            if (buildMenuItem(item, group)) |widget| gtk_menu_shell_append(submenu, widget);
+            if (buildMenuItem(item)) |widget| gtk_menu_shell_append(submenu, widget);
         }
         gtk_menu_item_set_submenu(top, submenu);
         gtk_menu_shell_append(bar, top);
@@ -252,10 +269,7 @@ fn rebuildMenu() void {
     gtk_box_pack_start(box, bar, 0, 0, 0);
     gtk_box_reorder_child(box, bar, 0);
     gtk_widget_show_all(bar);
-    gtk_window_add_accel_group(window, group);
     menu_bar = bar;
-    accel_group = group;
-    accel_window = host.window;
 }
 
 /// `craft.menu.*`. The sender's window becomes the one that shows the bar.
@@ -514,7 +528,9 @@ fn appendContextItems(owner: *ContextRequest, shell: *anyopaque, items: []const 
     for (items) |*item| {
         counter.* += 1;
         if (item.separator) {
-            gtk_menu_shell_append(shell, gtk_separator_menu_item_new());
+            const separator = gtk_separator_menu_item_new();
+            gtk_widget_show(separator);
+            gtk_menu_shell_append(shell, separator);
             continue;
         }
         var label_buffer: std.ArrayListUnmanaged(u8) = .empty;
@@ -538,6 +554,7 @@ fn appendContextItems(owner: *ContextRequest, shell: *anyopaque, items: []const 
             cell.* = .{ .owner = owner, .number = counter.* };
             _ = g_signal_connect_data(widget, "activate", @ptrCast(&onContextItemActivate), cell, @ptrCast(@constCast(&freeContextCell)), 0);
         }
+        gtk_widget_show(widget);
         gtk_menu_shell_append(shell, widget);
     }
 }

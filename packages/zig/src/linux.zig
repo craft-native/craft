@@ -1119,6 +1119,7 @@ pub const Window = struct {
             .x = x,
             .y = y,
         };
+        linux_desktop.attachWindow(window, window_id);
         // Register the page API before any load. The user-content manager
         // reapplies this document-start script after navigation too.
         try created.injectScript(@embedFile("js/craft-bridge.js"));
