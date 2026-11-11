@@ -342,25 +342,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Missing signing material stops the *signing*, not the release.
+          # Missing signing material fails this leg, and with it the release.
           #
-          # This used to `exit 1`, which took the whole darwin leg down with it —
-          # including the publish step at the end of this job. The result was
-          # releases carrying linux and windows binaries and no macOS ones at
-          # all, from v0.0.37 to v0.0.78, and Pantry (which only surfaces a
-          # version whose release has the full prebuilt set) pinned at 0.0.37
-          # for a year. Nobody noticed, because the tag, the changelog and the
-          # GitHub release all still appeared.
+          # For a while this warned and carried on, publishing macOS binaries
+          # unsigned. That was the answer to an older failure: `exit 1` here
+          # used to take down only the darwin leg while the others published,
+          # so releases v0.0.37 to v0.0.78 shipped with no macOS binary at all.
+          # That hazard is closed elsewhere now. Every leg stages into a draft
+          # release, and `verify-release` and `publish-release` both need this
+          # whole matrix to succeed, so a red darwin leg leaves a private draft
+          # and nothing public.
           #
-          # A macOS binary Pantry can install unsigned beats no macOS binary at
-          # all: it is fetched programmatically, so it carries no quarantine
-          # attribute and Gatekeeper does not gate it. When the secret is
-          # present this behaves exactly as before.
+          # An unsigned macOS binary is not a degraded release, it is a
+          # different product: Gatekeeper refuses it for anyone who downloads
+          # it by hand, and an app built on it cannot be notarized. Shipping
+          # that with a warning nobody reads is worse than not shipping.
           if [ -z "${DOTENV_PRIVATE_KEY_PRODUCTION:-}" ]; then
-            echo "::warning::DOTENV_PRIVATE_KEY_PRODUCTION is not set — publishing macOS binaries unsigned."
-            echo "::warning::Set it to restore signing and notarization: gh secret set DOTENV_PRIVATE_KEY_PRODUCTION"
-            echo "SIGNING_AVAILABLE=false" >> "$GITHUB_ENV"
-            exit 0
+            echo "::error::DOTENV_PRIVATE_KEY_PRODUCTION is not set, so the macOS binaries cannot be signed or notarized. The release stays a draft."
+            echo "::error::Set it and re-run this job: gh secret set DOTENV_PRIVATE_KEY_PRODUCTION"
+            exit 1
           fi
 
           missing=""
@@ -377,9 +377,8 @@ jobs:
           done
 
           if [ -n "$missing" ]; then
-            echo "::warning::Empty in .env.production:$missing — publishing macOS binaries unsigned."
-            echo "SIGNING_AVAILABLE=false" >> "$GITHUB_ENV"
-            exit 0
+            echo "::error::Empty in .env.production:$missing. The macOS binaries cannot be signed or notarized, and the release stays a draft."
+            exit 1
           fi
 
           echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"

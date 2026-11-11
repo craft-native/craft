@@ -208,6 +208,43 @@ test('the Vulkan ABI matrix requires managed Git on every platform and still run
   expect(job.steps.find((step: any) => step.name === 'Execute the independent SDK ABI probe and C callback').if).toBeUndefined()
 })
 
+test('a release without macOS signing material fails instead of publishing unsigned binaries', () => {
+  const loader = release.jobs.pantry.steps?.find(step => step.name === 'Load macOS release credentials')?.run
+  expect(loader).toBeTruthy()
+  expect(loader).not.toContain('SIGNING_AVAILABLE=false')
+  expect(loader).not.toContain('::warning::')
+  const dir = createTempDir('craft-signing-missing-')
+  const executable = join(dir, 'bun')
+  const output = join(dir, 'github-env')
+  try {
+    // The secret that decrypts .env.production is absent.
+    writeFileSync(output, '')
+    const base = { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_ENV: output }
+    const withoutKey = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', loader!], { env: { ...base, DOTENV_PRIVATE_KEY_PRODUCTION: '' } })
+    expect(withoutKey.exitCode).not.toBe(0)
+    expect(withoutKey.stdout.toString()).toContain('::error::DOTENV_PRIVATE_KEY_PRODUCTION is not set')
+    expect(readFileSync(output, 'utf8')).toBe('')
+
+    // The secret is present but a credential decrypts to nothing.
+    writeFileSync(executable, '#!/bin/sh\n[ "$3" = "APPLE_TEAM_ID" ] && exit 0\nprintf "fixture-value"\n')
+    chmodSync(executable, 0o755)
+    const withEmptyValue = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', loader!], { env: { ...base, DOTENV_PRIVATE_KEY_PRODUCTION: 'fixture-key' } })
+    expect(withEmptyValue.exitCode).not.toBe(0)
+    expect(withEmptyValue.stdout.toString()).toContain('::error::Empty in .env.production: APPLE_TEAM_ID')
+    expect(readFileSync(output, 'utf8')).not.toContain('SIGNING_AVAILABLE')
+  }
+  finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // Nothing downstream may publish when this matrix did not fully succeed.
+  for (const gate of ['verify-release', 'publish-release'] as const) {
+    const job = release.jobs[gate] as { needs: string[], if?: string }
+    expect(job.needs).toContain(gate === 'verify-release' ? 'pantry' : 'verify-release')
+  }
+  expect((release.jobs['verify-release'] as { if?: string }).if).toContain('needs.pantry.result == \'success\'')
+})
+
 test('macOS signing reads credentials from the declared Stacks CLI, not the shared buddy binary', () => {
   const loader = release.jobs.pantry.steps?.find(step => step.name === 'Load macOS release credentials')?.run
   expect(loader).toBeTruthy()
