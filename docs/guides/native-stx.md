@@ -1091,10 +1091,18 @@ For a Maps-style group of floating actions, set `layout: 'vertical'` (or
 `'horizontal'`). This implies `iconOnly` and joins the icons in one material
 capsule, above the trailing edge of the tab bar. Companions appear first,
 then the primary action; omitting `layout` keeps the separate-button style.
-iOS uses one system glass/material surface, Android uses a native elevated
-surface, and the STX browser host uses the same layout and accessible actions.
-Every icon retains a 48-point touch target; grouping does not shrink the tabs
-or reserve a full-width content inset. A single action remains a circle.
+The group is one control, as the map controls in Maps are. On iOS 26 it is a
+single capsule of interactive Liquid Glass that holds its actions: the glass
+lights the action being pressed, keeps each symbol legible over whatever
+scrolls beneath, and is shaped by the system, so its rim and shadow are never
+clipped. Nothing divides the actions; pass filled symbols (`map.fill`,
+`message.fill`) for the weight Maps uses. Before iOS 26 the capsule is the tab
+bar's thin material with a hairline. Android uses a native elevated surface,
+and the STX browser host the same layout and accessible actions.
+Each action is 48 points across and 52 along the group; grouping does not
+shrink the tabs or reserve a full-width content inset. A single action
+remains a circle. From STX, `<FloatingActions>` declares the group in a
+screen's markup and `floatingActions()` builds it for `setChrome`.
 
 ```ts
 craft.navigation.setChrome({

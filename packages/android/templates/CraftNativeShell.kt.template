@@ -1313,13 +1313,7 @@ internal class CraftNativeChrome(
             action.layoutParams = LayoutParams(dp(48), dp(48)).apply { marginStart = if (grouped) 0 else dp(8) }
         }
         accessory.layoutParams = LayoutParams(dp(if (grouped) 48 else 64), dp(if (grouped) 48 else 64)).apply { marginStart = if (grouped) 0 else dp(8) }
-        val divider = GradientDrawable().apply { setColor(Color.argb(48, 128, 128, 128)); setSize(dp(1), dp(1)) }
-        for (row in listOf(accessoryGroup, companionRow)) {
-            row.showDividers = if (grouped) SHOW_DIVIDER_MIDDLE else SHOW_DIVIDER_NONE
-            row.dividerDrawable = if (grouped) divider.constantState?.newDrawable() else null
-            row.dividerPadding = dp(12)
-        }
-        // An empty companion row must not leave a divider above a single icon.
+        // A group is one control: no divider between its actions, as on iOS.
         companionRow.visibility = if (companionViews.isEmpty()) View.GONE else View.VISIBLE
     }
 

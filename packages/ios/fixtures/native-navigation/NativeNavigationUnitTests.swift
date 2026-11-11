@@ -955,7 +955,6 @@ final class NativeNavigationUnitTests: XCTestCase {
         await apply("vertical")
         let add = try XCTUnwrap(button("craft-tab-companion:/add", in: shell.view))
         let messages = try XCTUnwrap(button("craft-tab-accessory", in: shell.view))
-        XCTAssertTrue(messages.superview === shell.view, "UIKit must not take the floating button back into its old shelf")
         XCTAssertNotNil(messages.window)
         XCTAssertEqual(add.frame.minX, messages.frame.minX, accuracy: 0.5)
         XCTAssertEqual(add.frame.maxY, messages.frame.minY, accuracy: 0.5)
@@ -965,8 +964,23 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertNotNil(add.configuration?.image, "the companion must have a visible native symbol")
         XCTAssertTrue(add.showsMenuAsPrimaryAction)
         XCTAssertEqual((add.menu?.children.first as? UIAction)?.title, "Workout")
-        let material = try XCTUnwrap(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && $0.frame.contains(add.frame) && $0.frame.contains(messages.frame) })
-        XCTAssertEqual(material.layer.cornerRadius, 26)
+        // One control: both actions live inside the shared surface, which
+        // takes their touches, fits them exactly and draws no divider.
+        let material = try XCTUnwrap(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && add.isDescendant(of: $0) && messages.isDescendant(of: $0) })
+        XCTAssertTrue(messages.superview === material.contentView, "UIKit must not take the floating button back into its old shelf")
+        XCTAssertTrue(material.superview === shell.view)
+        XCTAssertTrue(material.isUserInteractionEnabled)
+        XCTAssertEqual(material.frame.width, 48, accuracy: 0.5)
+        XCTAssertEqual(material.frame.height, add.frame.height + messages.frame.height, accuracy: 0.5)
+        XCTAssertEqual(material.contentView.subviews.filter { !($0 is UIButton) }.count, 0)
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            XCTAssertTrue((material.effect as? UIGlassEffect)?.isInteractive == true)
+            XCTAssertFalse(material.clipsToBounds)
+        } else {
+            XCTAssertEqual(material.layer.cornerRadius, 24)
+        }
+#endif
         XCTAssertEqual(shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.filter { !$0.isHidden }.count, 1)
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
         await apply("horizontal")
@@ -974,6 +988,12 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertTrue(button("craft-tab-accessory", in: shell.view) === messages)
         XCTAssertEqual(add.frame.minY, messages.frame.minY, accuracy: 0.5)
         XCTAssertEqual(add.frame.maxX, messages.frame.minX, accuracy: 0.5)
+        XCTAssertEqual(material.frame.height, 48, accuracy: 0.5)
+        // Separate actions leave the shared surface for the shell again.
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',iconOnly:true,companions:[{path:'/add',title:'Add',symbol:'plus',menu:[{path:'/linked-details',title:'Workout'}]}]}})")
+        await displayWait("group separates") { CraftChrome.shared.tabAccessory?.accessoryLayout == nil && add.superview === self.shell.view }
+        XCTAssertTrue(messages.superview === shell.view)
+        XCTAssertFalse(material.isUserInteractionEnabled)
         screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
         await displayWait("group material is removed") { CraftChrome.shared.tabAccessory == nil && (material.isHidden || material.superview == nil) }
     }
