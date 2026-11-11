@@ -63,6 +63,24 @@ test.each(['ziglang.org/v', 'ziglang-org/'])('Windows uses the pinned Pantry ins
   expect(pinnedPantryZigPath(f.root, version, f.env, 'darwin')).toBeNull()
 })
 
+test.each([
+  ['darwin', 'ziglang.org/v0.17.0-dev.1963+e00c6c439', 'bin/zig'],
+  ['linux', 'ziglang.org/v0.17.0-dev.1963_e00c6c439', 'bin/zig'],
+  ['linux', 'ziglang.org/v0.17.0-dev.1963_e00c6c439', 'zig'],
+  ['darwin', 'ziglang-org/0.17.0-dev.1963_e00c6c439', 'bin/zig'],
+])('%s selects the locked local compiler at %s/%s ahead of a stale global PATH', (platform, layout, binary) => {
+  const f = fixture('0.17.0-dev.2163+89ff10d56')
+  const pinned = fixture()
+  const installed = join(f.root, 'pantry', layout!, binary!)
+  mkdirSync(join(installed, '..'), { recursive: true })
+  writeFileSync(installed, readFileSync(pinned.path))
+  chmodSync(installed, 0o755)
+  expect(resolveZig(f.root, f.env, platform)).toEqual({ path: installed, version: '0.17.0-dev.1963+e00c6c439', overridden: false })
+  // Explicit experiments keep their existing opt-in; no silent pin bypass.
+  expect(() => resolveZig(f.root, { ...f.env, CRAFT_ZIG: f.path }, platform)).toThrow('version mismatch')
+  expect(resolveZig(f.root, { ...f.env, CRAFT_ZIG: f.path, CRAFT_ALLOW_UNPINNED_ZIG: '1' }, platform).overridden).toBe(true)
+}, 30_000)
+
 test('requires an explicit opt-in for unpinned snapshots', () => {
   const f = fixture('0.17.0-dev.2163+89ff10d56')
   expect(() => resolveZig(f.root, { ...f.env, CRAFT_ALLOW_UNPINNED_ZIG: 'true' })).toThrow('version mismatch')

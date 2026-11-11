@@ -10,17 +10,20 @@ export function pinnedZigVersion(root: string): string {
 }
 
 export function pinnedPantryZigPath(root: string, expected: string, env: NodeJS.ProcessEnv, hostPlatform: string): string | null {
-  if (hostPlatform !== 'win32' || env.CRAFT_ZIG) return null
-  const version = expected.replace('+', '_')
-  const packageDirs = [
+  if (env.CRAFT_ZIG) return null
+  const versions = [...new Set([expected.replace('+', '_'), expected])]
+  const packageDirs = versions.flatMap(version => [
     join(root, 'pantry', 'ziglang.org', `v${version}`),
     join(root, 'pantry', 'ziglang-org', version),
-  ]
+  ])
   // The native installer uses domain/v<version>; the SDK uses the slug.
   // The official ZIP has zig.exe at its root; registry mirrors can use bin/.
   // Invoke the package binary with its adjacent standard library in either layout.
   for (const packageDir of packageDirs) {
-    for (const installed of [join(packageDir, 'zig.exe'), join(packageDir, 'bin', 'zig.exe')]) {
+    const candidates = hostPlatform === 'win32'
+      ? [join(packageDir, 'zig.exe'), join(packageDir, 'bin', 'zig.exe')]
+      : [join(packageDir, 'bin', 'zig'), join(packageDir, 'zig')]
+    for (const installed of candidates) {
       if (existsSync(installed)) return installed
     }
   }
@@ -30,9 +33,8 @@ export function pinnedPantryZigPath(root: string, expected: string, env: NodeJS.
 export function resolveZig(root: string, env: NodeJS.ProcessEnv = process.env, hostPlatform = process.platform): { path: string, version: string, overridden: boolean } {
   const expected = pinnedZigVersion(root)
   const executable = env.CRAFT_ZIG || 'zig'
-  // Pantry's Windows .bin/zig.exe shim reports a version, but Zig resolves
-  // its lib directory relative to argv[0] and cannot build through the shim.
-  // Invoke the locked package's actual binary whenever Pantry installed it.
+  // Prefer the exact local package on every host. A global PATH may contain
+  // another snapshot, and the Windows .bin shim also breaks stdlib discovery.
   const path = pinnedPantryZigPath(root, expected, env, hostPlatform) ?? Bun.which(executable, { PATH: env.PATH, cwd: root })
   const remedy = 'Activate the pinned Pantry toolchain, or set CRAFT_ZIG to its executable. To intentionally test a different snapshot, also set CRAFT_ALLOW_UNPINNED_ZIG=1.'
   if (!path)

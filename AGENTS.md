@@ -8,7 +8,7 @@ A lightweight, high-performance cross-platform application framework built with 
 
 These are the things a fresh checkout cannot tell you, each of which has already cost a separately diagnosed build failure. None is a code defect.
 
-**`zig build` needs the pinned toolchain.** The `zig` on your PATH is almost certainly the wrong snapshot, and the build refuses it by design. Point `CRAFT_ZIG` at the executable `pantry.lock` pins, or activate the pinned Pantry toolchain. `CRAFT_ALLOW_UNPINNED_ZIG=1` exists only for deliberately testing another snapshot.
+**`zig build` needs the pinned toolchain.** Craft's scripts select the exact local Pantry installation from `pantry.lock` on macOS, Linux and Windows before consulting PATH. Install the locked Pantry toolchain if it is missing. An explicit `CRAFT_ZIG` remains supported and must report the locked version; `CRAFT_ALLOW_UNPINNED_ZIG=1` exists only for deliberately testing another snapshot.
 
 **Zig dependencies resolve through the package manifest.** `packages/zig/build.zig.zon` declares immutable source URLs and native package hashes. The compiler verifies each package hash, including transitive dependencies. No sibling checkouts are required. CI uses `.github/actions/first-party-zig-deps` to run the pinned compiler's normal dependency fetch.
 
