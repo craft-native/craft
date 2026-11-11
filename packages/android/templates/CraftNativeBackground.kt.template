@@ -251,6 +251,23 @@ internal class CraftNativeHeadlessApp(
     private val timers = mutableMapOf<Int, Runnable>()
     private val chunks = CraftNativeChunks()
 
+    /**
+     * The clock's reading at this script's first frame, as a screen keeps
+     * (`Screen.frameTimeOrigin` in the activity).
+     *
+     * `requestAnimationFrame` hands its callback milliseconds from the
+     * script's own origin. This host handed it milliseconds from boot, so
+     * code shared with a screen read a first frame near zero there and one
+     * in the billions here, on the same device.
+     */
+    private var frameTimeOrigin: Long? = null
+
+    /** Milliseconds from this script's first frame, for a reading of the monotonic clock in nanoseconds. */
+    private fun frameTime(now: Long): Double {
+        val origin = frameTimeOrigin ?: now.also { frameTimeOrigin = it }
+        return (now - origin) / 1_000_000.0
+    }
+
     init {
         capabilities.storeObserver = { store, key, value -> stores.changed(store, key, value, scope) }
         services.onBackgroundComplete = { ok, answered -> if (answered == null || answered == id) finish(ok) }
@@ -351,7 +368,7 @@ internal class CraftNativeHeadlessApp(
             }
             "TIMER_CLEAR" -> timers.remove(payload.optInt("id"))?.let(main::removeCallbacks)
             // Nothing is drawn in the background: frames come at a calm pace.
-            "FRAME" -> main.postDelayed({ send("FRAME_FIRE", JSONObject().put("time", android.os.SystemClock.uptimeMillis().toDouble())) }, 100)
+            "FRAME" -> main.postDelayed({ send("FRAME_FIRE", JSONObject().put("time", frameTime(System.nanoTime()))) }, 100)
             // A background refresh shows nothing: navigation waits for the app.
         }
     }

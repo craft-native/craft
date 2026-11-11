@@ -1344,6 +1344,11 @@ Closing a screen invalidates display-frame delivery still waiting on its
 background script queue. Delivery already admitted on that queue is not
 preempted; disposal prevents later queued batches from entering the script.
 
+On Android a screen's callbacks receive milliseconds from that screen's first
+delivered frame, so its first is `0`. The app script started with no activity,
+for a background refresh or a silent push, counts from its own first frame the
+same way; nothing is drawn there, so its frames come about ten a second.
+
 ### The app script (`nativeApp`)
 
 `nativeApp` names a bundle route that has no screen (Stacks names it `__app`).

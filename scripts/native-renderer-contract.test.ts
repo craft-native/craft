@@ -25,6 +25,7 @@ const androidBuilder = readFileSync(join(root, 'packages/android/src/index.ts'),
 const androidManifest = readFileSync(join(root, 'packages/android/templates/AndroidManifest.xml.template'), 'utf8')
 const androidChrome = readFileSync(join(root, 'packages/android/templates/CraftNativeShell.kt.template'), 'utf8')
 const androidCapabilities = readFileSync(join(root, 'packages/android/templates/CraftNativeCapabilities.kt.template'), 'utf8')
+const androidBackground = readFileSync(join(root, 'packages/android/templates/CraftNativeBackground.kt.template'), 'utf8')
 const androidNative = readFileSync(join(root, 'packages/android/templates/CraftNative.kt.template'), 'utf8')
 const androidDispatch = readFileSync(join(root, 'packages/zig/src/android_dispatch.zig'), 'utf8')
 const androidAudioPrelude = (() => {
@@ -280,6 +281,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('JSONObject().put("time", (frameTime - origin) / 1_000_000.0)')
     // Boot-relative delivery must not come back.
     expect(android).not.toContain('JSONObject().put("time", frameTime / 1_000_000.0)')
+
+    // The app script started with no activity is the same API on the same
+    // device, and counted from boot until it was given its own origin.
+    expect(androidBackground).toContain('val origin = frameTimeOrigin ?: now.also { frameTimeOrigin = it }')
+    expect(androidBackground).toContain('JSONObject().put("time", frameTime(System.nanoTime()))')
+    expect(androidBackground).not.toContain('uptimeMillis()')
 
     // Neither host may substitute wall-clock time for a frame time, and a
     // legitimate first frame of 0 must survive the fallback.
