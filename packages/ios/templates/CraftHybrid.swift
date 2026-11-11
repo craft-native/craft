@@ -1603,7 +1603,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     /// its touch targets keep their size; only the symbol is smaller. A
     /// separate action keeps the lighter bar-button weight.
     private static func accessorySymbol(grouped: Bool) -> UIImage.SymbolConfiguration {
-        UIImage.SymbolConfiguration(pointSize: grouped ? 17 : 22, weight: grouped ? .medium : .regular)
+        UIImage.SymbolConfiguration(pointSize: grouped ? 15 : 22, weight: grouped ? .medium : .regular)
     }
 
     /// The surface under the floating actions. A group is a capsule of

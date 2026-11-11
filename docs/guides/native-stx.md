@@ -1100,7 +1100,7 @@ clipped. Nothing divides the actions; pass filled symbols (`map.fill`,
 bar's thin material with a hairline. Android uses a native elevated surface,
 and the STX browser host the same layout and accessible actions.
 Each action is 48 points across and 52 along the group, and on iOS its symbol
-is 17 points at medium weight, which leaves the room around it that the
+is 15 points at medium weight, which leaves the room around it that the
 symbols in Maps have; grouping does not
 shrink the tabs or reserve a full-width content inset. A single action
 remains a circle, with a 22-point symbol. From STX, `<FloatingActions>` declares the group in a
