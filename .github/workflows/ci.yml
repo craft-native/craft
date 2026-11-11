@@ -281,7 +281,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl x11-utils libvulkan1 mesa-vulkan-drivers vulkan-tools vulkan-validationlayers libxtst-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl x11-utils libvulkan1 mesa-vulkan-drivers vulkan-tools vulkan-validationlayers libxtst-dev xdotool python3-gi gir1.2-gtk-3.0
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -354,6 +354,14 @@ jobs:
       - name: Smoke Linux multi-window bridge
         if: runner.os == 'Linux'
         run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft
+
+      # Menus and accelerators, context menus, dialogs, file drop,
+      # single-instance activation and relaunch, driven through the real GTK
+      # windows with xdotool. Inside the wrapper, not around it: the second
+      # launch it starts has to share the display and the session bus.
+      - name: Smoke Linux desktop bridge
+        if: runner.os == 'Linux'
+        run: sh scripts/run-linux-with-wm.sh bun scripts/verify-desktop-bridge.ts packages/zig/zig-out/bin/craft
 
       - name: Install SDK dependencies for packaged-app smoke
         run: bun install --frozen-lockfile
@@ -444,6 +452,11 @@ jobs:
 
       - name: Smoke Windows multi-window bridge
         run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft.exe
+
+      # The same namespaces as the Linux leg, driven through the real Win32
+      # menu bar, task dialogs and shell file dialogs.
+      - name: Smoke Windows desktop bridge
+        run: bun scripts/verify-desktop-bridge.ts packages/zig/zig-out/bin/craft.exe
 
       - name: Install SDK dependencies for packaged-app smoke
         run: bun install --frozen-lockfile
@@ -940,6 +953,9 @@ jobs:
 
       - name: Test installed-app smoke checkpoints
         run: bun test ./scripts/verify-packaged-app.test.ts
+
+      - name: Test desktop bridge smoke coverage and the support table it backs
+        run: bun test ./scripts/verify-desktop-bridge.test.ts ./scripts/platform-support.test.ts
 
       - name: Test native Metal suite admission
         run: bun test ./packages/ios/scripts/metal-xctest-steps.test.ts
