@@ -1,5 +1,62 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.499...v0.0.500)
+
+## 🚀 Features
+
+- **android**: give a scroll view behind the grouped tab actions room at its end ([0d7a148](https://github.com/craft-native/craft/commit/0d7a148)) _(by glennmichael123)_ ([#523](https://github.com/craft-native/craft/issues/523))
+- **ios**: give a scroll view behind the floating tab actions room at its end ([a405a41](https://github.com/craft-native/craft/commit/a405a41)) _(by glennmichael123)_ ([#523](https://github.com/craft-native/craft/issues/523))
+- **desktop**: hand a second launch to the running instance, and relaunch ([ea426c9](https://github.com/craft-native/craft/commit/ea426c9)) _(by Chris Breuer)_
+- **windows**: application menu, context menus, dialogs, file drop and single instance ([406ba2f](https://github.com/craft-native/craft/commit/406ba2f)) _(by Chris Breuer)_
+- **linux**: application menu, context menus, dialogs, file drop and single instance ([3ad2f45](https://github.com/craft-native/craft/commit/3ad2f45)) _(by Chris Breuer)_
+- **bridge**: page API for relaunch, second launches, and desktop context menus ([7573034](https://github.com/craft-native/craft/commit/7573034)) _(by Chris Breuer)_
+- **desktop**: menu, dialog and single-instance contracts for Windows and Linux ([ebc4d39](https://github.com/craft-native/craft/commit/ebc4d39)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **package**: an rpm that builds, and rpmbuild's own words when it does not ([eacc06d](https://github.com/craft-native/craft/commit/eacc06d)) _(by Chris)_
+- **ios**: hold every style number to what layout can use ([07ae52f](https://github.com/craft-native/craft/commit/07ae52f)) _(by glennmichael123)_ ([#518](https://github.com/craft-native/craft/issues/518), [#510](https://github.com/craft-native/craft/issues/510))
+- **ios**: play a buffer source at a rate the audio engine can hold ([3ed45c4](https://github.com/craft-native/craft/commit/3ed45c4)) _(by glennmichael123)_ ([#517](https://github.com/craft-native/craft/issues/517), [#510](https://github.com/craft-native/craft/issues/510))
+- **native**: give every list row an identity of its own, whatever its key ([fdee0f7](https://github.com/craft-native/craft/commit/fdee0f7)) _(by glennmichael123)_ ([#516](https://github.com/craft-native/craft/issues/516))
+- **ios**: answer for a system picker that went without telling its delegate ([ebd5724](https://github.com/craft-native/craft/commit/ebd5724)) _(by glennmichael123)_ ([#515](https://github.com/craft-native/craft/issues/515))
+- **ios**: clamp a prop number no Int holds instead of trapping on it ([16cbc06](https://github.com/craft-native/craft/commit/16cbc06)) _(by glennmichael123)_ ([#510](https://github.com/craft-native/craft/issues/510))
+- **native**: autoFocus takes focus when it mounts or turns on, not on every render ([8015a75](https://github.com/craft-native/craft/commit/8015a75)) _(by glennmichael123)_ ([#511](https://github.com/craft-native/craft/issues/511), [#497](https://github.com/craft-native/craft/issues/497))
+- **linux**: match menu accelerators on the window's key press ([614a928](https://github.com/craft-native/craft/commit/614a928)) _(by Chris Breuer)_
+- **sdk**: reach native through the injected bridge, and drop the process API nothing backed ([ba677ee](https://github.com/craft-native/craft/commit/ba677ee)) _(by Chris Breuer)_
+
+## 📚 Documentation
+
+- state what each platform's bridge serves, and what CI has seen work ([13be364](https://github.com/craft-native/craft/commit/13be364)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: date the start of a hosted unit run by its first suite ([6956df3](https://github.com/craft-native/craft/commit/6956df3)) _(by glennmichael123)_ ([#508](https://github.com/craft-native/craft/issues/508))
+- **ios**: fail a case at once when the app has not settled after a pull to refresh ([46e9c41](https://github.com/craft-native/craft/commit/46e9c41)) _(by glennmichael123)_ ([#522](https://github.com/craft-native/craft/issues/522))
+- **ios**: suspend the simulator's push daemon on a virtual host ([66461a6](https://github.com/craft-native/craft/commit/66461a6)) _(by glennmichael123)_ ([#521](https://github.com/craft-native/craft/issues/521), [#508](https://github.com/craft-native/craft/issues/508))
+- **ios**: write the launch wait down while the test command runs ([d6c04f2](https://github.com/craft-native/craft/commit/d6c04f2)) _(by glennmichael123)_ ([#508](https://github.com/craft-native/craft/issues/508))
+- **ios**: read the app's state directly when waiting for it to background ([af50ec9](https://github.com/craft-native/craft/commit/af50ec9)) _(by glennmichael123)_ ([#520](https://github.com/craft-native/craft/issues/520))
+- **ios**: say how long XCTest took to begin, and keep the simulator's log for a long wait ([a3357f4](https://github.com/craft-native/craft/commit/a3357f4)) _(by glennmichael123)_ ([#508](https://github.com/craft-native/craft/issues/508))
+- **ios**: build the navigation fixtures while the simulator boots ([cdb1ef8](https://github.com/craft-native/craft/commit/cdb1ef8)) _(by glennmichael123)_ ([#508](https://github.com/craft-native/craft/issues/508))
+- **desktop**: keep the smoke page loaded after a drop, and compare long paths ([c39ee4d](https://github.com/craft-native/craft/commit/c39ee4d)) _(by Chris Breuer)_
+- **desktop**: count menu actions before triggering them ([b1f7bf6](https://github.com/craft-native/craft/commit/b1f7bf6)) _(by Chris Breuer)_
+- **release**: give the missing-signing test a spawn budget ([796a345](https://github.com/craft-native/craft/commit/796a345)) _(by Chris Breuer)_
+
+## 🤖 Continuous Integration
+
+- **release**: fail when macOS signing material is missing ([6bec0dd](https://github.com/craft-native/craft/commit/6bec0dd)) _(by Chris Breuer)_
+- smoke the Windows and Linux desktop bridge on real windows ([c3e0de0](https://github.com/craft-native/craft/commit/c3e0de0)) _(by Chris Breuer)_
+- cancel a superseded push's run, and build release binaries beside the gates ([27d5fb0](https://github.com/craft-native/craft/commit/27d5fb0)) _(by Chris Breuer)_
+
+## ⏪ Reverts
+
+- "test(ios): suspend the simulator's push daemon on a virtual host" ([339eb09](https://github.com/craft-native/craft/commit/339eb09)) _(by glennmichael123)_ ([#521](https://github.com/craft-native/craft/issues/521), [#508](https://github.com/craft-native/craft/issues/508))
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.498...v0.0.499)
 
 ## 🐛 Bug Fixes
