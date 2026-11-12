@@ -5,9 +5,9 @@ const ComponentProps = base.ComponentProps;
 
 /// Get current timestamp in milliseconds (compatible with Zig 0.16)
 fn getMilliTimestamp() i64 {
-    var ts: std.c.timespec = undefined;
-    if (std.c.clock_gettime(.REALTIME, &ts) != 0) return 0;
-    return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+    // Cross-platform via compat; see the note in src/error_context.zig. POSIX
+    // `clock_gettime` cannot compile for Windows (`clockid_t` is `void`).
+    return @import("../compat.zig").milliTimestamp();
 }
 
 /// Toast/Notification Component
