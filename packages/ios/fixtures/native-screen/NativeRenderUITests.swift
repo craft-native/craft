@@ -77,11 +77,17 @@ final class NativeRenderUITests: XCTestCase {
     }
 
     private func waitForBackground(_ app: XCUIApplication) {
-        let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            app.state == .runningBackground || app.state == .runningBackgroundSuspended
-        }, object: app)
-        XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 10), .completed,
-                       "Home must background the app, including when iOS has already suspended it")
+        // Read the state itself. An expectation on a predicate over the app
+        // describes the app each time the predicate is false, and describing
+        // an app that iOS suspends meanwhile blocked for nine seconds on CI:
+        // the state was read once in the ten seconds allowed, 1.5 s after
+        // Home, and never again (run 43236065505). The limit is unchanged.
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if app.state == .runningBackground || app.state == .runningBackgroundSuspended { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTFail("Home must background the app, including when iOS has already suspended it; its state is \(app.state.rawValue)")
     }
 
     private func backgroundAfterObservingPicker(_ app: XCUIApplication) {
