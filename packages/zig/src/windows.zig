@@ -954,9 +954,31 @@ fn sendSystem(action: []const u8) !void {
         return sendJsonField(allocator, action, "timezone", utf8);
     }
 
-    // appearance / accent colour / accessibility flags would each need their
-    // own Win32 or registry read; none is wired yet, and a fabricated default
-    // is worse than saying so.
+    // Accessibility flags would each need their own SystemParametersInfo read;
+    // a fabricated default is worse than saying so.
+    if (eql(u8, action, "getAccentColor")) {
+        // DWM keeps the accent colour as an ARGB DWORD. Reading it is the same
+        // value the taskbar and Start menu are painted with, and unlike
+        // `GetSysColor(COLOR_HIGHLIGHT)` it tracks the user's chosen accent
+        // rather than the legacy 3D highlight.
+        var value: u32 = 0;
+        var size: u32 = @sizeOf(u32);
+        const status = RegGetValueW(
+            HKEY_CURRENT_USER,
+            std.unicode.utf8ToUtf16LeStringLiteral("Software\\Microsoft\\Windows\\DWM"),
+            std.unicode.utf8ToUtf16LeStringLiteral("ColorizationColor"),
+            RRF_RT_REG_DWORD,
+            null,
+            &value,
+            &size,
+        );
+        if (status != 0) return bridge_error.BridgeError.NativeCallFailed;
+        var hex: [8]u8 = undefined;
+        const color = std.fmt.bufPrint(&hex, "#{x:0>6}", .{value & 0x00FFFFFF}) catch
+            return bridge_error.BridgeError.NativeCallFailed;
+        return sendJsonField(allocator, action, "color", color);
+    }
+
     return bridge_error.BridgeError.PlatformNotSupported;
 }
 
@@ -1084,6 +1106,19 @@ extern "kernel32" fn GetComputerNameW(lpBuffer: [*]u16, nSize: *u32) callconv(.c
 extern "advapi32" fn GetUserNameW(lpBuffer: [*]u16, pcbBuffer: *u32) callconv(.c) c_int;
 extern "kernel32" fn GetUserDefaultLocaleName(lpLocaleName: [*]u16, cchLocaleName: c_int) callconv(.c) c_int;
 extern "kernel32" fn GetTimeZoneInformation(lpTimeZoneInformation: *TIME_ZONE_INFORMATION) callconv(.c) u32;
+
+const HKEY_CURRENT_USER: ?*anyopaque = @ptrFromInt(0x80000001);
+const RRF_RT_REG_DWORD: u32 = 0x00000010;
+
+extern "advapi32" fn RegGetValueW(
+    hkey: ?*anyopaque,
+    lp_sub_key: ?[*:0]const u16,
+    lp_value: ?[*:0]const u16,
+    dw_flags: u32,
+    pdw_type: ?*u32,
+    pv_data: ?*anyopaque,
+    pcb_data: ?*u32,
+) callconv(.c) c_long;
 
 /// Reports the real OS version. `GetVersionExW` lies on anything newer than
 /// Windows 8.1 unless the binary ships a compatibility manifest, so the
