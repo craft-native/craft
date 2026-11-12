@@ -1804,7 +1804,7 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps native text truncation props aligned across hosts', () => {
-    expect(ios).toContain('label.numberOfLines = max(0, Int(number(props["numberOfLines"]) ?? 0))')
+    expect(ios).toContain('label.numberOfLines = max(0, craftNativeInt(number(props["numberOfLines"]) ?? 0))')
     expect(ios).toContain('label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])')
     expect(ios).toContain('case "middle": return .byTruncatingMiddle')
     expect(android).toContain('maxLines = craftNativeInt(props.opt("numberOfLines"), 0).takeIf { it > 0 } ?: Int.MAX_VALUE')
@@ -2941,6 +2941,21 @@ describe('native renderer component contract', () => {
     expect(iosNativeUnitTests).toContain('func testAutoFocusFocusesOnMountAndWhenTurnedOnButNotOnEveryRender()')
     expect(guide).toContain('`autoFocus` focuses the input when it mounts with it or when it is turned on')
     expect(componentTypes).toContain('Focus the input when it mounts, or when this turns on; not on each render.')
+  })
+
+  it('clamps a prop number no integer holds instead of trapping on it', () => {
+    // Swift's `Int(_:)` traps on a floating-point value outside its range,
+    // and a prop is whatever the script said: `maxLength={Number.MAX_VALUE}`
+    // ended the process on iOS, where Android's `toInt()` carries on (#510).
+    // Run on a simulator in testNumbersTooLargeForAnIntAreClampedAndDoNotEndTheProcess,
+    // and against Foundation in packages/ios/src/prop-integer-range.test.ts,
+    // which also checks that no prop conversion is left in the trapping form.
+    expect(ios).toContain('return Int(max(Double(Int32.min), min(Double(Int32.max), value.rounded(.towardZero))))')
+    expect(ios).toContain('let maxLength = craftNativeInt(number(props["maxLength"]) ?? 0)')
+    expect(iosFlatList).toContain('craftNativeInt(ceil(Double(dataItemCount) * endReachedThreshold))')
+    expect(android).toContain('private fun craftNativeInt(value: Any?, fallback: Int): Int = (value as? Number)?.toInt() ?: fallback')
+    expect(iosNativeUnitTests).toContain('func testNumbersTooLargeForAnIntAreClampedAndDoNotEndTheProcess()')
+    expect(guide).toContain('takes the nearest end of\nthat range on both hosts')
   })
 
   it('describes a link whatever its sender wrote, without closing the app', () => {
@@ -4605,8 +4620,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('maxLines = craftNativeInt(props.opt("numberOfLines"), 0).takeIf { it > 0 } ?: Int.MAX_VALUE')
     expect(android).toContain('val maxLength = craftNativeInt(props.opt("maxLength"), 0)')
     expect(android).not.toContain('props.optInt("maxLength", 0)')
-    expect(ios).toContain('let maxLength = Int(number(props["maxLength"]) ?? 0)')
-    expect(ios).toContain('let numberOfLines = Int(number(props["numberOfLines"]) ?? 0)')
+    expect(ios).toContain('let maxLength = craftNativeInt(number(props["maxLength"]) ?? 0)')
+    expect(ios).toContain('let numberOfLines = craftNativeInt(number(props["numberOfLines"]) ?? 0)')
     expect(navigationHome).toContain('testID="boolean-max-length"')
     expect(navigationHome).toContain('testID="boolean-input-lines"')
     expect(iosNavigationTest).toContain('Boolean maxLength was treated as numeric')
@@ -4616,9 +4631,9 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps iOS integer component props strict at the native bridge boundary', () => {
-    expect(ios).toContain('let interval = Int(number(props["minuteInterval"]) ?? 1)')
-    expect(ios).toContain('columns: Int(number(props["numColumns"]) ?? 1)')
-    expect(ios).toContain('compactMap { number($0).map { Int($0) } }')
+    expect(ios).toContain('let interval = craftNativeInt(number(props["minuteInterval"]) ?? 1)')
+    expect(ios).toContain('columns: craftNativeInt(number(props["numColumns"]) ?? 1)')
+    expect(ios).toContain('compactMap { number($0).map { craftNativeInt($0) } }')
     expect(iosNativeUnitTests).toContain('"invalid-interval"')
     expect(iosNativeUnitTests).toContain('XCTAssertEqual(invalid.minuteInterval, 1)')
     expect(iosFlatList).toContain('guard let number = craftNativeNumber(value) else { return nil }')

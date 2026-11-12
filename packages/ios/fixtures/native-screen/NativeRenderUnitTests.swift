@@ -4617,6 +4617,96 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(password.isFirstResponder, "A delayed acknowledgement brought the keyboard back to a leaving screen")
     }
 
+    /// A number in a prop is whatever the screen's script said, and
+    /// `Number.MAX_VALUE` for "no limit" is a thing people write. `Int(_:)`
+    /// traps on a value it cannot hold, so each of these ended the process;
+    /// Android's `toInt()` takes the nearest end of its range and carries on
+    /// (#510). A crash here is the failure: the case does not finish.
+    func testNumbersTooLargeForAnIntAreClampedAndDoNotEndTheProcess() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func screen(_ number: Double) -> [String: Any] {
+            document([
+                ["type": "Text", "props": ["key": "label", "numberOfLines": number], "style": ["fontWeight": number, "order": number], "children": ["Label"]],
+                ["type": "Text", "props": ["key": "selectable", "selectable": true, "numberOfLines": number], "children": ["Selectable"]],
+                ["type": "TextInput", "props": ["key": "field", "maxLength": number]],
+                ["type": "TextInput", "props": ["key": "note", "multiline": true, "maxLength": number, "numberOfLines": number]],
+                ["type": "DatePicker", "props": ["key": "time", "mode": "time", "minuteInterval": number]],
+                [
+                    "type": "ScrollView", "props": ["key": "scroll", "stickyHeaderIndices": [number, 0]], "style": ["height": 80],
+                    "children": [
+                        ["type": "Text", "props": ["key": "sticky"], "children": ["Header"]],
+                        ["type": "Text", "props": ["key": "body"], "children": ["Body"]],
+                    ],
+                ],
+                [
+                    "type": "FlatList", "props": ["key": "list", "numColumns": number, "onEndReachedThreshold": number],
+                    "style": ["height": 120], "events": ["onEndReached": "more"],
+                    "children": (0..<6).map { ["type": "Text", "props": ["key": "row-\($0)"], "children": ["Row \($0)"]] },
+                ],
+                [
+                    "type": "FlatList", "props": ["key": "rows", "onEndReachedThreshold": number],
+                    "style": ["height": 120], "events": ["onEndReached": "more"],
+                    "children": (0..<6).map { ["type": "Text", "props": ["key": "line-\($0)"], "children": ["Line \($0)"]] },
+                ],
+            ])
+        }
+        let limit = Int(Int32.max)
+        for number in [1e30, Double.greatestFiniteMagnitude, 4_294_967_296.5] {
+            controller.render(screen(number))
+            window.layoutIfNeeded()
+            let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+            XCTAssertEqual(label.numberOfLines, limit, "\(number)")
+            let selectable = try XCTUnwrap(find(UITextView.self, key: "selectable", below: controller.view))
+            XCTAssertEqual(selectable.textContainer.maximumNumberOfLines, limit, "\(number)")
+            let note = try XCTUnwrap(find(UITextView.self, key: "note", below: controller.view))
+            XCTAssertEqual(note.textContainer.maximumNumberOfLines, limit, "\(number)")
+            // No interval that large divides an hour: UIKit's default stands.
+            let time = try XCTUnwrap(find(UIDatePicker.self, key: "time", below: controller.view))
+            XCTAssertEqual(time.minuteInterval, 1, "\(number)")
+            // The distance from the end at which a list asks for more is a
+            // share of its rows; it is worked out when the list scrolls.
+            let rows = try XCTUnwrap(find(UICollectionView.self, key: "rows", below: controller.view))
+            let drawn = expectation(description: "the list drew its rows")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { drawn.fulfill() }
+            wait(for: [drawn], timeout: 2)
+            rows.layoutIfNeeded()
+            XCTAssertFalse(rows.indexPathsForVisibleItems.isEmpty, "No row was drawn, so the threshold was never worked out")
+            rows.delegate?.scrollViewDidScroll?(rows)
+            // A limit nothing reaches is no limit: typing is still accepted.
+            let field = try XCTUnwrap(find(UITextField.self, key: "field", below: controller.view))
+            XCTAssertTrue(controller.textField(field, shouldChangeCharactersIn: NSRange(location: 0, length: 0), replacementString: "typed"), "\(number)")
+        }
+        for number in [-1e30, -Double.greatestFiniteMagnitude] {
+            controller.render(screen(number))
+            window.layoutIfNeeded()
+            // Below zero these mean "not set", as a small negative number does.
+            let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+            XCTAssertEqual(label.numberOfLines, 0, "\(number)")
+            let note = try XCTUnwrap(find(UITextView.self, key: "note", below: controller.view))
+            XCTAssertEqual(note.textContainer.maximumNumberOfLines, 0, "\(number)")
+            let time = try XCTUnwrap(find(UIDatePicker.self, key: "time", below: controller.view))
+            XCTAssertEqual(time.minuteInterval, 1, "\(number)")
+        }
+        // A drawing's outline is numbers too, the first of each run a command.
+        for command in [1e30, -1e30] {
+            XCTAssertNotNil(CraftNativeSvgView.path([0, 1, 2, command, 3, 4]), "\(command)")
+            let frames: [String: Any] = [
+                "attributeName": "d", "duration": 2,
+                "frames": [[command, 0, 0], [command, 10, 10]], "frameTimes": [0, 1],
+            ]
+            XCTAssertNotNil(CraftNativeSvgView.keyframe(frames, at: 1), "\(command)")
+        }
+        // And the screen still draws what it is given next.
+        controller.render(screen(2))
+        window.layoutIfNeeded()
+        let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+        XCTAssertEqual(label.numberOfLines, 2)
+    }
+
     /// `autoFocus` is for when the field arrives, and for when its author
     /// turns it on. It was applied on every render instead: put the keyboard
     /// away, let anything on the screen update, and it came back (#511).

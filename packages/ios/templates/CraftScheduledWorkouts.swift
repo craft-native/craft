@@ -317,6 +317,13 @@ enum CraftWorkoutPlanBuilder {
         return double.isFinite ? double : nil
     }
 
+    /// A number as a whole one, toward zero, or nil when no `Int` holds it.
+    /// `Int(_:)` traps there, and these come from the caller: an `hour` of
+    /// `1e30` ended the process where it should have been refused (#510).
+    private static func whole(_ value: Any?) -> Int? {
+        number(value).flatMap { Int(exactly: $0.rounded(.towardZero)) }
+    }
+
     /// Two schedule dates as WorkoutKit compares them: the day and the time of day.
     static func sameMoment(_ a: DateComponents, _ b: DateComponents) -> Bool {
         a.year == b.year && a.month == b.month && a.day == b.day && (a.hour ?? 0) == (b.hour ?? 0) && (a.minute ?? 0) == (b.minute ?? 0)
@@ -328,8 +335,8 @@ enum CraftWorkoutPlanBuilder {
         let parts = text.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
               let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return nil }
-        let hour = body["hour"] == nil || body["hour"] is NSNull ? 7 : number(body["hour"]).map { Int($0) }
-        let minute = body["minute"] == nil || body["minute"] is NSNull ? 0 : number(body["minute"]).map { Int($0) }
+        let hour = body["hour"] == nil || body["hour"] is NSNull ? 7 : whole(body["hour"])
+        let minute = body["minute"] == nil || body["minute"] is NSNull ? 0 : whole(body["minute"])
         guard let hour, let minute, (0...23).contains(hour), (0...59).contains(minute) else { return nil }
         var components = DateComponents()
         components.year = year
@@ -379,7 +386,7 @@ enum CraftWorkoutPlanBuilder {
         }
         func zone() -> Int? {
             guard let value = number(body["zone"]), value >= 1, value.rounded() == value else { return nil }
-            return Int(value)
+            return Int(exactly: value)
         }
         switch type {
         case "heartRate":
@@ -485,7 +492,7 @@ enum CraftWorkoutPlanBuilder {
         var blocks: [IntervalBlock] = []
         for (blockIndex, value) in (workout["blocks"] as? [Any] ?? []).enumerated() {
             let block = value as? [String: Any] ?? [:]
-            let iterations = number(block["iterations"] ?? 1).map { Int($0) } ?? 0
+            let iterations = whole(block["iterations"] ?? 1) ?? 0
             guard iterations >= 1 else { return refuse("block \(blockIndex + 1) needs iterations of 1 or more") }
             var steps: [IntervalStep] = []
             for (stepIndex, entry) in (block["steps"] as? [Any] ?? []).enumerated() {

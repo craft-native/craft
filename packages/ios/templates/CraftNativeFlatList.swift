@@ -680,7 +680,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         let lastDataOrdinal = dataOrdinals[lastVisible]
         guard lastDataOrdinal >= 0 else { return }
         let remaining = dataItemCount - lastDataOrdinal - 1
-        let thresholdItems = max(1, Int(ceil(Double(dataItemCount) * endReachedThreshold)))
+        let thresholdItems = max(1, craftNativeInt(ceil(Double(dataItemCount) * endReachedThreshold)))
         guard remaining <= thresholdItems else { return }
         let signature = dataContentSignature
         guard endReachedSignature != signature else { return }

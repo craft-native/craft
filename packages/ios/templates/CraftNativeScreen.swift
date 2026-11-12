@@ -150,6 +150,21 @@ func craftNativeNumber(_ value: Any?) -> NSNumber? {
     return number
 }
 
+/// A number from a prop as an `Int`, the way `toInt()` gives it on the
+/// Android host: toward zero, the nearest end of the 32-bit range when it is
+/// outside it, and 0 when it is not a number.
+///
+/// `Int(_:)` traps on a value it cannot hold, and a prop is whatever the
+/// screen's script said: `maxLength={Number.MAX_VALUE}` ended the process
+/// (#510). The 32-bit range is the other host's, and it leaves room for the
+/// arithmetic done on the result, which `Int.max` would not.
+func craftNativeInt(_ value: Double) -> Int {
+    guard !value.isNaN else { return 0 }
+    return Int(max(Double(Int32.min), min(Double(Int32.max), value.rounded(.towardZero))))
+}
+
+func craftNativeInt(_ value: CGFloat) -> Int { craftNativeInt(Double(value)) }
+
 /// A finite number from a prop, for the views outside the screen controller,
 /// which has its own: the keyboard-avoiding view and SVG text read theirs
 /// with it, and without it the template did not compile.
@@ -165,7 +180,7 @@ private func craftNativeFontWeight(_ value: Any?) -> String? {
     if let value = value as? String { return value }
     guard let number = craftNativeNumber(value), number.doubleValue.isFinite else { return nil }
     let integer = number.doubleValue.rounded()
-    return integer == number.doubleValue ? String(Int(integer)) : nil
+    return integer == number.doubleValue ? String(craftNativeInt(integer)) : nil
 }
 
 private func craftNativePickerValue(_ value: Any?) -> String? {
@@ -2466,7 +2481,7 @@ private struct CraftNativeLayoutStyle {
         left = number(raw["left"])
         let align = raw["alignSelf"] as? String
         alignSelf = align == "auto" ? nil : align
-        order = number(raw["order"]).map { Int($0.rounded(.towardZero)) } ?? 0
+        order = number(raw["order"]).map { craftNativeInt($0) } ?? 0
         // `flex: n` is the web's and React Native's shorthand: a positive
         // number grows by n, shrinks, and starts from nothing, so `flex-1`
         // siblings share a row equally whatever their content.
@@ -5001,7 +5016,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     /// these indices stay at the top of the visible area once scrolled to,
     /// each pushed up by the next. Vertical scroll views only.
     func setStickyHeaderIndices(_ value: Any?) {
-        let next = Array(Set(((value as? [Any]) ?? []).compactMap { number($0).map { Int($0) } }.filter { $0 >= 0 })).sorted()
+        let next = Array(Set(((value as? [Any]) ?? []).compactMap { number($0).map { craftNativeInt($0) } }.filter { $0 >= 0 })).sorted()
         guard next != stickyIndices else { return }
         stickyIndices = next
         setNeedsLayout()
@@ -5525,7 +5540,7 @@ final class CraftNativeSvgView: UIView {
         var out = from
         var i = 0
         while i < from.count {
-            let command = Int(from[i])
+            let command = craftNativeInt(from[i])
             guard to[i] == from[i] else { return from }
             let count: Int
             switch command {
@@ -5752,7 +5767,7 @@ final class CraftNativeSvgView: UIView {
         var i = 0
         func point(_ at: Int) -> CGPoint { CGPoint(x: n[at], y: n[at + 1]) }
         while i < n.count {
-            switch Int(n[i]) {
+            switch craftNativeInt(n[i]) {
             case 0 where i + 2 < n.count: path.move(to: point(i + 1)); i += 3
             case 1 where i + 2 < n.count: path.addLine(to: point(i + 1)); i += 3
             case 2 where i + 6 < n.count: path.addCurve(to: point(i + 5), controlPoint1: point(i + 1), controlPoint2: point(i + 3)); i += 7
@@ -9770,12 +9785,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "Text":
             let text = children.compactMap { $0 as? String }.joined()
             if let selectable = result as? CraftNativeSelectableTextView {
-                selectable.textContainer.maximumNumberOfLines = max(0, Int(number(props["numberOfLines"]) ?? 0))
+                selectable.textContainer.maximumNumberOfLines = max(0, craftNativeInt(number(props["numberOfLines"]) ?? 0))
                 selectable.textContainer.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])
                 configureSelectableText(selectable, text: text, style: style)
             } else {
                 let label = result as! UILabel
-                label.numberOfLines = max(0, Int(number(props["numberOfLines"]) ?? 0))
+                label.numberOfLines = max(0, craftNativeInt(number(props["numberOfLines"]) ?? 0))
                 label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])
                 (label as? CraftNativeLabel)?.insets = paddingInsets(style)
                 configureText(label, text: text, style: style)
@@ -9853,7 +9868,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             field.tintColor = color(props["selectionColor"])
             let fieldId = ObjectIdentifier(field)
             inputIdentities[fieldId] = current.identity
-            let maxLength = Int(number(props["maxLength"]) ?? 0)
+            let maxLength = craftNativeInt(number(props["maxLength"]) ?? 0)
             if maxLength > 0 {
                 textMaxLengths[fieldId] = maxLength
             } else {
@@ -9964,7 +9979,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 if picker.preferredDatePickerStyle != display { picker.preferredDatePickerStyle = display }
             }
             // UIKit takes an interval that divides an hour, and ignores others.
-            let interval = Int(number(props["minuteInterval"]) ?? 1)
+            let interval = craftNativeInt(number(props["minuteInterval"]) ?? 1)
             picker.minuteInterval = (1...30).contains(interval) && 60 % interval == 0 ? interval : 1
             picker.minimumDate = Self.pickerDate(props["minimumDate"])
             picker.maximumDate = Self.pickerDate(props["maximumDate"])
@@ -10647,7 +10662,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         list.apply(
             nodes: children,
             horizontal: props["horizontal"] as? Bool == true,
-            columns: Int(number(props["numColumns"]) ?? 1),
+            columns: craftNativeInt(number(props["numColumns"]) ?? 1),
             inverted: props["inverted"] as? Bool == true,
             endReachedThreshold: threshold,
             renderItem: { [weak self] node, identity, reusable in
@@ -11180,13 +11195,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         // An input's own scrolling follows its height (CraftNativeTextView).
         if !(textView is CraftNativeTextView) { textView.isScrollEnabled = false }
-        let numberOfLines = Int(number(props["numberOfLines"]) ?? 0)
+        let numberOfLines = craftNativeInt(number(props["numberOfLines"]) ?? 0)
         if numberOfLines > 0 {
             textView.textContainer.maximumNumberOfLines = numberOfLines
         } else {
             textView.textContainer.maximumNumberOfLines = 0
         }
-        let maxLength = Int(number(props["maxLength"]) ?? 0)
+        let maxLength = craftNativeInt(number(props["maxLength"]) ?? 0)
         if maxLength > 0 {
             textMaxLengths[id] = maxLength
         } else {

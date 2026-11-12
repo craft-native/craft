@@ -911,7 +911,10 @@ the event applies to a `TextInput`. `keyboardType`, `returnKeyType`,
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. `autoFocus` focuses the input when it mounts with it or when it is turned on
 later; while it stays on, a render that changes something else does not take
-focus back after the keyboard has been dismissed. `placeholderTextColor`, `selectionColor`,
+focus back after the keyboard has been dismissed. A whole-number prop such as
+`maxLength`, `numberOfLines`, or `numColumns` given a number outside the 32-bit
+integer range (`Number.MAX_VALUE` for "no limit", say) takes the nearest end of
+that range on both hosts. `placeholderTextColor`, `selectionColor`,
 positive `maxLength`, `multiline`, and `numberOfLines` values are applied on
 both hosts, including keyboard and return-key traits on multiline inputs. Shared
 keyboard types are limited to values both hosts implement; iOS-only keyboard
