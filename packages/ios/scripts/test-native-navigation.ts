@@ -3,7 +3,6 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 import { describeSimulatorBoot, startSimulatorBoot } from './simulator-boot'
-import { launchWait, longLaunchWaitSeconds, simulatorLogWindow } from './launch-wait'
 import { nativeNavigationGroup, verifyNativeNavigationResults } from './native-navigation-groups'
 import { nativeTestResultBundle } from './native-test-result'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
@@ -51,28 +50,30 @@ function runXcodeTests(args: string[], cwd: string, resultBundle: string, expect
 
 /**
  * Say how long XCTest took to begin, and keep the simulator's log for a wait
- * nobody can yet explain (#508). Evidence only: it reads what the test
- * command printed into the live log, and nothing here fails a run.
+ * nobody can yet explain (#508). Evidence only: a process of its own reads
+ * what the test command prints into the live log while the command runs, so
+ * a job ended by its time limit has already written it, and nothing here
+ * fails a run.
  */
-function reportLaunchWait(liveLog: string | undefined, printedBefore: number, commandStarted: Date, udid: string, resultBundle: string): void {
-  try {
-    if (!liveLog || !existsSync(liveLog)) return
-    const seconds = launchWait(readFileSync(liveLog).subarray(printedBefore).toString('utf8'), commandStarted)
-    if (seconds === undefined) {
-      console.log('XCTest did not report that it began running tests')
-      return
-    }
-    console.log(`XCTest began running tests ${seconds}s after the test command`)
-    if (seconds < longLaunchWaitSeconds) return
-    const kept = `${resultBundle}.launch-wait.log`
-    const until = new Date(commandStarted.getTime() + (seconds + 5) * 1000)
-    const shown = Bun.spawnSync(simulatorLogWindow(udid, commandStarted, until), { stdout: Bun.file(kept), stderr: 'pipe', timeout: 120_000 })
-    console.log(shown.exitCode === 0
-      ? `Kept the simulator's log for that wait: ${kept}`
-      : `Could not read the simulator's log for that wait (${shown.exitCode ?? 'timed out'}): ${shown.stderr.toString().trim().split('\n')[0]}`)
-  }
-  catch (error) {
-    console.log(`Could not measure the wait before the tests: ${error}`)
+function watchLaunchWait(liveLog: string | undefined, udid: string, resultBundle: string): { stop: () => Promise<void> } | undefined {
+  if (!liveLog || !existsSync(liveLog)) return undefined
+  const watch = Bun.spawn([
+    process.execPath, join(import.meta.dir, 'launch-wait-watch.ts'), liveLog, String(statSync(liveLog).size),
+    String(Date.now()), udid, `${resultBundle}.launch-wait.log`, String(process.pid),
+  ], { stdout: 'inherit', stderr: 'inherit' })
+  return {
+    // It left when the tests began; one still here is told the command has
+    // returned, and given the time reading a simulator's log can take.
+    stop: async () => {
+      watch.kill('SIGTERM')
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const left = await Promise.race([
+        watch.exited,
+        new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 130_000) }),
+      ])
+      clearTimeout(timer)
+      if (left === undefined) watch.kill('SIGKILL')
+    },
   }
 }
 
@@ -217,12 +218,12 @@ try {
     const stopWatcher = () => watcher?.kill('SIGTERM')
     if (watcher) process.once('exit', stopWatcher)
     let testFailure: unknown
-    let testCommand: { started: Date, printedBefore: number } | undefined
+    let launchWatch: ReturnType<typeof watchLaunchWait>
     try {
       // Prove and warm the independent public capture path before XCTest can
       // synthesize its hold. A failed control must never start the gesture.
       if (watcher) await waitForHeldViewerReady(ready, watcher.exited)
-      testCommand = { started: new Date(), printedBefore: liveLog && existsSync(liveLog) ? statSync(liveLog).size : 0 }
+      launchWatch = watchLaunchWait(liveLog, device.udid, resultBundle)
       runXcodeTests([
         // Retain live XCTest activity as well as the structured result bundle.
         ...xcodeArgs.filter(arg => arg !== '-quiet'),
@@ -236,7 +237,7 @@ try {
     }
     catch (error) { testFailure = error }
     finally {
-      if (testCommand) reportLaunchWait(liveLog, testCommand.printedBefore, testCommand.started, device.udid, resultBundle)
+      await launchWatch?.stop()
       if (watcher) {
         writeFileSync(done, 'XCTest command completed\n')
         let timer: ReturnType<typeof setTimeout> | undefined

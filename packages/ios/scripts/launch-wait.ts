@@ -45,3 +45,31 @@ export function simulatorLogWindow(udid: string, from: Date, to: Date): string[]
   }
   return ['xcrun', 'simctl', 'spawn', udid, 'log', 'show', '--style', 'compact', '--start', local(from), '--end', local(to)]
 }
+
+/** Past a long wait, how often the host's busiest processes are written down. */
+export const launchWaitSnapshotSeconds = 60
+
+export type LaunchWaitStep =
+  | { began: true, seconds: number, keepLog: boolean }
+  | { began: false, seconds: number, snapshot: boolean }
+
+/**
+ * What a watcher does at one look at the log, while the test command is
+ * still running. The wait is reported the moment the runner speaks rather
+ * than when the command returns: the leg that waited 410 seconds was ended
+ * by its 45-minute limit half an hour later, and a report left for the end
+ * was never written. While the runner is still silent past a long wait, the
+ * host is asked what it is busy with, once a minute.
+ */
+export function launchWaitStep(logSinceCommand: string, commandStarted: Date, now: Date, snapshotsTaken: number): LaunchWaitStep {
+  const seconds = launchWait(logSinceCommand, commandStarted)
+  if (seconds !== undefined) return { began: true, seconds, keepLog: seconds >= longLaunchWaitSeconds }
+  const waited = Math.max(0, Math.round((now.getTime() - commandStarted.getTime()) / 1000))
+  return { began: false, seconds: waited, snapshot: waited >= longLaunchWaitSeconds + snapshotsTaken * launchWaitSnapshotSeconds }
+}
+
+/** The host's processes, busiest first, and its load and swap. */
+export const hostActivityCommands: string[][] = [
+  ['sysctl', 'vm.loadavg', 'vm.swapusage'],
+  ['ps', '-Ao', 'pcpu,pmem,etime,command', '-r'],
+]
