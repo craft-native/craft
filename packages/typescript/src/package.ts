@@ -1768,6 +1768,46 @@ catch (error) {
 /**
  * Helper: Create Linux RPM package
  */
+/**
+ * The spec an app's rpm is built from: one prebuilt executable, installed as
+ * it is.
+ *
+ * `Source0` names the executable, which is what `%{SOURCE0}` in `%install`
+ * refers to; without the tag the macro is not defined and the install step
+ * fails. The executable is a finished program, so nothing is stripped from it,
+ * no debug package is split off and no build-id links are made: a compiled
+ * app that carries its own data after the program (a Bun or Deno executable)
+ * stops working when strip rewrites it. With nothing required, the `Requires`
+ * line is left out, because an empty one is not valid.
+ */
+export function rpmSpec(options: { name: string, version: string, summary: string, description: string, requires?: string }): string {
+  return [
+    '%global debug_package %{nil}',
+    '%global _build_id_links none',
+    '%global __strip /bin/true',
+    '%global __os_install_post %{nil}',
+    `Name: ${options.name}`,
+    `Version: ${options.version}`,
+    // No %{?dist}: the file name is then the same on every system, which is how the result is found.
+    'Release: 1',
+    `Summary: ${options.summary}`,
+    'License: MIT',
+    `Source0: ${options.name}`,
+    ...(options.requires ? [`Requires: ${options.requires}`] : []),
+    '',
+    '%description',
+    options.description,
+    '',
+    '%install',
+    'mkdir -p %{buildroot}/usr/bin',
+    `install -m 755 %{SOURCE0} %{buildroot}/usr/bin/${options.name}`,
+    '',
+    '%files',
+    `/usr/bin/${options.name}`,
+    '',
+  ].join('\n')
+}
+
 async function createRPM(opts: {
   name: string
   version: string
@@ -1821,28 +1861,16 @@ async function createRPM(opts: {
       copyFileSync(opts.binaryPath, join(sourcesDir, sanitizedName))
 
       // Create spec file
-      const specContent = `Name: ${sanitizedName}
-Version: ${opts.version}
-Release: 1%{?dist}
-Summary: ${summary}
-License: MIT
-Requires: ${requires}
-
-%description
-${description}
-
-%install
-mkdir -p %{buildroot}/usr/bin
-install -m 755 %{SOURCE0} %{buildroot}/usr/bin/${sanitizedName}
-
-%files
-/usr/bin/${sanitizedName}
-`
+      const specContent = rpmSpec({ name: sanitizedName, version: opts.version, summary, description, requires })
       const specPath = join(specDir, `${opts.name.toLowerCase()}.spec`)
       writeFileSync(specPath, specContent)
 
       // Build RPM
       const proc = spawn('rpmbuild', ['-bb', specPath])
+      // What rpmbuild says is the only account of why it stopped.
+      let said = ''
+      proc.stdout?.on('data', (chunk: Buffer) => { said += chunk.toString() })
+      proc.stderr?.on('data', (chunk: Buffer) => { said += chunk.toString() })
 
       proc.on('close', (code) => {
         if (code === 0) {
@@ -1858,7 +1886,7 @@ catch {
           }
         }
 else {
-          resolve({ success: false, error: `rpmbuild exited with code ${code}` })
+          resolve({ success: false, error: `rpmbuild exited with code ${code}: ${said.trim().split('\n').slice(-12).join('\n')}` })
         }
       })
 

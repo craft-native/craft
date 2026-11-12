@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, statSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { attachedDevice, candleArguments, codesignArguments, createDiskImage, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { attachedDevice, candleArguments, codesignArguments, createDiskImage, DEFAULT_DEB_DEPENDENCIES, detachDiskImage, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, rpmSpec, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 import { createTempDir, removeAllTempDirs, removeTempDir } from './temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -650,4 +650,28 @@ it.skipIf(process.platform !== 'darwin')('signs prebuilt app helpers with inheri
     expect(results[1].error).toContain('installerIdentity')
   }
   finally { removeTempDir(root) }
+})
+
+describe('rpm spec', () => {
+  const spec = rpmSpec({ name: 'tinker', version: '0.2.2', summary: 'Runs code.', description: 'Runs code.\nAnywhere.', requires: '' })
+
+  it('declares the source its install step uses', () => {
+    expect(spec).toContain('Source0: tinker')
+    expect(spec).toContain('install -m 755 %{SOURCE0} %{buildroot}/usr/bin/tinker')
+  })
+
+  it('leaves a compiled app exactly as it is', () => {
+    expect(spec).toContain('%global debug_package %{nil}')
+    expect(spec).toContain('%global __strip /bin/true')
+  })
+
+  it('has no Requires line when nothing is required, and one when something is', () => {
+    expect(spec).not.toContain('Requires:')
+    expect(rpmSpec({ name: 'tinker', version: '1', summary: 's', description: 'd', requires: 'gtk3, webkit2gtk4.1' })).toContain('Requires: gtk3, webkit2gtk4.1')
+  })
+
+  it('names the release without the distribution, so the built file is where it is looked for', () => {
+    expect(spec).toContain('Release: 1\n')
+    expect(spec).not.toContain('%{?dist}')
+  })
 })
