@@ -2993,6 +2993,20 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('counted on past any row whose own key is that text')
   })
 
+  it('plays a buffer source at a rate the engine can hold, whatever its params say', () => {
+    // playbackRate times 2^(detune / 1200), and a buffer source bounds
+    // neither. An infinite rate on a looping source became a position that is
+    // not a number, and the render thread trapped converting it: the process
+    // ended. WebKit's rule: clamp to 1024 either side of zero, and play a rate
+    // that is not a number at 1. Run on a simulator in
+    // testABufferSourceWhoseRateOverflowsPlaysOnInsteadOfEndingTheProcess and
+    // against Foundation in packages/ios/src/web-audio-rate.test.ts.
+    expect(iosWebAudio).toContain('static let maximumRate = 1024.0')
+    expect(iosWebAudio).toContain('guard !rate.isNaN else { return 1 }\n        return max(-maximumRate, min(maximumRate, rate))')
+    expect(iosWebAudio).toContain('let rate = Self.rate(ratio: buffer.sampleRate / render.sampleRate,')
+    expect(guide).toContain('is limited to 1024 either side\nof zero, and one that is not a number plays at 1, as in WebKit')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link

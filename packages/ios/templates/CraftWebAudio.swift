@@ -503,6 +503,25 @@ final class CraftAudioBufferSource: CraftAudioSource {
     private var played = 0.0
     private var began = false
 
+    /// An arbitrary limit on the rate, and WebKit's: `MaxRate` in its
+    /// AudioBufferSourceNode.
+    static let maximumRate = 1024.0
+
+    /// The rate a buffer plays at: its own sample rate over the context's,
+    /// times `playbackRate`, times two to the power of `detune` in octaves.
+    ///
+    /// Neither param is bounded for a buffer source, so the product can be
+    /// infinite (a detune of 2,000,000 cents) or not a number (that, with a
+    /// playbackRate of 0). A looping source wrapped an infinite position into
+    /// one that is not a number, and `Int(position)` traps on it: the render
+    /// thread ended the process. WebKit clamps the rate to its limit either
+    /// side of zero and plays a rate that is not a number at 1; so does this.
+    static func rate(ratio: Double, playbackRate: Double, detune: Double) -> Double {
+        let rate = ratio * playbackRate * pow(2, detune / 1200)
+        guard !rate.isNaN else { return 1 }
+        return max(-maximumRate, min(maximumRate, rate))
+    }
+
     override init(id: Int) {
         super.init(id: id)
         params = [playbackRate, detune]
@@ -530,7 +549,7 @@ final class CraftAudioBufferSource: CraftAudioSource {
                 position = loopFrom + (position - loopFrom).truncatingRemainder(dividingBy: span)
             }
         }
-        let rate = buffer.sampleRate / render.sampleRate * Double(playbackRate.values[0]) * pow(2, Double(detune.values[0]) / 1200)
+        let rate = Self.rate(ratio: buffer.sampleRate / render.sampleRate, playbackRate: Double(playbackRate.values[0]), detune: Double(detune.values[0]))
         let first = buffer.channels[0]
         let second = buffer.channels.count > 1 ? buffer.channels[1] : first
         let frames = buffer.length

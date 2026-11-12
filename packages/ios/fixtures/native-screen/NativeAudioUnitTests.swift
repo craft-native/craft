@@ -964,6 +964,61 @@ final class NativeAudioUnitTests: XCTestCase {
         XCTAssertEqual(peak(out.left[frame(0.351)...]), 0)
     }
 
+    /// A buffer source's rate is its playbackRate times two to the power of
+    /// its detune in octaves, and neither is bounded for a buffer source. A
+    /// detune of 2,000,000 cents makes the rate infinite; a looping source
+    /// wrapped that into a position that is not a number, and the render
+    /// thread trapped converting it: the process ended. With a playbackRate
+    /// of 0 the rate itself is not a number. WebKit clamps the rate to
+    /// +-1024 and plays one that is not a number at 1.
+    func testABufferSourceWhoseRateOverflowsPlaysOnInsteadOfEndingTheProcess() {
+        run("""
+            var ramp = context.createBuffer(1, 4800, context.sampleRate);
+            var data = ramp.getChannelData(0);
+            for (var i = 0; i < data.length; i++) data[i] = i / data.length;
+            function source(loop, rate, detune) {
+                var made = context.createBufferSource();
+                made.buffer = ramp;
+                made.loop = loop;
+                made.playbackRate.value = rate;
+                made.detune.value = detune;
+                var level = context.createGain();
+                level.gain.value = 0.25;
+                made.connect(level).connect(context.destination);
+                made.start();
+                return made;
+            }
+            var infinite = source(true, 1, 2000000);
+            var infiniteOnce = source(false, 1, 2000000);
+            var backwards = source(true, -1, 2000000);
+            var notANumber = source(true, 0, 2000000);
+            var notANumberOnce = source(false, 0, 2000000);
+        """)
+        let out = render(0.2)
+        XCTAssertTrue(out.left.allSatisfy(\.isFinite) && out.right.allSatisfy(\.isFinite), "The graph played something that is not a number")
+        // Three of them loop for good, so there is sound to the end.
+        XCTAssertGreaterThan(peak(out.left[frame(0.15)...]), 0)
+        // A rate that is not a number plays at 1: one pass of the ramp takes
+        // a tenth of a second, and the one that does not loop then ends.
+        run("""
+            var plain = context.createBufferSource();
+            plain.buffer = ramp;
+            plain.playbackRate.value = 0;
+            plain.detune.value = 2000000;
+            var plainEnded = false;
+            plain.onended = function() { plainEnded = true; };
+            var alone = context.createGain();
+            alone.connect(context.destination);
+            infinite.stop(); backwards.stop(); notANumber.stop();
+        """)
+        _ = render(0.05)
+        run("plain.connect(alone); plain.start();")
+        let alone = render(0.2)
+        XCTAssertEqual(alone.left[frame(0.05)], 0.5, accuracy: 0.02, "A rate that is not a number did not play at 1")
+        XCTAssertEqual(peak(alone.left[frame(0.11)...]), 0)
+        XCTAssertTrue(run("plainEnded").toBool())
+    }
+
     func testABiquadLowpassKeepsTheLowAndCutsTheHigh() {
         func level(_ hz: Double) -> Float {
             run("""

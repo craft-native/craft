@@ -428,7 +428,9 @@ sawtooth, triangle, `frequency`, `detune`), `AudioBuffer` and
 `playbackRate`, `detune`), `BiquadFilterNode` (all eight types),
 `DelayNode` (in a feedback cycle too), `DynamicsCompressorNode` and
 `ConvolverNode` (with the spec's normalisation), `connect()`/`disconnect()`,
-`start()`/`stop()` and `onended`.
+`start()`/`stop()` and `onended`. A buffer source's rate (`playbackRate`
+times two to the power of `detune` in octaves) is limited to 1024 either side
+of zero, and one that is not a number plays at 1, as in WebKit.
 
 The graph renders in 128-frame quanta, as the spec describes, inside one
 `AVAudioSourceNode` per context on the screen's `AVAudioEngine`; a step
