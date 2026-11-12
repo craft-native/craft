@@ -847,6 +847,16 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     // correlated answer.
     if (eql(u8, kind, "system")) return sendSystem(action);
     if (eql(u8, kind, "screen")) return sendScreen(action);
+    if (eql(u8, kind, "capabilities")) {
+        // The manifest is rendered from `capability_registry.zig`, which lists
+        // the bridges that exist. It used to be unreachable here because that
+        // registry pulls in `bridge_screen.zig`, and that file imported
+        // `macos.zig` at file scope.
+        var bridge = @import("bridge_capabilities.zig").CapabilitiesBridge.init(std.heap.c_allocator);
+        defer bridge.deinit();
+        bridge.handleMessage(action, data orelse "") catch {};
+        return;
+    }
     if (eql(u8, kind, "fs")) {
         // `bridge_fs.zig` replies on whichever channel the caller used; the
         // `_req` path answers with `__craftBridgeResult`, which is what
