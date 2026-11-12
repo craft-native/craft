@@ -129,6 +129,15 @@ pub const NotificationBridge = struct {
             return self.windowsShowNotification(data);
         }
         if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission(data);
+        if (std.mem.eql(u8, action, "getPermissionStatus")) {
+            // Windows has no per-app notification permission prompt: toast
+            // delivery is a system-wide setting the shell owns, and an app is
+            // never told whether a banner was actually shown. "granted" is the
+            // only answer that is both true and useful here — the alternative
+            // is failing a query the page asked in good faith.
+            bridge_error.sendResultToJS(self.allocator, action, "\"granted\"");
+            return;
+        }
         return BridgeError.UnknownAction;
     }
 
