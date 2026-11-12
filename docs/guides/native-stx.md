@@ -1528,6 +1528,9 @@ const stopLinks = craft.deepLinks.onLink((link) => console.log(link.url))
 const id = await craft.notifications.schedule({ title: 'Reminder', delay: 60_000 })
 await craft.notifications.cancel(id)
 
+// null when the picker is dismissed. On iOS that includes a picker that goes
+// because the sheet it opened over was closed; one that could not be shown at
+// all rejects with PICKER_ERROR. Neither keeps later picks from opening.
 const photo = await craft.files.pickImage({ source: 'library' })
 const attachments = await craft.files.pickFile({
   contentTypes: ['application/pdf', 'csv', 'gpx', 'fit'],

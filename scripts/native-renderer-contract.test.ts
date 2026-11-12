@@ -2958,6 +2958,25 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('takes the nearest end of\nthat range on both hosts')
   })
 
+  it('answers for a system picker that went without telling its delegate', () => {
+    // UIKit tells a picker's delegate about a choice and a cancel, and
+    // nothing when the picker goes with the sheet it was presented on or is
+    // never presented at all. The request then held the one picker slot and
+    // every later pick was refused as BUSY until the app restarted. Run in
+    // the unit cases testAPickerThatLeavesWithItsSheetAnswersAndFreesTheSlot,
+    // testAPickWhoseSheetClosesBeforeThePickerIsUpOpensOrAnswers and
+    // testAPickAskedForWhileASheetClosesOpensOrAnswers.
+    expect(iosFiles.match(/guard pickerSlotIsFree\(\) else \{/g)?.length).toBe(3)
+    expect(iosFiles).not.toContain('guard activePicker == nil else {')
+    // Every picker that takes the slot is followed.
+    expect(iosFiles.match(/activePicker = delegate\n\s+watch\(picker, for: delegate\)/g)?.length).toBe(5)
+    expect(iosFiles.match(/activePicker = delegate\n/g)?.length).toBe(5)
+    expect(iosFiles.match(/guard lostItsPicker else \{ return \}/g)?.length).toBe(3)
+    expect(iosFiles).toContain('if shown { return picker.viewIfLoaded?.window == nil }')
+    expect(iosFiles).toContain('return presenter.viewIfLoaded?.window == nil')
+    expect(guide).toContain('one that could not be shown at\n// all rejects with PICKER_ERROR')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link

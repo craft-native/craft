@@ -291,6 +291,138 @@ final class FilesUnitTests: XCTestCase {
         XCTAssertTrue(rejected)
     }
 
+    /// A window of the test's own with a sheet up, as a `<Modal>` is.
+    @MainActor private func windowWithSheet() async throws -> (UIWindow, UIViewController, UIViewController) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let sheet = UIViewController()
+        sheet.modalPresentationStyle = .pageSheet
+        let up = expectation(description: "the sheet is up")
+        root.present(sheet, animated: false) { up.fulfill() }
+        await fulfillment(of: [up], timeout: 5)
+        return (window, root, sheet)
+    }
+
+    /// A system picker runs in another process, and UIKit presents it once
+    /// that process answers: some time after `present` returns.
+    @MainActor private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("Timed out waiting until \(what)") }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// The system pickers are presented over whatever is on top, and a sheet
+    /// is. An app that closes its sheet takes the picker down with it, and
+    /// UIKit tells the picker's delegate nothing: the request never answered
+    /// and kept the one picker slot, so every later pick was refused as BUSY
+    /// until the app was restarted. Reported from a TestFlight build.
+    @MainActor func testAPickerThatLeavesWithItsSheetAnswersAndFreesTheSlot() async throws {
+        typealias Done = (Result<Any, CraftNativeActionError>) -> Void
+        let pickers: [(name: String, open: (@escaping Done) -> Void, nothing: (Any) -> Bool)] = [
+            ("photo", { CraftNativeFiles.pickImage([:], cameraEnabled: false, done: $0) }, { $0 is NSNull }),
+            ("video", { CraftNativeFiles.pickVideo([:], done: $0) }, { $0 is NSNull }),
+            ("video file", { CraftNativeFiles.pickVideo(["source": "files"], done: $0) }, { $0 is NSNull }),
+            ("file", { CraftNativeFiles.pickFile([:], done: $0) }, { ($0 as? [Any])?.isEmpty == true }),
+        ]
+        for picker in pickers {
+            let (window, root, sheet) = try await windowWithSheet()
+            defer { window.isHidden = true }
+            XCTAssertTrue(CraftPresenter.topViewController() === sheet, picker.name)
+            let answered = expectation(description: "the \(picker.name) picker that left answered")
+            var first: Result<Any, CraftNativeActionError>?
+            picker.open { first = $0; answered.fulfill() }
+            try await waitUntil("the \(picker.name) picker is on the sheet") { sheet.presentedViewController?.viewIfLoaded?.window != nil }
+            // The app closes its sheet; nobody chose or cancelled anything.
+            let closed = expectation(description: "the sheet closed")
+            root.dismiss(animated: false) { closed.fulfill() }
+            await fulfillment(of: [closed], timeout: 5)
+            await fulfillment(of: [answered], timeout: 5)
+            guard case .success(let value)? = first, picker.nothing(value) else {
+                XCTFail("A \(picker.name) picker that left without a choice answers as one that was cancelled: \(String(describing: first))")
+                continue
+            }
+            var free = false
+            CraftNativeFiles.pickImage(["source": "invalid"], cameraEnabled: false) { self.assertImportFailure($0, "INVALID_ARGUMENT"); free = true }
+            XCTAssertTrue(free, "The \(picker.name) picker kept the slot")
+            window.isHidden = true
+        }
+
+        // And the next one opens.
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let token = UUID().uuidString
+        let settled = expectation(description: "the next picker settled")
+        var second: Result<Any, CraftNativeActionError>?
+        CraftNativeFiles.pickImage([:], cameraEnabled: false, requestToken: token) { second = $0; settled.fulfill() }
+        try await waitUntil("the next picker opens") { root.presentedViewController is PHPickerViewController || second != nil }
+        XCTAssertTrue(root.presentedViewController is PHPickerViewController, "The next picker did not open: \(String(describing: second))")
+        CraftNativeFiles.cancelPicker(requestToken: token)
+        await fulfillment(of: [settled], timeout: 5)
+        assertImportFailure(try XCTUnwrap(second), "CANCELLED")
+    }
+
+    /// The same, earlier: the sheet goes while the picker is still on its way
+    /// to the screen. A system picker runs in another process and is
+    /// presented once that process answers, so what happens depends on which
+    /// is first. UIKit may give the presentation up ("whose view is not in
+    /// the window hierarchy", in the console only), and then the picker is
+    /// never seen: the request used to wait for ever, holding the slot. Or
+    /// the picker may still appear. Either is fine. What must not happen is
+    /// neither a picker nor an answer.
+    @MainActor private func pickWhileTheSheetGoes(animated: Bool) async throws {
+        let (window, root, sheet) = try await windowWithSheet()
+        defer { window.isHidden = true }
+        let token = UUID().uuidString
+        let settled = expectation(description: "the pick settled")
+        var first: Result<Any, CraftNativeActionError>?
+        let closed = expectation(description: "the sheet closed")
+        if animated {
+            // Asked for while the sheet is already closing.
+            root.dismiss(animated: true) { closed.fulfill() }
+            XCTAssertTrue(sheet.isBeingDismissed, "The sheet is not on its way out, which is the case being tested")
+            CraftNativeFiles.pickImage([:], cameraEnabled: false, requestToken: token) { first = $0; settled.fulfill() }
+        } else {
+            // Asked for on the sheet, which closes before the picker is up.
+            XCTAssertTrue(CraftPresenter.topViewController() === sheet)
+            CraftNativeFiles.pickImage([:], cameraEnabled: false, requestToken: token) { first = $0; settled.fulfill() }
+            root.dismiss(animated: false) { closed.fulfill() }
+        }
+        await fulfillment(of: [closed], timeout: 5)
+        func pickerOnScreen() -> Bool {
+            [root.presentedViewController, sheet.presentedViewController].contains { $0 is PHPickerViewController && $0?.viewIfLoaded?.window != nil }
+        }
+        try await waitUntil("the pick answers or its picker is on screen") { first != nil || pickerOnScreen() }
+        if first == nil {
+            CraftNativeFiles.cancelPicker(requestToken: token)
+            await fulfillment(of: [settled], timeout: 5)
+            assertImportFailure(try XCTUnwrap(first), "CANCELLED")
+        } else {
+            await fulfillment(of: [settled], timeout: 5)
+            // Never seen: it could not be presented. That is not a cancel.
+            assertImportFailure(try XCTUnwrap(first), "PICKER_ERROR")
+        }
+        var free = false
+        CraftNativeFiles.pickImage(["source": "invalid"], cameraEnabled: false) { self.assertImportFailure($0, "INVALID_ARGUMENT"); free = true }
+        XCTAssertTrue(free, "The slot was kept")
+    }
+
+    @MainActor func testAPickWhoseSheetClosesBeforeThePickerIsUpOpensOrAnswers() async throws {
+        try await pickWhileTheSheetGoes(animated: false)
+    }
+
+    @MainActor func testAPickAskedForWhileASheetClosesOpensOrAnswers() async throws {
+        try await pickWhileTheSheetGoes(animated: true)
+    }
+
     func testDocumentPickerCancellationIgnoresLateSelectionAndDuplicateCallbacks() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("late-\(UUID().uuidString).mp4")
         try Data("late provider bytes".utf8).write(to: source)

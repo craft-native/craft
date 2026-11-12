@@ -85,6 +85,84 @@ final class CraftNotificationAttachments {
 // memory. `fetch` and the share sheet take the path; only files made here are
 // read back for a form, so a screen cannot post an arbitrary file of the app's.
 
+/// A request waiting on a system picker, as the one picker slot sees it.
+protocol CraftPickerRequest: AnyObject {
+    /// Where its picker is.
+    var presence: CraftPickerPresence { get }
+    /// It has neither been answered by its picker nor finished.
+    var isWaiting: Bool { get }
+    /// The picker went without a choice or a cancel reaching its delegate.
+    /// One that was on screen answers as a cancel; one that never appeared
+    /// answers that it could not be presented.
+    func pickerLeft(shown: Bool)
+}
+
+extension CraftPickerRequest {
+    /// Still waiting on a picker that can no longer answer.
+    var lostItsPicker: Bool { isWaiting && presence.lost }
+}
+
+/// Where a request's picker is: on its way to the screen, on it, or gone.
+///
+/// UIKit tells a picker's delegate about a choice and about a cancel. It
+/// says nothing when the picker goes because what presented it did (an app
+/// closing the sheet the picker was on), or when it gives a presentation up
+/// before it began: a system picker runs in another process and is presented
+/// once that process answers, and by then the sheet it was to appear on may
+/// have closed ("whose view is not in the window hierarchy", in the console
+/// only). The request then never answered and kept the one picker slot:
+/// every later pick was refused as BUSY until the app was restarted.
+final class CraftPickerPresence {
+    weak var picker: UIViewController?
+    /// What the picker was handed to for presenting.
+    weak var presenter: UIViewController?
+    weak var watch: CraftPickerWatch?
+
+    /// The picker has been on screen.
+    var shown: Bool { watch?.shown ?? false }
+
+    /// The picker cannot answer any more.
+    var lost: Bool {
+        guard let picker else { return true }
+        if picker.presentingViewController != nil { return false }
+        // It was on screen, is not now, and nothing presents it.
+        if shown { return picker.viewIfLoaded?.window == nil }
+        // It has not appeared yet, and what was to present it has gone.
+        guard let presenter else { return true }
+        return presenter.viewIfLoaded?.window == nil
+    }
+}
+
+/// A view inside a system picker that says when the picker has been seen
+/// and when it is gone: it leaves the window when the picker does and is
+/// released when the picker is, whichever way that happens.
+final class CraftPickerWatch: UIView {
+    private(set) var shown = false
+    private var left: ((_ shown: Bool) -> Void)?
+
+    static func attach(to picker: UIViewController, left: @escaping (_ shown: Bool) -> Void) -> CraftPickerWatch {
+        let watch = CraftPickerWatch(frame: .zero)
+        watch.isHidden = true
+        watch.isUserInteractionEnabled = false
+        watch.left = left
+        picker.view.addSubview(watch)
+        return watch
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { shown = true } else if shown { report() }
+    }
+
+    deinit { report() }
+
+    private func report() {
+        guard let left else { return }
+        let shown = shown
+        DispatchQueue.main.async { left(shown) }
+    }
+}
+
 enum CraftNativeFiles {
     /// The longest side of a picked photo unless the screen asks otherwise:
     /// sharp on any phone screen and in a share card, a few hundred kilobytes
@@ -103,6 +181,40 @@ enum CraftNativeFiles {
     private static var swept = false
     /// The picker on screen, kept alive until it answers. One at a time.
     private static var activePicker: NSObject?
+
+    /// The slot is free when nothing holds it, or when what holds it is
+    /// waiting on a picker that can no longer answer.
+    private static func pickerSlotIsFree() -> Bool {
+        guard let request = activePicker as? CraftPickerRequest else { return activePicker == nil }
+        guard request.lostItsPicker else { return false }
+        activePicker = nil
+        request.pickerLeft(shown: request.presence.shown)
+        return true
+    }
+
+    /// Follow `picker` for the request that is waiting on it.
+    private static func watch(_ picker: UIViewController, for request: CraftPickerRequest) {
+        let presence = request.presence
+        presence.picker = picker
+        presence.presenter = CraftPresenter.topViewController()
+        presence.watch = CraftPickerWatch.attach(to: picker) { [weak request] shown in request?.pickerLeft(shown: shown) }
+        awaitAppearance(of: request, checks: 60)
+    }
+
+    /// Until the picker is on screen nothing of its own can say it never
+    /// will be, and UIKit may hold a presentation it cannot make for as long
+    /// as the picker's process takes to answer. Look twice a second, for half
+    /// a minute at most, and answer for a picker whose presenter has gone.
+    private static func awaitAppearance(of request: CraftPickerRequest, checks: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak request] in
+            guard let request, request.isWaiting, !request.presence.shown else { return }
+            if request.presence.lost {
+                request.pickerLeft(shown: false)
+            } else if checks > 1 {
+                awaitAppearance(of: request, checks: checks - 1)
+            }
+        }
+    }
 
     // MARK: Files of our own
 
@@ -208,7 +320,7 @@ enum CraftNativeFiles {
             .map { $0.doubleValue }
             .flatMap { $0.isFinite ? $0 : nil } ?? defaultQuality))
         let source = options["source"] as? String ?? "library"
-        guard activePicker == nil else {
+        guard pickerSlotIsFree() else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
         }
@@ -245,6 +357,7 @@ enum CraftNativeFiles {
         picker.delegate = delegate
         delegate.controller = picker
         activePicker = delegate
+        watch(picker, for: delegate)
         if !CraftPresenter.present(picker, from: nil) {
             delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the photo picker")))
         }
@@ -291,7 +404,7 @@ enum CraftNativeFiles {
         return "\(base).jpg"
     }
 
-    final class LibraryDelegate: NSObject, PHPickerViewControllerDelegate {
+    final class LibraryDelegate: NSObject, PHPickerViewControllerDelegate, CraftPickerRequest {
         let maxPixels: Int
         let quality: Double
         let videoLimit: Int?
@@ -353,8 +466,18 @@ enum CraftNativeFiles {
             }
         }
 
+        let presence = CraftPickerPresence()
+        var isWaiting: Bool { !answered && !finished }
+
+        func pickerLeft(shown: Bool) {
+            guard lostItsPicker else { return }
+            answered = true
+            finish(shown ? .success(NSNull()) : .failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the \(videoLimit == nil ? "photo" : "video") picker")))
+        }
+
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            guard !answered else { return }
+            // A picker whose request was already answered still closes.
+            guard !answered else { picker.dismiss(animated: true); return }
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider else {
                 answered = true
@@ -403,12 +526,13 @@ enum CraftNativeFiles {
         picker.delegate = delegate
         delegate.controller = picker
         activePicker = delegate
+        watch(picker, for: delegate)
         if !CraftPresenter.present(picker, from: nil) {
             delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the camera")))
         }
     }
 
-    final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, CraftPickerRequest {
         let maxPixels: Int
         let quality: Double
         let requestToken: String?
@@ -483,6 +607,15 @@ enum CraftNativeFiles {
             answered = true
             finish(.success(NSNull()))
         }
+
+        let presence = CraftPickerPresence()
+        var isWaiting: Bool { !answered && !finished }
+
+        func pickerLeft(shown: Bool) {
+            guard lostItsPicker else { return }
+            answered = true
+            finish(shown ? .success(NSNull()) : .failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the camera")))
+        }
     }
 
     #endif
@@ -493,7 +626,7 @@ enum CraftNativeFiles {
     /// the provider's URL is valid; no movie bytes cross JavaScriptCore.
     static func pickVideo(_ options: [String: Any], requestToken: String? = nil, isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
         guard !isCancelled() else { done(.failure(importCancelled())); return }
-        guard activePicker == nil else {
+        guard pickerSlotIsFree() else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
         }
@@ -512,6 +645,7 @@ enum CraftNativeFiles {
             picker.delegate = delegate
             delegate.controller = picker
             activePicker = delegate
+            watch(picker, for: delegate)
             if !CraftPresenter.present(picker, from: nil) {
                 delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
             }
@@ -525,6 +659,7 @@ enum CraftNativeFiles {
             picker.delegate = delegate
             delegate.controller = picker
             activePicker = delegate
+            watch(picker, for: delegate)
             if !CraftPresenter.present(picker, from: nil) {
                 delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
             }
@@ -538,7 +673,7 @@ enum CraftNativeFiles {
     /// UTIs, or filename extensions; an empty list means any document.
     static func pickFile(_ options: [String: Any], requestToken: String? = nil, isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
         guard !isCancelled() else { done(.failure(importCancelled())); return }
-        guard activePicker == nil else {
+        guard pickerSlotIsFree() else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
         }
@@ -567,6 +702,7 @@ enum CraftNativeFiles {
         picker.delegate = delegate
         delegate.controller = picker
         activePicker = delegate
+        watch(picker, for: delegate)
         if !CraftPresenter.present(picker, from: nil) {
             delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the file picker")))
         }
@@ -727,7 +863,7 @@ enum CraftNativeFiles {
         }
     }
 
-    final class DocumentDelegate: NSObject, UIDocumentPickerDelegate {
+    final class DocumentDelegate: NSObject, UIDocumentPickerDelegate, CraftPickerRequest {
         let limit: Int
         let video: Bool
         let requestToken: String?
@@ -766,6 +902,15 @@ enum CraftNativeFiles {
             guard !answered else { return }
             answered = true
             finish(.success(video ? NSNull() : []))
+        }
+
+        let presence = CraftPickerPresence()
+        var isWaiting: Bool { !answered && !finished }
+
+        func pickerLeft(shown: Bool) {
+            guard lostItsPicker else { return }
+            answered = true
+            finish(shown ? .success(video ? NSNull() : []) : .failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the \(video ? "video" : "file") picker")))
         }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
