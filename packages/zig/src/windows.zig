@@ -847,6 +847,11 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     // correlated answer.
     if (eql(u8, kind, "system")) return sendSystem(action);
     if (eql(u8, kind, "screen")) return sendScreen(action);
+    if (eql(u8, kind, "shell")) return sendShell(action, data);
+    if (eql(u8, kind, "power")) return sendPower(action);
+    if (eql(u8, kind, "autoLaunch")) return sendAutoLaunch(action);
+    if (eql(u8, kind, "permissions")) return sendPermissions(action);
+    if (eql(u8, kind, "log")) return sendLog(action, data);
     if (eql(u8, kind, "capabilities")) {
         // The manifest is rendered from `capability_registry.zig`, which lists
         // the bridges that exist. It used to be unreachable here because that
@@ -1069,6 +1074,418 @@ fn sendJsonField(allocator: std.mem.Allocator, action: []const u8, key: []const 
     defer allocator.free(json);
     bridge_error.sendResultToJS(allocator, action, json);
 }
+
+/// Answer a single-field `{ "<key>": true|false }` result.
+fn sendJsonBool(allocator: std.mem.Allocator, action: []const u8, key: []const u8, value: bool) !void {
+    var buf: [96]u8 = undefined;
+    const json = try std.fmt.bufPrint(&buf, "{{\"{s}\":{s}}}", .{ key, if (value) "true" else "false" });
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
+/// The string fields every request in this section may carry. One flat struct
+/// with `ignore_unknown_fields` keeps per-action parsing to a single call; the
+/// caller owns the arena that the slices point into.
+const BridgeArgs = struct {
+    url: []const u8 = "",
+    path: []const u8 = "",
+    name: []const u8 = "",
+    value: []const u8 = "",
+    level: []const u8 = "",
+    message: []const u8 = "",
+};
+
+fn parseBridgeArgs(arena: std.mem.Allocator, json: []const u8) !BridgeArgs {
+    if (json.len == 0) return .{};
+    const parsed = std.json.parseFromSlice(BridgeArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    return parsed.value;
+}
+
+/// UTF-8 to a NUL-terminated UTF-16 buffer. UTF-16 units never outnumber the
+/// UTF-8 bytes they encode, so `s.len + 1` is always enough.
+fn toWideZ(allocator: std.mem.Allocator, s: []const u8) ![:0]u16 {
+    const buf = try allocator.alloc(u16, s.len + 1);
+    errdefer allocator.free(buf);
+    const n = std.unicode.utf8ToUtf16Le(buf, s) catch return bridge_error.BridgeError.InvalidParameter;
+    buf[n] = 0;
+    return buf[0..n :0];
+}
+
+/// `ShellExecuteW` reports failure with a small positive code rather than a
+/// negative error value: anything at or below 32 is one of the documented
+/// failures (file not found, no association, refused by the shell, ...).
+fn shellExecute(operation: [*:0]const u16, file: [*:0]const u16, params: ?[*:0]const u16) !void {
+    if (ShellExecuteW(null, operation, file, params, null, SW_SHOWNORMAL) <= 32)
+        return bridge_error.BridgeError.NativeCallFailed;
+}
+
+const HKEY_CLASSES_ROOT: ?*anyopaque = @ptrFromInt(0x8000_0000);
+
+/// Whether Windows has a handler for the URL's scheme.
+///
+/// `ShellExecuteW` alone cannot answer this: for a scheme nothing is registered
+/// for, it raises the "how do you want to open this" picker and still reports
+/// success, so the page could not tell a URL that opened from one that went
+/// nowhere. Protocols live under `HKEY_CLASSES_ROOT`, which is the same lookup
+/// the shell itself performs.
+fn schemeIsRegistered(arena: std.mem.Allocator, url: []const u8) !bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return true;
+    const scheme = url[0..colon];
+    // A single letter is a drive letter (`C:\...`), not a protocol.
+    if (scheme.len <= 1) return true;
+    for (scheme) |ch| {
+        if (!std.ascii.isAlphanumeric(ch) and ch != '+' and ch != '-' and ch != '.') return true;
+    }
+    var hkey: ?*anyopaque = undefined;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, try toWideZ(arena, scheme), 0, KEY_QUERY_VALUE, &hkey) != 0)
+        return false;
+    _ = RegCloseKey(hkey);
+    return true;
+}
+
+/// `craft.shell` on Windows.
+fn sendShell(action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const args = try parseBridgeArgs(arena, data orelse "");
+
+    if (eql(u8, action, "openUrl")) {
+        if (args.url.len == 0) return bridge_error.BridgeError.MissingData;
+        if (!try schemeIsRegistered(arena, args.url)) return bridge_error.BridgeError.NativeCallFailed;
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, args.url), null);
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    if (eql(u8, action, "openPath")) {
+        if (args.path.len == 0) return bridge_error.BridgeError.MissingData;
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, args.path), null);
+        return;
+    }
+    if (eql(u8, action, "showInFinder")) {
+        if (args.path.len == 0) return bridge_error.BridgeError.MissingData;
+        // Windows has no "reveal" verb of its own; Explorer takes the selection
+        // as a switch on its command line instead.
+        const select = try std.fmt.allocPrint(arena, "/select,\"{s}\"", .{args.path});
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, "explorer.exe"), try toWideZ(arena, select));
+        return;
+    }
+    if (eql(u8, action, "getEnv")) {
+        if (args.name.len == 0) return bridge_error.BridgeError.MissingData;
+        var buf: [32767]u16 = undefined;
+        const n = GetEnvironmentVariableW(try toWideZ(arena, args.name), &buf, @intCast(buf.len));
+        // `n` is the length excluding the terminator, or the required length
+        // when the buffer was too small.
+        if (n == 0 or n >= buf.len) return sendJsonField(allocator, action, "value", "");
+        const value = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..n]);
+        defer allocator.free(value);
+        try sendJsonField(allocator, action, "value", value);
+        return;
+    }
+    if (eql(u8, action, "setEnv")) {
+        if (args.name.len == 0) return bridge_error.BridgeError.MissingData;
+        if (SetEnvironmentVariableW(try toWideZ(arena, args.name), try toWideZ(arena, args.value)) == 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+/// `SYSTEM_POWER_STATUS` from `winbase.h` (12 bytes with `DWORD` alignment).
+const SYSTEM_POWER_STATUS = extern struct {
+    ACLineStatus: u8 = 0,
+    BatteryFlag: u8 = 0,
+    BatteryLifePercent: u8 = 0,
+    SystemStatusFlag: u8 = 0,
+    BatteryLifeTime: u32 = 0,
+    BatteryFullLifeTime: u32 = 0,
+};
+
+const BATTERY_FLAG_CHARGING: u8 = 0x08;
+const BATTERY_PERCENT_UNKNOWN: u8 = 255;
+const BATTERY_LIFE_UNKNOWN: u32 = 0xFFFF_FFFF;
+
+/// `craft.power` on Windows.
+fn sendPower(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var status: SYSTEM_POWER_STATUS = .{};
+    const known = GetSystemPowerStatus(&status) != 0;
+    const ac_online = known and status.ACLineStatus == 1;
+    const charging = known and (status.BatteryFlag & BATTERY_FLAG_CHARGING) != 0;
+
+    if (eql(u8, action, "isCharging")) return sendJsonBool(allocator, action, "value", charging);
+    if (eql(u8, action, "isPluggedIn")) return sendJsonBool(allocator, action, "value", ac_online);
+    // Battery saver exists as a user setting, but Windows exposes no query for
+    // its state to a desktop process, so this reports false rather than
+    // inventing an answer.
+    if (eql(u8, action, "isLowPowerMode")) return sendJsonBool(allocator, action, "value", false);
+
+    if (eql(u8, action, "getBatteryLevel")) {
+        if (!known or status.BatteryLifePercent == BATTERY_PERCENT_UNKNOWN) {
+            bridge_error.sendResultToJS(allocator, action, "{\"level\":null}");
+            return;
+        }
+        // Formatted from integers so the value is exactly the percentage the
+        // OS reported, with no float rounding in between.
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"level\":{d}.{d:0>2}}}", .{
+            status.BatteryLifePercent / 100,
+            status.BatteryLifePercent % 100,
+        });
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "getBatteryState")) {
+        const state = if (!known or status.BatteryLifePercent == BATTERY_PERCENT_UNKNOWN)
+            "unknown"
+        else if (charging)
+            "charging"
+        else if (ac_online and status.BatteryLifePercent == 100)
+            "charged"
+        else if (!ac_online)
+            "unplugged"
+        else
+            "unknown";
+        return sendJsonField(allocator, action, "state", state);
+    }
+    if (eql(u8, action, "getTimeRemaining")) {
+        if (!known or status.BatteryLifeTime == BATTERY_LIFE_UNKNOWN or status.BatteryLifeTime == 0) {
+            bridge_error.sendResultToJS(allocator, action, "{\"minutes\":null}");
+            return;
+        }
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"minutes\":{d}}}", .{status.BatteryLifeTime / 60});
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    // `getThermalState` has no Win32 equivalent; Windows throttles silently and
+    // the WinRT sensor API needs a package identity.
+    if (eql(u8, action, "getThermalState")) return sendJsonField(allocator, action, "state", "nominal");
+    if (eql(u8, action, "getUptimeSeconds")) {
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"seconds\":{d}}}", .{GetTickCount64() / 1000});
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "preventSleep")) {
+        // `ES_CONTINUOUS` holds the request in force until it is cleared, which
+        // is what `allowSleep` pairs with.
+        if (SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) == 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        return;
+    }
+    if (eql(u8, action, "allowSleep")) {
+        _ = SetThreadExecutionState(ES_CONTINUOUS);
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+const RUN_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+/// The registry value name: the executable's base name without `.exe`, so one
+/// app cannot silently overwrite another app's entry unless they share a name.
+fn autoLaunchValueName(allocator: std.mem.Allocator) ![]u8 {
+    var wide: [std.fs.max_path_bytes]u16 = undefined;
+    const n = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+    if (n == 0) return bridge_error.BridgeError.NativeCallFailed;
+    const exe = try std.unicode.utf16LeToUtf8Alloc(allocator, wide[0..@min(@as(usize, n), wide.len)]);
+    defer allocator.free(exe);
+    const base = std.fs.path.basename(exe);
+    const name = if (base.len > 4 and std.ascii.eqlIgnoreCase(base[base.len - 4 ..], ".exe"))
+        base[0 .. base.len - 4]
+    else
+        base;
+    return allocator.dupe(u8, name);
+}
+
+/// `craft.autoLaunch` on Windows, through the per-user `Run` key.
+fn sendAutoLaunch(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const value_name = try toWideZ(arena, try autoLaunchValueName(arena));
+    const key_path = try toWideZ(arena, RUN_KEY);
+
+    if (eql(u8, action, "isEnabled")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, key_path, 0, KEY_QUERY_VALUE, &hkey) != 0)
+            return sendJsonBool(allocator, action, "value", false);
+        defer _ = RegCloseKey(hkey);
+        var size: u32 = 0;
+        const rc = RegQueryValueExW(hkey, value_name, null, null, null, &size);
+        // A zero-length or single-NUL-stub value is a leftover, not an entry
+        // that would actually start anything.
+        return sendJsonBool(allocator, action, "value", rc == 0 and size > 2);
+    }
+    if (eql(u8, action, "enable")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, key_path, 0, null, 0, KEY_SET_VALUE, null, &hkey, null) != 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        defer _ = RegCloseKey(hkey);
+
+        var wide: [std.fs.max_path_bytes]u16 = undefined;
+        const n = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+        if (n == 0) return bridge_error.BridgeError.NativeCallFailed;
+        const exe = try std.unicode.utf16LeToUtf8Alloc(arena, wide[0..@min(@as(usize, n), wide.len)]);
+        // Quoted, because an unquoted path containing a space is parsed as
+        // "run the part before the space with the rest as arguments".
+        const command = try std.fmt.allocPrint(arena, "\"{s}\"", .{exe});
+        const command_w = try toWideZ(arena, command);
+        const bytes: u32 = @intCast((command_w.len + 1) * 2);
+        if (RegSetValueExW(hkey, value_name, 0, REG_SZ, @ptrCast(command_w.ptr), bytes) != 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    if (eql(u8, action, "disable")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE, &hkey) != 0) {
+            // No key means nothing was ever registered, which is the state the
+            // caller asked for.
+            bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+            return;
+        }
+        defer _ = RegCloseKey(hkey);
+        // A missing value is also already-disabled, not a failure.
+        _ = RegDeleteValueW(hkey, value_name);
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+/// `craft.permissions` on Windows.
+///
+/// There is no per-capability grant table to consult: a packaged app declares
+/// its capabilities in the manifest and the user consents once at install,
+/// while an unpackaged app is unrestricted. Reporting `granted` describes what
+/// the OS will actually do instead of inventing a prompt that does not exist.
+fn sendPermissions(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    if (eql(u8, action, "check") or eql(u8, action, "request"))
+        return sendJsonField(allocator, action, "status", "granted");
+
+    if (eql(u8, action, "openSettings")) {
+        try shellExecute(try toWideZ(std.heap.c_allocator, "open"), try toWideZ(std.heap.c_allocator, "ms-settings:privacy"), null);
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+/// `craft.log` on Windows: writes through `std.log` so the lines land wherever
+/// the rest of the process's output goes.
+fn sendLog(action: []const u8, data: ?[]const u8) !void {
+    if (!std.mem.eql(u8, action, "log")) return error.PlatformNotSupported;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena_state.deinit();
+    const args = try parseBridgeArgs(arena_state.allocator(), data orelse "");
+
+    if (std.mem.eql(u8, args.level, "error")) {
+        std.log.err("[js] {s}", .{args.message});
+    } else if (std.mem.eql(u8, args.level, "warn")) {
+        std.log.warn("[js] {s}", .{args.message});
+    } else if (std.mem.eql(u8, args.level, "debug")) {
+        std.log.debug("[js] {s}", .{args.message});
+    } else {
+        std.log.info("[js] {s}", .{args.message});
+    }
+}
+
+// =============================================================================
+// Windows: shell / power / autoLaunch / permissions / log
+// =============================================================================
+
+const SW_SHOWNORMAL: c_int = 1;
+
+// `HKEY_CURRENT_USER` is declared further down next to `RegGetValueW`; the
+// handles here are the same `?*anyopaque` shape, so they are not redeclared.
+const KEY_QUERY_VALUE: u32 = 0x0001;
+const KEY_SET_VALUE: u32 = 0x0002;
+const REG_SZ: u32 = 1;
+
+const ES_CONTINUOUS: u32 = 0x8000_0000;
+const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+
+extern "shell32" fn ShellExecuteW(
+    hwnd: ?HWND,
+    lp_operation: [*:0]const u16,
+    lp_file: [*:0]const u16,
+    lp_parameters: ?[*:0]const u16,
+    lp_directory: ?[*:0]const u16,
+    n_show_cmd: c_int,
+) callconv(.c) usize;
+
+extern "kernel32" fn GetEnvironmentVariableW(
+    lp_name: [*:0]const u16,
+    lp_buffer: ?[*]u16,
+    n_size: u32,
+) callconv(.c) u32;
+
+extern "kernel32" fn SetEnvironmentVariableW(
+    lp_name: [*:0]const u16,
+    lp_value: ?[*:0]const u16,
+) callconv(.c) c_int;
+
+extern "kernel32" fn GetSystemPowerStatus(lp_status: *SYSTEM_POWER_STATUS) callconv(.c) c_int;
+extern "kernel32" fn GetTickCount64() callconv(.c) u64;
+extern "kernel32" fn SetThreadExecutionState(flags: u32) callconv(.c) u32;
+
+extern "advapi32" fn RegOpenKeyExW(
+    h_key: ?*anyopaque,
+    lp_sub_key: [*:0]const u16,
+    ul_options: u32,
+    sam_desired: u32,
+    phk_result: *?*anyopaque,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegCreateKeyExW(
+    h_key: ?*anyopaque,
+    lp_sub_key: [*:0]const u16,
+    reserved: u32,
+    lp_class: ?[*:0]const u16,
+    dw_options: u32,
+    sam_desired: u32,
+    lp_security_attributes: ?*anyopaque,
+    phk_result: *?*anyopaque,
+    lpdw_disposition: ?*u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegSetValueExW(
+    h_key: ?*anyopaque,
+    lp_value_name: [*:0]const u16,
+    reserved: u32,
+    dw_type: u32,
+    lp_data: [*]const u8,
+    cb_data: u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegQueryValueExW(
+    h_key: ?*anyopaque,
+    lp_value_name: [*:0]const u16,
+    lp_reserved: ?*u32,
+    lp_type: ?*u32,
+    lp_data: ?[*]u8,
+    lpcb_data: *u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegDeleteValueW(h_key: ?*anyopaque, lp_value_name: [*:0]const u16) callconv(.c) c_int;
+extern "advapi32" fn RegCloseKey(h_key: ?*anyopaque) callconv(.c) c_int;
 
 /// `craft.screen` on Windows.
 ///
