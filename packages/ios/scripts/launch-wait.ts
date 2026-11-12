@@ -12,11 +12,24 @@
 /** The runner's first line carries its own clock: `2026-11-12 13:26:36.860770+0000 …Runner[…] [Default] Running tests...`. */
 const began = /(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)\.(\d+)([+-])(\d\d)(\d\d) \S*\[\d+:\d+\] \[Default\] Running tests\.\.\./
 
-/** When the first runner in `log` began its tests, or undefined when none did. */
+/**
+ * A test bundle hosted in the app (the unit targets) has no runner and
+ * prints no such line. Its first is the suite's, on the simulator's clock,
+ * which is the host's and carries no zone:
+ * `Test Suite 'All tests' started at 2026-11-12 18:34:13.112.`
+ */
+const suiteBegan = /Test Suite '[^']*' started at (\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)\.(\d+)\./
+
+/** When the tests in `log` began, by whichever of the two lines came first, or undefined when neither did. */
 export function testsBeganAt(log: string): Date | undefined {
-  const match = began.exec(log)
-  if (!match) return undefined
-  const [, year, month, day, hour, minute, second, fraction, sign, offsetHours, offsetMinutes] = match
+  const runner = began.exec(log)
+  const suite = suiteBegan.exec(log)
+  if (suite && (!runner || suite.index < runner.index)) {
+    const [, year, month, day, hour, minute, second, fraction] = suite
+    return new Date(+year, +month - 1, +day, +hour, +minute, +second, Math.round(+`0.${fraction}` * 1000))
+  }
+  if (!runner) return undefined
+  const [, year, month, day, hour, minute, second, fraction, sign, offsetHours, offsetMinutes] = runner
   const utc = Date.UTC(+year, +month - 1, +day, +hour, +minute, +second, Math.round(+`0.${fraction}` * 1000))
   const offset = (+offsetHours * 60 + +offsetMinutes) * 60_000 * (sign === '-' ? -1 : 1)
   return new Date(utc - offset)

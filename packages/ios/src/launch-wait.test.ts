@@ -34,6 +34,23 @@ test('a runner that never began has no wait, and a later runner is not the first
   expect(launchWait(slow, new Date('2026-11-12T13:26:37.500Z'))).toBe(0)
 })
 
+test('a hosted unit run, which has no runner, begins at its first suite', () => {
+  // The navigation-unit leg of run 43270591396: no "Running tests..." line
+  // at all, so the watcher said the tests never began after they had passed.
+  const hosted = `2026-11-12T18:33:19.6096970Z     /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -project NativeNavigation.xcodeproj test-without-building
+2026-11-12T18:34:13.1315470Z Test Suite 'All tests' started at 2026-11-12 18:34:13.112.
+2026-11-12T18:34:13.1400000Z Test Suite 'NativeNavigationUnitTests.xctest' started at 2026-11-12 18:34:13.120.
+`
+  // The suite's clock is the host's, with no zone on it.
+  const suiteStarted = new Date(2026, 10, 12, 18, 34, 13, 112)
+  expect(testsBeganAt(hosted)?.getTime()).toBe(suiteStarted.getTime())
+  expect(launchWait(hosted, new Date(suiteStarted.getTime() - 59_346))).toBe(59)
+  // A UI run prints both, the runner's first: that one is still the answer.
+  expect(testsBeganAt(`${slow}2026-11-12T13:27:10.0000000Z Test Suite 'Selected tests' started at 2026-11-12 13:27:06.000.\n`)?.toISOString()).toBe('2026-11-12T13:26:36.861Z')
+  // A suite named in a sentence is not a suite starting.
+  expect(testsBeganAt('note: Test Suite started at some point\n')).toBeUndefined()
+})
+
 test('the simulator\'s log is asked for between the two moments, in local time', () => {
   const from = new Date(2026, 10, 12, 13, 20, 4)
   const to = new Date(2026, 10, 12, 13, 26, 37)
