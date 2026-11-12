@@ -64,6 +64,36 @@ final class NativeNavigationUITests: XCTestCase {
         Int(String(element.label.split(separator: ":").last ?? "0").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
+    /// Taps `element`, and fails at once if the app had not settled.
+    ///
+    /// An app that is still animating holds every later step for XCTest's
+    /// 60 seconds and then lets it pass: one case took 516 seconds that way
+    /// after its pull to refresh, said nothing, and its leg reached the time
+    /// limit (#522). A tap waits for the app to be idle before it lands, so
+    /// one that takes half that long is the first sign. The picture shows
+    /// what was still moving. Returns false when the case should stop.
+    private func tapExpectingIdle(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        after what: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let began = Date()
+        element.tap()
+        let waited = Date().timeIntervalSince(began)
+        guard waited > Self.settleLimit else { return true }
+        let picture = XCTAttachment(screenshot: app.screenshot())
+        picture.name = "still animating after \(what)"
+        picture.lifetime = .keepAlways
+        add(picture)
+        XCTFail("the app was still animating \(Int(waited))s after \(what) (#522)", file: file, line: line)
+        return false
+    }
+
+    /// Half of the 60 seconds XCTest waits for animations; an ordinary tap takes under five.
+    private static let settleLimit: TimeInterval = 30
+
     private func waitForLabel(
         _ element: XCUIElement,
         _ label: String,
@@ -709,7 +739,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(waitForLabel(app.staticTexts["people-count"], "People: 40; events: 1"))
         let input = app.textFields["person-input-person-0"]
         reveal(input, in: people)
-        input.tap()
+        guard tapExpectingIdle(input, in: app, after: "the pull to refresh was answered") else { return }
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         input.typeText("draft")
         app.buttons["shuffle-people"].tap()
@@ -1684,7 +1714,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.textFields["person-input-person-0"].waitForExistence(timeout: 5))
         let personInput = app.textFields["person-input-person-0"]
         reveal(personInput, in: people)
-        personInput.tap()
+        guard tapExpectingIdle(personInput, in: app, after: "the pull to refresh was answered") else { return }
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the row input did not open its keyboard")
         personInput.typeText("draft")
         app.buttons["shuffle-people"].tap()
@@ -1704,7 +1734,7 @@ final class NativeNavigationUITests: XCTestCase {
         let recycledPersonInput = app.textFields["person-input-person-0"]
         XCTAssertTrue(recycledPersonInput.waitForExistence(timeout: 5))
         XCTAssertEqual(recycledPersonInput.value as? String, "draft")
-        app.buttons["clear-people"].tap()
+        guard tapExpectingIdle(app.buttons["clear-people"], in: app, after: "the second pull to refresh") else { return }
         XCTAssertTrue(app.staticTexts["people-empty"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["people-footer"].waitForExistence(timeout: 5))
         XCTAssertTrue(waitForLabel(peopleCount, "People: 0; events: 4"))
