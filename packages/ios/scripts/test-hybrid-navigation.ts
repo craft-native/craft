@@ -1,7 +1,8 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { bootSimulator, build, init, pickSimulator } from '../src/index'
+import { build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
+import { describeSimulatorBoot, startSimulatorBoot } from './simulator-boot'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'hybrid-navigation')
@@ -179,7 +180,10 @@ try {
     const requested = process.env.CRAFT_HYBRID_NAVIGATION_SIMULATOR
     const device = requested ? { udid: requested, name: requested, state: 'Booted', runtime: 'iOS' } : await pickSimulator()
     if (!device) throw new Error('No iOS simulator is available for hybrid navigation tests')
-    await bootSimulator(device)
+    // The build needs this device to exist, not to be running, and a cold
+    // boot has taken longer than the build: do both at once (#508).
+    const boot = startSimulatorBoot(device.udid)
+    console.log(`Simulator boot began for ${device.udid}`)
     const selectedTest = process.env.CRAFT_HYBRID_NAVIGATION_TEST
     const selection = selectedTest
       ? [`-only-testing:HybridNavigationUITests/HybridNavigationUITests/${selectedTest}`]
@@ -190,7 +194,11 @@ try {
       '-derivedDataPath', join(workspace, 'DerivedData'),
       '-parallel-testing-enabled', 'NO', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'ENABLE_TESTABILITY=YES',
     ]
+    const buildStarted = Date.now()
     run([...xcodeArgs, 'build-for-testing'], output)
+    const buildFinished = Date.now()
+    console.log(`build-for-testing took ${Math.round((buildFinished - buildStarted) / 1000)}s`)
+    console.log(describeSimulatorBoot(await boot.ready, (Date.now() - buildFinished) / 1000))
     await runXcodeTests([
       ...xcodeArgs,
       ...(testIterations > 1 ? ['-test-iterations', String(testIterations)] : []),

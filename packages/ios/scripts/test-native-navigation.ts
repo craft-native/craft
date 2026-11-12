@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { bootSimulator, build, init, pickSimulator } from '../src/index'
+import { build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
+import { describeSimulatorBoot, startSimulatorBoot } from './simulator-boot'
 import { nativeNavigationGroup, verifyNativeNavigationResults } from './native-navigation-groups'
 import { nativeTestResultBundle } from './native-test-result'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
@@ -138,7 +139,10 @@ try {
     const requested = process.env.CRAFT_NATIVE_NAVIGATION_SIMULATOR
     const device = requested ? { udid: requested, name: requested, state: 'Booted', runtime: 'iOS' } : await pickSimulator()
     if (!device) throw new Error('No iOS simulator is available for native navigation tests')
-    await bootSimulator(device)
+    // The build needs this device to exist, not to be running, and a cold
+    // boot has taken longer than the build: do both at once (#508).
+    const boot = startSimulatorBoot(device.udid)
+    console.log(`Simulator boot began for ${device.udid}`)
     // Write directly into retained evidence: a CI cancellation can terminate
     // this process before any post-test copy or finally block can run.
     const resultBundle = nativeTestResultBundle(workspace, process.env.CRAFT_NATIVE_NAVIGATION_RESULT, 'NativeNavigation.xcresult')
@@ -166,7 +170,11 @@ try {
     ]
     // Separate build and test sessions: the combined action can stall before
     // launching a hosted XCTest bundle, even after compilation has finished.
+    const buildStarted = Date.now()
     run([...xcodeArgs, 'build-for-testing'], output)
+    const buildFinished = Date.now()
+    console.log(`build-for-testing took ${Math.round((buildFinished - buildStarted) / 1000)}s`)
+    console.log(describeSimulatorBoot(await boot.ready, (Date.now() - buildFinished) / 1000))
     const captureOutput = `${resultBundle}.large-content-viewer`
     const done = join(captureOutput, 'xcode-finished')
     const ready = join(captureOutput, `preflight-ready-${process.pid}-${Date.now()}`)
