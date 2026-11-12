@@ -901,7 +901,7 @@ export interface TextInputProps extends BaseProps {
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters'
   /** Auto correct */
   autoCorrect?: boolean
-  /** Auto focus */
+  /** Focus the input when it mounts, or when this turns on; not on each render. */
   autoFocus?: boolean
   /** Secure text entry (password) */
   secureTextEntry?: boolean

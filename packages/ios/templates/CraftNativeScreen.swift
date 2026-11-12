@@ -6857,6 +6857,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         /// targeted update of this subtree inherits it without its ancestors.
         var inheritedFontFamily: String?
         var children: [RenderedNode] = []
+        /// `autoFocus` was on when this input was last drawn. Focus is taken
+        /// when it turns on, which mounting with it on is, and not on each
+        /// render while it stays on (#511).
+        var autoFocus = false
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
 
@@ -9830,6 +9834,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                         ? nil
                         : inputDrafts[current.identity] ?? props["defaultValue"] as? String
                 )
+                applyAutoFocus(props["autoFocus"], to: textView, node: current)
                 break
             }
             let field = result as! UITextField
@@ -9890,12 +9895,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)
             updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)
             updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: field)
-            if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
-                DispatchQueue.main.async { [weak self] in
-                    guard self?.isLeavingScreen == false else { return }
-                    _ = field.becomeFirstResponder()
-                }
-            }
+            applyAutoFocus(props["autoFocus"], to: field, node: current)
         case "SegmentedControl":
             let control = result as! CraftNativeSegmentedControl
             let items = props["items"] as? [[String: Any]] ?? []
@@ -11216,11 +11216,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: textView)
         updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: textView)
         updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)
-        if props["autoFocus"] as? Bool == true, !textView.isFirstResponder {
-            DispatchQueue.main.async { [weak self] in
-                guard self?.isLeavingScreen == false else { return }
-                _ = textView.becomeFirstResponder()
-            }
+    }
+
+    /// `autoFocus`: focus when the input mounts with it, or when it is turned
+    /// on later. Applied on every render it took the keyboard back each time
+    /// anything else on the screen changed (#511).
+    private func applyAutoFocus(_ value: Any?, to input: UIView, node: RenderedNode) {
+        let wanted = value as? Bool == true
+        let turnedOn = wanted && !node.autoFocus
+        node.autoFocus = wanted
+        guard turnedOn, !input.isFirstResponder else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard self?.isLeavingScreen == false else { return }
+            _ = input.becomeFirstResponder()
         }
     }
 

@@ -2196,7 +2196,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('"numeric", "number-pad" -> InputType.TYPE_CLASS_NUMBER')
     expect(android).toContain('"web-search" -> base or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT')
     expect(android).toContain('"visible-password" -> base or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD')
-    expect(android).toContain('if (craftNativeBoolean(props.opt("autoFocus")) && !isFocused) post')
+    expect(android).toContain('if (autoFocusTurnedOn(craftNativeBoolean(props.opt("autoFocus"))) && !isFocused) post')
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
     expect(android).toContain('reusableInput ?: CraftNativeTextField(this)')
     expect(android).toContain('setTextPreservingSelection(this, controlledValue)')
@@ -2918,8 +2918,29 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('isLeavingScreen = true\n        view.endEditing(true)')
     const restore = ios.slice(ios.indexOf('    private func restoreFocus(_ focused: UIView?) {'))
     expect(restore.split('\n')[1]).toBe('        guard !isLeavingScreen else { return }')
-    // Every place the screen takes focus on its own asks first.
-    expect(ios.match(/isLeavingScreen/g)?.length).toBeGreaterThanOrEqual(8)
+    // Every place the screen takes focus on its own asks first. The two
+    // `autoFocus` inputs share one function since #511, and so one check.
+    expect(ios.match(/isLeavingScreen/g)?.length).toBeGreaterThanOrEqual(7)
+    const autoFocus = ios.slice(ios.indexOf('    private func applyAutoFocus('))
+    expect(autoFocus.slice(0, autoFocus.indexOf('\n    }\n'))).toContain('guard self?.isLeavingScreen == false else { return }')
+  })
+
+  it('focuses an autoFocus input when it mounts or is turned on, not on every render', () => {
+    // Both hosts asked `autoFocus && !focused` each time the input was
+    // reconciled, so a field took the keyboard back whenever anything else on
+    // the screen changed (#511). Off to on is still a request for focus: an
+    // "Edit" button that sets it and clears it a moment later keeps working.
+    // Run on iOS in testAutoFocusFocusesOnMountAndWhenTurnedOnButNotOnEveryRender
+    // and on a JVM in packages/android/src/auto-focus-on-mount.test.ts.
+    expect(ios).toContain('let turnedOn = wanted && !node.autoFocus\n        node.autoFocus = wanted\n        guard turnedOn, !input.isFirstResponder else { return }')
+    expect(ios).toContain('applyAutoFocus(props["autoFocus"], to: field, node: current)')
+    expect(ios).toContain('applyAutoFocus(props["autoFocus"], to: textView, node: current)')
+    expect(ios).not.toContain('if props["autoFocus"] as? Bool == true')
+    expect(android).toContain('val turnedOn = wanted && !autoFocus\n        autoFocus = wanted\n        return turnedOn')
+    expect(android).not.toContain('if (craftNativeBoolean(props.opt("autoFocus")) && !isFocused)')
+    expect(iosNativeUnitTests).toContain('func testAutoFocusFocusesOnMountAndWhenTurnedOnButNotOnEveryRender()')
+    expect(guide).toContain('`autoFocus` focuses the input when it mounts with it or when it is turned on')
+    expect(componentTypes).toContain('Focus the input when it mounts, or when this turns on; not on each render.')
   })
 
   it('describes a link whatever its sender wrote, without closing the app', () => {

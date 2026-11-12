@@ -4617,6 +4617,63 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(password.isFirstResponder, "A delayed acknowledgement brought the keyboard back to a leaving screen")
     }
 
+    /// `autoFocus` is for when the field arrives, and for when its author
+    /// turns it on. It was applied on every render instead: put the keyboard
+    /// away, let anything on the screen update, and it came back (#511).
+    func testAutoFocusFocusesOnMountAndWhenTurnedOnButNotOnEveryRender() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func settle() {
+            let settled = expectation(description: "the main queue ran what was scheduled")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settled.fulfill() }
+            wait(for: [settled], timeout: 2)
+        }
+        for multiline in [false, true] {
+            let kind = multiline ? "multiline field" : "field"
+            let key = multiline ? "note" : "draft"
+            func screen(autoFocus: Bool, status: String) -> [String: Any] {
+                document([
+                    ["type": "TextInput", "props": ["key": key, "autoFocus": autoFocus, "multiline": multiline]],
+                    ["type": "Text", "props": ["key": "status"], "children": [status]],
+                ])
+            }
+            func input() -> UIView? {
+                multiline
+                    ? find(UITextView.self, key: key, below: controller.view)
+                    : find(UITextField.self, key: key, below: controller.view)
+            }
+            controller.render(screen(autoFocus: true, status: "0:47"))
+            let field = try XCTUnwrap(input())
+            settle()
+            XCTAssertTrue(field.isFirstResponder, "autoFocus focuses the \(kind) it mounts with")
+
+            // The person puts the keyboard away, and a timer on the screen ticks.
+            controller.forgetFocusedInput(field)
+            window.endEditing(true)
+            XCTAssertFalse(field.isFirstResponder)
+            controller.render(screen(autoFocus: true, status: "0:46"))
+            settle()
+            XCTAssertTrue(input() === field, "The render replaced the \(kind), so its focus proved nothing")
+            XCTAssertFalse(field.isFirstResponder, "A render that changed something else gave the \(kind) focus again")
+
+            // Its author turns it off, and nothing happens; then on, to ask for focus.
+            controller.render(screen(autoFocus: false, status: "0:45"))
+            settle()
+            XCTAssertFalse(field.isFirstResponder)
+            controller.render(screen(autoFocus: true, status: "0:44"))
+            settle()
+            XCTAssertTrue(input() === field)
+            XCTAssertTrue(field.isFirstResponder, "Turning autoFocus on did not focus the \(kind)")
+
+            controller.forgetFocusedInput(field)
+            window.endEditing(true)
+            controller.render(document([]))
+        }
+    }
+
     func testDelayedInputAcknowledgementDoesNotReopenADismissedKeyboard() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()

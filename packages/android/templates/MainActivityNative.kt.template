@@ -3585,6 +3585,17 @@ private class CraftNativeTextField(context: Context) : EditText(context) {
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
     companion object { val CLEAR_ACTION_ID = View.generateViewId() }
+    /**
+     * `autoFocus` as this field was last drawn. Focus is taken when it turns
+     * on, which mounting with it on is, and not on each render while it stays
+     * on: that took the keyboard back whenever anything else changed (#511).
+     */
+    private var autoFocus = false
+    fun autoFocusTurnedOn(wanted: Boolean): Boolean {
+        val turnedOn = wanted && !autoFocus
+        autoFocus = wanted
+        return turnedOn
+    }
     var clearButtonMode = "never"
     var onClearRequest: (() -> Unit)? = null
     private var clearPressed = false
@@ -6802,7 +6813,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("text", text.toString())))
                     true
                 }
-                if (craftNativeBoolean(props.opt("autoFocus")) && !isFocused) post {
+                if (autoFocusTurnedOn(craftNativeBoolean(props.opt("autoFocus"))) && !isFocused) post {
                     if (!isFocused) {
                         requestFocus()
                         (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
