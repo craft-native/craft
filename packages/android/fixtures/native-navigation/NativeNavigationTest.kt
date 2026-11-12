@@ -1224,6 +1224,123 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * #523: grouped actions float over the trailing end of whatever scrolls
+     * behind them, and nothing was reserved, so the end of a screen could
+     * not be brought out from under them.
+     */
+    @Test
+    fun groupedActionsGiveTheScrollViewBehindThemRoomAtItsEnd() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            lateinit var chrome: CraftNativeChrome
+            lateinit var scroll: CraftNativeScrollView
+            lateinit var inner: android.widget.ScrollView
+            instrumentation.runOnMainSync {
+                chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                scroll = find(chrome.content, "native-root-scroll") as CraftNativeScrollView
+                inner = findType(scroll, android.widget.ScrollView::class.java)
+                    ?: throw AssertionError("the root scroll view has no vertical scroller")
+            }
+            fun apply(accessory: Any) {
+                instrumentation.runOnMainSync { chrome.apply(org.json.JSONObject().put("tabAccessory", accessory), 0, "Home") }
+            }
+            fun group(layout: String) = org.json.JSONObject(
+                """{"path":"/capabilities","title":"Messages","symbol":"message","layout":"$layout","companions":[{"path":"/add","title":"Add","symbol":"plus"}]}"""
+            )
+            /** Where the content ends on screen, scrolled as far as it goes, and where the scroll view does. */
+            fun ends(): Pair<Int, Int> {
+                var result = 0 to 0
+                instrumentation.runOnMainSync {
+                    inner.scrollTo(0, Int.MAX_VALUE / 2)
+                    val at = IntArray(2)
+                    scroll.content.getLocationOnScreen(at)
+                    val content = at[1] + scroll.content.height
+                    scroll.getLocationOnScreen(at)
+                    result = content to at[1] + scroll.height
+                }
+                return result
+            }
+            fun top(view: View): Int {
+                var y = 0
+                instrumentation.runOnMainSync { val at = IntArray(2); view.getLocationOnScreen(at); y = at[1] }
+                return y
+            }
+            /**
+             * Waits for the actions to reach as far as `expected` allows, and
+             * for the scroll view to have exactly the room that reach takes
+             * out of it: the part of it below the top of the actions.
+             */
+            fun awaitReach(expected: (Int) -> Boolean, message: String): Int {
+                var found = ""
+                repeat(50) {
+                    var reach = -1
+                    var settled = false
+                    instrumentation.runOnMainSync {
+                        reach = chrome.floatingActionsReach()
+                        val at = IntArray(2)
+                        scroll.getLocationOnScreen(at)
+                        val end = at[1] + scroll.height
+                        val group = find(chrome, "craft-tab-accessory-group")
+                        val wanted = if (reach <= 0 || group == null) 0 else {
+                            group.getLocationOnScreen(at)
+                            (end - at[1]).coerceIn(0, reach)
+                        }
+                        settled = inner.paddingBottom == wanted
+                        found = "reach $reach, room ${inner.paddingBottom}, wanted $wanted"
+                    }
+                    if (expected(reach) && settled) return reach
+                    SystemClock.sleep(100)
+                }
+                throw AssertionError("$message; $found")
+            }
+            val density = context.resources.displayMetrics.density
+            fun dp(value: Int) = (value * density + 0.5f).toInt()
+
+            // Nothing floats: the content ends where the scroll view does.
+            assertEquals(0, awaitReach({ it == 0 }, "no actions, no room"))
+            val viewport = ends().second
+            assertEquals(viewport, ends().first)
+
+            // A vertical group of two: two 48dp actions and 2dp of padding
+            // each side, 8dp above the tab bar.
+            apply(group("vertical"))
+            val vertical = awaitReach({ it > 0 }, "a vertical group gives the scroll view room")
+            assertEquals(dp(48) * 2 + dp(2) * 2 + dp(8), vertical)
+            lateinit var capsule: View
+            var room = 0
+            instrumentation.runOnMainSync { capsule = find(chrome, "craft-tab-accessory-group")!!; room = inner.paddingBottom }
+            assertTrue("the actions reach into this scroll view, so it must have been given room", room > 0)
+            val (cleared, sameViewport) = ends()
+            assertEquals("the last content must come out from under the actions, and no further", top(capsule), cleared)
+            assertEquals("the page still scrolls behind the actions, in the viewport it had", viewport, sameViewport)
+
+            // A horizontal group reaches less far up, and the room follows it.
+            apply(group("horizontal"))
+            val horizontal = awaitReach({ it in 1 until vertical }, "a horizontal group gives less room")
+            assertEquals(dp(48) + dp(2) * 2 + dp(8), horizontal)
+
+            // Actions that sit in the tab row float over nothing.
+            apply(org.json.JSONObject("""{"path":"/capabilities","title":"Messages","symbol":"message"}"""))
+            assertEquals(0, awaitReach({ it == 0 }, "actions in the tab row leave the scroll view alone"))
+
+            // Back to a group, then nothing: the room goes with the actions.
+            apply(group("vertical"))
+            assertEquals(vertical, awaitReach({ it == vertical }, "the room returns with the group"))
+            apply(org.json.JSONObject.NULL)
+            assertEquals(0, awaitReach({ it == 0 }, "the room goes with the actions"))
+            assertEquals(viewport, ends().first)
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     @Test
     fun liveTabUpdatesRetainToolbarViewsAndActionsUntilTheirSpecsChange() {
         val context = instrumentation.targetContext

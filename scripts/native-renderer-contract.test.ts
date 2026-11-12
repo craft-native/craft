@@ -4358,6 +4358,54 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('activity.onBackPressedDispatcher.onBackPressed()')
   })
 
+  // #523: compact tab actions float over the trailing end of whatever
+  // scrolls behind them, and nothing was reserved, so the last rows of a
+  // screen could not be brought out from under them.
+  it('gives a scroll view or list behind the floating tab actions room at its end, on both hosts', () => {
+    const iosChrome = readFileSync(join(root, 'packages/ios/templates/CraftApp.swift'), 'utf8')
+    // iOS: the shell says where its actions float after every layout.
+    expect(iosChrome).toContain('func floatingActionsMoved(to frame: CGRect?, in host: UIView?) {')
+    expect(iosHybrid).toContain('defer { CraftChrome.shared.floatingActionsMoved(to: floatingActionsFrame(), in: view) }')
+    expect(iosHybrid).toContain('guard let model = accessoryModel, model.iconOnly, view.window != nil,')
+    // Each screen measures how far they reach into each of its scroll views,
+    // less what the safe area already clears, and only in its own shell.
+    expect(ios).toContain('func insetScrollViewsForFloatingActions() {')
+    expect(ios).toContain('chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? frame : nil }')
+    expect(ios).toContain('return max(0, frame.maxY - actions.minY - automaticBottom)')
+    expect(ios).toContain('forName: CraftChrome.floatingActionsDidMove,')
+    // The keyboard and the actions share one inset: the larger.
+    expect(ios).toContain('let cover = max(keyboardCover, floatingCover)')
+    expect(ios).toContain('scroll.keyboardCover = overlap')
+    // A list adds it to its own padding, and is no taller for it.
+    expect(iosFlatList).toContain("if flowLayout.scrollDirection == .vertical { inset.bottom += floatingCover }")
+    expect(iosFlatList).toContain('return max(0, ceil(content + contentPadding.top + contentPadding.bottom))')
+    // What it leaves alone, which earlier tests rely on: the safe area and
+    // the web inset stay at the tab bar.
+    expect(iosHybrid).toContain('let accessoryInset: CGFloat = accessoryModel != nil && !iconOnly ? 44 : 0')
+    expect(iosHybrid).toContain('if chrome.tabAccessory?.iconOnly == true { return 0 }')
+    // Android: the chrome measures after each layout and gives the same room.
+    expect(androidChrome).toContain('internal fun floatingActionsReach(): Int =')
+    expect(androidChrome).toContain('return (at[1] - origin[1] + view.height - top).coerceIn(0, reach)')
+    expect(androidChrome).toContain('is CraftNativeScrollView -> { view.setFloatingCover(cover(view)); visit(view.content) }')
+    expect(android).toContain('vertical.setPadding(vertical.paddingLeft, vertical.paddingTop, vertical.paddingRight, next)')
+    // A list's room is below its last row only: its padding and viewport stay.
+    expect(androidFlatList).toContain('if (endsTheList) outRect.bottom = floatingCover')
+    expect(androidFlatList).toContain('addItemDecoration(floatingCoverRoom)')
+    for (const name of [
+      'testCompactActionsGiveTheScrollBehindThemRoomAtItsEnd',
+    ]) expect(iosNavigationUnitTests).toContain(`func ${name}(`)
+    for (const name of [
+      'testAScrollBehindFloatingActionsGetsRoomAtItsEndAndKeepsItsViewport',
+      'testAScrollThatEndsAboveOrPartWayIntoFloatingActionsClearsOnlyWhatReachesIt',
+      'testAListBehindFloatingActionsAddsTheirReachToItsOwnPadding',
+      'testActionsFloatingInAnotherShellAreNotThisScreensToClear',
+    ]) expect(iosLayoutUnitTests).toContain(`func ${name}(`)
+    expect(androidNavigationTest).toContain('fun groupedActionsGiveTheScrollViewBehindThemRoomAtItsEnd()')
+    expect(androidFlatListTest).toContain('fun theLastRowIsGivenRoomToClearWhatFloatsOverTheEndOfTheList()')
+    expect(guide).toContain('is given room at its end equal to how far the group')
+    expect(guide).toContain('the viewport, the safe area and the web')
+  })
+
   it('exercises the pushed-screen tab accessory on both maintained hosts', () => {
     expect(navigationDetails).toContain("path: '/capabilities'")
     expect(navigationDetails).toContain("accessibilityLabel: 'Open capabilities'")

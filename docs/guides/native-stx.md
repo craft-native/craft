@@ -1094,8 +1094,12 @@ On the iOS native/hybrid route shell, add `iconOnly: true` for a 48-point
 circular trailing action with an overlaid badge. Its title and badge remain
 available to VoiceOver. This compact presentation bypasses `UITabAccessory`,
 including on iOS 26, and floats above the bar without increasing the native
-bottom safe area or the hybrid page's `--craft-tab-bar-height`. Avoid placing
-important controls under its trailing footprint; add local padding if needed.
+bottom safe area or the hybrid page's `--craft-tab-bar-height`. A native
+screen's vertical `ScrollView`, `SectionList` or `FlatList` that the action
+reaches into is given that much room at its end, so its last row can be
+scrolled clear of it; see the group below. A web page, and anything that does
+not scroll, is not: keep important controls out from under its trailing
+footprint, or pad locally.
 Omitting `iconOnly` retains the standard accessory presentation and spacing.
 The `@stacksjs/stx/native` navigation/chrome types carry the same `iconOnly`
 option; no separate compiler or compact-accessory prop is needed.
@@ -1119,6 +1123,21 @@ nearest action. On iOS a symbol is 15 points at medium weight, which leaves
 the room around it that the symbols in Maps have. Grouping does not
 shrink the tabs or reserve a full-width content inset. A single action
 remains a circle, with a 22-point symbol.
+
+The group floats over the trailing end of whatever scrolls behind it, and
+content still scrolls behind it. So that the end of a screen is not left under
+it, each vertical `ScrollView`, `SectionList` and `FlatList` whose bottom edge
+reaches into the group is given room at its end equal to how far the group
+reaches into it: for a scroll view that runs to the tab bar, the group's
+length plus its lift above the bar (113 points for two actions in a vertical
+group on iOS, 108 dp on Android), less what the safe area already keeps clear
+above a floating tab bar. The room is added to a list's own
+`contentContainerStyle` padding and goes when the group does. A scroll view
+that ends above the group gets none; the viewport, the safe area and the web
+inset are unchanged, so nothing that does not scroll moves. An app that padded
+its screens by hand for the group can drop that padding to the small gap it
+wants above it. Rows still pass behind the group mid-scroll: keep a row's
+trailing control clear of the last 70 points of width if that matters.
 
 An action is drawn in the app's tint, filled where its symbol has a fill, and
 announced as selected while it is on: when the screen at its `path` is

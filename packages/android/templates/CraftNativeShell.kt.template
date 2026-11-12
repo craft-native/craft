@@ -1335,6 +1335,60 @@ internal class CraftNativeChrome(
         refreshColors()
     }
 
+    /**
+     * How far the grouped actions reach up from the tab bar, in pixels: their
+     * height and their lift above it. Zero when they are not floating over
+     * the screen (no group, a hidden bar, or actions that sit in the tab row).
+     */
+    internal fun floatingActionsReach(): Int =
+        if (accessoryGroup.parent === body && accessoryGroup.visibility == View.VISIBLE && accessoryGroup.height > 0) (body.height - accessoryGroup.top).coerceAtLeast(0)
+        else 0
+
+    private var floatingClearancePosted = false
+    private var floatingClearanceGiven = false
+
+    /**
+     * The grouped actions float over the trailing end of whatever scrolls
+     * behind them, and nothing was reserved, so the last rows of a screen
+     * could not be brought out from under them (#523). Every vertical scroll
+     * view and list that reaches into them is given that much room at its
+     * end; one that ends above them gets none. Measured after each layout,
+     * where each of them now ends.
+     */
+    private fun clearFloatingActions() {
+        val reach = floatingActionsReach()
+        // Nothing floats and nothing was given room: no screen to walk.
+        if (reach <= 0 && !floatingClearanceGiven) return
+        floatingClearanceGiven = reach > 0
+        val top = body.height - reach
+        val origin = IntArray(2).also { body.getLocationInWindow(it) }
+        val at = IntArray(2)
+        fun cover(view: View): Int {
+            if (reach <= 0 || !view.isLaidOut) return 0
+            view.getLocationInWindow(at)
+            return (at[1] - origin[1] + view.height - top).coerceIn(0, reach)
+        }
+        fun visit(view: View) {
+            when (view) {
+                is CraftNativeFlatList -> view.setFloatingCover(cover(view))
+                is CraftNativeScrollView -> { view.setFloatingCover(cover(view)); visit(view.content) }
+                is ViewGroup -> for (index in 0 until view.childCount) visit(view.getChildAt(index))
+            }
+        }
+        visit(content)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (floatingClearancePosted) return
+        floatingClearancePosted = true
+        // After this pass: giving a scroll view room asks for a layout.
+        post {
+            floatingClearancePosted = false
+            clearFloatingActions()
+        }
+    }
+
     /** The same actions and popup anchors survive switching between grouped and separate chrome. */
     private fun layoutAccessoryGroup(hidden: Boolean) {
         val layout = accessorySpec?.optString("layout").orEmpty()

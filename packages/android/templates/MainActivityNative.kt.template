@@ -3067,6 +3067,19 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
         }
     }
 
+    /**
+     * How far the grouped tab actions reach over the end of this scroll view,
+     * in pixels (#523). Its content gets that much room at the end, so the
+     * last of it can be brought clear of them; the rest still scrolls behind
+     * them, in the viewport it had.
+     */
+    fun setFloatingCover(cover: Int) {
+        val next = if (horizontalMode == true) 0 else max(0, cover)
+        if (vertical.paddingBottom == next) return
+        vertical.clipToPadding = false
+        vertical.setPadding(vertical.paddingLeft, vertical.paddingTop, vertical.paddingRight, next)
+    }
+
     private var bounces = true
     private var alwaysBounceVertical = true
     private var alwaysBounceHorizontal = true

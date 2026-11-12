@@ -421,6 +421,64 @@ class NativeFlatListTest {
         }
     }
 
+    /**
+     * #523: what floats over the end of a list gets room below the last row,
+     * and only there: the list's viewport and its other rows are untouched.
+     */
+    @Test
+    fun theLastRowIsGivenRoomToClearWhatFloatsOverTheEndOfTheList() {
+        val context = instrumentation.targetContext
+        val renders = AtomicInteger()
+        for (columns in listOf(1, 3)) {
+            lateinit var list: CraftNativeFlatList
+            val rows = (0 until 40).map(::row)
+            instrumentation.runOnMainSync {
+                list = CraftNativeFlatList(context)
+                attach(list)
+                list.apply(rows, false, columns, false, 0.1, renderer(context, renders), { _ -> }, { _ -> }, null)
+            }
+            awaitCount(list, 40)
+            /** The bottom of the last row, scrolled as far as the list goes, and how many rows end there. */
+            fun end(): Pair<Int, Int> {
+                var result = 0 to 0
+                instrumentation.runOnMainSync {
+                    attach(list)
+                    list.scrollToPosition(39)
+                    attach(list)
+                    list.scrollBy(0, 100_000)
+                    attach(list)
+                    val bottoms = (0 until list.childCount).map { list.getChildAt(it).bottom }
+                    result = bottoms.max() to bottoms.count { it == bottoms.max() }
+                }
+                return result
+            }
+            assertEquals("with nothing over it, the last row ends where the list does ($columns columns)", 480, end().first)
+            instrumentation.runOnMainSync { list.setFloatingCover(150) }
+            val (cleared, across) = end()
+            assertEquals("the last row must end 150 above the list's end ($columns columns)", 330, cleared)
+            // Forty rows in three columns end with one row of one; in one column, with one.
+            assertEquals(1, across)
+            instrumentation.runOnMainSync {
+                assertEquals("the list keeps its viewport", 480, list.height)
+                assertEquals(0, list.paddingBottom)
+                // Only the end is given room: the first rows are where they were.
+                list.scrollToPosition(0)
+                attach(list)
+                assertEquals(0, list.getChildAt(0).top)
+                assertEquals(list.getChildAt(0).bottom, (0 until list.childCount).map { list.getChildAt(it).top }.filter { it > 0 }.min())
+            }
+            instrumentation.runOnMainSync { list.setFloatingCover(0) }
+            assertEquals("the room goes when what floated does ($columns columns)", 480, end().first)
+            // A list that scrolls sideways has no end for them to be over.
+            instrumentation.runOnMainSync {
+                list.apply(rows, true, 1, false, 0.1, renderer(context, renders), { _ -> }, { _ -> }, null)
+                list.setFloatingCover(150)
+                attach(list)
+                assertTrue((0 until list.childCount).all { list.getChildAt(it).bottom <= 480 })
+            }
+        }
+    }
+
     @Test
     fun recyclesTenThousandRowsAndRetainsTheViewport() {
         val context = instrumentation.targetContext

@@ -297,10 +297,38 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         post { onContentSizeChanged?.invoke() }
     }
 
+    /**
+     * How far the grouped tab actions reach over the end of this list, in
+     * pixels (#523). The last row is given that much room below it, so it can
+     * be brought clear of them; the rows above still scroll behind them, and
+     * the list's own padding and viewport are as they were.
+     */
+    private var floatingCover = 0
+
+    fun setFloatingCover(cover: Int) {
+        val next = if (horizontal) 0 else max(0, cover)
+        if (next == floatingCover) return
+        floatingCover = next
+        invalidateItemDecorations()
+    }
+
+    private val floatingCoverRoom = object : ItemDecoration() {
+        override fun getItemOffsets(outRect: android.graphics.Rect, view: View, parent: RecyclerView, state: State) {
+            val position = parent.getChildAdapterPosition(view)
+            val last = state.itemCount - 1
+            if (floatingCover <= 0 || horizontal || position == NO_POSITION || last < 0) return
+            val grid = layoutManager as? GridLayoutManager
+            val endsTheList = if (grid == null) position == last
+            else grid.spanSizeLookup.getSpanGroupIndex(position, grid.spanCount) == grid.spanSizeLookup.getSpanGroupIndex(last, grid.spanCount)
+            if (endsTheList) outRect.bottom = floatingCover
+        }
+    }
+
     init {
         adapter = listAdapter
         itemAnimator = null
         addOnScrollListener(scrollListener)
+        addItemDecoration(floatingCoverRoom)
     }
 
     fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit) {
