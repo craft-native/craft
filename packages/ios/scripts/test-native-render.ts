@@ -75,6 +75,7 @@ try {
   copyFileSync(join(fixture, 'FilesUnitTests.swift'), join(output, 'UnitTests', 'FilesUnitTests.swift'))
   copyFileSync(join(fixture, 'ScriptThreadUnitTests.swift'), join(output, 'UnitTests', 'ScriptThreadUnitTests.swift'))
   copyFileSync(join(fixture, 'KeychainUnitTests.swift'), join(output, 'UnitTests', 'KeychainUnitTests.swift'))
+  copyFileSync(join(fixture, 'HostileNumbersUnitTests.swift'), join(output, 'UnitTests', 'HostileNumbersUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeRenderUITests.swift'), join(output, 'UITests', 'NativeRenderUITests.swift'))
   // Exercise the shipped journey driver against the real renderer, including
   // its viewport-aware scrollto and single-gesture tapid acceptance (#449).

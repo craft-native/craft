@@ -165,6 +165,23 @@ func craftNativeInt(_ value: Double) -> Int {
 
 func craftNativeInt(_ value: CGFloat) -> Int { craftNativeInt(Double(value)) }
 
+/// The most a number may be in layout, either side of zero: 2^25 points. It
+/// is far past any screen, and small enough that what the layout makes of a
+/// few such numbers multiplied together still fits a Float, which the flex
+/// engine works in.
+let craftNativeLayoutLimit: CGFloat = 33_554_432
+
+/// A number for layout: inside that limit, and 0 when it is not a number.
+///
+/// A style is whatever the script said. `flex: Number.MAX_VALUE` is finite,
+/// and became an infinite share of a row, an infinite frame, and then
+/// UIKit's `NSLayoutConstraint constant is not finite! That's illegal`, an
+/// exception nothing catches: the app ended. Lengths and flex factors are
+/// held to this as they are read, and so is every frame the layout produces.
+func craftNativeLayoutNumber(_ value: CGFloat) -> CGFloat {
+    value.isNaN ? 0 : max(-craftNativeLayoutLimit, min(craftNativeLayoutLimit, value))
+}
+
 /// A finite number from a prop, for the views outside the screen controller,
 /// which has its own: the keyboard-avoiding view and SVG text read theirs
 /// with it, and without it the template did not compile.
@@ -174,6 +191,14 @@ private func number(_ value: Any?) -> CGFloat? {
     guard let number = craftNativeNumber(value) else { return nil }
     let value = CGFloat(truncating: number)
     return value.isFinite ? value : nil
+}
+
+/// A finite number from a style, held to what layout can use (see
+/// `craftNativeLayoutNumber`). A padding, radius, spacing or size of
+/// `Number.MAX_VALUE` reached UIKit as an inset or a font it could not place,
+/// and UIKit raised `CALayer position contains NaN`: the app ended.
+private func styleNumber(_ value: Any?) -> CGFloat? {
+    number(value).map(craftNativeLayoutNumber)
 }
 
 private func craftNativeFontWeight(_ value: Any?) -> String? {
@@ -2404,16 +2429,16 @@ private enum CraftNativeLength: Equatable {
         if let number = craftNativeNumber(value) {
             let points = CGFloat(truncating: number)
             guard points.isFinite else { return nil }
-            self = .points(points)
+            self = .points(craftNativeLayoutNumber(points))
             return
         }
         guard let text = (value as? String)?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
         if text.hasSuffix("%"), let fraction = Double(text.dropLast()), fraction.isFinite {
-            self = .percent(CGFloat(fraction) / 100)
+            self = .percent(craftNativeLayoutNumber(CGFloat(fraction) / 100))
         } else if text.hasSuffix("px"), let points = Double(text.dropLast(2)), points.isFinite {
-            self = .points(CGFloat(points))
+            self = .points(craftNativeLayoutNumber(CGFloat(points)))
         } else if let points = Double(text), points.isFinite {
-            self = .points(CGFloat(points))
+            self = .points(craftNativeLayoutNumber(CGFloat(points)))
         } else {
             return nil
         }
@@ -2464,7 +2489,7 @@ private struct CraftNativeLayoutStyle {
         func number(_ value: Any?) -> CGFloat? {
             guard let number = craftNativeNumber(value) else { return nil }
             let value = CGFloat(truncating: number)
-            return value.isFinite ? value : nil
+            return value.isFinite ? craftNativeLayoutNumber(value) : nil
         }
         width = CraftNativeLength(raw["width"])
         height = CraftNativeLength(raw["height"])
@@ -2847,7 +2872,7 @@ enum CraftNativeFlexLayout {
     static func ceiled(_ size: CGSize, scale: CGFloat, atLeast floor: CGSize) -> CGSize {
         let scale = max(1, scale)
         // Less a hair, so a size already on the pixel grid stays put.
-        func up(_ value: CGFloat) -> CGFloat { (value * scale - 0.001).rounded(.up) / scale }
+        func up(_ value: CGFloat) -> CGFloat { (craftNativeLayoutNumber(value) * scale - 0.001).rounded(.up) / scale }
         return CGSize(width: max(floor.width, up(size.width)), height: max(floor.height, up(size.height)))
     }
 
@@ -2855,7 +2880,9 @@ enum CraftNativeFlexLayout {
     /// neither overlap nor leave a hairline between them.
     static func snapped(_ rect: CGRect, scale: CGFloat) -> CGRect {
         let scale = max(1, scale)
-        func snap(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+        // Whatever the arithmetic before this made of the styles it was
+        // given, the frame UIKit is handed is one it accepts.
+        func snap(_ value: CGFloat) -> CGFloat { (craftNativeLayoutNumber(value) * scale).rounded() / scale }
         let minX = snap(rect.minX), minY = snap(rect.minY)
         return CGRect(x: minX, y: minY, width: max(0, snap(rect.maxX) - minX), height: max(0, snap(rect.maxY) - minY))
     }
@@ -5725,7 +5752,7 @@ final class CraftNativeSvgView: UIView {
         guard !text.isEmpty else { return }
         let props = node["props"] as? [String: Any] ?? [:]
         let style = node["style"] as? [String: Any] ?? [:]
-        let size = number(props["fontSize"]) ?? number(style["fontSize"]) ?? 12
+        let size = number(props["fontSize"]) ?? styleNumber(style["fontSize"]) ?? 12
         let weight: UIFont.Weight = {
             switch paint.fontWeight?.lowercased() {
             case "500": return .medium
@@ -10025,7 +10052,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 modalFocusRestore[modalID] = focusBeforeContent
             }
             if visible, wasVisible != true { positionModals() }
-            modal.setVisible(visible, opacity: number(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)
+            modal.setVisible(visible, opacity: styleNumber(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)
             if !visible, wasVisible == true {
                 let restore = modalFocusRestore.removeValue(forKey: modalID)
                 DispatchQueue.main.async { [weak self, weak restore] in
@@ -10052,7 +10079,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let disabled = props["disabled"] as? Bool == true
             pressable.pressActiveOpacity = disabled
                 ? nil : number(props["activeOpacity"]) ?? 0.5
-            pressable.pressBaseOpacity = number(style["opacity"]) ?? 1
+            pressable.pressBaseOpacity = styleNumber(style["opacity"]) ?? 1
             pressable.pressUnderlayColor = type == "TouchableHighlight" && !disabled ? color(props["underlayColor"]) : nil
         case "Switch":
             if let toggle = result as? CraftNativeSolidSwitch {
@@ -11253,8 +11280,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// leaving a hole.
     private func configureIcon(_ icon: UIImageView, props: [String: Any], style: [String: Any]) {
         let name = (props["symbol"] as? String) ?? (props["name"] as? String) ?? ""
-        let box = [number(style["width"]), number(style["height"])].compactMap { $0 }.min()
-        let fontSize = number(style["fontSize"])
+        let box = [styleNumber(style["width"]), styleNumber(style["height"])].compactMap { $0 }.min()
+        let fontSize = styleNumber(style["fontSize"])
         // Without a size of its own an icon is a 20 pt square (contract A2).
         (icon as? CraftNativeIconView)?.defaultBox = box == nil && fontSize == nil ? 20 : nil
         let pointSize = fontSize ?? (box ?? 20) * 0.84
@@ -11295,10 +11322,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         stack.alignItems = style["alignItems"] as? String ?? "stretch"
         stack.alignContent = style["alignContent"] as? String ?? "flex-start"
         stack.justifyContent = style["justifyContent"] as? String ?? "flex-start"
-        let gap = max(0, number(style["gap"]) ?? 0)
+        let gap = max(0, styleNumber(style["gap"]) ?? 0)
         stack.gap = gap
-        stack.rowGap = max(0, number(style["rowGap"]) ?? gap)
-        stack.columnGap = max(0, number(style["columnGap"]) ?? gap)
+        stack.rowGap = max(0, styleNumber(style["rowGap"]) ?? gap)
+        stack.columnGap = max(0, styleNumber(style["columnGap"]) ?? gap)
         stack.grid = style["display"] as? String == "grid"
         stack.gridColumns = craftNativeGridColumnCount(style["gridTemplateColumns"] ?? style["gridColumns"])
         stack.gridRows = craftNativeGridRowCount(style["gridTemplateRows"])
@@ -11310,8 +11337,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func addJustificationSpacers(to stack: CraftNativeFlowView, value: String?) { }
 
     private func applyViewStyle(_ style: [String: Any], to view: UIView, node: RenderedNode) {
-        let width = style["minWidth"] == nil && style["maxWidth"] == nil ? number(style["width"]) : nil
-        let height = style["minHeight"] == nil && style["maxHeight"] == nil ? number(style["height"]) : nil
+        let width = style["minWidth"] == nil && style["maxWidth"] == nil ? styleNumber(style["width"]) : nil
+        let height = style["minHeight"] == nil && style["maxHeight"] == nil ? styleNumber(style["height"]) : nil
         updateDimension(width, constraint: &node.widthConstraint, anchor: view.widthAnchor)
         updateDimension(height, constraint: &node.heightConstraint, anchor: view.heightAnchor)
         view.backgroundColor = color(style["backgroundColor"]) ?? .clear
@@ -11330,31 +11357,31 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             direction: style["gradientDirection"] as? String,
             colors: [color(style["gradientFrom"]), color(style["gradientVia"]), color(style["gradientTo"])]
         )
-        view.alpha = number(style["opacity"]) ?? 1
+        view.alpha = styleNumber(style["opacity"]) ?? 1
         view.isHidden = style["display"] as? String == "none"
-        let borderRadius = number(style["borderRadius"]) ?? 0
+        let borderRadius = styleNumber(style["borderRadius"]) ?? 0
         let cornerRadiusKeys = ["borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius", "borderBottomLeftRadius"]
         let hasCornerRadii = cornerRadiusKeys.contains { style[$0] != nil }
         view.craftRequestedCornerRadius = borderRadius
         view.craftRequestedCornerRadii = hasCornerRadii
-            ? cornerRadiusKeys.map { number(style[$0]) ?? borderRadius }
+            ? cornerRadiusKeys.map { styleNumber(style[$0]) ?? borderRadius }
             : nil
-        let borderWidth = number(style["borderWidth"]) ?? 0
+        let borderWidth = styleNumber(style["borderWidth"]) ?? 0
         let borderColor = color(style["borderColor"]) ?? .clear
         let sideWidthKeys = ["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"]
         let sideColorKeys = ["borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"]
         view.craftApplySideBorders(
             (sideWidthKeys + sideColorKeys).contains { style[$0] != nil },
             style: style["borderStyle"] as? String,
-            widths: sideWidthKeys.map { number(style[$0]) ?? borderWidth },
+            widths: sideWidthKeys.map { styleNumber(style[$0]) ?? borderWidth },
             colors: sideColorKeys.map { color(style[$0]) ?? borderColor }
         )
-        view.layer.zPosition = number(style["zIndex"]) ?? 0
+        view.layer.zPosition = styleNumber(style["zIndex"]) ?? 0
         applyTransform(style["transform"], to: view)
-        let elevation = max(0, number(style["elevation"]) ?? 0)
+        let elevation = max(0, styleNumber(style["elevation"]) ?? 0)
         let shadowColor = color(style["shadowColor"]) ?? .black
-        let shadowOpacity = min(1, max(0, number(style["shadowOpacity"]) ?? (elevation > 0 ? min(0.28, 0.12 + elevation * 0.02) : 0)))
-        let shadowRadius = max(0, number(style["shadowRadius"]) ?? elevation * 0.5)
+        let shadowOpacity = min(1, max(0, styleNumber(style["shadowOpacity"]) ?? (elevation > 0 ? min(0.28, 0.12 + elevation * 0.02) : 0)))
+        let shadowRadius = max(0, styleNumber(style["shadowRadius"]) ?? elevation * 0.5)
         let shadowOffset = style["shadowOffset"] as? [String: Any]
         view.layer.shadowColor = shadowColor.cgColor
         view.layer.shadowOpacity = Float(shadowOpacity)
@@ -11387,7 +11414,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func paddingInsets(_ style: [String: Any]) -> UIEdgeInsets {
         func nonNegative(_ value: Any?) -> CGFloat? {
-            guard let value = number(value), value >= 0 else { return nil }
+            guard let value = styleNumber(value), value >= 0 else { return nil }
             return value
         }
         let padding = nonNegative(style["padding"]) ?? 0
@@ -11410,11 +11437,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         var threeDimensional = CATransform3DIdentity
         var hasThreeDimensionalRotation = false
         for transform in transforms {
-            if let value = number(transform["translateX"]) { affine = affine.translatedBy(x: value, y: 0) }
-            if let value = number(transform["translateY"]) { affine = affine.translatedBy(x: 0, y: value) }
-            if let value = number(transform["scale"]) { affine = affine.scaledBy(x: value, y: value) }
-            if let value = number(transform["scaleX"]) { affine = affine.scaledBy(x: value, y: 1) }
-            if let value = number(transform["scaleY"]) { affine = affine.scaledBy(x: 1, y: value) }
+            if let value = styleNumber(transform["translateX"]) { affine = affine.translatedBy(x: value, y: 0) }
+            if let value = styleNumber(transform["translateY"]) { affine = affine.translatedBy(x: 0, y: value) }
+            if let value = styleNumber(transform["scale"]) { affine = affine.scaledBy(x: value, y: value) }
+            if let value = styleNumber(transform["scaleX"]) { affine = affine.scaledBy(x: value, y: 1) }
+            if let value = styleNumber(transform["scaleY"]) { affine = affine.scaledBy(x: 1, y: value) }
             if let value = transformAngle(transform["rotate"] ?? transform["rotateZ"]) { affine = affine.rotated(by: value) }
             if let value = transformAngle(transform["skewX"]) { affine = affine.concatenating(CGAffineTransform(a: 1, b: 0, c: tan(value), d: 1, tx: 0, ty: 0)) }
             if let value = transformAngle(transform["skewY"]) { affine = affine.concatenating(CGAffineTransform(a: 1, b: tan(value), c: 0, d: 1, tx: 0, ty: 0)) }
@@ -11452,10 +11479,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         label.font = textFont(style, default: .systemFont(ofSize: 16))
         label.textAlignment = textAlignment(style["textAlign"])
         var attributes: [NSAttributedString.Key: Any] = [:]
-        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         addTextDecorationAttributes(style, to: &attributes)
         if let shadow = textShadow(style) { attributes[.shadow] = shadow }
-        if let lineHeight = number(style["lineHeight"]) {
+        if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
             paragraph.minimumLineHeight = lineHeight
             paragraph.maximumLineHeight = lineHeight
@@ -11509,8 +11536,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             .foregroundColor: color,
             .font: font,
         ]
-        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
-        if let lineHeight = number(style["lineHeight"]) {
+        if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
             paragraph.minimumLineHeight = lineHeight
             paragraph.maximumLineHeight = lineHeight
@@ -11532,14 +11559,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             .foregroundColor: color(style["color"]) ?? .label,
             .font: font,
         ]
-        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         // UIKit otherwise resets the field's alignment to natural when these attributes are applied.
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment
         // The default paragraph wraps even inside a UITextField. A long URL
         // then paints a second line outside the field instead of scrolling.
         if singleLine { paragraph.lineBreakMode = .byClipping }
-        if let lineHeight = number(style["lineHeight"]) {
+        if let lineHeight = styleNumber(style["lineHeight"]) {
             paragraph.minimumLineHeight = lineHeight
             paragraph.maximumLineHeight = lineHeight
         }
@@ -11558,7 +11585,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             width: number(offset?["width"]) ?? 0,
             height: number(offset?["height"]) ?? 0
         )
-        shadow.shadowBlurRadius = max(0, number(style["textShadowRadius"]) ?? 0)
+        shadow.shadowBlurRadius = max(0, styleNumber(style["textShadowRadius"]) ?? 0)
         return shadow
     }
 
@@ -11597,7 +11624,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func textFont(_ style: [String: Any], default fallback: UIFont) -> UIFont {
-        let size = number(style["fontSize"]) ?? fallback.pointSize
+        let size = styleNumber(style["fontSize"]) ?? fallback.pointSize
         let weight: UIFont.Weight
         switch craftNativeFontWeight(style["fontWeight"]) {
         case "100": weight = .ultraLight

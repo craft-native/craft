@@ -1429,7 +1429,7 @@ describe('native renderer component contract', () => {
   it('keeps Android SVG text sizes as Kotlin floats in both prop branches', () => {
     expect(android).toContain('craftNativeNumber(props.opt("fontSize"))')
     expect(android).toContain('textSize = size')
-    expect(ios).toContain('let size = number(props["fontSize"]) ?? number(style["fontSize"]) ?? 12')
+    expect(ios).toContain('let size = number(props["fontSize"]) ?? styleNumber(style["fontSize"]) ?? 12')
     expect(ios).toContain('var x = number(props["x"]) ?? 0')
     expect(android).toContain('.takeIf { it.isFinite() }')
     expect(android).toContain('var x = craftNativeNumber(props.opt("x"))?.toFloat()?.takeIf { it.isFinite() } ?: 0f')
@@ -2038,7 +2038,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('if visible, alpha != opacity { alpha = opacity }')
     expect(ios).toContain('func resetForTeardown()')
     expect(ios).toContain('onRequestClose = nil')
-    expect(ios).toContain('modal.setVisible(visible, opacity: number(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)')
+    expect(ios).toContain('modal.setVisible(visible, opacity: styleNumber(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)')
     expect(ios).toContain('if let propVisible = props["visible"] as? Bool')
     expect(ios).toContain('visible = display != nil && display != "none"')
     expect(ios).toContain('modal.transparent = props["transparent"] as? Bool == true')
@@ -2114,7 +2114,7 @@ describe('native renderer component contract', () => {
 
   it('keeps pressable container disabled behavior aligned across hosts', () => {
     expect(ios).toContain('let disabled = props["disabled"] as? Bool == true')
-    expect(ios).toContain('pressable.pressBaseOpacity = number(style["opacity"]) ?? 1')
+    expect(ios).toContain('pressable.pressBaseOpacity = styleNumber(style["opacity"]) ?? 1')
     expect(ios).toContain('pressable.pressBaseOpacity * activeOpacity')
     expect(ios).toContain('number(props["activeOpacity"]) ?? 0.5')
     expect(ios).toContain('pressable.pressUnderlayColor = type == "TouchableHighlight" && !disabled ? color(props["underlayColor"]) : nil')
@@ -3007,6 +3007,21 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('is limited to 1024 either side\nof zero, and one that is not a number plays at 1, as in WebKit')
   })
 
+  it('holds every style number on iOS to what layout can use', () => {
+    // `flex: Number.MAX_VALUE` is finite and became an infinite frame, then
+    // UIKit's "NSLayoutConstraint constant is not finite! That's illegal";
+    // a padding of it on a button came back as "CALayer position contains
+    // NaN". Either is an exception nothing catches. Found, and now kept from
+    // coming back, by HostileNumbersUnitTests, whose lists of props and
+    // styles packages/ios/src/hostile-numbers.test.ts holds equal to the keys
+    // the templates read.
+    expect(ios).toContain('let craftNativeLayoutLimit: CGFloat = 33_554_432')
+    expect(ios).toContain('value.isNaN ? 0 : max(-craftNativeLayoutLimit, min(craftNativeLayoutLimit, value))')
+    expect(ios).not.toContain('number(style[')
+    expect(readFileSync(join(root, 'packages/ios/scripts/test-native-render.ts'), 'utf8')).toContain("join(output, 'UnitTests', 'HostileNumbersUnitTests.swift')")
+    expect(guide).toContain('is held to 33,554,432 either\nside of zero')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link
@@ -3282,9 +3297,9 @@ describe('native renderer component contract', () => {
   })
 
   it('applies the shared gap fallback on both flex axes', () => {
-    expect(ios).toContain('let gap = max(0, number(style["gap"]) ?? 0)')
-    expect(ios).toContain('stack.rowGap = max(0, number(style["rowGap"]) ?? gap)')
-    expect(ios).toContain('stack.columnGap = max(0, number(style["columnGap"]) ?? gap)')
+    expect(ios).toContain('let gap = max(0, styleNumber(style["gap"]) ?? 0)')
+    expect(ios).toContain('stack.rowGap = max(0, styleNumber(style["rowGap"]) ?? gap)')
+    expect(ios).toContain('stack.columnGap = max(0, styleNumber(style["columnGap"]) ?? gap)')
     expect(android).toContain('private var rowGap = 0f')
     expect(android).toContain('fun spacing(name: String, fallback: Float): Float')
     expect(android).toContain('value.isFinite() && value >= 0 && pixels.isFinite() && narrowed.isFinite()')
@@ -3545,19 +3560,19 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps elevation visible on both native hosts', () => {
-    expect(ios).toContain('let elevation = max(0, number(style["elevation"]) ?? 0)')
-    expect(ios).toContain('number(style["shadowOpacity"]) ?? (elevation > 0')
+    expect(ios).toContain('let elevation = max(0, styleNumber(style["elevation"]) ?? 0)')
+    expect(ios).toContain('styleNumber(style["shadowOpacity"]) ?? (elevation > 0')
     expect(android).toContain('view.elevation = dp(craftNativeNonNegativeDouble(style, "elevation", 0.0)).toFloat()')
   })
 
   it('applies the public zIndex style on both native hosts', () => {
-    expect(ios).toContain('view.layer.zPosition = number(style["zIndex"]) ?? 0')
+    expect(ios).toContain('view.layer.zPosition = styleNumber(style["zIndex"]) ?? 0')
     expect(android).toContain('view.z = craftNativeFiniteFloat(style, "zIndex", 0f)')
   })
 
   it('applies and clears text shadows on both native hosts', () => {
     expect(ios).toContain('if let shadow = textShadow(style) { attributes[.shadow] = shadow }')
-    expect(ios).toContain('shadow.shadowBlurRadius = max(0, number(style["textShadowRadius"]) ?? 0)')
+    expect(ios).toContain('shadow.shadowBlurRadius = max(0, styleNumber(style["textShadowRadius"]) ?? 0)')
     expect(android).toContain('view.paint.clearShadowLayer()')
     expect(android).toContain('view.setShadowLayer(')
     expect(android).toContain('craftNativeOptionalString(style.opt("textShadowColor"))')
@@ -3603,7 +3618,7 @@ describe('native renderer component contract', () => {
 
   it('maps per-edge border widths and colors on both native hosts', () => {
     expect(ios).toContain('fileprivate func craftApplySideBorders(_ hasSideBorders: Bool')
-    expect(ios).toContain('sideWidthKeys.map { number(style[$0]) ?? borderWidth }')
+    expect(ios).toContain('sideWidthKeys.map { styleNumber(style[$0]) ?? borderWidth }')
     expect(android).toContain('CraftNativeSideBorderDrawable(')
     expect(android).toContain('craftNativeOptionalString(style.opt("borderStyle"))?.takeIf { it == "dashed" || it == "dotted" }')
     expect(android).toContain('val overflow = craftNativeOptionalString(style.opt("overflow"))')
