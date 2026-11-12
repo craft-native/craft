@@ -43,6 +43,13 @@ pub const SerialBridge = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // `std.c.close` is a POSIX symbol; on Windows the bridge never opens a
+        // port, so there is nothing to close. A `comptime` guard (not a runtime
+        // one) is what keeps the call out of the Windows build entirely.
+        if (comptime builtin.os.tag != .macos and builtin.os.tag != .linux) {
+            self.ports.deinit();
+            return;
+        }
         var it = self.ports.iterator();
         while (it.next()) |entry| {
             _ = std.c.close(entry.value_ptr.*);
@@ -51,6 +58,15 @@ pub const SerialBridge = struct {
     }
 
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
+        // This bridge is a POSIX file-descriptor implementation: it opens with
+        // `std.c.open`, reads with `std.c.read`, writes an `fd_t`, and lists
+        // `/dev/*`. Windows needs CreateFileW/ReadFile/WriteFile and a COM-port
+        // enumeration, which is a separate port — until then, refuse at the
+        // entry point. Reaching any of those calls in a Windows build is a
+        // compile error (`std.c.clock_gettime`'s parameter is `void` there),
+        // which is what blocked the whole Windows test build.
+        if (comptime builtin.os.tag != .macos and builtin.os.tag != .linux) return BridgeError.PlatformNotSupported;
+
         if (std.mem.eql(u8, action, "list")) {
             try self.list();
         } else if (std.mem.eql(u8, action, "open")) {
