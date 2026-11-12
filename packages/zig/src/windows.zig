@@ -847,6 +847,15 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     // correlated answer.
     if (eql(u8, kind, "system")) return sendSystem(action);
     if (eql(u8, kind, "screen")) return sendScreen(action);
+    if (eql(u8, kind, "fs")) {
+        // `bridge_fs.zig` replies on whichever channel the caller used; the
+        // `_req` path answers with `__craftBridgeResult`, which is what
+        // `craft-bridge.js` awaits.
+        var bridge = @import("bridge_fs.zig").FSBridge.init(std.heap.c_allocator);
+        defer bridge.deinit();
+        bridge.handleMessage(action, data orelse "") catch {};
+        return;
+    }
     if (eql(u8, kind, "app")) {
         if (eql(u8, action, "quit")) return closeAllWindows();
         if (eql(u8, action, "relaunch")) {
