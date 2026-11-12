@@ -387,11 +387,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         }
 
         val seen = mutableMapOf<String, Int>()
+        val taken = mutableSetOf<String>()
         val next = nodes.mapIndexed { index, node ->
             val base = identity(node) ?: "index:$index"
-            val occurrence = seen.getOrDefault(base, 0)
-            seen[base] = occurrence + 1
-            val unique = if (occurrence == 0) base else "$base#$occurrence"
+            val unique = uniqueIdentity(base, seen, taken)
             val role = node.optJSONObject("props")?.optString("listRole").orEmpty()
             Item(unique, node, node.toString(), role.isNotBlank() && role != "item")
         }.let { if (inverted) it.reversed() else it }
@@ -544,6 +543,27 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         if (endReachedSignature == signature) return
         endReachedSignature = signature
         endReached?.invoke()
+    }
+
+    /**
+     * A row's identity, its own in this list.
+     *
+     * Rows that share a key are told apart by a suffix: `run`, then `run#1`.
+     * A row whose own key was `run#1` then had the identity of the second
+     * `run`, and with it the same stable id, which a RecyclerView requires to
+     * be unique; UIKit's list ended the process on the same rows. The suffix
+     * counts on until the identity is one no row has taken. A list with no
+     * such key has the identities it always had.
+     */
+    private fun uniqueIdentity(base: String, seen: MutableMap<String, Int>, taken: MutableSet<String>): String {
+        var occurrence = seen.getOrDefault(base, 0)
+        var identity = if (occurrence == 0) base else "$base#$occurrence"
+        while (!taken.add(identity)) {
+            occurrence += 1
+            identity = "$base#$occurrence"
+        }
+        seen[base] = occurrence + 1
+        return identity
     }
 
     private fun identity(node: JSONObject): String? {

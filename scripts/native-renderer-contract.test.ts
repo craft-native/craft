@@ -2977,6 +2977,22 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('one that could not be shown at\n// all rejects with PICKER_ERROR')
   })
 
+  it('gives every list row an identity of its own, whatever its key', () => {
+    // Rows that repeat a key were suffixed `#1`, `#2`; a row whose own key
+    // was `run#1` then had the second `run`'s identity. UIKit's list built
+    // its table with a constructor that traps on a repeat and ended the
+    // process; Android's gave two rows one stable id. Both run the same rule
+    // on one table: packages/android/src/list-row-identity-cases.json.
+    expect(iosFlatList).toContain('let identity = Self.uniqueIdentity(base, seen: &seen, taken: &taken)')
+    expect(iosFlatList).toContain('while !taken.insert(identity).inserted {')
+    expect(iosFlatList).not.toContain('uniqueKeysWithValues')
+    expect(androidFlatList).toContain('val unique = uniqueIdentity(base, seen, taken)')
+    expect(androidFlatList).toContain('while (!taken.add(identity)) {')
+    expect(iosNativeUnitTests).toContain('func testListRowsWhoseKeysCollideWithTheSuffixOfARepeatAreAllDrawn()')
+    expect(androidFlatListTest).toContain('fun rowsWhoseKeysCollideWithTheSuffixOfARepeatKeepIdentitiesOfTheirOwn()')
+    expect(guide).toContain('counted on past any row whose own key is that text')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link

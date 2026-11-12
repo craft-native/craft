@@ -3490,6 +3490,45 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(next.convert(next.bounds, to: list).maxX, list.bounds.width - 24, accuracy: 0.5)
     }
 
+    /// Rows that share a key are told apart by a suffix, `#1` for the second.
+    /// A row whose own key was that same text got the same identity, and the
+    /// list builds a table that traps on a repeated one: three tags keyed
+    /// `run`, `run` and `run#1` ended the process. Keys are data.
+    func testListRowsWhoseKeysCollideWithTheSuffixOfARepeatAreAllDrawn() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func rows(_ keys: [String]) -> [String: Any] {
+            document([[
+                "type": "FlatList", "props": ["key": "tags"], "style": ["height": 400],
+                "children": keys.enumerated().map { index, key in
+                    ["type": "Text", "props": ["key": key, "accessibilityLabel": "row \(index)"], "style": ["height": 40], "children": ["\(index): \(key)"]] as [String: Any]
+                },
+            ]])
+        }
+        for keys in [["run", "run", "run#1"], ["run#1", "run", "run"], ["a", "a", "a", "a#1", "a#2", "a#1#1"], ["index:1", "", "index:1#1"]] {
+            controller.render(rows(keys))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            window.layoutIfNeeded()
+            let list = try XCTUnwrap(find(UICollectionView.self, key: "tags", below: controller.view))
+            list.layoutIfNeeded()
+            XCTAssertEqual(list.numberOfItems(inSection: 0), keys.count, "\(keys)")
+            for index in keys.indices {
+                XCTAssertNotNil(labelled("row \(index)", below: list), "row \(index) of \(keys) was not drawn")
+            }
+        }
+    }
+
+    private func labelled(_ label: String, below view: UIView) -> UIView? {
+        if view.accessibilityLabel == label { return view }
+        for child in view.subviews {
+            if let match = labelled(label, below: child) { return match }
+        }
+        return nil
+    }
+
     /// SMIL path keyframes (stx `Animate`: HQ's moving exercise figures)
     /// play between the frames either side of now, at their key times.
     func testSvgKeyframesPlayBetweenTheirKeyTimes() throws {

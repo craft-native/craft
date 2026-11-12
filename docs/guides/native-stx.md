@@ -816,7 +816,10 @@ function loadMore() {
 
 The `listRole="item"` child is expanded by the ordinary STX `:for` binding and
 can reference its loop value and zero-based index. Its `:key` must be stable and
-unique; moving a row with the same key keeps its native row state. `horizontal`, `inverted`, and
+unique; moving a row with the same key keeps its native row state. Rows that
+repeat a key are still all drawn: each repeat is told apart by a suffix (`#1`,
+`#2`), counted on past any row whose own key is that text, so no two rows share
+an identity on either host. `horizontal`, `inverted`, and
 `numColumns` select the native layout. `numColumns` applies to vertical lists;
 header, separator, empty, and footer content span every column. Empty content
 is shown only when the keyed row set has no items. Separator content is inserted

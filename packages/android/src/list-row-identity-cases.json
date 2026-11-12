@@ -1,0 +1,119 @@
+[
+  {
+    "keys": [
+      "run",
+      "run",
+      "run#1"
+    ],
+    "identities": [
+      "run",
+      "run#1",
+      "run#1#1"
+    ],
+    "why": "what collided: the third row's key is the second row's suffixed identity"
+  },
+  {
+    "keys": [
+      "run#1",
+      "run",
+      "run"
+    ],
+    "identities": [
+      "run#1",
+      "run",
+      "run#2"
+    ],
+    "why": "the same, with the suffixed key first"
+  },
+  {
+    "keys": [
+      "a",
+      "a",
+      "a",
+      "a#1",
+      "a#2",
+      "a#1#1"
+    ],
+    "identities": [
+      "a",
+      "a#1",
+      "a#2",
+      "a#1#1",
+      "a#2#1",
+      "a#1#1#1"
+    ],
+    "why": "a chain of them"
+  },
+  {
+    "keys": [
+      "index:1",
+      "index:1",
+      "index:1#1"
+    ],
+    "identities": [
+      "index:1",
+      "index:1#1",
+      "index:1#1#1"
+    ],
+    "why": "a key that looks like a position"
+  },
+  {
+    "keys": [
+      "a",
+      "b",
+      "c"
+    ],
+    "identities": [
+      "a",
+      "b",
+      "c"
+    ],
+    "why": "unchanged: no repeats"
+  },
+  {
+    "keys": [
+      "a",
+      "a",
+      "a"
+    ],
+    "identities": [
+      "a",
+      "a#1",
+      "a#2"
+    ],
+    "why": "unchanged: repeats"
+  },
+  {
+    "keys": [
+      "a",
+      "b",
+      "a",
+      "b",
+      "a"
+    ],
+    "identities": [
+      "a",
+      "b",
+      "a#1",
+      "b#1",
+      "a#2"
+    ],
+    "why": "unchanged: interleaved repeats"
+  },
+  {
+    "keys": [
+      "a#1",
+      "b#1"
+    ],
+    "identities": [
+      "a#1",
+      "b#1"
+    ],
+    "why": "unchanged: keys that only look suffixed"
+  },
+  {
+    "keys": [],
+    "identities": [],
+    "why": "unchanged: no rows"
+  }
+]

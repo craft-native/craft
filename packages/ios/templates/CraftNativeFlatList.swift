@@ -507,11 +507,10 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         let oldItems = itemsByIdentity
         let viewportAnchor = currentViewportAnchor()
         var seen: [String: Int] = [:]
+        var taken = Set<String>()
         var next = nodes.enumerated().map { index, node -> Item in
             let base = Self.identity(for: node) ?? "index:\(index)"
-            let occurrence = seen[base, default: 0]
-            seen[base] = occurrence + 1
-            let identity = occurrence == 0 ? base : "\(base)#\(occurrence)"
+            let identity = Self.uniqueIdentity(base, seen: &seen, taken: &taken)
             let props = node["props"] as? [String: Any] ?? [:]
             let role = props["listRole"] as? String
             let signature = (try? JSONSerialization.data(withJSONObject: node, options: [.sortedKeys])) ?? Data()
@@ -532,7 +531,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             return dataItemCount - 1
         }
         items = next
-        itemsByIdentity = Dictionary(uniqueKeysWithValues: next.map { ($0.identity, $0) })
+        itemsByIdentity = Dictionary(next.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
 
         flowLayout.scrollDirection = horizontal ? .horizontal : .vertical
         alwaysBounceHorizontal = horizontal
@@ -862,6 +861,25 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             offset.y = frame.minY - anchor.distanceFromOrigin
         }
         setContentOffset(clamped(offset), animated: false)
+    }
+
+    /// A row's identity, its own in this list.
+    ///
+    /// Rows that share a key are told apart by a suffix: `run`, then `run#1`.
+    /// A row whose own key was `run#1` then had the identity of the second
+    /// `run`, and the list's table and its snapshot both trap on a repeated
+    /// identity: three tags keyed `run`, `run` and `run#1` ended the process.
+    /// The suffix counts on until the identity is one no row has taken. A
+    /// list with no such key has the identities it always had.
+    static func uniqueIdentity(_ base: String, seen: inout [String: Int], taken: inout Set<String>) -> String {
+        var occurrence = seen[base, default: 0]
+        var identity = occurrence == 0 ? base : "\(base)#\(occurrence)"
+        while !taken.insert(identity).inserted {
+            occurrence += 1
+            identity = "\(base)#\(occurrence)"
+        }
+        seen[base] = occurrence + 1
+        return identity
     }
 
     private static func identity(for node: [String: Any]) -> String? {

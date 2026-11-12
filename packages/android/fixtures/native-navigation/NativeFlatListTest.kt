@@ -375,6 +375,52 @@ class NativeFlatListTest {
             }
         }
 
+    /**
+     * Rows that share a key are told apart by a suffix, `#1` for the second.
+     * A row whose own key was that same text got the same identity: three
+     * tags keyed `run`, `run` and `run#1` gave two rows one identity and one
+     * stable id. Keys are data.
+     */
+    @Test
+    fun rowsWhoseKeysCollideWithTheSuffixOfARepeatKeepIdentitiesOfTheirOwn() {
+        val context = instrumentation.targetContext
+        val renders = AtomicInteger()
+        fun keyed(key: String, index: Int): JSONObject = JSONObject()
+            .put("type", "Text")
+            .put("props", JSONObject().put("key", key))
+            .put("children", JSONArray().put("$index: $key"))
+        val lists = listOf(
+            listOf("run", "run", "run#1"),
+            listOf("run#1", "run", "run"),
+            listOf("a", "a", "a", "a#1", "a#2", "a#1#1"),
+            listOf("index:1", "", "index:1#1"),
+        )
+        for (keys in lists) {
+            lateinit var list: CraftNativeFlatList
+            instrumentation.runOnMainSync {
+                list = CraftNativeFlatList(context)
+                attach(list)
+                list.apply(keys.mapIndexed { index, key -> keyed(key, index) }, false, 1, false, 0.1, renderer(context, renders), { _ -> }, { _ -> }, null)
+            }
+            awaitCount(list, keys.size)
+            instrumentation.runOnMainSync {
+                attach(list)
+                val ids = keys.indices.map { list.adapter!!.getItemId(it) }
+                assertEquals("rows of $keys share a stable id: $ids", keys.size, ids.toSet().size)
+                assertEquals("rows of $keys were not all drawn", keys.size, list.childCount)
+            }
+            // The same rows in another order: a diff over identities.
+            instrumentation.runOnMainSync {
+                list.apply(keys.mapIndexed { index, key -> keyed(key, index) }.reversed(), false, 1, false, 0.1, renderer(context, renders), { _ -> }, { _ -> }, null)
+            }
+            awaitCount(list, keys.size)
+            instrumentation.runOnMainSync {
+                attach(list)
+                assertEquals("reordered rows of $keys were not all drawn", keys.size, list.childCount)
+            }
+        }
+    }
+
     @Test
     fun recyclesTenThousandRowsAndRetainsTheViewport() {
         val context = instrumentation.targetContext
