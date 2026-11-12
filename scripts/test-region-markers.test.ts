@@ -46,7 +46,7 @@ test('a stale marker is named with what it does to the region', () => {
 
 test('every sliced region in this repository is still bounded', async () => {
   // Derived, so the next renamed boundary is caught when it is renamed.
-  const sources = ['packages/*/templates/**/*', 'packages/*/src/**/*.ts', 'packages/zig/src/**/*.zig', 'packages/*/fixtures/**/*', 'scripts/**/*.ts', 'docs/**/*.md', '.github/**/*.yml', 'packages/typescript/types/*.d.ts']
+  const sources = ['packages/*/templates/**/*', 'packages/*/src/**/*.ts', 'packages/*/scripts/**/*.ts', 'packages/zig/src/**/*.zig', 'packages/*/fixtures/**/*', 'scripts/**/*.ts', 'docs/**/*.md', '.github/**/*.yml', 'packages/typescript/types/*.d.ts']
   let corpus = ''
   for (const pattern of sources) {
     for (const file of new Bun.Glob(pattern).scanSync({ cwd: root })) {
