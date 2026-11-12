@@ -863,7 +863,19 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
         // `craft-bridge.js` awaits.
         var bridge = @import("bridge_fs.zig").FSBridge.init(std.heap.c_allocator);
         defer bridge.deinit();
-        bridge.handleMessage(action, data orelse "") catch {};
+        bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
+        return;
+    }
+    if (eql(u8, kind, "serial")) {
+        // Must be the process-wide instance, not a per-request one: `open`
+        // hands the page an id whose meaning lives in the bridge's port map, so
+        // a fresh bridge per call would discard the mapping (and close the
+        // handle) before the following `write` arrives.
+        const bridge = serialBridge() catch |err| {
+            replyBridgeError(action, err);
+            return;
+        };
+        bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
         return;
     }
     if (eql(u8, kind, "app")) {
@@ -875,6 +887,32 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
         if (eql(u8, action, "getInfo")) return sendAppInfo();
     }
     return error.PlatformNotSupported;
+}
+
+/// The serial bridge outlives a single message: `open` returns an id that a
+/// later `write` / `read` / `close` refers to, so the port map has to survive
+/// between dispatches. Mirrors `global_serial_bridge` in `macos.zig`.
+var global_serial_bridge: ?*@import("bridge_serial.zig").SerialBridge = null;
+
+fn serialBridge() !*@import("bridge_serial.zig").SerialBridge {
+    if (global_serial_bridge == null) {
+        const T = @import("bridge_serial.zig").SerialBridge;
+        const bridge = try std.heap.c_allocator.create(T);
+        bridge.* = T.init(std.heap.c_allocator);
+        global_serial_bridge = bridge;
+    }
+    return global_serial_bridge.?;
+}
+
+/// Answer a bridge handler's failure on the correlated reply channel.
+///
+/// `craft-bridge.js` `_req` only settles when `__craftBridgeResult` arrives, so
+/// swallowing the error here leaves the JS promise pending forever — the page
+/// simply stops at that `await` with no error and no timeout. Every handler we
+/// drive from this dispatcher therefore reports through here.
+fn replyBridgeError(action: []const u8, err: anyerror) void {
+    const be = @import("bridge_error.zig");
+    be.sendErrorToJS(std.heap.c_allocator, action, be.fromHandlerError(err));
 }
 
 /// Ask every window to close. The last one to go ends the message loop.
