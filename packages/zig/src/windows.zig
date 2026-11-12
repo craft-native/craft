@@ -839,12 +839,21 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     if (eql(u8, kind, "dialog")) return windows_desktop.queueDialog(action, data, entry.id);
     if (eql(u8, kind, "nativeUI") and eql(u8, action, "showContextMenu"))
         return windows_desktop.queueContextMenu(data, entry.id);
+
+    // These namespaces used to answer PLATFORM_NOT_SUPPORTED outright, which
+    // is why a Windows page could not read the clock format, the screen list or
+    // its own executable path. They reply through `bridge_error.sendResultToJS`,
+    // and the caller has already pushed the request id, so the page gets a
+    // correlated answer.
+    if (eql(u8, kind, "system")) return sendSystem(action);
+    if (eql(u8, kind, "screen")) return sendScreen(action);
     if (eql(u8, kind, "app")) {
         if (eql(u8, action, "quit")) return closeAllWindows();
         if (eql(u8, action, "relaunch")) {
             try desktop_instance.spawnRelaunch(std.heap.c_allocator);
             return closeAllWindows();
         }
+        if (eql(u8, action, "getInfo")) return sendAppInfo();
     }
     return error.PlatformNotSupported;
 }
@@ -856,6 +865,302 @@ fn closeAllWindows() void {
         const entry = desktop_windows.byWebview(webview) orelse continue;
         _ = PostMessageW(@ptrFromInt(entry.window), WM_CLOSE, 0, 0);
     }
+}
+
+/// `craft.system` on Windows.
+///
+/// Served here rather than through `bridge_system.zig`: that module reaches
+/// `macos.zig`, which imports `bridge_dialog.zig` — a module whose Windows path
+/// is still a `@compileError`. Importing it from this dispatcher does not
+/// compile at all, so these are direct Win32 reads until that chain is made
+/// conditional.
+///
+/// Actions with no Win32 equivalent yet answer `PlatformNotSupported` instead
+/// of an empty string, so a page can tell "off" from "not implemented".
+fn sendSystem(action: []const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const eql = std.mem.eql;
+
+    if (eql(u8, action, "getHostname")) {
+        var buf: [256]u16 = undefined;
+        var size: u32 = buf.len;
+        if (GetComputerNameW(&buf, &size) == 0) return bridge_error.BridgeError.NativeCallFailed;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..size]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "hostname", utf8);
+    }
+    if (eql(u8, action, "getUsername")) {
+        var buf: [256]u16 = undefined;
+        var size: u32 = buf.len;
+        if (GetUserNameW(&buf, &size) == 0) return bridge_error.BridgeError.NativeCallFailed;
+        // `GetUserNameW` counts the terminating NUL in `size`.
+        const len: usize = if (size > 0 and buf[size - 1] == 0) size - 1 else size;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "username", utf8);
+    }
+    if (eql(u8, action, "getSystemVersion")) {
+        var info: RTL_OSVERSIONINFOW = std.mem.zeroes(RTL_OSVERSIONINFOW);
+        info.dwOSVersionInfoSize = @intCast(@sizeOf(RTL_OSVERSIONINFOW));
+        if (RtlGetVersion(&info) != 0) return bridge_error.BridgeError.NativeCallFailed;
+        var num: [96]u8 = undefined;
+        const text = try std.fmt.bufPrint(&num, "Windows {d}.{d} (build {d})", .{
+            info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber,
+        });
+        return sendJsonField(allocator, action, "version", text);
+    }
+    if (eql(u8, action, "getLocale") or eql(u8, action, "getLanguage")) {
+        var buf: [LOCALE_NAME_MAX_LENGTH]u16 = undefined;
+        const written = GetUserDefaultLocaleName(&buf, @intCast(buf.len));
+        if (written <= 0) return bridge_error.BridgeError.NativeCallFailed;
+        const reported: usize = @min(@as(usize, @intCast(written)), buf.len);
+        const len: usize = if (reported > 0 and buf[reported - 1] == 0) reported - 1 else reported;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+        defer allocator.free(utf8);
+        if (eql(u8, action, "getLocale")) return sendJsonField(allocator, action, "locale", utf8);
+        // `getLanguage` wants the bare tag: "zh-CN" -> "zh".
+        const tag_end = std.mem.indexOfScalar(u8, utf8, '-') orelse utf8.len;
+        return sendJsonField(allocator, action, "language", utf8[0..tag_end]);
+    }
+    if (eql(u8, action, "getTimezone")) {
+        var tz: TIME_ZONE_INFORMATION = std.mem.zeroes(TIME_ZONE_INFORMATION);
+        const state = GetTimeZoneInformation(&tz);
+        if (state == 0xFFFFFFFF) return bridge_error.BridgeError.NativeCallFailed;
+        // TIME_ZONE_ID_DAYLIGHT = 2
+        const name = if (state == 2) tz.DaylightName[0..] else tz.StandardName[0..];
+        var n: usize = 0;
+        while (n < name.len and name[n] != 0) : (n += 1) {}
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, name[0..n]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "timezone", utf8);
+    }
+
+    // appearance / accent colour / accessibility flags would each need their
+    // own Win32 or registry read; none is wired yet, and a fabricated default
+    // is worse than saying so.
+    return bridge_error.BridgeError.PlatformNotSupported;
+}
+
+/// `craft.app.getInfo` on Windows. There is no bundle: the executable is the
+/// app. `version` and `bundleId` have no Win32 equivalent that does not mean
+/// reading the PE version resource, so they stay empty rather than guessed.
+fn sendAppInfo() !void {
+    const allocator = std.heap.c_allocator;
+    var wide: [std.fs.max_path_bytes]u16 = undefined;
+    const written = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+    if (written == 0) return bridge_error.BridgeError.NativeCallFailed;
+    const exe_path = try std.unicode.utf16LeToUtf8Alloc(allocator, wide[0..@min(@as(usize, written), wide.len)]);
+    defer allocator.free(exe_path);
+
+    const dir = std.fs.path.dirname(exe_path) orelse "";
+    const base = std.fs.path.basename(exe_path);
+    const name = if (base.len > 4 and std.ascii.eqlIgnoreCase(base[base.len - 4 ..], ".exe"))
+        base[0 .. base.len - 4]
+    else
+        base;
+
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"name\":\"");
+    try appendJsonEscaped(allocator, &buf, name);
+    try buf.appendSlice(allocator, "\",\"version\":\"\",\"bundleId\":\"\",\"bundlePath\":\"");
+    try appendJsonEscaped(allocator, &buf, dir);
+    try buf.appendSlice(allocator, "\",\"executablePath\":\"");
+    try appendJsonEscaped(allocator, &buf, exe_path);
+    try buf.appendSlice(allocator, "\",\"sandboxed\":false}");
+
+    const json = try buf.toOwnedSlice(allocator);
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, "getInfo", json);
+}
+
+fn appendJsonEscaped(allocator: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    const esc_buf = try allocator.alloc(u8, s.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    try out.appendSlice(allocator, try bridge_error.escapeJsonString(esc_buf, s));
+}
+
+/// Answer a single-field `{ "<key>": "<value>" }` result, the shape every
+/// `craft.system.*` getter resolves through.
+fn sendJsonField(allocator: std.mem.Allocator, action: []const u8, key: []const u8, value: []const u8) !void {
+    const esc_buf = try allocator.alloc(u8, value.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    const escaped = try bridge_error.escapeJsonString(esc_buf, value);
+    const json = try std.fmt.allocPrint(allocator, "{{\"{s}\":\"{s}\"}}", .{ key, escaped });
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
+/// `craft.screen` on Windows.
+///
+/// Answered here for the same reason: `bridge_screen.zig` also reaches
+/// `macos.zig`, so the AppKit implementation stays where it is until that
+/// dependency chain is made conditional.
+fn sendScreen(action: []const u8) !void {
+    const primary_only = std.mem.eql(u8, action, "getPrimary");
+    if (!primary_only and !std.mem.eql(u8, action, "getDisplays"))
+        return bridge_error.BridgeError.UnknownAction;
+
+    const allocator = std.heap.c_allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    var sink = MonitorSink{ .out = &buf, .primary_only = primary_only };
+    if (!primary_only) try buf.appendSlice(allocator, "{\"displays\":[");
+    // `EnumDisplayMonitors` returns 0 both on failure *and* when a callback
+    // stops it early — which is exactly what `getPrimary` does once it finds
+    // the primary monitor. Treating that as an error made `screen.getPrimary`
+    // report a native failure while holding a perfectly good result. The sink
+    // is the authority: it knows whether anything was written.
+    _ = EnumDisplayMonitors(null, null, monitorEnumProc, @bitCast(@intFromPtr(&sink)));
+    if (sink.failed) return bridge_error.BridgeError.AllocationFailed;
+
+    if (primary_only) {
+        // No monitor claimed PRIMARY: answer with an empty object rather than
+        // inventing geometry that does not exist.
+        if (!sink.wrote_any) try buf.appendSlice(allocator, "{}");
+    } else {
+        try buf.appendSlice(allocator, "]}");
+    }
+
+    const json = try buf.toOwnedSlice(allocator);
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, if (primary_only) "getPrimary" else "getDisplays", json);
+}
+
+const LOCALE_NAME_MAX_LENGTH: usize = 85;
+
+const RTL_OSVERSIONINFOW = extern struct {
+    dwOSVersionInfoSize: u32,
+    dwMajorVersion: u32,
+    dwMinorVersion: u32,
+    dwBuildNumber: u32,
+    dwPlatformId: u32,
+    szCSDVersion: [128]u16,
+};
+
+const SYSTEMTIME_W = extern struct {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+};
+
+const TIME_ZONE_INFORMATION = extern struct {
+    Bias: i32,
+    StandardName: [32]u16,
+    StandardDate: SYSTEMTIME_W,
+    StandardBias: i32,
+    DaylightName: [32]u16,
+    DaylightDate: SYSTEMTIME_W,
+    DaylightBias: i32,
+};
+
+extern "kernel32" fn GetModuleFileNameW(hModule: ?*anyopaque, lpFilename: [*]u16, nSize: u32) callconv(.c) u32;
+extern "kernel32" fn GetComputerNameW(lpBuffer: [*]u16, nSize: *u32) callconv(.c) c_int;
+extern "advapi32" fn GetUserNameW(lpBuffer: [*]u16, pcbBuffer: *u32) callconv(.c) c_int;
+extern "kernel32" fn GetUserDefaultLocaleName(lpLocaleName: [*]u16, cchLocaleName: c_int) callconv(.c) c_int;
+extern "kernel32" fn GetTimeZoneInformation(lpTimeZoneInformation: *TIME_ZONE_INFORMATION) callconv(.c) u32;
+
+/// Reports the real OS version. `GetVersionExW` lies on anything newer than
+/// Windows 8.1 unless the binary ships a compatibility manifest, so the
+/// undoctored `ntdll` call is the one that tells the truth.
+extern "ntdll" fn RtlGetVersion(lpVersionInformation: *RTL_OSVERSIONINFOW) callconv(.c) c_long;
+
+const MONITORINFOEXW = extern struct {
+    cbSize: DWORD,
+    rcMonitor: RECT,
+    rcWork: RECT,
+    dwFlags: DWORD,
+    szDevice: [32]u16,
+};
+
+const MONITORINFOF_PRIMARY: DWORD = 0x1;
+
+extern "user32" fn EnumDisplayMonitors(
+    hdc: ?*anyopaque,
+    lprcClip: ?*const RECT,
+    lpfnEnum: *const fn (?*anyopaque, ?*anyopaque, *RECT, isize) callconv(.c) c_int,
+    dwData: isize,
+) callconv(.c) c_int;
+
+/// System DPI, i.e. the scale of the primary monitor. Per-monitor DPI needs
+/// `GetDpiForMonitor` from shcore; reporting the system value is honest and is
+/// what a single-scale layout is drawn against.
+extern "user32" fn GetDpiForSystem() callconv(.c) UINT;
+
+const MonitorSink = struct {
+    out: *std.ArrayListUnmanaged(u8),
+    primary_only: bool,
+    index: usize = 0,
+    wrote_any: bool = false,
+    failed: bool = false,
+};
+
+fn monitorEnumProc(hmonitor: ?*anyopaque, _: ?*anyopaque, _: *RECT, data: isize) callconv(.c) c_int {
+    const sink: *MonitorSink = @ptrFromInt(@as(usize, @bitCast(data)));
+    var info: MONITORINFOEXW = std.mem.zeroes(MONITORINFOEXW);
+    info.cbSize = @intCast(@sizeOf(MONITORINFOEXW));
+    if (GetMonitorInfoW(hmonitor orelse return 1, @ptrCast(&info)) == 0) return 1;
+
+    const is_primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    if (sink.primary_only and !is_primary) return 1;
+
+    if (sink.wrote_any) {
+        sink.out.append(std.heap.c_allocator, ',') catch {
+            sink.failed = true;
+            return 0;
+        };
+    }
+    appendMonitorJson(sink, &info, is_primary) catch {
+        sink.failed = true;
+        return 0;
+    };
+    sink.wrote_any = true;
+    sink.index += 1;
+
+    // One is all `getPrimary` needs; stop enumerating.
+    if (sink.primary_only) return 0;
+    return 1;
+}
+
+fn appendMonitorJson(sink: *MonitorSink, info: *const MONITORINFOEXW, is_primary: bool) !void {
+    const allocator = std.heap.c_allocator;
+    var device_len: usize = 0;
+    while (device_len < info.szDevice.len and info.szDevice[device_len] != 0) : (device_len += 1) {}
+    const device_utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, info.szDevice[0..device_len]);
+    defer allocator.free(device_utf8);
+
+    const esc_buf = try allocator.alloc(u8, device_utf8.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    const escaped = try bridge_error.escapeJsonString(esc_buf, device_utf8);
+
+    const scale = @as(f64, @floatFromInt(GetDpiForSystem())) / 96.0;
+    const monitor = info.rcMonitor;
+    const work = info.rcWork;
+
+    var num: [768]u8 = undefined;
+    const written = try std.fmt.bufPrint(&num, "{{\"id\":{d},\"name\":\"{s}\",\"x\":{d},\"y\":{d}," ++
+        "\"width\":{d},\"height\":{d},\"workX\":{d},\"workY\":{d}," ++
+        "\"workWidth\":{d},\"workHeight\":{d},\"scaleFactor\":{d:.2},\"primary\":{s}}}", .{
+        sink.index,
+        escaped,
+        monitor.left,
+        monitor.top,
+        monitor.right - monitor.left,
+        monitor.bottom - monitor.top,
+        work.left,
+        work.top,
+        work.right - work.left,
+        work.bottom - work.top,
+        scale,
+        if (is_primary) "true" else "false",
+    });
+    try sink.out.appendSlice(allocator, written);
 }
 
 fn desktopTarget(id: u32) ?windows_desktop.Target {
