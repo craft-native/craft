@@ -1665,6 +1665,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard hybrid.controller === self else { return }
+        // Once the actions are where this pass puts them.
+        defer { CraftChrome.shared.floatingActionsMoved(to: floatingActionsFrame(), in: view) }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *), accessoryModel?.iconOnly != true {
             // UIKit already supplies the native safe area. This measurement is
@@ -1699,6 +1701,20 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         // Only the older-system full-width shelf reserves space in web layout.
         let accessoryInset: CGFloat = accessoryModel != nil && !iconOnly ? 44 : 0
         CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + accessoryInset)
+    }
+
+    /// The compact actions' frame in the window, or nil when none float over
+    /// the page: a full-width shelf is reserved for through the safe area,
+    /// and a hidden tab bar takes its actions with it. A group is its one
+    /// capsule; separate actions are the row of them.
+    private func floatingActionsFrame() -> CGRect? {
+        guard let model = accessoryModel, model.iconOnly, view.window != nil,
+              accessoryGlass.superview === view, !accessoryGlass.isHidden, !tabBar.isHidden else { return nil }
+        var frame = accessoryGlass.frame
+        if model.accessoryLayout == nil {
+            for glass in companionGlasses where !glass.isHidden { frame = frame.union(glass.frame) }
+        }
+        return view.convert(frame, to: view.window)
     }
 
     /// One capsule above the trailing end of the tab bar, companions first

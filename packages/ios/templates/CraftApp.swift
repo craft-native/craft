@@ -838,6 +838,23 @@ final class CraftChrome: ObservableObject {
     @Published var tabs: [Tab] = []
     @Published var tabAccessory: Tab?
     private weak var tabAccessoryOwner: AnyObject?
+
+    /// Where the compact tab actions float over the page, in window
+    /// coordinates, and the shell that drew them; nil when nothing floats.
+    /// They cover the trailing end of whatever scrolls behind them, so a
+    /// screen gives its scroll views that much room at the end (#523): the
+    /// last row can be brought clear without the app knowing this geometry.
+    private(set) var floatingActions: CGRect?
+    private(set) weak var floatingActionsHost: UIView?
+    static let floatingActionsDidMove = Notification.Name("CraftFloatingActionsDidMove")
+
+    func floatingActionsMoved(to frame: CGRect?, in host: UIView?) {
+        let next = frame.flatMap { $0.isNull || $0.isEmpty ? nil : $0.integral }
+        guard next != floatingActions || (next != nil && host !== floatingActionsHost) else { return }
+        floatingActions = next
+        floatingActionsHost = next == nil ? nil : host
+        NotificationCenter.default.post(name: Self.floatingActionsDidMove, object: self)
+    }
     @Published var selected: String?
     /// The visible destination may be the accessory, independently of its owning stack.
     @Published var visiblePath: String?

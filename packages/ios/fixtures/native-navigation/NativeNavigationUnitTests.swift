@@ -1026,6 +1026,83 @@ final class NativeNavigationUnitTests: XCTestCase {
         await displayWait("group material is removed") { CraftChrome.shared.tabAccessory == nil && (material.isHidden || material.superview == nil) }
     }
 
+    /// #523: compact actions float over the trailing end of whatever scrolls
+    /// behind them, and nothing was reserved, so the last rows of a screen
+    /// could not be brought out from under them.
+    func testCompactActionsGiveTheScrollBehindThemRoomAtItsEnd() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        func find(_ id: String, in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == id { return view }
+            return view.subviews.lazy.compactMap { find(id, in: $0) }.first
+        }
+        let scroll = try XCTUnwrap(find("native-root-scroll", in: screen.view) as? UIScrollView)
+        let window = try XCTUnwrap(shell.view.window)
+        let material = { () -> UIVisualEffectView? in
+            self.shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && $0.superview === self.shell.view }
+        }
+        /// Where the content ends, in the window, scrolled as far as it goes.
+        func contentEnd() async -> CGFloat {
+            scroll.layoutIfNeeded()
+            let furthest = max(-scroll.adjustedContentInset.top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            scroll.setContentOffset(CGPoint(x: 0, y: furthest), animated: false)
+            await renderFrames()
+            return scroll.convert(CGPoint(x: 0, y: scroll.contentSize.height), to: window).y
+        }
+        func group(_ layout: String) -> String {
+            "craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',layout:'\(layout)',companions:[{path:'/add',title:'Add',symbol:'plus'}]}})"
+        }
+        let viewport = scroll.frame
+        let bar = shell.tabBar.convert(shell.tabBar.bounds, to: window).minY
+
+        // Nothing floats: the content ends where UIKit's own inset puts it,
+        // at the top of the tab bar or a little above a floating one. What
+        // UIKit already keeps clear above the bar is not asked for twice.
+        XCTAssertNil(CraftChrome.shared.floatingActions)
+        XCTAssertEqual(scroll.contentInset.bottom, 0, accuracy: 0.5)
+        let plainEnd = await contentEnd()
+        let kept = bar - plainEnd
+        XCTAssertGreaterThanOrEqual(kept, -0.5)
+        XCTAssertLessThan(kept, 40)
+
+        // A vertical group of two: 103 points of capsule, 10 above the bar.
+        screen.evaluateScript(group("vertical"))
+        await displayWait("the scroll view clears a vertical group") { CraftChrome.shared.floatingActions != nil && abs(scroll.contentInset.bottom - (113 - kept)) <= 1 }
+        let capsule = try XCTUnwrap(material())
+        let actions = try XCTUnwrap(CraftChrome.shared.floatingActions)
+        XCTAssertEqual(actions, shell.view.convert(capsule.frame, to: window).integral)
+        XCTAssertEqual(bar - actions.minY, 113, accuracy: 1)
+        let clearedEnd = await contentEnd()
+        XCTAssertEqual(clearedEnd, actions.minY, accuracy: 1, "the last content must come out from under the actions, and no further")
+        // Room at the end, and nothing else: the page still scrolls behind
+        // the actions, in the viewport and the safe area it had.
+        XCTAssertEqual(scroll.frame, viewport)
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+        XCTAssertEqual(screen.additionalSafeAreaInsets.bottom, 0)
+
+        // A horizontal group reaches 58 points up, and the room follows it.
+        screen.evaluateScript(group("horizontal"))
+        await displayWait("the scroll view clears a horizontal group") { abs(scroll.contentInset.bottom - (58 - kept)) <= 1 }
+        XCTAssertEqual(bar - (try XCTUnwrap(CraftChrome.shared.floatingActions)).minY, 58, accuracy: 1)
+
+        // Separate compact actions: 48 points, 8 above the bar, all of them.
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',iconOnly:true,companions:[{path:'/add',title:'Add',symbol:'plus'}]}})")
+        await displayWait("the scroll view clears separate actions") { abs(scroll.contentInset.bottom - (56 - kept)) <= 1 }
+        XCTAssertGreaterThan(try XCTUnwrap(CraftChrome.shared.floatingActions).width, 100, "the companion beside the action is part of what floats")
+
+        // A full-width shelf is reserved for by the safe area, not here.
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left'}})")
+        await displayWait("a shelf leaves the scroll view's own inset alone") { CraftChrome.shared.floatingActions == nil && scroll.contentInset.bottom < 0.5 }
+
+        // Back to a group, then nothing: the room goes with the actions.
+        screen.evaluateScript(group("vertical"))
+        await displayWait("the room returns with the group") { abs(scroll.contentInset.bottom - (113 - kept)) <= 1 }
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
+        await displayWait("the room goes with the actions") { CraftChrome.shared.floatingActions == nil && scroll.contentInset.bottom < 0.5 }
+        let restoredEnd = await contentEnd()
+        XCTAssertEqual(restoredEnd, plainEnd, accuracy: 1)
+    }
+
     func testCompactAccessoryModeChangesKeepNativeAndWebInsetsAtTheTabBar() async throws {
         final class PageLoad: NSObject, WKNavigationDelegate {
             let finished = XCTestExpectation(description: "layout observer page loaded")

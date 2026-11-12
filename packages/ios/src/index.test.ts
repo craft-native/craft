@@ -2862,7 +2862,9 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(screen).toContain('applyAutofill(to: field, props: props)')
     expect(screen).toContain('(field as? CraftNativeTextField)?.padding = paddingInsets(style)')
     expect(screen).toContain('func textFieldShouldReturn(_ textField: UITextField) -> Bool {')
-    expect(screen).toContain('scroll.contentInset.bottom = overlap')
+    // The keyboard's overlap, through the inset it shares with the floating tab actions (#523).
+    expect(screen).toContain('scroll.keyboardCover = overlap')
+    expect(screen).toContain('if abs(contentInset.bottom - cover) > 0.5 { contentInset.bottom = cover }')
     expect(screen).toContain('case "DatePicker":\n            let picker = CraftNativeDatePickerView()')
     expect(screen).toContain('case "datepicker", "date-picker", "date": return "DatePicker"')
     expect(screen).toContain('"Picker", "DatePicker", "Switch"')

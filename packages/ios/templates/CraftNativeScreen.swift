@@ -3356,6 +3356,7 @@ private class CraftNativeFlowView: UIStackView {
             if moved {
                 craftScreenController?.scheduleLayoutEvents()
                 craftScreenController?.scheduleKeyboardInsets()
+                craftScreenController?.scheduleFloatingClearance()
             }
         }
         for (child, frame) in result.frames {
@@ -5157,6 +5158,19 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     override func adjustedContentInsetDidChange() {
         super.adjustedContentInsetDidChange()
         setContentNeedsLayout()
+    }
+
+    /// What covers the end of this scroll view from below: the keyboard, and
+    /// the compact tab actions floating above the tab bar (#523). The content
+    /// is inset by the larger, so its last lines can be scrolled clear of
+    /// whichever reaches further.
+    var keyboardCover: CGFloat = 0 { didSet { applyCover() } }
+    var floatingCover: CGFloat = 0 { didSet { applyCover() } }
+
+    private func applyCover() {
+        let cover = max(keyboardCover, floatingCover)
+        if abs(contentInset.bottom - cover) > 0.5 { contentInset.bottom = cover }
+        if abs(verticalScrollIndicatorInsets.bottom - cover) > 0.5 { verticalScrollIndicatorInsets.bottom = cover }
     }
 
     private var refreshingProp = false
@@ -7061,6 +7075,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// Where the keyboard is on the screen while it is up, in screen coordinates.
     private var keyboardScreenFrame: CGRect?
     private var keyboardInsetsScheduled = false
+    private var floatingClearanceScheduled = false
+    /// Whether any scroll view may still hold room for actions that have gone.
+    private var floatingClearanceApplied = false
     /// The hybrid shell (CraftHybrid.swift), when this screen is one of a web
     /// app's native screens: told of the first frame, of a first frame that
     /// could not be drawn, and of `craft.navigation.open(path)`.
@@ -7442,6 +7459,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         emitLayoutEvents()
         sendViewportIfChanged()
         scheduleKeyboardInsets()
+        scheduleFloatingClearance()
     }
 
     /// The width the bundle last heard, so a layout pass at the same size says nothing.
@@ -8863,6 +8881,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // The app script has no screen for the keyboard to cover.
         if !isAppScript {
             lifecycleObservers.append(NotificationCenter.default.addObserver(
+                forName: CraftChrome.floatingActionsDidMove,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleFloatingClearance()
+            })
+            lifecycleObservers.append(NotificationCenter.default.addObserver(
                 forName: UIResponder.keyboardWillChangeFrameNotification,
                 object: nil,
                 queue: .main
@@ -9006,7 +9031,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// took account of) insets its content by that much, so everything in it
     /// can be scrolled above the keyboard. Internal for XCTest.
     func insetScrollViewsForKeyboard() {
-        var scrolls: [UIScrollView] = []
+        var scrolls: [CraftNativeScrollView] = []
         func collect(_ node: RenderedNode?) {
             guard let node else { return }
             if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical { scrolls.append(scroll) }
@@ -9023,8 +9048,51 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 let automaticBottom = max(0, scroll.adjustedContentInset.bottom - scroll.contentInset.bottom)
                 overlap = max(0, overlap - automaticBottom)
             }
-            if abs(scroll.contentInset.bottom - overlap) > 0.5 { scroll.contentInset.bottom = overlap }
-            if abs(scroll.verticalScrollIndicatorInsets.bottom - overlap) > 0.5 { scroll.verticalScrollIndicatorInsets.bottom = overlap }
+            // Its own inset is what is being measured, not part of the answer.
+            scroll.keyboardCover = overlap
+        }
+    }
+
+    /// The compact tab actions float over the trailing end of whatever
+    /// scrolls behind them. Each vertical scroll view and list they reach
+    /// into gets that much room at its end, so its last row can be brought
+    /// clear of them; one that ends above them gets none. How wide a scroll
+    /// view is does not come into it: a page of a pager that is off to one
+    /// side now is under the actions once it is swiped to. The safe area and
+    /// the viewport are left alone: content still scrolls behind the
+    /// actions. Internal for XCTest.
+    func insetScrollViewsForFloatingActions() {
+        let chrome = CraftChrome.shared
+        let actions = chrome.floatingActions.flatMap { frame in
+            chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? frame : nil }
+        }
+        func cover(_ scroll: UIScrollView) -> CGFloat {
+            guard let actions, let window = scroll.window else { return 0 }
+            let frame = scroll.convert(scroll.bounds, to: window)
+            // An edge-to-edge scroller already clears the tab bar through
+            // UIKit's safe area. Add only what the actions reach above it.
+            let automaticBottom = max(0, scroll.adjustedContentInset.bottom - scroll.contentInset.bottom)
+            return max(0, frame.maxY - actions.minY - automaticBottom)
+        }
+        func visit(_ node: RenderedNode?) {
+            guard let node else { return }
+            if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical { scroll.floatingCover = cover(scroll) }
+            else if let list = node.view as? CraftNativeFlatList { list.floatingCover = cover(list) }
+            node.children.forEach(visit)
+        }
+        visit(renderedRoot)
+        floatingClearanceApplied = actions != nil
+    }
+
+    /// A layout moved a view, or the actions moved: measured again once the
+    /// pass is over, where each scroll view now ends.
+    fileprivate func scheduleFloatingClearance() {
+        guard CraftChrome.shared.floatingActions != nil || floatingClearanceApplied, !floatingClearanceScheduled else { return }
+        floatingClearanceScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.floatingClearanceScheduled = false
+            self.insetScrollViewsForFloatingActions()
         }
     }
 

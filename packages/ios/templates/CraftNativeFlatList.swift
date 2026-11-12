@@ -316,7 +316,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             rows += (pending + columns - 1) / columns
             content = CGFloat(rows) * 44 + CGFloat(max(0, rows - 1)) * flowLayout.minimumLineSpacing
         }
-        return max(0, ceil(content + contentInset.top + contentInset.bottom))
+        // Its rows and its own padding: not the room left for what floats over it.
+        return max(0, ceil(content + contentPadding.top + contentPadding.bottom))
     }
 
     /// The width a row gets: the list's own width inside its content padding,
@@ -406,6 +407,24 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             bottom: nonNegative(raw?["paddingBottom"]) ?? vertical,
             right: nonNegative(raw?["paddingRight"]) ?? horizontal
         )
+        guard contentPadding != inset else { return }
+        contentPadding = inset
+        applyContentInsets()
+    }
+
+    /// `contentContainerStyle`'s padding, which the list draws as its insets.
+    private var contentPadding: UIEdgeInsets = .zero
+
+    /// How far the compact tab actions reach over the end of this list. The
+    /// rows get that much more room at the end, so the last one can be
+    /// brought clear of them (#523).
+    var floatingCover: CGFloat = 0 {
+        didSet { if abs(oldValue - floatingCover) > 0.5 { applyContentInsets() } }
+    }
+
+    private func applyContentInsets() {
+        var inset = contentPadding
+        if flowLayout.scrollDirection == .vertical { inset.bottom += floatingCover }
         guard contentInset != inset else { return }
         contentInset = inset
         scrollIndicatorInsets = inset
