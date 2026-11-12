@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, build, init, pickSimulator, type CraftConfig } from '../src/index'
+import { suspendSimulatorPush } from './simulator-boot'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 import { nativeTestResultBundle } from './native-test-result'
 import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
@@ -140,6 +141,8 @@ try {
   const device = requested ? { udid: requested, name: requested, state: 'Booted', runtime: 'iOS' } : await pickSimulator()
   if (!device) throw new Error('No iOS simulator is available for native renderer tests')
   if (!requested) await bootSimulator(device)
+  const push = suspendSimulatorPush(device.udid)
+  if (push) console.log(push)
   // XCTest writes failures and screenshots directly into retained CI evidence,
   // so temporary-project cleanup cannot discard them after an error or abort.
   const results = nativeTestResultBundle(workspace, process.env.CRAFT_NATIVE_RENDER_RESULT)
