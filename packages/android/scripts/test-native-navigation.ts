@@ -71,6 +71,7 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), join(testDirectory, 'NativeNavigationTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMutationTest.kt'), join(testDirectory, 'NativeMutationTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeFlatListTest.kt'), join(testDirectory, 'NativeFlatListTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeHostileNumbersTest.kt'), join(testDirectory, 'NativeHostileNumbersTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilitiesTest.kt'), join(testDirectory, 'NativeCapabilitiesTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativePassiveStepsTest.kt'), join(testDirectory, 'NativePassiveStepsTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeRecordingTest.kt'), join(testDirectory, 'NativeRecordingTest.kt'))

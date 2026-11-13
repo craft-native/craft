@@ -229,6 +229,21 @@ internal fun craftNativeFiniteFloat(style: JSONObject?, name: String, fallback: 
     return if (value.isFinite() && narrowed.isFinite()) narrowed else fallback
 }
 
+/**
+ * The most a number may be on a view, either side of zero: 2^25, as on UIKit.
+ * It is far past any screen, and a view refuses anything past the largest
+ * Float: `setScaleX` and its like throw on infinity and on what is not a
+ * number, and a style is whatever the script said.
+ */
+internal const val CRAFT_NATIVE_LAYOUT_LIMIT = 33_554_432f
+
+/** A number for a view: inside that limit, and 0 when it is not a number. */
+internal fun craftNativeLayoutNumber(value: Float): Float =
+    if (value.isNaN()) 0f else value.coerceIn(-CRAFT_NATIVE_LAYOUT_LIMIT, CRAFT_NATIVE_LAYOUT_LIMIT)
+
+internal fun craftNativeLayoutNumber(value: Double): Float =
+    if (value.isNaN()) 0f else value.coerceIn(-CRAFT_NATIVE_LAYOUT_LIMIT.toDouble(), CRAFT_NATIVE_LAYOUT_LIMIT.toDouble()).toFloat()
+
 internal fun craftNativeFiniteDouble(style: JSONObject?, name: String, fallback: Double): Double {
     val value = craftNativeNumber(style?.opt(name)) ?: Double.NaN
     return value.takeIf { it.isFinite() } ?: fallback
@@ -355,28 +370,31 @@ internal fun craftNativeComponentLayoutStyle(node: JSONObject): JSONObject {
     return merged
 }
 
-private fun craftNativeGridColumnCount(value: Any?): Int {
-    if (value is Number) return max(1, value.toInt())
-    val text = value as? String ?: return 1
-    val trimmed = text.trim()
+/**
+ * The most tracks a grid is given, either way. A count is whatever the script
+ * said (`gridTemplateRows: Number.MAX_VALUE`, `repeat(2147483647, 1fr)`), and
+ * the layout makes a list of rows and an array of columns that long: the
+ * process ran out of memory in measure. No screen has room to show more
+ * tracks than this.
+ */
+internal const val CRAFT_NATIVE_GRID_TRACK_LIMIT = 1024
+
+internal fun craftNativeGridTrackCount(value: Any?): Int? {
+    if (value is Number) return value.toInt().coerceIn(1, CRAFT_NATIVE_GRID_TRACK_LIMIT)
+    val trimmed = (value as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     if (trimmed.startsWith("repeat(")) {
-        val count = trimmed.removePrefix("repeat(").takeWhile { it.isDigit() }.toIntOrNull()
-        if (count != null) return max(1, count)
+        // Digits past what an Int holds are still a count, and still too many.
+        val digits = trimmed.removePrefix("repeat(").takeWhile { it.isDigit() }
+        if (digits.isNotEmpty()) {
+            return (digits.toIntOrNull() ?: CRAFT_NATIVE_GRID_TRACK_LIMIT).coerceIn(1, CRAFT_NATIVE_GRID_TRACK_LIMIT)
+        }
     }
-    return max(1, trimmed.split(Regex("\\s+")).count { it.isNotBlank() })
+    return trimmed.split(Regex("\\s+")).count { it.isNotBlank() }.coerceIn(1, CRAFT_NATIVE_GRID_TRACK_LIMIT)
 }
 
-private fun craftNativeGridRowCount(value: Any?): Int? {
-    if (value is Number) return max(1, value.toInt())
-    val text = value as? String ?: return null
-    val trimmed = text.trim()
-    if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("repeat(")) {
-        val count = trimmed.removePrefix("repeat(").takeWhile { it.isDigit() }.toIntOrNull()
-        if (count != null) return max(1, count)
-    }
-    return max(1, trimmed.split(Regex("\\s+")).count { it.isNotBlank() })
-}
+private fun craftNativeGridColumnCount(value: Any?): Int = craftNativeGridTrackCount(value) ?: 1
+
+private fun craftNativeGridRowCount(value: Any?): Int? = craftNativeGridTrackCount(value)
 
 /**
  * A CSS colour as Android's ARGB. STX writes `#RRGGBBAA` (and `#RGBA`) for a
@@ -7096,9 +7114,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "Slider" -> (previous as? SeekBar ?: CraftNativePointerSeekBar(this)).apply {
-                val minimum = craftNativeFiniteNumber(props, "minimumValue", 0.0)
-                val maximumCandidate = craftNativeFiniteNumber(props, "maximumValue", 1.0)
-                val maximum = if (maximumCandidate > minimum) maximumCandidate else minimum + Double.MIN_VALUE
+                // Held to a quarter of the largest Double, so the range, and
+                // a value's distance along it, are numbers: at the largest
+                // their difference is infinite, and infinity over infinity
+                // is not a number, which `roundToInt` throws on and JSON
+                // will not carry back to the screen.
+                val bound = Double.MAX_VALUE / 4
+                val minimum = craftNativeFiniteNumber(props, "minimumValue", 0.0).coerceIn(-bound, bound)
+                val maximumCandidate = craftNativeFiniteNumber(props, "maximumValue", 1.0).coerceIn(-bound, bound)
+                // The next number up, whatever the size of the first: adding
+                // the smallest Double to anything but zero adds nothing.
+                val maximum = if (maximumCandidate > minimum) maximumCandidate else Math.nextUp(minimum)
                 setOnSeekBarChangeListener(null)
                 val step = craftNativeFiniteNumber(props, "step", 0.0).takeIf { it > 0 }
                 // A stepped slider needs one native position per authored
@@ -7114,7 +7140,7 @@ class MainActivity : AppCompatActivity() {
                         .toInt()
                 } ?: 1000
                 max = progressMax
-                val requested = craftNativeFiniteNumber(props, "value", minimum)
+                val requested = craftNativeFiniteNumber(props, "value", minimum).coerceIn(minimum, maximum)
                 val value = (if (step != null) minimum + ((requested - minimum) / step).roundToInt() * step else requested)
                     .coerceIn(minimum, maximum)
                 progress = if (step != null) {
@@ -7162,7 +7188,7 @@ class MainActivity : AppCompatActivity() {
                 val scale = when (requestedSize) {
                     "large" -> 1.35f
                     "small" -> 0.75f
-                    is Number -> (requestedSize.toDouble() / 24.0).takeIf { it.isFinite() }?.toFloat()?.coerceAtLeast(0.5f) ?: 1f
+                    is Number -> (requestedSize.toDouble() / 24.0).takeIf { it.isFinite() }?.let { craftNativeLayoutNumber(it).coerceAtLeast(0.5f) } ?: 1f
                     else -> 1f
                 }
                 indicatorScale = scale
@@ -7967,37 +7993,46 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyTransform(view: View, transforms: JSONArray?) {
-        view.translationX = 0f
-        view.translationY = 0f
         // Reconciliation reapplies transforms; start from the control's
         // intrinsic scale rather than erasing its authored indicator size.
         val intrinsicScale = (view as? CraftNativeActivityIndicator)?.indicatorScale ?: 1f
-        view.scaleX = intrinsicScale
-        view.scaleY = intrinsicScale
-        view.rotation = 0f
-        view.rotationX = 0f
-        view.rotationY = 0f
-        CraftNativeSkewTransforms.clear(view)
-        if (transforms == null) return
+        var translationX = 0f
+        var translationY = 0f
+        var scaleX = intrinsicScale
+        var scaleY = intrinsicScale
+        var rotation = 0f
+        var rotationX = 0f
+        var rotationY = 0f
         var skewX = 0f
         var skewY = 0f
-        for (index in 0 until transforms.length()) {
-            val transform = transforms.optJSONObject(index) ?: continue
+        for (index in 0 until (transforms?.length() ?: 0)) {
+            val transform = transforms?.optJSONObject(index) ?: continue
             val key = transform.keys().asSequence().firstOrNull() ?: continue
             when (key) {
-                "translateX" -> view.translationX += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()
-                "translateY" -> view.translationY += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()
-                "scale" -> craftNativeFiniteDouble(transform, key, 1.0).toFloat().let { view.scaleX *= it; view.scaleY *= it }
-                "scaleX" -> view.scaleX *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()
-                "scaleY" -> view.scaleY *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()
-                "rotate", "rotateZ" -> view.rotation += angleDegrees(transform.opt(key))
-                "rotateX" -> view.rotationX += angleDegrees(transform.opt(key))
-                "rotateY" -> view.rotationY += angleDegrees(transform.opt(key))
+                "translateX" -> translationX += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()
+                "translateY" -> translationY += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()
+                "scale" -> craftNativeFiniteDouble(transform, key, 1.0).toFloat().let { scaleX *= it; scaleY *= it }
+                "scaleX" -> scaleX *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()
+                "scaleY" -> scaleY *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()
+                "rotate", "rotateZ" -> rotation += angleDegrees(transform.opt(key))
+                "rotateX" -> rotationX += angleDegrees(transform.opt(key))
+                "rotateY" -> rotationY += angleDegrees(transform.opt(key))
                 "skewX" -> skewX += skewFactor(transform.opt(key))
                 "skewY" -> skewY += skewFactor(transform.opt(key))
             }
         }
-        CraftNativeSkewTransforms.set(view, skewX, skewY)
+        // Summed and multiplied first, and bounded once: a view throws on a
+        // scale or an offset that is infinite or not a number, and two finite
+        // factors can make either.
+        view.translationX = craftNativeLayoutNumber(translationX)
+        view.translationY = craftNativeLayoutNumber(translationY)
+        view.scaleX = craftNativeLayoutNumber(scaleX)
+        view.scaleY = craftNativeLayoutNumber(scaleY)
+        view.rotation = craftNativeLayoutNumber(rotation)
+        view.rotationX = craftNativeLayoutNumber(rotationX)
+        view.rotationY = craftNativeLayoutNumber(rotationY)
+        CraftNativeSkewTransforms.clear(view)
+        if (transforms != null) CraftNativeSkewTransforms.set(view, craftNativeLayoutNumber(skewX), craftNativeLayoutNumber(skewY))
     }
 
     private fun skewFactor(value: Any?): Float =

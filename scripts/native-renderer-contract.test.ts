@@ -3022,6 +3022,33 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('is held to 33,554,432 either\nside of zero')
   })
 
+  it('counts a grid no more tracks than a screen could show, on both hosts, and draws Android with hostile numbers too', () => {
+    // A track count is whatever the script said. UIKit appended to an array
+    // of row heights up to it: `gridTemplateRows: 1e30` froze the app for
+    // minutes and then ended it, and past 2^32 the count trapped as a
+    // UInt32. Android made a list of rows and an array of columns that
+    // long and ran out of memory in measure. Neither host's hostile-number
+    // case reached a grid, because a number is not `display: "grid"` (#528).
+    expect(ios).toContain('let craftNativeGridTrackLimit = 1024')
+    expect(ios).toContain('return min(craftNativeGridTrackLimit, max(1, craftNativeInt(number.doubleValue)))')
+    expect(ios).toContain('if !digits.isEmpty { return min(craftNativeGridTrackLimit, max(1, Int(digits) ?? craftNativeGridTrackLimit)) }')
+    expect(ios).not.toContain('return max(1, number.intValue)')
+    expect(android).toContain('internal const val CRAFT_NATIVE_GRID_TRACK_LIMIT = 1024')
+    expect(android).toContain('if (value is Number) return value.toInt().coerceIn(1, CRAFT_NATIVE_GRID_TRACK_LIMIT)')
+    expect(androidFlatList).toContain('val nextColumns = columns.coerceIn(1, CRAFT_NATIVE_FLAT_LIST_MAX_COLUMNS)')
+    const iosHostile = readFileSync(join(root, 'packages/ios/fixtures/native-screen/HostileNumbersUnitTests.swift'), 'utf8')
+    const androidHostile = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeHostileNumbersTest.kt'), 'utf8')
+    expect(iosHostile).toContain('func testGridsOfAHostileNumberOfColumnsAndRows() throws {')
+    expect(androidHostile).toContain('fun gridsOfAHostileNumberOfColumnsAndRows() = drawing { draw ->')
+    // The same numbers on both hosts.
+    const numbers = (text: string, open: string) => text.slice(text.indexOf(open), text.indexOf('\n', text.indexOf('1e15', text.indexOf(open)))).replace(/\s+/g, ' ')
+    expect(numbers(iosHostile, 'static let numbers: [Double] = [')).toContain('1e30, -1e30, .greatestFiniteMagnitude, -.greatestFiniteMagnitude, 4_294_967_296.5, -4_294_967_296.5, 1e15, -1, 0, 0.5,')
+    expect(numbers(androidHostile, 'val numbers = listOf(')).toContain('1e30, -1e30, Double.MAX_VALUE, -Double.MAX_VALUE, 4_294_967_296.5, -4_294_967_296.5, 1e15, -1.0, 0.0, 0.5,')
+    // And the Android case is in the device suite.
+    expect(readFileSync(join(root, 'packages/android/scripts/test-native-navigation.ts'), 'utf8')).toContain("join(testDirectory, 'NativeHostileNumbersTest.kt')")
+    expect(guide).toContain('grid at most 1,024 column or row tracks')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link
@@ -3660,11 +3687,16 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('affine = affine.translatedBy(x: value, y: 0)')
     expect(ios).toContain('CATransform3DRotate(threeDimensional, value, 1, 0, 0)')
     expect(android).toContain('applyTransform(view, style.optJSONArray("transform"))')
-    expect(android).toContain('view.translationX += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()')
-    expect(android).toContain('view.scaleX *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()')
+    expect(android).toContain('"translateX" -> translationX += dp(craftNativeFiniteDouble(transform, key, 0.0)).toFloat()')
+    expect(android).toContain('"scaleX" -> scaleX *= craftNativeFiniteDouble(transform, key, 1.0).toFloat()')
+    // Summed and multiplied first, then set once, bounded: a view throws on
+    // a scale or an offset that is infinite or not a number (#528).
+    expect(android).toContain('view.translationX = craftNativeLayoutNumber(translationX)')
+    expect(android).toContain('view.scaleX = craftNativeLayoutNumber(scaleX)')
     expect(android).toContain('takeIf { it.isFinite() } ?: 0f')
     expect(android).toContain('private fun dp(value: Double): Int')
-    expect(android).toContain('view.rotationY += angleDegrees(transform.opt(key))')
+    expect(android).toContain('"rotateY" -> rotationY += angleDegrees(transform.opt(key))')
+    expect(android).toContain('view.rotationY = craftNativeLayoutNumber(rotationY)')
     expect(android).toContain('"skewX" -> skewX += skewFactor(transform.opt(key))')
     expect(android).toContain('override fun drawChild(canvas: Canvas, child: View, drawingTime: Long)')
     expect(android).toContain('CraftNativeSkewTransforms.matrix(child)')
@@ -3737,7 +3769,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('previous as? CraftNativeActivityIndicator ?: CraftNativeActivityIndicator(this)')
     expect(android).toContain('isIndeterminate = animating')
     expect(ios).toContain('scale = value.isFinite ? max(0.5, value) : 1')
-    expect(android).toContain('takeIf { it.isFinite() }?.toFloat()?.coerceAtLeast(0.5f) ?: 1f')
+    expect(android).toContain('takeIf { it.isFinite() }?.let { craftNativeLayoutNumber(it).coerceAtLeast(0.5f) } ?: 1f')
     expect(ios).toContain('indicator.isHidden = style["display"] as? String == "none" || indicator.hidesWhenStopped')
     expect(ios).toContain('indicator.isHidden = style["display"] as? String == "none"')
     expect(navigationHome).toContain('testID="toggle-indicator-hide"')
@@ -3853,7 +3885,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('indicator.stopAnimating()')
     expect(android).toContain('val requestedSize = props.opt("size")')
     expect(android).toContain('val intrinsicScale = (view as? CraftNativeActivityIndicator)?.indicatorScale ?: 1f')
-    expect(android).toContain('is Number -> (requestedSize.toDouble() / 24.0).takeIf { it.isFinite() }?.toFloat()?.coerceAtLeast(0.5f) ?: 1f')
+    expect(android).toContain('is Number -> (requestedSize.toDouble() / 24.0).takeIf { it.isFinite() }?.let { craftNativeLayoutNumber(it).coerceAtLeast(0.5f) } ?: 1f')
     expect(android).toContain('isIndeterminate = animating')
     expect(android).toContain('craftNativeBoolean(props.opt("hidesWhenStopped"), true)')
     expect(android).toContain('if (craftNativeOptionalString(style.opt("display")) == "none" || (!animating && hidesWhenStopped))')

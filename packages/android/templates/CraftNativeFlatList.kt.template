@@ -17,6 +17,9 @@ import kotlin.math.max
 
 internal typealias CraftNativeRenderItem = (node: JSONObject, identity: String, previous: View?) -> View
 
+/** The most columns a grid is given: more than any screen has pixels across to show. */
+internal const val CRAFT_NATIVE_FLAT_LIST_MAX_COLUMNS = 1024
+
 /** A stable-key RecyclerView host for stx native FlatList nodes. */
 internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
@@ -403,7 +406,11 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         this.endReached = endReached
         threshold = endReachedThreshold.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.1
 
-        val nextColumns = columns.coerceAtLeast(1)
+        // A grid keeps an array one longer than its column count, so a
+        // count from data (`numColumns={Number.MAX_VALUE}` arrives as the
+        // largest Int) asked it for a negative length and ended the process
+        // in layout. No screen is as many pixels wide as this many columns.
+        val nextColumns = columns.coerceIn(1, CRAFT_NATIVE_FLAT_LIST_MAX_COLUMNS)
         val layoutChanged = this.horizontal != horizontal || this.columns != nextColumns
         val retainedState = if (layoutChanged) null else layoutManager?.onSaveInstanceState()
         this.horizontal = horizontal
