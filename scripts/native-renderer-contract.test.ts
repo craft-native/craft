@@ -3049,6 +3049,28 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('grid at most 1,024 column or row tracks')
   })
 
+  it('lets a position place an image without choosing its fit, on both hosts', () => {
+    // In CSS object-position does not change object-fit. STX compiles
+    // `object-cover` to `resizeMode: "cover"` and sets no objectFit, and both
+    // hosts read "a position and no fit" as fit "fill": a cover photo given
+    // `objectPosition: 'center 30%'` was stretched to its box (#532).
+    expect(ios).toContain('let requested = rawFit as? String ?? Self.objectFit(resizeMode: style["resizeMode"] as? String ?? props["resizeMode"] as? String)')
+    expect(ios).toContain('static func objectFit(resizeMode: String?) -> String {')
+    expect(ios).not.toContain('let requested = rawFit as? String ?? "fill"')
+    expect(android).toContain('val requested = if (fit != null) fit as? String else when (')
+    expect(android).toContain('craftNativeOptionalString(style.opt("resizeMode")) ?: craftNativeOptionalString(props.opt("resizeMode"))')
+    expect(android).not.toContain('objectFit = if (fit != null || position != null) (fit as? String)')
+    // The same mapping on both: what each resize mode already draws.
+    for (const [mode, fit] of [['cover', 'cover'], ['contain', 'contain'], ['center', 'none']]) {
+      expect(ios).toContain(`case "${mode}": return "${fit}"`)
+      expect(android).toContain(`"${mode}" -> "${fit}"`)
+    }
+    expect(readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeRenderUnitTests.swift'), 'utf8'))
+      .toContain('func testAPositionAloneKeepsTheFitTheResizeModeAskedFor() throws {')
+    expect(androidNavigationTest).toContain('@Test fun aPositionAloneKeepsTheFitTheResizeModeAskedFor() {')
+    expect(guide).toContain('A\nposition does not choose a fit')
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link

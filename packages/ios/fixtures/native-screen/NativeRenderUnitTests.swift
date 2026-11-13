@@ -6602,6 +6602,38 @@ final class NativeImageGeometryUnitTests: XCTestCase {
         }
     }
 
+    /// A position does not choose a fit (#532). `object-cover` reaches the
+    /// host as `resizeMode: "cover"` with no objectFit; with a position beside
+    /// it the image was drawn as "fill", squashed into its box.
+    func testAPositionAloneKeepsTheFitTheResizeModeAskedFor() throws {
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let view = CraftNativePositionedImageView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        view.clipsToBounds = true; view.contentMode = .scaleAspectFill
+        controller.view.addSubview(view)
+        // Twice as tall as wide: cover fills the width and crops the height.
+        let source = try image(10, 20)
+        view.image = source
+        let cases: [([String: Any], [String: Any], CGRect)] = [
+            (["objectPosition": "center 30%"], ["resizeMode": "cover"], CGRect(x: 0, y: -30, width: 100, height: 200)),
+            // The mode may be a prop, and the position a style.
+            (["resizeMode": "cover"], ["objectPosition": "center 30%"], CGRect(x: 0, y: -30, width: 100, height: 200)),
+            (["objectPosition": "right top"], ["resizeMode": "contain"], CGRect(x: 50, y: 0, width: 50, height: 100)),
+            (["objectPosition": "left top"], ["resizeMode": "center"], CGRect(x: 0, y: 0, width: 10, height: 20)),
+            (["objectPosition": "left top"], ["resizeMode": "stretch"], view.bounds),
+            // No mode at all: fill, as it was.
+            (["objectPosition": "left top"], [:], view.bounds),
+            // An objectFit still decides, whatever the mode.
+            (["objectPosition": "left top", "objectFit": "contain"], ["resizeMode": "cover"], CGRect(x: 0, y: 0, width: 50, height: 100)),
+        ]
+        for (props, style, frame) in cases {
+            view.configureObjectGeometry(props: props, style: style)
+            try assertRaster(view, source: source, frame: frame)
+        }
+    }
+
     func testRasterRestoresLegacyPaintingAndClearsReplacedSourceWithoutDuplication() throws {
         let controller = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))

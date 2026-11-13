@@ -2250,8 +2250,11 @@ above the content it overlays; pointer policy does not reorder native siblings.
 
 `Image` and `ImageBackground` accept `objectFit` and `objectPosition` in props or
 style. Non-null props take precedence; null/absent props fall back to style.
-With either property present, `objectFit` defaults to `fill` and supports `fill`,
-`contain`, `cover`, `none`, and `scale-down`. `contain` may upscale; `scale-down`
+`objectFit` supports `fill`, `contain`, `cover`, `none`, and `scale-down`. A
+position does not choose a fit: with `objectPosition` and no `objectFit`, the
+fit is the one `resizeMode` already asks for (`cover`, `contain`, `center` as
+`none`, `stretch` as `fill`), and `fill` when there is no `resizeMode` either,
+so `class="object-cover"` with an `objectPosition` crops rather than stretches. `contain` may upscale; `scale-down`
 uses the intrinsic size when it fits and otherwise contains it, never upscaling.
 `none` keeps intrinsic size. All explicit modes clip pixels to the image box.
 

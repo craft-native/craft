@@ -3863,6 +3863,40 @@ class NativeImageGeometryTest {
         }
     }
 
+    /**
+     * A position does not choose a fit (#532). `object-cover` reaches the
+     * host as `resizeMode: "cover"` with no objectFit; with a position beside
+     * it the image was drawn as "fill", squashed into its box.
+     */
+    @Test fun aPositionAloneKeepsTheFitTheResizeModeAskedFor() {
+        instrumentation.runOnMainSync {
+            val image = CraftNativePointerImageView(instrumentation.targetContext)
+            image.layout(0, 0, 100, 100)
+            // Twice as tall as its box is wide: cover fills the width and crops the height.
+            image.setImageBitmap(Bitmap.createBitmap(100, 200, Bitmap.Config.ARGB_8888).apply { density = Bitmap.DENSITY_NONE })
+            fun position(value: String) = JSONObject().put("objectPosition", value)
+            fun mode(value: String) = JSONObject().put("resizeMode", value)
+            // A quarter, which a Float holds exactly.
+            image.configureObjectGeometry(position("center 25%"), mode("cover"))
+            assertEquals("cover, cropped a quarter of the way down", android.graphics.RectF(0f, -25f, 100f, 175f), rect(image))
+            // The mode may be a prop, and the position a style.
+            image.configureObjectGeometry(mode("cover"), position("center 25%"))
+            assertEquals(android.graphics.RectF(0f, -25f, 100f, 175f), rect(image))
+            image.configureObjectGeometry(position("right top"), mode("contain"))
+            assertEquals("contain, at the right", android.graphics.RectF(50f, 0f, 100f, 100f), rect(image))
+            image.configureObjectGeometry(position("left top"), mode("center"))
+            assertEquals("center keeps the intrinsic size", android.graphics.RectF(0f, 0f, 100f, 200f), rect(image))
+            image.configureObjectGeometry(position("left top"), mode("stretch"))
+            assertEquals("stretch fills", android.graphics.RectF(0f, 0f, 100f, 100f), rect(image))
+            // No mode at all: fill, as it was.
+            image.configureObjectGeometry(position("left top"), JSONObject())
+            assertEquals(android.graphics.RectF(0f, 0f, 100f, 100f), rect(image))
+            // An objectFit still decides, whatever the mode.
+            image.configureObjectGeometry(position("left top").put("objectFit", "contain"), mode("cover"))
+            assertEquals(android.graphics.RectF(0f, 0f, 50f, 100f), rect(image))
+        }
+    }
+
     @Test fun coverAndPositionRespectCroppingPrecedenceAndReset() {
         instrumentation.runOnMainSync {
             val image = CraftNativePointerImageView(instrumentation.targetContext)

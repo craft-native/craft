@@ -4379,7 +4379,11 @@ class CraftNativePositionedImageView: UIView {
         }
         let rawFit = value("objectFit"), rawPosition = value("objectPosition")
         if rawFit != nil || rawPosition != nil {
-            let requested = rawFit as? String ?? "fill"
+            // A position does not choose a fit, as in CSS. STX compiles
+            // `object-cover` to `resizeMode: "cover"` and sets no objectFit,
+            // so a cover image given a position was drawn as "fill":
+            // stretched to its box instead of cropped (#532).
+            let requested = rawFit as? String ?? Self.objectFit(resizeMode: style["resizeMode"] as? String ?? props["resizeMode"] as? String)
             fit = ["fill", "contain", "cover", "none", "scale-down"].contains(requested) ? requested : "fill"
             position = Self.objectPosition(rawPosition)
         } else { fit = nil }
@@ -4406,6 +4410,17 @@ class CraftNativePositionedImageView: UIView {
 
     var usesObjectGeometry: Bool { fit != nil }
     var objectCovers: Bool { fit == "cover" }
+
+    /// The fit a `resizeMode` already asks for, for an image that has a
+    /// position and no `objectFit`; "fill" when it has neither.
+    static func objectFit(resizeMode: String?) -> String {
+        switch resizeMode {
+        case "cover": return "cover"
+        case "contain": return "contain"
+        case "center": return "none"
+        default: return "fill"
+        }
+    }
 
     private static func objectPosition(_ raw: Any?) -> CGPoint {
         guard let text = raw as? String else { return CGPoint(x: 0.5, y: 0.5) }

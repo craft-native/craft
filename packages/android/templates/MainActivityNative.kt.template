@@ -1410,7 +1410,19 @@ internal class CraftNativePointerImageView(context: Context) : ImageView(context
             ?: style.opt(name)?.takeUnless { it == JSONObject.NULL }
         val fit = value("objectFit")
         val position = value("objectPosition")
-        objectFit = if (fit != null || position != null) (fit as? String)
+        // A position does not choose a fit, as in CSS. STX compiles
+        // `object-cover` to `resizeMode: "cover"` and sets no objectFit, so a
+        // cover image given a position was drawn as "fill": stretched to its
+        // box instead of cropped (#532).
+        val requested = if (fit != null) fit as? String else when (
+            craftNativeOptionalString(style.opt("resizeMode")) ?: craftNativeOptionalString(props.opt("resizeMode"))
+        ) {
+            "cover" -> "cover"
+            "contain" -> "contain"
+            "center" -> "none"
+            else -> "fill"
+        }
+        objectFit = if (fit != null || position != null) requested
             ?.takeIf { it in setOf("fill", "contain", "cover", "none", "scale-down") } ?: "fill" else null
         val point = parsePosition(position)
         objectX = point.first; objectY = point.second
