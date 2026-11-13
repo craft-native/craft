@@ -1092,6 +1092,7 @@ const BridgeArgs = struct {
     value: []const u8 = "",
     level: []const u8 = "",
     message: []const u8 = "",
+    id: []const u8 = "",
 };
 
 fn parseBridgeArgs(arena: std.mem.Allocator, json: []const u8) !BridgeArgs {
@@ -1193,7 +1194,204 @@ fn sendShell(action: []const u8, data: ?[]const u8) !void {
             return bridge_error.BridgeError.NativeCallFailed;
         return;
     }
+    if (eql(u8, action, "spawn")) return spawnChild(arena, allocator, data orelse "");
+    if (eql(u8, action, "kill")) return killChild(allocator, action, args.id);
     return error.PlatformNotSupported;
+}
+
+/// One live child process. A fixed-capacity table rather than a hash map, so it
+/// needs no allocator and a failed insert cannot leak the id it copied.
+const SpawnSlot = struct {
+    id: [64]u8 = undefined,
+    id_len: usize = 0,
+    handle: ?*anyopaque = null,
+};
+
+const max_spawns = 32;
+var spawn_slots: [max_spawns]SpawnSlot = @splat(.{});
+var spawn_count: usize = 0;
+
+/// Drop slots whose process has already exited, closing the handle. Runs before
+/// every spawn: a page that starts many short commands would otherwise fill the
+/// table with finished children and leak a handle per process.
+fn reapSpawns() void {
+    var write_index: usize = 0;
+    for (spawn_slots[0..spawn_count]) |slot| {
+        if (slot.handle) |handle| {
+            // WAIT_OBJECT_0 means the process signalled, i.e. it has exited.
+            if (WaitForSingleObject(handle, 0) == 0) {
+                _ = CloseHandle(handle);
+                continue;
+            }
+        }
+        spawn_slots[write_index] = slot;
+        write_index += 1;
+    }
+    spawn_count = write_index;
+}
+
+/// Quote one argument the way Windows' `CommandLineToArgvW` parser reads it
+/// back: a bare token needs no quoting, anything holding a space, tab or quote
+/// is wrapped, embedded quotes are escaped, and the backslashes that land in
+/// front of the closing quote are doubled so they are not read as escapes.
+fn appendQuotedArg(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, arg: []const u8) !void {
+    if (arg.len != 0 and std.mem.indexOfAny(u8, arg, " \t\"") == null)
+        return out.appendSlice(allocator, arg);
+
+    try out.append(allocator, '"');
+    var backslashes: usize = 0;
+    for (arg) |ch| {
+        if (ch == '\\') {
+            backslashes += 1;
+            continue;
+        }
+        if (ch == '"') {
+            try out.appendNTimes(allocator, '\\', backslashes * 2 + 1);
+            try out.append(allocator, '"');
+            backslashes = 0;
+            continue;
+        }
+        try out.appendNTimes(allocator, '\\', backslashes);
+        backslashes = 0;
+        try out.append(allocator, ch);
+    }
+    try out.appendNTimes(allocator, '\\', backslashes * 2);
+    try out.append(allocator, '"');
+}
+
+/// `craft.shell.spawn` on Windows.
+///
+/// The child inherits our stdout and stderr, matching `bridge_shell.zig`: the
+/// page asked for a process, not for a pipe. `opts.shell` runs the command
+/// through `cmd.exe`, and arguments are refused there because a shell command
+/// line is one string -- accepting both would silently drop the arguments.
+fn spawnChild(arena: std.mem.Allocator, allocator: std.mem.Allocator, json: []const u8) !void {
+    const SpawnArgs = struct {
+        id: []const u8 = "",
+        command: []const u8 = "",
+        cwd: []const u8 = "",
+        args: []const []const u8 = &.{},
+        shell: bool = false,
+    };
+    const parsed = std.json.parseFromSlice(SpawnArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    const sp = parsed.value;
+
+    if (sp.id.len == 0 or sp.command.len == 0) return bridge_error.BridgeError.MissingData;
+    if (sp.id.len >= spawn_slots[0].id.len) return bridge_error.BridgeError.InvalidParameter;
+    if (sp.args.len > 256) return bridge_error.BridgeError.InvalidParameter;
+
+    var cmdline: std.ArrayListUnmanaged(u8) = .empty;
+    defer cmdline.deinit(allocator);
+
+    if (sp.shell) {
+        if (sp.args.len != 0) return bridge_error.BridgeError.InvalidParameter;
+        // `cmd.exe` is the program here, and the command goes in verbatim:
+        // cmd has its own quote handling (`/s` strips the outer pair) and does
+        // not treat `\\"` as an escape, so the argv quoting above would corrupt
+        // it. A `>` or `|` inside is the shell's job to interpret.
+        try cmdline.appendSlice(allocator, "cmd.exe /d /s /c \"");
+        try cmdline.appendSlice(allocator, sp.command);
+        try cmdline.append(allocator, '"');
+    } else {
+        try appendQuotedArg(&cmdline, allocator, sp.command);
+        for (sp.args) |arg| {
+            try cmdline.append(allocator, ' ');
+            try appendQuotedArg(&cmdline, allocator, arg);
+        }
+    }
+
+    var startup: STARTUPINFOW = std.mem.zeroes(STARTUPINFOW);
+    startup.cb = @sizeOf(STARTUPINFOW);
+    var info: PROCESS_INFORMATION = std.mem.zeroes(PROCESS_INFORMATION);
+
+    reapSpawns();
+    if (spawn_count >= max_spawns) {
+        std.log.warn("craft.shell.spawn: refusing '{s}', {d} children are still running", .{ sp.command, spawn_count });
+        return bridge_error.BridgeError.NativeCallFailed;
+    }
+
+    // The program to start and the command line that names it are two different
+    // things in shell mode: `cmd.exe` runs, and the caller's text is an argument
+    // to it.
+    const app_name: []const u8 = if (sp.shell) "cmd.exe" else sp.command;
+    const app_w = try toWideZ(arena, app_name);
+    const cmd_w = try toWideZ(arena, cmdline.items);
+    const cwd_w: ?[:0]u16 = if (sp.cwd.len > 0) try toWideZ(arena, sp.cwd) else null;
+
+    // `CreateProcessW` does not search `PATH` when `lpApplicationName` is given:
+    // it treats the value as a path relative to the working directory, so a bare
+    // `ping.exe` fails. Resolving through `SearchPathW` first is what makes
+    // `spawn('p', 'ping.exe', ...)` behave like typing it into a shell.
+    const app_ptr: [*:0]const u16 = blk: {
+        var search_buf: [std.fs.max_path_bytes]u16 = undefined;
+        const found = SearchPathW(null, app_w.ptr, null, @intCast(search_buf.len), &search_buf, null);
+        if (found > 0 and found < search_buf.len) {
+            const copy = try arena.alloc(u16, found + 1);
+            @memcpy(copy[0..found], search_buf[0..found]);
+            copy[found] = 0;
+            break :blk copy[0..found :0].ptr;
+        }
+        break :blk app_w.ptr;
+    };
+
+    // `bInheritHandles = TRUE` without STARTF_USESTDHANDLES hands the child our
+    // standard handles, which is how its output reaches the same console.
+    if (CreateProcessW(
+        app_ptr,
+        @constCast(cmd_w.ptr),
+        null,
+        null,
+        1,
+        0,
+        null,
+        if (cwd_w) |cwd| cwd.ptr else null,
+        &startup,
+        &info,
+    ) == 0) {
+        std.log.warn("craft.shell.spawn: CreateProcessW failed for '{s}' (command line: {s})", .{ app_name, cmdline.items });
+        return bridge_error.BridgeError.NativeCallFailed;
+    }
+    // The thread handle is not needed; the process handle is what `kill` uses.
+    _ = CloseHandle(info.hThread);
+
+    var slot = &spawn_slots[spawn_count];
+    @memcpy(slot.id[0..sp.id.len], sp.id);
+    slot.id_len = sp.id.len;
+    slot.handle = info.hProcess;
+    spawn_count += 1;
+
+    var escaped_buf: [512]u8 = undefined;
+    const escaped = bridge_error.escapeJsonString(&escaped_buf, sp.id) catch return bridge_error.BridgeError.InvalidParameter;
+    var reply_buf: [600]u8 = undefined;
+    const reply = try std.fmt.bufPrint(&reply_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{escaped});
+    bridge_error.sendResultToJS(allocator, "spawn", reply);
+}
+
+/// `craft.shell.kill` on Windows: terminate the child and release its handle.
+fn killChild(allocator: std.mem.Allocator, action: []const u8, id: []const u8) !void {
+    if (id.len == 0) return bridge_error.BridgeError.MissingData;
+
+    var index: usize = 0;
+    while (index < spawn_count) : (index += 1) {
+        const slot = &spawn_slots[index];
+        if (!std.mem.eql(u8, slot.id[0..slot.id_len], id)) continue;
+
+        if (slot.handle) |handle| {
+            _ = TerminateProcess(handle, 1);
+            _ = CloseHandle(handle);
+        }
+        // Compact the table: this slot goes, the rest shift down.
+        var k = index;
+        while (k + 1 < spawn_count) : (k += 1) spawn_slots[k] = spawn_slots[k + 1];
+        spawn_count -= 1;
+
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    return bridge_error.BridgeError.NotFound;
 }
 
 /// `SYSTEM_POWER_STATUS` from `winbase.h` (12 bytes with `DWORD` alignment).
@@ -1445,6 +1643,64 @@ extern "kernel32" fn SetEnvironmentVariableW(
 extern "kernel32" fn GetSystemPowerStatus(lp_status: *SYSTEM_POWER_STATUS) callconv(.c) c_int;
 extern "kernel32" fn GetTickCount64() callconv(.c) u64;
 extern "kernel32" fn SetThreadExecutionState(flags: u32) callconv(.c) u32;
+
+extern "kernel32" fn CreateProcessW(
+    lp_application_name: ?[*:0]const u16,
+    lp_command_line: ?[*:0]u16,
+    lp_process_attributes: ?*anyopaque,
+    lp_thread_attributes: ?*anyopaque,
+    b_inherit_handles: c_int,
+    dw_creation_flags: u32,
+    lp_environment: ?*anyopaque,
+    lp_current_directory: ?[*:0]const u16,
+    lp_startup_info: *STARTUPINFOW,
+    lp_process_information: *PROCESS_INFORMATION,
+) callconv(.c) c_int;
+
+extern "kernel32" fn TerminateProcess(h: ?*anyopaque, code: u32) callconv(.c) c_int;
+extern "kernel32" fn WaitForSingleObject(h: ?*anyopaque, milliseconds: u32) callconv(.c) u32;
+extern "kernel32" fn CloseHandle(h: ?*anyopaque) callconv(.c) c_int;
+
+/// Resolves a bare executable name through the same search order a shell uses
+/// (`PATH`, `PATHEXT` and the application directory).
+extern "kernel32" fn SearchPathW(
+    lp_path: ?[*:0]const u16,
+    lp_file_name: [*:0]const u16,
+    lp_extension: ?[*:0]const u16,
+    n_buffer_length: u32,
+    lp_buffer: ?[*]u16,
+    lp_file_part: ?*?[*]u16,
+) callconv(.c) u32;
+
+/// `STARTUPINFOW` from `processthreadsapi.h`. Left zeroed except `cb`, which
+/// makes the child inherit our standard handles instead of receiving pipes.
+const STARTUPINFOW = extern struct {
+    cb: u32 = 0,
+    lpReserved: ?[*:0]u16 = null,
+    lpDesktop: ?[*:0]u16 = null,
+    lpTitle: ?[*:0]u16 = null,
+    dwX: u32 = 0,
+    dwY: u32 = 0,
+    dwXSize: u32 = 0,
+    dwYSize: u32 = 0,
+    dwXCountChars: u32 = 0,
+    dwYCountChars: u32 = 0,
+    dwFillAttribute: u32 = 0,
+    dwFlags: u32 = 0,
+    wShowWindow: u16 = 0,
+    cbReserved2: u16 = 0,
+    lpReserved2: ?*u8 = null,
+    hStdInput: ?*anyopaque = null,
+    hStdOutput: ?*anyopaque = null,
+    hStdError: ?*anyopaque = null,
+};
+
+const PROCESS_INFORMATION = extern struct {
+    hProcess: ?*anyopaque = null,
+    hThread: ?*anyopaque = null,
+    dwProcessId: u32 = 0,
+    dwThreadId: u32 = 0,
+};
 
 extern "advapi32" fn RegOpenKeyExW(
     h_key: ?*anyopaque,
