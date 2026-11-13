@@ -13,6 +13,7 @@ const io_context = @import("io_context.zig");
 const desktop_deep_link = @import("desktop_deep_link.zig");
 const desktop_instance = @import("desktop_instance.zig");
 const windows_desktop = @import("windows_desktop.zig");
+const windows_tray = @import("windows_tray.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -847,6 +848,7 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     // correlated answer.
     if (eql(u8, kind, "system")) return sendSystem(action);
     if (eql(u8, kind, "screen")) return sendScreen(action);
+    if (eql(u8, kind, "tray")) return handleTrayAction(entry, action, data);
     if (eql(u8, kind, "shell")) return sendShell(action, data);
     if (eql(u8, kind, "power")) return sendPower(action);
     if (eql(u8, kind, "autoLaunch")) return sendAutoLaunch(action);
@@ -1392,6 +1394,75 @@ fn killChild(allocator: std.mem.Allocator, action: []const u8, id: []const u8) !
         return;
     }
     return bridge_error.BridgeError.NotFound;
+}
+
+// =============================================================================
+// Windows: system tray
+// =============================================================================
+
+var global_tray: ?*windows_tray.WindowsTray = null;
+
+/// The tray this process owns, anchored to the window that will receive its
+/// click messages.
+///
+/// `tray.zig` asks `windows_tray` to build its own message-only window, and that
+/// path cannot work: it calls `CreateWindowExW` with a class name nothing ever
+/// registers, so it fails before an icon appears. Anchoring the icon to the app
+/// window is also what makes `WM_TRAYICON` reach the proc below; a window of the
+/// system's own class has a procedure that is not ours.
+fn ensureTray(allocator: std.mem.Allocator, window: usize, title: []const u8) !*windows_tray.WindowsTray {
+    if (global_tray) |tray| return tray;
+    const tray = try allocator.create(windows_tray.WindowsTray);
+    errdefer allocator.destroy(tray);
+    tray.* = try windows_tray.WindowsTray.init(allocator, @ptrFromInt(window), title);
+    global_tray = tray;
+    return tray;
+}
+
+/// `craft.tray` on Windows.
+fn handleTrayAction(entry: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+    // `setTitle` and `setTooltip` send their text bare rather than as JSON.
+    const payload = data orelse "";
+
+    if (eql(u8, action, "getState")) {
+        var buf: [128]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"visible\":{s},\"title\":\"\",\"tooltip\":\"\"}}", .{
+            if (global_tray != null) "true" else "false",
+        });
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "setTitle")) {
+        const tray = try ensureTray(allocator, entry.window, payload);
+        try tray.setTitle(payload);
+        return;
+    }
+    if (eql(u8, action, "setTooltip")) {
+        const tray = try ensureTray(allocator, entry.window, payload);
+        try tray.setTooltip(payload);
+        return;
+    }
+    if (eql(u8, action, "show")) {
+        _ = try ensureTray(allocator, entry.window, payload);
+        return;
+    }
+    if (eql(u8, action, "destroy") or eql(u8, action, "hide")) {
+        if (global_tray) |tray| {
+            tray.deinit();
+            allocator.destroy(tray);
+            global_tray = null;
+        }
+        return;
+    }
+    // `setIcon`, `setMenu`, `setBadge` and `pollActions` have no counterpart
+    // here: the icon is the stock application icon, the tray draws no menu yet,
+    // and clicks are pushed rather than polled. All four are `_send` on the
+    // facade, so answering nothing is the right shape.
+    if (eql(u8, action, "setIcon") or eql(u8, action, "setMenu") or
+        eql(u8, action, "setBadge") or eql(u8, action, "pollActions")) return;
+    return error.PlatformNotSupported;
 }
 
 /// `SYSTEM_POWER_STATUS` from `winbase.h` (12 bytes with `DWORD` alignment).
@@ -3378,6 +3449,24 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         windows_desktop.WM_CRAFT_DESKTOP => {
             windows_desktop.processPending();
             return 0;
+        },
+        windows_tray.WindowsTray.WM_TRAYICON => {
+            // A left click is the open/toggle gesture. Right clicks would open a
+            // menu, which this build does not draw yet.
+            const event = windows_tray.handleTrayMessage(wParam, @bitCast(lParam));
+            const button: []const u8 = switch (event) {
+                .left_click => "left",
+                .right_click => "right",
+                else => "",
+            };
+            if (button.len > 0) {
+                if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                    var script_buf: [96]u8 = undefined;
+                    const script = std.fmt.bufPrint(&script_buf, "if(window.__craftDeliverTrayClick)window.__craftDeliverTrayClick('{s}');", .{button}) catch "";
+                    if (script.len > 0) evalInWebview(entry.webview, script);
+                }
+                return 0;
+            }
         },
         WM_COMMAND => {
             // High word 0 and no control handle: a menu item, or an
