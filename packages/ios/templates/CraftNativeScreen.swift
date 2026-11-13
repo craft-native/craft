@@ -7259,9 +7259,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // released, it stays drawn until the destination says what it wants.
         CraftChrome.shared.releaseTabAccessory(ownedBy: self)
         // Popped (or its stack dismissed) while the bar was away: it comes
-        // back for whatever shows next, a web page included.
+        // back for whatever shows next, a web page included. Unless what
+        // shows next is a screen of this stack that puts the bar away too:
+        // that one says so only once it is on screen, after this, so the bar
+        // and the floating actions slid in for the length of the pop and out
+        // again, and stayed in for the whole of a back-swipe (#530).
         if tabBarHiddenApplied, isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
-            CraftChrome.shared.setHiddenByScreen(false)
+            let stackGoes = isBeingDismissed || navigationController?.isBeingDismissed == true
+            let revealed = stackGoes ? nil : navigationController?.topViewController as? CraftNativeScreenController
+            if revealed === self || revealed?.wantsTabBarHidden != true {
+                CraftChrome.shared.setHiddenByScreen(false)
+            }
         }
     }
 

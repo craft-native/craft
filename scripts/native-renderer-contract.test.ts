@@ -315,6 +315,13 @@ describe('native renderer component contract', () => {
     // would read as never hidden and stay off for whatever shows next.
     expect(ios).toContain('tabBarHiddenApplied = wantsTabBarHidden')
     expect(ios).toContain('if tabBarHiddenApplied, isMovingFromParent || isBeingDismissed')
+    // The leaving screen brought the bar back even when the screen its pop
+    // reveals puts it away too (an inbox with tabBarHiddenWhenPushed under a
+    // conversation with tabBarHidden): the bar and the floating actions slid
+    // in for the length of the pop and out again (#530). It now asks first.
+    expect(ios).toContain('let revealed = stackGoes ? nil : navigationController?.topViewController as? CraftNativeScreenController')
+    expect(ios).toContain('if revealed === self || revealed?.wantsTabBarHidden != true {')
+    expect(iosNavigationUnitTests).toContain('func testPoppingBetweenTwoScreensThatHideTheBarNeverShowsIt() async throws {')
     expect(ios).not.toContain('if tabBarHidden, isMovingFromParent')
   })
 
