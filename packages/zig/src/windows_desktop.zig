@@ -39,6 +39,7 @@ extern "user32" fn TrackPopupMenu(menu: HMENU, flags: UINT, x: c_int, y: c_int, 
 extern "user32" fn ClientToScreen(window: HWND, point: *POINT) callconv(.c) BOOL;
 extern "user32" fn SetForegroundWindow(window: HWND) callconv(.c) BOOL;
 extern "user32" fn GetKeyState(key: c_int) callconv(.c) c_short;
+extern "user32" fn GetAsyncKeyState(key: c_int) callconv(.c) c_short;
 extern "user32" fn GetAncestor(window: HWND, flags: UINT) callconv(.c) ?HWND;
 extern "user32" fn SendInput(count: UINT, inputs: [*]const INPUT, size: c_int) callconv(.c) UINT;
 extern "user32" fn MessageBoxW(window: ?HWND, text: LPCWSTR, caption: LPCWSTR, flags: UINT) callconv(.c) c_int;
@@ -283,7 +284,14 @@ fn performRole(id: u32, host: Target, role: desktop_menu.Role) void {
 }
 
 fn keyHeld(key: c_int) bool {
-    return GetKeyState(key) < 0;
+    // `GetAsyncKeyState`, not `GetKeyState`. The latter answers from the
+    // calling thread's message queue, but the WebView2 path reaches here from
+    // the AcceleratorKeyPressed callback, which WebView2 dispatches on its own
+    // input thread -- a thread whose queue the modifier was never delivered to.
+    // Measured against the message-loop path both report the same state, so
+    // this changes nothing there; it is chosen because its contract holds
+    // whichever thread asks.
+    return GetAsyncKeyState(key) < 0;
 }
 
 /// The menu command a key press activates in window `id`, if any.
