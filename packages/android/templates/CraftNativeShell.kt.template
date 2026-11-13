@@ -187,6 +187,10 @@ internal class CraftNativeRoutes(config: JSONObject) {
         }
         ?: CraftNativeTabBarAppearance()
 
+    /** The chrome's accent, where the app set one (`tintColor`); the system blue otherwise. */
+    val tintColor: Int? = config.optString("tintColor").takeUnless { config.isNull("tintColor") || it.isBlank() }
+        ?.let { runCatching { Color.parseColor(it) }.getOrNull() }
+
     /** CSS stacks for the chrome's labels and titles, as the app configured them. */
     val fontFamily: String? = config.optString("fontFamily").takeUnless { config.isNull("fontFamily") || it.isBlank() }
     val headingFontFamily: String? = config.optString("headingFontFamily").takeUnless { config.isNull("headingFontFamily") || it.isBlank() }
@@ -1013,6 +1017,7 @@ internal class CraftNativeChrome(
     private val tabs: List<CraftNativeTab>,
     private val tabBarAppearance: CraftNativeTabBarAppearance = CraftNativeTabBarAppearance(),
     private val fonts: CraftNativeChromeFonts = CraftNativeChromeFonts(),
+    private val tintColor: Int? = null,
 ) : LinearLayout(context) {
     val content = FrameLayout(context)
     private val body = FrameLayout(context)
@@ -1681,7 +1686,8 @@ internal class CraftNativeChrome(
         }
     }
 
-    private fun accentColor(dark: Boolean): Int = if (dark) Color.parseColor("#0A84FF") else Color.parseColor("#007AFF")
+    /** Back, the bar's buttons and the selected tab: the app's own tint in both appearances, else the system blue. */
+    private fun accentColor(dark: Boolean): Int = tintColor ?: if (dark) Color.parseColor("#0A84FF") else Color.parseColor("#007AFF")
 
     private fun tabCellBackground(index: Int, dark: Boolean): android.graphics.drawable.Drawable? {
         if (accessorySelected || index != selectedTab || (tabBarAppearance.selectionColor == null && tabBarAppearance.selectionCornerRadius == null)) return rippleBackground()

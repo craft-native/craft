@@ -5426,7 +5426,8 @@ class MainActivity : AppCompatActivity() {
     private fun installChrome() {
         val bodyFont = craftNativeChromeTypeface(routes.fontFamily, bundledFonts)
         val bars = CraftNativeChrome(this, routes.tabs, routes.tabBarAppearance,
-            CraftNativeChromeFonts(bodyFont, craftNativeChromeTypeface(routes.headingFontFamily, bundledFonts) ?: bodyFont))
+            CraftNativeChromeFonts(bodyFont, craftNativeChromeTypeface(routes.headingFontFamily, bundledFonts) ?: bodyFont),
+            routes.tintColor)
         bars.layoutParams = FrameLayout.LayoutParams(-1, -1)
         bars.onBack = { onBackPressedDispatcherCompat() }
         bars.onAccessory = { path -> navigateOpen(path) }

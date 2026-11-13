@@ -534,6 +534,11 @@ changes; the other two values pin the generated host. If it is omitted,
 `darkMode` remains the compatibility switch (`false` pins light, `true` pins
 dark).
 
+`tintColor` (`#RRGGBB`) is the native chrome's accent: Back, the bar's buttons
+and the selected tab. It is the same key iOS reads. Without it the chrome keeps
+the system blue, so an app that sets its tint for iOS alone gets a blue Android
+chrome.
+
 Native tab-bar selection styling is opt-in and lives in the generated config,
 so the generated Kotlin never needs to be patched:
 

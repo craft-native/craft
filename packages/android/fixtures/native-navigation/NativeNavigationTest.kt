@@ -817,6 +817,19 @@ class NativeNavigationTest {
                 ))).tabs.single()
                 val configuredChrome = CraftNativeChrome(activity, listOf(configured))
                 assertEquals(CraftTabIconAppearance("heart.fill", Color.parseColor("#ff3b30"), false), configuredChrome.tabIconAppearance(0, true))
+                // `tintColor` is the chrome's accent where the app set one: Back is drawn in it, where
+                // the system blue was. A value that is no colour keeps the blue.
+                val tint = Color.parseColor("#dd0f15")
+                assertEquals(tint, CraftNativeRoutes(org.json.JSONObject().put("tintColor", "#dd0f15")).tintColor)
+                assertEquals(null, CraftNativeRoutes(org.json.JSONObject().put("tintColor", "not a colour")).tintColor)
+                assertEquals(null, CraftNativeRoutes(org.json.JSONObject()).tintColor)
+                val backField = CraftNativeChrome::class.java.getDeclaredField("backButton").apply { isAccessible = true }
+                val tintedChrome = CraftNativeChrome(activity, listOf(configured), tintColor = tint)
+                tintedChrome.apply(org.json.JSONObject().put("title", "Inbox"), 1, "Inbox")
+                assertEquals(tint, (backField.get(tintedChrome) as ImageView).imageTintList?.defaultColor)
+                configuredChrome.apply(org.json.JSONObject().put("title", "Inbox"), 1, "Inbox")
+                val systemBlue = (backField.get(configuredChrome) as ImageView).imageTintList?.defaultColor
+                assertTrue("an app without a tint keeps the system blue", systemBlue == Color.parseColor("#0A84FF") || systemBlue == Color.parseColor("#007AFF"))
                 val blankChrome = CraftNativeChrome(activity, listOf(configured.copy(selectedSymbol = " \n ")))
                 assertEquals("heart", blankChrome.tabIconAppearance(0, true).symbol)
                 fun patch(item: org.json.JSONObject) {

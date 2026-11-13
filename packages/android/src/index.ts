@@ -158,6 +158,12 @@ export interface CraftAndroidConfig {
   renderer?: 'web' | 'native'
   /** "system" follows the device; light/dark pin the generated host. */
   appearance?: 'light' | 'dark' | 'system'
+  /**
+   * The native chrome's accent as #RRGGBB: Back, the bar's buttons and the
+   * selected tab. Omitted keeps the system blue, as before. iOS has had the
+   * same key; without it an app themed on iOS drew its Android chrome blue.
+   */
+  tintColor?: string
   /** Static native tab-bar styling applied before the page's own tabBar.set call. */
   tabBar?: CraftTabBarConfig
   /** Runs from the generated project root before Gradle compiles the app. */
@@ -714,6 +720,8 @@ function validateAndroidConfig(config: CraftAndroidConfig): void {
   if (config.appearance !== undefined && !['light', 'dark', 'system'].includes(config.appearance)) {
     throw new Error(`Unknown Android appearance: ${config.appearance}. Expected light, dark, or system.`)
   }
+  if (config.tintColor !== undefined && !/^#[0-9a-f]{6}$/i.test(config.tintColor))
+    throw new Error('Android tintColor must be a #RRGGBB color')
   const selection = config.tabBar?.selection
   if (selection?.cornerRadius !== undefined && (!Number.isFinite(selection.cornerRadius) || selection.cornerRadius < 0))
     throw new Error('Android tabBar.selection.cornerRadius must be a finite non-negative number')

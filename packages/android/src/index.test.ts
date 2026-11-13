@@ -112,6 +112,20 @@ describe('Craft Android builder', () => {
   })
 
 
+  it('carries the app\'s tint to the native chrome and refuses one that is no colour', async () => {
+    const output = createTempDir('craft-android-tint-')
+    await init({ name: 'Tinted', output, runtimeDir: null, config: { renderer: 'native', tintColor: '#dd0f15' } })
+    expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).tintColor).toBe('#dd0f15')
+    const shell = readFileSync(join(output, 'app/src/main/java/com/craft/tinted/CraftNativeShell.kt'), 'utf8')
+    const activity = readFileSync(join(output, 'app/src/main/java/com/craft/tinted/MainActivity.kt'), 'utf8')
+    // Read from the config, handed to the chrome, and used wherever the system blue was.
+    expect(shell).toContain('val tintColor: Int? = config.optString("tintColor")')
+    expect(shell).toContain('private fun accentColor(dark: Boolean): Int = tintColor ?: if (dark) Color.parseColor("#0A84FF") else Color.parseColor("#007AFF")')
+    expect(activity).toContain('routes.tintColor)')
+    await expect(init({ name: 'Invalid Tint', output: join(output, 'invalid'), runtimeDir: null, config: { renderer: 'native', tintColor: 'red' } }))
+      .rejects.toThrow('Android tintColor must be a #RRGGBB color')
+  })
+
   it('bundles custom fonts with their licenses and removes retired fonts', async () => {
     const root = createTempDir('craft-native-fonts-')
     const font = join(root, 'Signature.ttf')
