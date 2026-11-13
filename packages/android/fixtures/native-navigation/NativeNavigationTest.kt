@@ -2967,6 +2967,114 @@ class NativeNavigationTest {
     }
 
     /**
+     * A finger held on a control that also has a press handler is a long
+     * press, and not a press (#529).
+     *
+     * A pressable with `onPress` owns its touch through a listener that
+     * answers every event itself. The platform times a long click in
+     * `View.onTouchEvent`, which a consuming listener keeps from running, so
+     * `onLongPress` was never sent for a finger, and lifting it sent the
+     * press: holding a conversation row opened it instead of selecting it.
+     * `performLongClick()` reaches the handler without a touch, which is why
+     * nothing here had seen it.
+     */
+    @Test
+    fun aHeldPressableSendsItsLongPressAndNoPress() {
+        val timeout = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        for (type in listOf("Pressable", "TouchableOpacity", "TouchableHighlight")) {
+            val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+            lateinit var activity: MainActivity
+            lateinit var screen: Any
+            lateinit var isolate: androidx.javascriptengine.JavaScriptIsolate
+            lateinit var control: View
+            fun evaluate(source: String): String = isolate.evaluateJavaScriptAsync(source)
+                .get(5, java.util.concurrent.TimeUnit.SECONDS)
+            fun touch(action: Int, x: Float, y: Float, began: Long) {
+                scenario.onActivity {
+                    val event = MotionEvent.obtain(began, SystemClock.uptimeMillis(), action, x, y, 0)
+                    try { control.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+            }
+            /** A finger down in the middle, kept there for `held` ms, then lifted. */
+            fun press(held: Long, drift: Float = 0f) {
+                val began = SystemClock.uptimeMillis()
+                val x = control.width / 2f
+                val y = control.height / 2f
+                touch(MotionEvent.ACTION_DOWN, x, y, began)
+                if (drift != 0f) touch(MotionEvent.ACTION_MOVE, x + drift, y, began)
+                SystemClock.sleep(held)
+                touch(MotionEvent.ACTION_UP, x + drift, y, began)
+            }
+            fun expectEvents(expected: String, message: String) {
+                val deadline = SystemClock.uptimeMillis() + 3000
+                var actual = evaluate("__heldEvents.join(',')")
+                while (actual != expected && SystemClock.uptimeMillis() < deadline) {
+                    SystemClock.sleep(20)
+                    actual = evaluate("__heldEvents.join(',')")
+                }
+                // Nothing late: a press sent after the hold would arrive now.
+                SystemClock.sleep(150)
+                assertEquals("$type: $message", expected, evaluate("__heldEvents.join(',')"))
+            }
+            fun render(events: String) {
+                scenario.onActivity {
+                    val document = JSONObject("""{"id":"held","type":"$type","props":{"testID":"held-action"},
+                      "style":{"width":200,"height":60},"events":$events}""")
+                    MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                        .apply { isAccessible = true }.invoke(activity, screen, document)
+                }
+                control = awaitView(activity, "held-action") { it.width > 0 && it.height > 0 }
+            }
+            try {
+                scenario.onActivity { activity = it }
+                awaitView(activity, "navigation-home-state")
+                scenario.onActivity {
+                    screen = requireNotNull((MainActivity::class.java.getDeclaredField("screens")
+                        .apply { isAccessible = true }.get(activity) as List<*>).last())
+                    isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+                }
+                evaluate("""(function() {
+                  globalThis.__heldEvents = [];
+                  const port = globalThis.__craftPort;
+                  const previous = port ? port.onmessage : globalThis.__stxNativeCallback;
+                  function receive(value) {
+                    const message = JSON.parse(value);
+                    if (message.type === 'EVENT') __heldEvents.push(message.payload.handlerName);
+                    else if (previous) previous(port ? {data:value} : value);
+                  }
+                  if (port) port.onmessage = function(event) { receive(event.data); };
+                  else globalThis.__stxNativeCallback = receive;
+                })(); 'ready'""")
+
+                // Both handlers: the case that never sent the long press.
+                render("""{"onPress":"pressed","onLongPress":"held"}""")
+                press(held = timeout + 300)
+                expectEvents("held", "a held finger is a long press, and lifting it is not a press")
+                // A tap is still a press.
+                press(held = 40)
+                expectEvents("held,pressed", "a tap is a press")
+                // A finger that slid off before the hold was up is not holding.
+                press(held = timeout + 300, drift = 400f)
+                expectEvents("held,pressed,pressed", "a finger that moved away did not hold")
+                // Lifted just before the time: a press, and no long press after.
+                press(held = timeout / 3)
+                SystemClock.sleep(timeout)
+                expectEvents("held,pressed,pressed,pressed", "a hold given up early is a press, with nothing sent later")
+
+                // A long press with nothing to take it is still a press on lift.
+                render("""{"onPress":"pressed"}""")
+                press(held = timeout + 300)
+                expectEvents("held,pressed,pressed,pressed,pressed", "with no long-press handler a slow press is a press")
+
+                // The long press alone was always timed by the platform.
+                render("""{"onLongPress":"held"}""")
+                press(held = timeout + 300)
+                expectEvents("held,pressed,pressed,pressed,pressed,held", "a long press alone")
+            } finally { scenario.close() }
+        }
+    }
+
+    /**
      * What is broadcast while a new screen is still being set up reaches it,
      * in order, on both bridges.
      *

@@ -909,7 +909,9 @@ the old screen alive after navigation.
 when it is omitted. `onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
 pressable native views. `onLongPress` fires once after the native long-press
 gesture begins and also delivers an empty `nativeEvent`; removing the handler
-releases the platform gesture recognizer. `TextInput` accepts `onChange` or `onChangeText` and
+releases the platform gesture recognizer. A view with both `onPress` and
+`onLongPress` sends one or the other for a touch: a held finger is the long
+press, and lifting it afterwards is not a press. `TextInput` accepts `onChange` or `onChangeText` and
 delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `onSubmitEditing` are also native events and include the current text when
 the event applies to a `TextInput`. `keyboardType`, `returnKeyType`,

@@ -3946,6 +3946,20 @@ describe('native renderer component contract', () => {
     expect(android).toContain('control.setOnLongClickListener {')
     expect(android).toContain('screen.longPressHandlers.keys.removeAll(released)')
     expect(guide).toContain('`onLongPress`')
+    // Android times a long click in View.onTouchEvent, and a pressable with
+    // onPress answers every touch event in a listener of its own, so that
+    // never ran: a finger held on a row sent its press on lift, and
+    // onLongPress (or a contextMenu) was never reached (#529). The listener
+    // now times the hold itself, and a hold that was handled is not a press.
+    expect(android).toContain('private object CraftNativePressHolds {')
+    expect(android).toContain('view.postDelayed(fire, android.view.ViewConfiguration.getLongPressTimeout().toLong())')
+    expect(android).toContain('if (view.isAttachedToWindow && view.isLongClickable && view.performLongClick()) handled[view] = true')
+    expect(android).toContain('CraftNativePressHolds.began(view, event)')
+    expect(android).toContain('android.view.MotionEvent.ACTION_MOVE -> {\n                                CraftNativePressHolds.moved(view, event)')
+    expect(android).toContain('val held = CraftNativePressHolds.ended(view)')
+    expect(android).toContain('if (event.actionMasked == android.view.MotionEvent.ACTION_UP && !held) {')
+    expect(androidNavigationTest).toContain('fun aHeldPressableSendsItsLongPressAndNoPress()')
+    expect(guide).toContain('a held finger is the long\npress, and lifting it afterwards is not a press')
     expect(ios).toContain('if !ownsTouches(view) { view.isUserInteractionEnabled = true }')
     expect(ios).toContain('view.isUserInteractionEnabled = handlers[id] != nil || linkTargets[id] != nil || view is CraftNativeFlowView')
   })

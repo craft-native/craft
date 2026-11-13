@@ -430,6 +430,54 @@ internal fun craftNativeColor(raw: String): Int {
 }
 
 /** Android View has no skew setters before API 29; draw the shared skew around the view's center. */
+/**
+ * Times a hold on a view whose touch listener answers every event itself.
+ *
+ * The platform times a long click in `View.onTouchEvent`, and a listener
+ * that consumes the touch keeps that from running. A pressable with
+ * `onPress` has such a listener (it sends the press, and the press-in and
+ * press-out around it), so its `onLongPress`, and the menu a `contextMenu`
+ * opens on a hold, were never reached by a finger: holding a row sent its
+ * press when the finger lifted (#529).
+ *
+ * The same rules as the platform's: the hold is up after its long-press
+ * timeout, a finger that moves past the touch slop is not holding, and a
+ * hold that something handled is not also a press.
+ */
+private object CraftNativePressHolds {
+    private class Hold(val fire: Runnable, val x: Float, val y: Float)
+    private val pending = WeakHashMap<View, Hold>()
+    private val handled = WeakHashMap<View, Boolean>()
+
+    fun began(view: View, event: MotionEvent) {
+        cancel(view)
+        handled.remove(view)
+        if (!view.isLongClickable) return
+        val fire = Runnable {
+            pending.remove(view)
+            if (view.isAttachedToWindow && view.isLongClickable && view.performLongClick()) handled[view] = true
+        }
+        pending[view] = Hold(fire, event.x, event.y)
+        view.postDelayed(fire, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+    }
+
+    fun moved(view: View, event: MotionEvent) {
+        val hold = pending[view] ?: return
+        val slop = android.view.ViewConfiguration.get(view.context).scaledTouchSlop
+        if (abs(event.x - hold.x) > slop || abs(event.y - hold.y) > slop) cancel(view)
+    }
+
+    /** The touch is over. Whether its hold was handled, so that lifting is not a press. */
+    fun ended(view: View): Boolean {
+        cancel(view)
+        return handled.remove(view) == true
+    }
+
+    private fun cancel(view: View) {
+        pending.remove(view)?.let { view.removeCallbacks(it.fire) }
+    }
+}
+
 private object CraftNativeSkewTransforms {
     private val values = WeakHashMap<View, Pair<Float, Float>>()
 
@@ -7470,9 +7518,17 @@ class MainActivity : AppCompatActivity() {
                                 screen.pressUnderlayShowHandlers[view]?.let { current ->
                                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                                 }
+                                // This listener answers every event, so the
+                                // platform never times the hold: do it here.
+                                CraftNativePressHolds.began(view, event)
+                                true
+                            }
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                CraftNativePressHolds.moved(view, event)
                                 true
                             }
                             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                val held = CraftNativePressHolds.ended(view)
                                 view.alpha = screen.pressBaseOpacities[view] ?: 1f
                                 if (screen.pressBaseBackgrounds.containsKey(view)) view.background = screen.pressBaseBackgrounds[view]
                                 screen.pressOutHandlers[view]?.let { current ->
@@ -7481,7 +7537,9 @@ class MainActivity : AppCompatActivity() {
                                 screen.pressUnderlayHideHandlers[view]?.let { current ->
                                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                                 }
-                                if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                                // A hold that sent its long press, or opened
+                                // its menu, is not a press as well.
+                                if (event.actionMasked == android.view.MotionEvent.ACTION_UP && !held) {
                                     dispatchNativePress(screen, view)
                                 }
                                 true
