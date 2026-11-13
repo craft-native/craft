@@ -849,6 +849,7 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     if (eql(u8, kind, "system")) return sendSystem(action);
     if (eql(u8, kind, "screen")) return sendScreen(action);
     if (eql(u8, kind, "tray")) return handleTrayAction(entry, action, data);
+    if (eql(u8, kind, "shortcuts")) return handleShortcutAction(entry, action, data);
     if (eql(u8, kind, "shell")) return sendShell(action, data);
     if (eql(u8, kind, "power")) return sendPower(action);
     if (eql(u8, kind, "autoLaunch")) return sendAutoLaunch(action);
@@ -1394,6 +1395,311 @@ fn killChild(allocator: std.mem.Allocator, action: []const u8, id: []const u8) !
         return;
     }
     return bridge_error.BridgeError.NotFound;
+}
+
+// =============================================================================
+// Windows: global shortcuts
+// =============================================================================
+
+const accelerator = @import("accelerator.zig");
+// Only the detail/script helpers are borrowed: they own the JSON shapes and the
+// escaping, so the page sees the same payload on every platform. The registry
+// itself is not reused because its `Platform` callback hands out a Carbon
+// keycode, which means nothing to `RegisterHotKey`.
+const shortcut_registry = @import("shortcut_registry.zig");
+
+const MOD_ALT: u32 = 0x0001;
+const MOD_CONTROL: u32 = 0x0002;
+const MOD_SHIFT: u32 = 0x0004;
+const MOD_NOREPEAT: u32 = 0x4000;
+const WM_HOTKEY: UINT = 0x0312;
+
+extern "user32" fn RegisterHotKey(hwnd: ?HWND, id: c_int, modifiers: u32, vk: u32) callconv(.c) c_int;
+extern "user32" fn UnregisterHotKey(hwnd: ?HWND, id: c_int) callconv(.c) c_int;
+
+/// A registered shortcut. `bound` is false between `disable` and `enable`, which
+/// is exactly when the key is not reserved.
+const ShortcutSlot = struct {
+    id: [64]u8 = undefined,
+    id_len: usize = 0,
+    accelerator: [96]u8 = undefined,
+    accel_len: usize = 0,
+    hotkey_id: u32 = 0,
+    window: usize = 0,
+    bound: bool = false,
+};
+
+const max_shortcuts = 32;
+var shortcut_slots: [max_shortcuts]ShortcutSlot = @splat(.{});
+var shortcut_count: usize = 0;
+var next_hotkey_id: u32 = 1;
+
+fn shortcutSlot(id: []const u8) ?*ShortcutSlot {
+    for (shortcut_slots[0..shortcut_count]) |*slot| {
+        if (std.mem.eql(u8, slot.id[0..slot.id_len], id)) return slot;
+    }
+    return null;
+}
+
+/// The Windows virtual-key code for a canonical key name from `key_codes.zig`.
+///
+/// Letters and digits are their own ASCII codes, which is why they are handled
+/// separately rather than listed. `0x5B` (the Windows key) has no Carbon
+/// counterpart and so never appears here.
+fn virtualKeyFor(name: []const u8) ?u16 {
+    if (name.len == 1) {
+        const ch = name[0];
+        if ((ch >= 'A' and ch <= 'Z') or (ch >= '0' and ch <= '9'))
+            return @intCast(std.ascii.toUpper(ch));
+    }
+    if (name.len >= 2 and name.len <= 3 and name[0] == 'F') {
+        if (std.fmt.parseInt(u16, name[1..], 10)) |number| {
+            if (number >= 1 and number <= 24) return @intCast(0x70 + number - 1);
+        } else |_| {}
+    }
+    const table = [_]struct { name: []const u8, vk: u16 }{
+        .{ .name = "Return", .vk = 0x0D },
+        .{ .name = "Enter", .vk = 0x0D },
+        .{ .name = "Tab", .vk = 0x09 },
+        .{ .name = "Space", .vk = 0x20 },
+        // Carbon's `Delete` is the key above Return that erases backwards.
+        .{ .name = "Delete", .vk = 0x08 },
+        .{ .name = "Backspace", .vk = 0x08 },
+        .{ .name = "Del", .vk = 0x08 },
+        .{ .name = "ForwardDelete", .vk = 0x2E },
+        .{ .name = "Escape", .vk = 0x1B },
+        .{ .name = "Esc", .vk = 0x1B },
+        .{ .name = "Left", .vk = 0x25 },
+        .{ .name = "ArrowLeft", .vk = 0x25 },
+        .{ .name = "Up", .vk = 0x26 },
+        .{ .name = "ArrowUp", .vk = 0x26 },
+        .{ .name = "Right", .vk = 0x27 },
+        .{ .name = "ArrowRight", .vk = 0x27 },
+        .{ .name = "Down", .vk = 0x28 },
+        .{ .name = "ArrowDown", .vk = 0x28 },
+        .{ .name = "Home", .vk = 0x24 },
+        .{ .name = "End", .vk = 0x23 },
+        .{ .name = "PageUp", .vk = 0x21 },
+        .{ .name = "PgUp", .vk = 0x21 },
+        .{ .name = "PageDown", .vk = 0x22 },
+        .{ .name = "PgDn", .vk = 0x22 },
+        .{ .name = "Help", .vk = 0x2F },
+        // Punctuation, by US layout. A global hotkey is a physical key, so this
+        // is the same trade-off the Carbon codes make.
+        .{ .name = "-", .vk = 0xBD },
+        .{ .name = "Minus", .vk = 0xBD },
+        .{ .name = "=", .vk = 0xBB },
+        .{ .name = "Equal", .vk = 0xBB },
+        .{ .name = "Plus", .vk = 0xBB },
+        .{ .name = "[", .vk = 0xDB },
+        .{ .name = "BracketLeft", .vk = 0xDB },
+        .{ .name = "]", .vk = 0xDD },
+        .{ .name = "BracketRight", .vk = 0xDD },
+        .{ .name = "\\", .vk = 0xDC },
+        .{ .name = "Backslash", .vk = 0xDC },
+        .{ .name = ";", .vk = 0xBA },
+        .{ .name = "Semicolon", .vk = 0xBA },
+        .{ .name = "'", .vk = 0xDE },
+        .{ .name = "Quote", .vk = 0xDE },
+        .{ .name = ",", .vk = 0xBC },
+        .{ .name = "Comma", .vk = 0xBC },
+        .{ .name = ".", .vk = 0xBE },
+        .{ .name = "Period", .vk = 0xBE },
+        .{ .name = "/", .vk = 0xBF },
+        .{ .name = "Slash", .vk = 0xBF },
+        .{ .name = "`", .vk = 0xC0 },
+        .{ .name = "Backquote", .vk = 0xC0 },
+        .{ .name = "Grave", .vk = 0xC0 },
+        .{ .name = "Keypad0", .vk = 0x60 },
+        .{ .name = "Keypad1", .vk = 0x61 },
+        .{ .name = "Keypad2", .vk = 0x62 },
+        .{ .name = "Keypad3", .vk = 0x63 },
+        .{ .name = "Keypad4", .vk = 0x64 },
+        .{ .name = "Keypad5", .vk = 0x65 },
+        .{ .name = "Keypad6", .vk = 0x66 },
+        .{ .name = "Keypad7", .vk = 0x67 },
+        .{ .name = "Keypad8", .vk = 0x68 },
+        .{ .name = "Keypad9", .vk = 0x69 },
+        .{ .name = "KeypadMultiply", .vk = 0x6A },
+        .{ .name = "KeypadPlus", .vk = 0x6B },
+        .{ .name = "KeypadMinus", .vk = 0x6D },
+        .{ .name = "KeypadDecimal", .vk = 0x6E },
+        .{ .name = "KeypadDivide", .vk = 0x6F },
+        .{ .name = "KeypadEnter", .vk = 0x0D },
+        .{ .name = "KeypadEquals", .vk = 0x0C },
+        .{ .name = "KeypadClear", .vk = 0x0C },
+    };
+    for (table) |entry| {
+        if (std.mem.eql(u8, name, entry.name)) return entry.vk;
+    }
+    return null;
+}
+
+/// Windows has no Command key. `CmdOrCtrl` already collapses to ctrl during
+/// parsing, and a bare `Cmd` maps to Ctrl because that is the key a Windows
+/// user reaches for in the same position.
+fn windowsModifiers(modifiers: accelerator.Modifiers) u32 {
+    var flags: u32 = 0;
+    if (modifiers.cmd or modifiers.ctrl) flags |= MOD_CONTROL;
+    if (modifiers.alt) flags |= MOD_ALT;
+    if (modifiers.shift) flags |= MOD_SHIFT;
+    return flags;
+}
+
+fn sendShortcutEvent(webview: usize, name: []const u8, detail: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const script = shortcut_registry.eventScript(allocator, name, detail) catch return;
+    defer allocator.free(script);
+    evalInWebview(webview, script);
+}
+
+fn reportShortcutError(webview: usize, id: []const u8, code: []const u8, message: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const detail = shortcut_registry.errorDetail(allocator, id, code, message) catch return;
+    defer allocator.free(detail);
+    sendShortcutEvent(webview, "craft:shortcut:error", detail);
+}
+
+/// Reserve `slot`'s key again. Used by `register` and by `enable`.
+fn bindShortcut(slot: *ShortcutSlot, modifiers: u32, vk: u16) bool {
+    const hotkey_id: c_int = @intCast(slot.hotkey_id);
+    if (RegisterHotKey(@ptrFromInt(slot.window), hotkey_id, modifiers | MOD_NOREPEAT, vk) == 0)
+        return false;
+    slot.bound = true;
+    return true;
+}
+
+fn unbindShortcut(slot: *ShortcutSlot) void {
+    if (!slot.bound) return;
+    _ = UnregisterHotKey(@ptrFromInt(slot.window), @intCast(slot.hotkey_id));
+    slot.bound = false;
+}
+
+/// `craft.shortcuts` on Windows.
+fn handleShortcutAction(entry: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+    const payload = data orelse "";
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const args = try parseBridgeArgs(arena, payload);
+
+    if (eql(u8, action, "register")) {
+        const RegisterPayload = struct {
+            id: []const u8 = "",
+            accelerator: []const u8 = "",
+        };
+        const parsed = std.json.parseFromSlice(RegisterPayload, arena, payload, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        }) catch return bridge_error.BridgeError.InvalidJSON;
+        const id = parsed.value.id;
+        if (id.len == 0) return bridge_error.BridgeError.MissingData;
+        if (id.len >= shortcut_slots[0].id.len) return bridge_error.BridgeError.InvalidParameter;
+
+        const binding = accelerator.parse(parsed.value.accelerator) catch {
+            reportShortcutError(entry.webview, id, "INVALID_ACCELERATOR", "That accelerator could not be parsed.");
+            return;
+        };
+        var rendered: [96]u8 = undefined;
+        const canonical = accelerator.format(&rendered, binding) catch return bridge_error.BridgeError.InvalidParameter;
+
+        const vk = virtualKeyFor(binding.key) orelse {
+            reportShortcutError(entry.webview, id, "UNSUPPORTED_KEY", "Windows cannot bind this key globally.");
+            return;
+        };
+        const modifiers = windowsModifiers(binding.modifiers);
+        // Without a modifier a global hotkey would swallow a plain keystroke in
+        // every application on the machine.
+        if (modifiers == 0) {
+            reportShortcutError(entry.webview, id, "INVALID_ACCELERATOR", "A global shortcut needs at least one modifier.");
+            return;
+        }
+
+        // Re-registering an id replaces it, and the old reservation goes first:
+        // otherwise the same accelerator would collide with craft's own entry.
+        if (shortcutSlot(id)) |slot| unbindShortcut(slot);
+        const slot = shortcutSlot(id) orelse blk: {
+            if (shortcut_count >= max_shortcuts) {
+                reportShortcutError(entry.webview, id, "LIMIT_REACHED", "Too many shortcuts are registered.");
+                return;
+            }
+            const fresh = &shortcut_slots[shortcut_count];
+            shortcut_count += 1;
+            break :blk fresh;
+        };
+
+        @memcpy(slot.id[0..id.len], id);
+        slot.id_len = id.len;
+        @memcpy(slot.accelerator[0..canonical.len], canonical);
+        slot.accel_len = canonical.len;
+        slot.window = entry.window;
+        slot.hotkey_id = next_hotkey_id;
+        slot.bound = false;
+
+        if (!bindShortcut(slot, modifiers, vk)) {
+            // Another application, or the system, already owns the combination.
+            reportShortcutError(entry.webview, id, "ALREADY_REGISTERED", "Another application already uses that combination.");
+            return;
+        }
+        next_hotkey_id += 1;
+        return;
+    }
+
+    if (eql(u8, action, "unregister")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        const slot = shortcutSlot(args.id) orelse return bridge_error.BridgeError.NotFound;
+        unbindShortcut(slot);
+        const index = (@intFromPtr(slot) - @intFromPtr(&shortcut_slots[0])) / @sizeOf(ShortcutSlot);
+        var k = index;
+        while (k + 1 < shortcut_count) : (k += 1) shortcut_slots[k] = shortcut_slots[k + 1];
+        shortcut_count -= 1;
+        return;
+    }
+    if (eql(u8, action, "unregisterAll")) {
+        for (shortcut_slots[0..shortcut_count]) |*slot| unbindShortcut(slot);
+        shortcut_count = 0;
+        return;
+    }
+    if (eql(u8, action, "enable") or eql(u8, action, "disable")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        const slot = shortcutSlot(args.id) orelse return bridge_error.BridgeError.NotFound;
+        if (eql(u8, action, "disable")) {
+            unbindShortcut(slot);
+            return;
+        }
+        if (slot.bound) return;
+        const binding = accelerator.parse(slot.accelerator[0..slot.accel_len]) catch return bridge_error.BridgeError.InvalidParameter;
+        const vk = virtualKeyFor(binding.key) orelse return bridge_error.BridgeError.InvalidParameter;
+        if (!bindShortcut(slot, windowsModifiers(binding.modifiers), vk))
+            reportShortcutError(entry.webview, args.id, "ALREADY_REGISTERED", "Another application already uses that combination.");
+        return;
+    }
+    if (eql(u8, action, "isRegistered")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        return sendJsonBool(allocator, action, "value", shortcutSlot(args.id) != null);
+    }
+    if (eql(u8, action, "list")) {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(allocator);
+        try out.appendSlice(allocator, "{\"shortcuts\":[");
+        for (shortcut_slots[0..shortcut_count], 0..) |slot, index| {
+            if (index != 0) try out.append(allocator, ',');
+            try out.appendSlice(allocator, "{\"id\":\"");
+            try appendJsonEscaped(allocator, &out, slot.id[0..slot.id_len]);
+            try out.appendSlice(allocator, "\",\"accelerator\":\"");
+            try appendJsonEscaped(allocator, &out, slot.accelerator[0..slot.accel_len]);
+            try out.appendSlice(allocator, if (slot.bound) "\",\"enabled\":true}" else "\",\"enabled\":false}");
+        }
+        try out.appendSlice(allocator, "]}");
+        const owned = try out.toOwnedSlice(allocator);
+        defer allocator.free(owned);
+        bridge_error.sendResultToJS(allocator, action, owned);
+        return;
+    }
+    return error.PlatformNotSupported;
 }
 
 // =============================================================================
@@ -3450,9 +3756,21 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             windows_desktop.processPending();
             return 0;
         },
+        WM_HOTKEY => {
+            // `wParam` carries the id handed to `RegisterHotKey`.
+            const pressed_id: u32 = @truncate(wParam);
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |window_entry| {
+                for (shortcut_slots[0..shortcut_count]) |slot| {
+                    if (!slot.bound or slot.hotkey_id != pressed_id) continue;
+                    const detail = shortcut_registry.triggeredDetail(std.heap.c_allocator, slot.id[0..slot.id_len], slot.accelerator[0..slot.accel_len]) catch break;
+                    defer std.heap.c_allocator.free(detail);
+                    sendShortcutEvent(window_entry.webview, "craft:shortcut", detail);
+                    break;
+                }
+            }
+            return 0;
+        },
         windows_tray.WindowsTray.WM_TRAYICON => {
-            // A left click is the open/toggle gesture. Right clicks would open a
-            // menu, which this build does not draw yet.
             const event = windows_tray.handleTrayMessage(wParam, @bitCast(lParam));
             const button: []const u8 = switch (event) {
                 .left_click => "left",
