@@ -1190,6 +1190,21 @@ app, the iOS shell's gesture also covers the WebView. Pass
 gesture of its own; native screens can still opt out independently with
 `tabSwipeEnabled`.
 
+A screen that closes rather than goes back (an inbox opened over the app)
+can draw its Back as its own symbol on both hosts:
+
+```ts
+craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })
+```
+
+It takes the chevron's place and is still the bar's back button: it shows only
+where Back would, a tap does what `craft.navigation.back()` does, the
+back-swipe is unchanged, and `leftButtons` still sit beside it. `null`
+restores the chevron. `symbol` is an SF Symbol name; Android draws the app's
+own icon for it, or its close mark for an `xmark`, and a symbol a host has
+nothing for leaves the chevron, so a screen is never left with no way back.
+`accessibilityLabel` defaults to "Close" for an `xmark` and "Back" otherwise.
+
 Both native hosts also accept `backgroundColor` in
 `craft.navigation.setOptions`. It paints the screen behind its native content;
 passing `null` or omitting the option follows the app's light/dark background

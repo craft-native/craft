@@ -1111,6 +1111,92 @@ class NativeNavigationTest {
     }
 
     /**
+     * `backButton`: a screen's own symbol where Back is (#527).
+     *
+     * `leftButtons` sit beside Back, so a screen that closes rather than goes
+     * back could not put an X in the arrow's place. Read off the real chrome:
+     * the same view, at the same depths, with the same tap.
+     */
+    @Test
+    fun aScreenCanDrawItsBackAsACloseButton() {
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            instrumentation.runOnMainSync {
+                val chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                val back = CraftNativeChrome::class.java.getDeclaredField("backButton").apply { isAccessible = true }.get(chrome) as ImageView
+                fun options(backButton: Any?) = org.json.JSONObject().put("title", "Inbox").apply {
+                    if (backButton != null) put("backButton", backButton)
+                }
+                fun spec(symbol: String, label: String? = null) = org.json.JSONObject().put("symbol", symbol).apply {
+                    if (label != null) put("accessibilityLabel", label)
+                }
+                /** What the button draws, as pixels: a tinted drawable is its own object each time. */
+                fun picture(): Bitmap {
+                    val bitmap = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888)
+                    val drawable = back.drawable
+                    val bounds = android.graphics.Rect(drawable.bounds)
+                    drawable.setBounds(0, 0, 48, 48)
+                    drawable.draw(android.graphics.Canvas(bitmap))
+                    drawable.bounds = bounds
+                    return bitmap
+                }
+                chrome.apply(options(null), 1, "Inbox")
+                assertEquals(View.VISIBLE, back.visibility)
+                assertEquals("Back", back.contentDescription)
+                val arrow = picture()
+
+                chrome.apply(options(spec("xmark", "Close messages")), 1, "Inbox")
+                assertEquals(View.VISIBLE, back.visibility)
+                assertEquals("Close messages", back.contentDescription)
+                assertFalse("the arrow gives way to the screen's own symbol", picture().sameAs(arrow))
+                val close = back.drawable
+
+                // The same options again keep the same picture, and the tap is Back's.
+                chrome.apply(options(spec("xmark", "Close messages")), 1, "Inbox")
+                assertSame(close, back.drawable)
+                val previous = chrome.onBack
+                var went = 0
+                chrome.onBack = { went++ }
+                back.performClick()
+                chrome.onBack = previous
+                assertEquals("the screen's own symbol is still the back button", 1, went)
+
+                // Its label defaults by what it is.
+                chrome.apply(options(spec("xmark")), 1, "Inbox")
+                assertEquals("Close", back.contentDescription)
+
+                // The first screen of a stack has no back button to draw.
+                chrome.apply(options(spec("xmark")), 0, "Inbox")
+                assertEquals(View.GONE, back.visibility)
+
+                // A symbol the host has nothing for leaves the arrow, and so
+                // does a screen that asks for nothing: the next screen's bar
+                // is its own.
+                chrome.apply(options(spec("craft.no.such.symbol", "Close")), 1, "Inbox")
+                assertEquals("Back", back.contentDescription)
+                assertTrue("an unknown symbol leaves the arrow", picture().sameAs(arrow))
+                chrome.apply(options(spec("xmark")), 1, "Inbox")
+                assertFalse(picture().sameAs(arrow))
+                chrome.apply(options(org.json.JSONObject.NULL), 1, "Details")
+                assertEquals("Back", back.contentDescription)
+                assertTrue("null restores the arrow", picture().sameAs(arrow))
+                chrome.apply(options(spec("xmark")), 1, "Inbox")
+                chrome.apply(options(null), 1, "Details")
+                assertEquals("Back", back.contentDescription)
+                assertTrue("a screen that asks for nothing has the arrow", picture().sameAs(arrow))
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    /**
      * `tabBarHiddenWhenPushed` on the real chrome, at real depths (#493).
      *
      * The option was honoured here and nowhere else in Craft until UIKit was

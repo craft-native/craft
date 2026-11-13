@@ -1075,6 +1075,74 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertNil(controller.navigationItem.compactScrollEdgeAppearance)
     }
 
+    // #527: `leftButtons` sit beside Back, so a screen that closes rather
+    // than goes back (an inbox opened over the app) could not put an X where
+    // the chevron is.
+    func testAScreenCanDrawItsBackAsACloseButton() throws {
+        let root = CraftNativeScreenController(config: CraftConfig())
+        let pushed = CraftNativeScreenController(config: CraftConfig())
+        let navigation = UINavigationController(rootViewController: root)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        navigation.pushViewController(pushed, animated: false)
+        navigation.view.layoutIfNeeded()
+        func leading(_ screen: UIViewController) -> [String] {
+            (screen.navigationItem.leftBarButtonItems ?? []).map { $0.accessibilityIdentifier ?? "" }
+        }
+        XCTAssertFalse(pushed.navigationItem.hidesBackButton)
+        XCTAssertEqual(leading(pushed), [])
+
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close messages' }, leftButtons: [{ id: 'edit', title: 'Edit' }] })")
+        XCTAssertTrue(pushed.navigationItem.hidesBackButton, "the chevron gives way to the screen's own symbol")
+        XCTAssertEqual(leading(pushed), ["nav-back", "nav-edit"], "in Back's place, before the screen's left buttons")
+        let close = try XCTUnwrap(pushed.navigationItem.leftBarButtonItems?.first)
+        XCTAssertEqual(close.accessibilityLabel, "Close messages")
+        XCTAssertNotNil(close.image)
+
+        // Options that say nothing about it leave it, and new left buttons
+        // go beside it rather than over it.
+        pushed.evaluateScript("craft.navigation.setOptions({ title: 'Inbox' })")
+        XCTAssertEqual(leading(pushed), ["nav-back", "nav-edit"])
+        pushed.evaluateScript("craft.navigation.setOptions({ leftButtons: [] })")
+        XCTAssertEqual(leading(pushed), ["nav-back"])
+        XCTAssertTrue(pushed.navigationItem.hidesBackButton)
+
+        // A symbol UIKit does not have leaves the chevron, and null brings it back.
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'craft.no.such.symbol' } })")
+        XCTAssertFalse(pushed.navigationItem.hidesBackButton, "a screen is never left with no way back")
+        XCTAssertEqual(leading(pushed), [])
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark' } })")
+        XCTAssertEqual(pushed.navigationItem.leftBarButtonItems?.first?.accessibilityLabel, "Close")
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: null })")
+        XCTAssertFalse(pushed.navigationItem.hidesBackButton)
+        XCTAssertEqual(leading(pushed), [])
+
+        // The first screen of a stack has nothing to go back to.
+        root.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark' } })")
+        XCTAssertFalse(root.navigationItem.hidesBackButton)
+        XCTAssertEqual(leading(root), [])
+
+        // Asked for before the screen is in a stack, as a screen's script
+        // does while it is being opened: it is there once it is pushed.
+        let later = CraftNativeScreenController(config: CraftConfig())
+        later.loadViewIfNeeded()
+        later.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark' } })")
+        navigation.pushViewController(later, animated: false)
+        navigation.view.layoutIfNeeded()
+        XCTAssertEqual(leading(later), ["nav-back"])
+        XCTAssertTrue(later.navigationItem.hidesBackButton)
+
+        // And it goes back: what `craft.navigation.back()` does.
+        let item = try XCTUnwrap(later.navigationItem.leftBarButtonItems?.first)
+        XCTAssertEqual(navigation.viewControllers.count, 3)
+        _ = try XCTUnwrap(item.target as? NSObject).perform(try XCTUnwrap(item.action))
+        XCTAssertEqual(navigation.viewControllers.count, 2)
+        XCTAssertFalse(navigation.viewControllers.contains(later))
+    }
+
     private func solidNavigationBackground(_ appearance: UINavigationBarAppearance, controller: UIViewController) throws -> UIColor {
         XCTAssertNil(appearance.backgroundEffect)
         if #available(iOS 26.0, *) {

@@ -3071,6 +3071,32 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('A\nposition does not choose a fit')
   })
 
+  it('lets a screen draw its Back as its own symbol, on both hosts', () => {
+    // `leftButtons` sit beside Back on both hosts, so a screen that closes
+    // rather than goes back could not put an X where the chevron is (#527).
+    // `backButton` replaces the picture and nothing else: the same place,
+    // the same depths, the same action, and the back-swipe is untouched.
+    expect(ios).toContain('if options.keys.contains("backButton") {')
+    expect(ios).toContain('let isRoot = navigationController?.viewControllers.first === self')
+    expect(ios).toContain('let item = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(backButtonTapped))')
+    expect(ios).toContain('navigationItem.hidesBackButton = back != nil')
+    expect(ios).toContain('if backButtonSpec != nil { applyLeadingBarItems() }')
+    // The shell decides the back-swipe itself, so hiding the chevron does
+    // not take the swipe with it.
+    expect(iosHybrid).toContain('guard let nav = visibleStack, isPopRecognizer(gestureRecognizer),')
+    expect(androidChrome).toContain('backButtonSpec = options.optJSONObject("backButton")')
+    expect(androidChrome).toContain('?: if (symbol.startsWith("xmark")) {')
+    expect(androidChrome).toContain('androidx.appcompat.R.drawable.abc_ic_clear_material')
+    expect(androidChrome).toContain('backButton.contentDescription = label.ifBlank { if (symbol.startsWith("xmark")) "Close" else "Back" }')
+    // A symbol the host has nothing for leaves Back as it was.
+    expect(androidChrome).toContain('backButton.setImageResource(androidx.appcompat.R.drawable.abc_ic_ab_back_material)\n            backButton.contentDescription = "Back"')
+    expect(iosLayoutUnitTests).toContain('func testAScreenCanDrawItsBackAsACloseButton() throws {')
+    expect(androidNavigationTest).toContain('fun aScreenCanDrawItsBackAsACloseButton()')
+    expect(readFileSync(join(root, 'packages/typescript/types/craft.d.ts'), 'utf8'))
+      .toContain('backButton?: { symbol: string; accessibilityLabel?: string } | null;')
+    expect(guide).toContain("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })")
+  })
+
   it('describes a link whatever its sender wrote, without closing the app', () => {
     // A link is outside input. UIKit built its parameters with unique keys
     // and trapped on one named twice; Android asked an opaque link

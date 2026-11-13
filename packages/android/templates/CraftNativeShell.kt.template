@@ -993,7 +993,7 @@ internal object CraftNativePrelude {
  * screen sets its own chrome with
  *
  * `craft.navigation.setOptions({ title, largeTitle, titleColor, hidden,
- *   backgroundColor, leftButtons, rightButtons, tabItem, tabAccessory,
+ *   backgroundColor, backButton, leftButtons, rightButtons, tabItem, tabAccessory,
  *   tabBarHidden, tabBarHiddenWhenPushed, tabSwipeEnabled })`
  *
  * which `apply` below reads. That list is checked against `apply` itself
@@ -1249,6 +1249,8 @@ internal class CraftNativeChrome(
         val title = options.optString("title").takeIf { options.has("title") } ?: fallbackTitle.orEmpty()
         bar.visibility = if (hidden) View.GONE else View.VISIBLE
         backButton.visibility = if (depth > 0) View.VISIBLE else View.GONE
+        backButtonSpec = options.optJSONObject("backButton")
+        applyBackButton()
         bar.setPadding(if (depth > 0) dp(4) else dp(4), 0, dp(8), 0)
         titleView.text = if (large) "" else title
         largeTitleView.text = title
@@ -1505,6 +1507,42 @@ internal class CraftNativeChrome(
         )
     }
 
+    private var backButtonSpec: JSONObject? = null
+    private var renderedBackButton = ""
+
+    /**
+     * `backButton`: what this screen's Back is drawn with, when it is not the
+     * arrow (`{ symbol: "xmark", accessibilityLabel: "Close" }` for a screen
+     * that closes rather than goes back). `leftButtons` sit beside Back, so a
+     * screen could not put its own symbol in Back's place (#527). It is still
+     * the bar's back button: the same tap, shown at the same depths.
+     *
+     * The symbol is the app's own icon when it has one, and AppCompat's close
+     * mark for an `xmark` it has none for. Any other symbol the app has no
+     * icon for leaves the arrow, and its "Back".
+     */
+    private fun applyBackButton() {
+        val symbol = backButtonSpec?.optString("symbol").orEmpty()
+        val label = backButtonSpec?.optString("accessibilityLabel").orEmpty()
+        val tint = backButton.imageTintList?.defaultColor ?: Color.BLACK
+        // The activity passes cumulative options for every live patch: the
+        // same symbol in the same colour keeps the picture it has.
+        val rendered = "$symbol\u0000$label\u0000$tint"
+        if (rendered == renderedBackButton) return
+        renderedBackButton = rendered
+        val icon = if (symbol.isBlank()) null else CraftNativeIcons.drawable(context, null, symbol, tint)
+            ?: if (symbol.startsWith("xmark")) {
+                androidx.appcompat.content.res.AppCompatResources.getDrawable(context, androidx.appcompat.R.drawable.abc_ic_clear_material)
+            } else null
+        if (icon == null) {
+            backButton.setImageResource(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
+            backButton.contentDescription = "Back"
+        } else {
+            backButton.setImageDrawable(icon)
+            backButton.contentDescription = label.ifBlank { if (symbol.startsWith("xmark")) "Close" else "Back" }
+        }
+    }
+
     /** Light or dark changed: the bars follow the screen's background. */
     fun refreshColors() {
         val background = screenBackgroundColor ?: ContextCompat.getColor(context, R.color.background)
@@ -1518,6 +1556,8 @@ internal class CraftNativeChrome(
         titleView.setTextColor(navigationTitleColor ?: text)
         largeTitleView.setTextColor(navigationTitleColor ?: text)
         backButton.imageTintList = ColorStateList.valueOf(accent)
+        // A screen's own back symbol is drawn in the accent, not tinted by it.
+        applyBackButton()
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
         val grouped = accessoryGroup.parent === body
         accessoryGroup.background = if (grouped) GradientDrawable().apply { setColor(surface); cornerRadius = dp(26).toFloat() } else null

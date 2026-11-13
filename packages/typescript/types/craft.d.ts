@@ -2636,6 +2636,19 @@ export interface CraftNavigationOptions {
    */
   backTitle?: string | null;
   /**
+   * What this screen's Back is drawn with, in place of the chevron: `{ symbol:
+   * 'xmark', accessibilityLabel: 'Close' }` for a screen that closes rather
+   * than goes back. It is still the bar's back button: it shows only where
+   * Back would, a tap does what `navigation.back()` does, and the back-swipe
+   * is unchanged. `null` restores the chevron.
+   *
+   * `symbol` is an SF Symbol name. Android draws the app's own icon for it,
+   * or its close mark for an `xmark`; a symbol a host has nothing for leaves
+   * the chevron. `accessibilityLabel` defaults to "Close" for an `xmark` and
+   * to "Back" otherwise.
+   */
+  backButton?: { symbol: string; accessibilityLabel?: string } | null;
+  /**
    * **iOS only.** Whether a back-swipe may leave this screen at all, the
    * screen edge's included. A screen that steps through its own pages with a
    * Back of its own would otherwise lose its place to a stray swipe.

@@ -7202,6 +7202,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // a screen that hid its own.
             navigationController?.setNavigationBarHidden(false, animated: animated)
         }
+        // Options can arrive before the screen is in a stack: whether it has
+        // a screen to go back to is known now.
+        if backButtonSpec != nil { applyLeadingBarItems() }
         applyNavigationBarAppearance()
         // Each screen says whether it wants the tab bar, so one that hid it
         // never leaves it hidden for the next. Only the screen on screen:
@@ -7876,7 +7879,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// - `craft.secureStorage.getSync(key)`: the Keychain item the web page's
     ///   `craft.secureStorage.set` wrote.
     /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
-    ///   backTitle, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
+    ///   backTitle, backButton, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
     ///   contentSwipeBack,
     ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, leftButtons,
     ///   rightButtons, tabAccessory })`; a button's tap is the event
@@ -8492,10 +8495,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 navigationController?.setNavigationBarHidden(hidden, animated: animatesNavigationBarChanges)
             }
         }
+        if options.keys.contains("backButton") {
+            backButtonSpec = options["backButton"] as? [String: Any]
+            backButtonItem = nil
+        }
         if options.keys.contains("leftButtons") {
             let buttons = (options["leftButtons"] as? [[String: Any]]) ?? []
-            navigationItem.leftItemsSupplementBackButton = true
-            navigationItem.leftBarButtonItems = buttons.compactMap(navigationButton)
+            leftButtonItems = buttons.compactMap(navigationButton)
+        }
+        if options.keys.contains("backButton") || options.keys.contains("leftButtons") {
+            applyLeadingBarItems()
         }
         if options.keys.contains("rightButtons") {
             let buttons = (options["rightButtons"] as? [[String: Any]]) ?? []
@@ -8591,6 +8600,44 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return action
         }
         return actions.isEmpty ? nil : UIMenu(children: actions)
+    }
+
+    /// `backButton`: what this screen's Back is drawn with, when it is not
+    /// the chevron (`{ symbol: "xmark", accessibilityLabel: "Close" }` for a
+    /// screen that closes rather than goes back). `leftButtons` are added
+    /// beside Back, so a screen could not put its own symbol in Back's place
+    /// (#527). Nil is the system's chevron.
+    private var backButtonSpec: [String: Any]?
+    private var backButtonItem: UIBarButtonItem?
+    private var leftButtonItems: [UIBarButtonItem] = []
+
+    /// The screen's own Back, when it asked for one and has a screen to go
+    /// back to, then its left buttons. The chevron is hidden only while the
+    /// item that replaces it is in the bar: a symbol UIKit does not have
+    /// leaves the chevron. The back-swipe is the shell's to allow, and is
+    /// not affected.
+    private func applyLeadingBarItems() {
+        // Known to be the first screen of its stack: nothing to go back to.
+        let isRoot = navigationController?.viewControllers.first === self
+        if !isRoot, backButtonItem == nil, let spec = backButtonSpec,
+           let symbol = spec["symbol"] as? String, let image = UIImage(systemName: symbol) {
+            let item = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(backButtonTapped))
+            item.accessibilityIdentifier = "nav-back"
+            item.accessibilityLabel = (spec["accessibilityLabel"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (symbol.hasPrefix("xmark") ? "Close" : "Back")
+            backButtonItem = item
+        }
+        let back = isRoot ? nil : backButtonItem
+        navigationItem.hidesBackButton = back != nil
+        navigationItem.leftItemsSupplementBackButton = true
+        navigationItem.leftBarButtonItems = (back.map { [$0] } ?? []) + leftButtonItems
+    }
+
+    /// What `craft.navigation.back()` does.
+    @objc private func backButtonTapped() {
+        if !isAppScript, navigationController?.topViewController === self {
+            navigationController?.popViewController(animated: true)
+        }
     }
 
     private func navigationButton(_ spec: [String: Any]) -> UIBarButtonItem? {

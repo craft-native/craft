@@ -2258,7 +2258,9 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     expect(swift).toContain('options.keys.contains("leftButtons")')
     expect(swift).toContain('navigationItem.leftItemsSupplementBackButton = true')
-    expect(swift).toContain('navigationItem.leftBarButtonItems = buttons.compactMap(navigationButton)')
+    expect(swift).toContain('leftButtonItems = buttons.compactMap(navigationButton)')
+    // Beside Back, or beside the symbol a screen draws in Back's place (#527).
+    expect(swift).toContain('navigationItem.leftBarButtonItems = (back.map { [$0] } ?? []) + leftButtonItems')
     expect(swift).toContain('if spec["variant"] as? String == "neutral" { item.tintColor = .label }')
     expect(swift).toContain('if let value = craftNativeNumber(spec["badge"]), value.intValue > 0 {')
   })
