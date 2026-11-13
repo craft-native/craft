@@ -1,5 +1,29 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.500...v0.0.502)
+
+## 🚀 Features
+
+- **android**: let an app set the native chrome's tint (tintColor) ([f92d15f](https://github.com/craft-native/craft/commit/f92d15f)) _(by Chris)_
+- let a screen draw its Back as its own symbol (backButton) ([d35a4ac](https://github.com/craft-native/craft/commit/d35a4ac)) _(by glennmichael123)_ ([#527](https://github.com/craft-native/craft/issues/527))
+
+## 🐛 Bug Fixes
+
+- let a position place an image without choosing its fit ([7580fcc](https://github.com/craft-native/craft/commit/7580fcc)) _(by glennmichael123)_ ([#532](https://github.com/craft-native/craft/issues/532))
+- **android**: send the long press when a finger is held on a pressable ([dbc31c1](https://github.com/craft-native/craft/commit/dbc31c1)) _(by glennmichael123)_ ([#529](https://github.com/craft-native/craft/issues/529))
+- **android**: draw every component with hostile numbers, and survive them ([da313f8](https://github.com/craft-native/craft/commit/da313f8)) _(by glennmichael123)_ ([#528](https://github.com/craft-native/craft/issues/528), [#510](https://github.com/craft-native/craft/issues/510), [#518](https://github.com/craft-native/craft/issues/518))
+- **ios**: count a grid no more tracks than a screen could show ([d217338](https://github.com/craft-native/craft/commit/d217338)) _(by glennmichael123)_ ([#528](https://github.com/craft-native/craft/issues/528))
+- keep the floating-actions room for what is behind the actions ([b25d9ba](https://github.com/craft-native/craft/commit/b25d9ba)) _(by glennmichael123)_ ([#525](https://github.com/craft-native/craft/issues/525), [#523](https://github.com/craft-native/craft/issues/523))
+
+## 🧹 Chores
+
+- release v0.0.501 ([7c76b5b](https://github.com/craft-native/craft/commit/7c76b5b)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.500...v0.0.501)
 
 ## 🚀 Features
