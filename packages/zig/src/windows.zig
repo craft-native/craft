@@ -1751,6 +1751,9 @@ fn handleShortcutAction(entry: desktop_window_registry.Entry, action: []const u8
 // =============================================================================
 
 var global_tray: ?*windows_tray.WindowsTray = null;
+/// The tray's context menu, as the bare array `craft.tray.setMenu` sent. Null
+/// until a menu is set, and a right click without one reports only the click.
+var tray_menu_json: ?[]u8 = null;
 
 /// The tray this process owns, anchored to the window that will receive its
 /// click messages.
@@ -1806,12 +1809,22 @@ fn handleTrayAction(entry: desktop_window_registry.Entry, action: []const u8, da
         }
         return;
     }
-    // `setIcon`, `setMenu`, `setBadge` and `pollActions` have no counterpart
-    // here: the icon is the stock application icon, the tray draws no menu yet,
-    // and clicks are pushed rather than polled. All four are `_send` on the
-    // facade, so answering nothing is the right shape.
-    if (eql(u8, action, "setIcon") or eql(u8, action, "setMenu") or
-        eql(u8, action, "setBadge") or eql(u8, action, "pollActions")) return;
+    if (eql(u8, action, "setMenu")) {
+        // Kept as the page sent it: `windows_desktop.showTrayMenuAt` parses it
+        // with the same `tray_menu` parser the macOS bridge uses.
+        if (tray_menu_json) |old| allocator.free(old);
+        tray_menu_json = try allocator.dupe(u8, payload);
+        // A menu with no icon would never be reachable, so setting one creates
+        // the tray the same way a tooltip does.
+        _ = try ensureTray(allocator, entry.window, "Craft");
+        return;
+    }
+    // `setIcon`, `setBadge` and `pollActions` have no counterpart here: the icon
+    // is the stock application icon, the tray badge is a macOS surface, and
+    // clicks and menu choices are pushed rather than polled. All three are
+    // `_send` on the facade, so answering nothing is the right shape.
+    if (eql(u8, action, "setIcon") or eql(u8, action, "setBadge") or
+        eql(u8, action, "pollActions")) return;
     return error.PlatformNotSupported;
 }
 
@@ -3850,6 +3863,16 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             };
             if (button.len > 0) {
                 if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                    // A right click opens the tray menu when one was set; the
+                    // page is told about the choice, not about the click.
+                    if (std.mem.eql(u8, button, "right")) {
+                        if (tray_menu_json) |items_json| {
+                            windows_desktop.showTrayMenuAt(entry.window, entry.webview, items_json) catch |err| {
+                                std.log.warn("craft.tray: the context menu could not be shown: {s}", .{@errorName(err)});
+                            };
+                            return 0;
+                        }
+                    }
                     var script_buf: [96]u8 = undefined;
                     const script = std.fmt.bufPrint(&script_buf, "if(window.__craftDeliverTrayClick)window.__craftDeliverTrayClick('{s}');", .{button}) catch "";
                     if (script.len > 0) evalInWebview(entry.webview, script);
