@@ -4370,8 +4370,18 @@ describe('native renderer component contract', () => {
     // Each screen measures how far they reach into each of its scroll views,
     // less what the safe area already clears, and only in its own shell.
     expect(ios).toContain('func insetScrollViewsForFloatingActions() {')
-    expect(ios).toContain('chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? frame : nil }')
-    expect(ios).toContain('return max(0, frame.maxY - actions.minY - automaticBottom)')
+    expect(ios).toContain('let host = chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? $0 : nil }')
+    expect(ios).toContain('return max(0, end - actions.minY - automaticBottom)')
+    // 0.0.500 gave the room to two things that are not behind the actions
+    // (#525). A sheet is presented in front of the shell: its scroll view
+    // got 162 points and could be dragged up into blank space. A list inside
+    // the screen's scroll view was measured where it sat in the page, below
+    // the fold, and got the height of the page above it.
+    expect(ios).toContain('guard let actions, let host, let window = scroll.window, scroll.isDescendant(of: host) else { return 0 }')
+    expect(ios).toContain('let end = min(frame.maxY, host.convert(host.bounds, to: window).maxY)')
+    expect(ios).toContain('scroll.floatingCover = inside ? 0 : cover(scroll)')
+    expect(ios).toContain('list.floatingCover = inside ? 0 : cover(list)')
+    expect(ios).not.toContain('node.children.forEach(visit)\n        }\n        visit(renderedRoot)\n        floatingClearanceApplied')
     expect(ios).toContain('forName: CraftChrome.floatingActionsDidMove,')
     // The keyboard and the actions share one inset: the larger.
     expect(ios).toContain('let cover = max(keyboardCover, floatingCover)')
@@ -4386,7 +4396,9 @@ describe('native renderer component contract', () => {
     // Android: the chrome measures after each layout and gives the same room.
     expect(androidChrome).toContain('internal fun floatingActionsReach(): Int =')
     expect(androidChrome).toContain('return (at[1] - origin[1] + view.height - top).coerceIn(0, reach)')
-    expect(androidChrome).toContain('is CraftNativeScrollView -> { view.setFloatingCover(cover(view)); visit(view.content) }')
+    expect(androidChrome).toContain('is CraftNativeFlatList -> view.setFloatingCover(if (inside) 0 else cover(view))')
+    expect(androidChrome).toContain('view.setFloatingCover(if (inside) 0 else cover(view))\n                    visit(view.content, inside || view.scrollsVertically)')
+    expect(android).toContain('val scrollsVertically: Boolean get() = horizontalMode != true')
     expect(android).toContain('vertical.setPadding(vertical.paddingLeft, vertical.paddingTop, vertical.paddingRight, next)')
     // A list's room is below its last row only: its padding and viewport stay.
     expect(androidFlatList).toContain('if (endsTheList) outRect.bottom = floatingCover')
@@ -4399,8 +4411,12 @@ describe('native renderer component contract', () => {
       'testAScrollThatEndsAboveOrPartWayIntoFloatingActionsClearsOnlyWhatReachesIt',
       'testAListBehindFloatingActionsAddsTheirReachToItsOwnPadding',
       'testActionsFloatingInAnotherShellAreNotThisScreensToClear',
+      'testASheetInFrontOfTheActionsIsNotGivenTheirRoom',
+      'testAListInsideTheScreensScrollLeavesTheRoomToThatScroll',
+      'testAScrollViewTallerThanTheScreenClearsNoMoreThanTheActionsReach',
     ]) expect(iosLayoutUnitTests).toContain(`func ${name}(`)
     expect(androidNavigationTest).toContain('fun groupedActionsGiveTheScrollViewBehindThemRoomAtItsEnd()')
+    expect(androidNavigationTest).toContain('fun aScrollViewOrListInsideTheScreensScrollViewLeavesTheRoomToIt()')
     expect(androidFlatListTest).toContain('fun theLastRowIsGivenRoomToClearWhatFloatsOverTheEndOfTheList()')
     expect(guide).toContain('is given room at its end equal to how far the group')
     expect(guide).toContain('the viewport, the safe area and the web')

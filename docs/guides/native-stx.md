@@ -1133,7 +1133,10 @@ length plus its lift above the bar (113 points for two actions in a vertical
 group on iOS, 108 dp on Android), less what the safe area already keeps clear
 above a floating tab bar. The room is added to a list's own
 `contentContainerStyle` padding and goes when the group does. A scroll view
-that ends above the group gets none; the viewport, the safe area and the web
+that ends above the group gets none, and neither does one that is not behind
+it (a scroll view in a sheet presented over the tabs on iOS, or a list or
+scroll view inside another that scrolls the same way, which the outer one
+brings clear); the viewport, the safe area and the web
 inset are unchanged, so nothing that does not scroll moves. An app that padded
 its screens by hand for the group can drop that padding to the small gap it
 wants above it. Rows still pass behind the group mid-scroll: keep a row's

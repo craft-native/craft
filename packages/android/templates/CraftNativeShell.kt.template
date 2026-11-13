@@ -1368,14 +1368,22 @@ internal class CraftNativeChrome(
             view.getLocationInWindow(at)
             return (at[1] - origin[1] + view.height - top).coerceIn(0, reach)
         }
-        fun visit(view: View) {
+        // `inside` a scroll view that scrolls down the screen, a list or a
+        // second scroll view is brought clear by that one, and gets none of
+        // its own: where it sits in a page not yet scrolled to it says
+        // nothing about the screen, and a short list below the fold was
+        // given the whole reach and scrolled inside its box into blank space.
+        fun visit(view: View, inside: Boolean) {
             when (view) {
-                is CraftNativeFlatList -> view.setFloatingCover(cover(view))
-                is CraftNativeScrollView -> { view.setFloatingCover(cover(view)); visit(view.content) }
-                is ViewGroup -> for (index in 0 until view.childCount) visit(view.getChildAt(index))
+                is CraftNativeFlatList -> view.setFloatingCover(if (inside) 0 else cover(view))
+                is CraftNativeScrollView -> {
+                    view.setFloatingCover(if (inside) 0 else cover(view))
+                    visit(view.content, inside || view.scrollsVertically)
+                }
+                is ViewGroup -> for (index in 0 until view.childCount) visit(view.getChildAt(index), inside)
             }
         }
-        visit(content)
+        visit(content, false)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {

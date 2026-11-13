@@ -9060,27 +9060,44 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// view is does not come into it: a page of a pager that is off to one
     /// side now is under the actions once it is swiped to. The safe area and
     /// the viewport are left alone: content still scrolls behind the
-    /// actions. Internal for XCTest.
+    /// actions.
+    ///
+    /// Two things are not behind the actions, and get none. A scroll view
+    /// that is not inside the shell the actions float in: a sheet is
+    /// presented in front of them, and its scroll view was given the room of
+    /// a capsule it covers, so every sheet could be dragged up into blank
+    /// space. And a scroll view or list inside another that scrolls the same
+    /// way: it is brought clear by the outer one, and where it sits in a page
+    /// not yet scrolled to it says nothing about the glass; a short list
+    /// below the fold was given the height of the page above it. Internal
+    /// for XCTest.
     func insetScrollViewsForFloatingActions() {
         let chrome = CraftChrome.shared
-        let actions = chrome.floatingActions.flatMap { frame in
-            chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? frame : nil }
-        }
+        let host = chrome.floatingActionsHost.flatMap { view.isDescendant(of: $0) ? $0 : nil }
+        let actions = host == nil ? nil : chrome.floatingActions
         func cover(_ scroll: UIScrollView) -> CGFloat {
-            guard let actions, let window = scroll.window else { return 0 }
+            guard let actions, let host, let window = scroll.window, scroll.isDescendant(of: host) else { return 0 }
             let frame = scroll.convert(scroll.bounds, to: window)
+            // Nothing past the end of the shell is on the glass.
+            let end = min(frame.maxY, host.convert(host.bounds, to: window).maxY)
             // An edge-to-edge scroller already clears the tab bar through
             // UIKit's safe area. Add only what the actions reach above it.
             let automaticBottom = max(0, scroll.adjustedContentInset.bottom - scroll.contentInset.bottom)
-            return max(0, frame.maxY - actions.minY - automaticBottom)
+            return max(0, end - actions.minY - automaticBottom)
         }
-        func visit(_ node: RenderedNode?) {
+        func visit(_ node: RenderedNode?, inside: Bool) {
             guard let node else { return }
-            if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical { scroll.floatingCover = cover(scroll) }
-            else if let list = node.view as? CraftNativeFlatList { list.floatingCover = cover(list) }
-            node.children.forEach(visit)
+            var inside = inside
+            if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical {
+                scroll.floatingCover = inside ? 0 : cover(scroll)
+                inside = true
+            } else if let list = node.view as? CraftNativeFlatList {
+                list.floatingCover = inside ? 0 : cover(list)
+                if (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal { inside = true }
+            }
+            node.children.forEach { visit($0, inside: inside) }
         }
-        visit(renderedRoot)
+        visit(renderedRoot, inside: false)
         floatingClearanceApplied = actions != nil
     }
 

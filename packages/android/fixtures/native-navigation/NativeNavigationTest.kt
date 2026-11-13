@@ -1341,6 +1341,84 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * The room is the outer scroll view's. In 0.0.500 a scroll view or list
+     * inside it was measured where it sat in the page, below the fold, and
+     * given the whole reach as well: a short list scrolled inside its own box
+     * into blank space.
+     */
+    @Test
+    fun aScrollViewOrListInsideTheScreensScrollViewLeavesTheRoomToIt() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            lateinit var chrome: CraftNativeChrome
+            lateinit var outer: android.widget.ScrollView
+            lateinit var nested: CraftNativeScrollView
+            lateinit var nestedScroller: android.widget.ScrollView
+            lateinit var list: CraftNativeFlatList
+            val listCover = CraftNativeFlatList::class.java.getDeclaredField("floatingCover").apply { isAccessible = true }
+            instrumentation.runOnMainSync {
+                chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                val scroll = find(chrome.content, "native-root-scroll") as CraftNativeScrollView
+                outer = findType(scroll, android.widget.ScrollView::class.java)
+                    ?: throw AssertionError("the root scroll view has no vertical scroller")
+                // Below the fold of the page: a spacer, then a scroll view and
+                // a list, each in a box of its own.
+                scroll.content.addView(View(activity), ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 4000))
+                nested = CraftNativeScrollView(activity).apply {
+                    content.addView(View(activity), ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 900))
+                }
+                scroll.content.addView(nested, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 300))
+                list = CraftNativeFlatList(activity)
+                scroll.content.addView(list, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 300))
+                nestedScroller = findType(nested, android.widget.ScrollView::class.java)
+                    ?: throw AssertionError("the nested scroll view has no vertical scroller")
+            }
+            instrumentation.runOnMainSync {
+                chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject(
+                    """{"path":"/capabilities","title":"Messages","symbol":"message","layout":"vertical","companions":[{"path":"/add","title":"Add","symbol":"plus"}]}"""
+                )), 0, "Home")
+            }
+            var found = ""
+            var settled = false
+            repeat(50) {
+                if (settled) return@repeat
+                instrumentation.runOnMainSync {
+                    val at = IntArray(2)
+                    nested.getLocationOnScreen(at)
+                    val below = at[1] > activity.window.decorView.height
+                    settled = chrome.floatingActionsReach() > 0 && outer.paddingBottom > 0 && below
+                    found = "reach ${chrome.floatingActionsReach()}, outer room ${outer.paddingBottom}, nested at ${at[1]}"
+                }
+                if (!settled) SystemClock.sleep(100)
+            }
+            assertTrue("the outer scroll view must be given room, with the nested ones below the fold; $found", settled)
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                assertEquals("a scroll view inside the screen's scroll view is brought clear by it", 0, nestedScroller.paddingBottom)
+                assertEquals("a list inside the screen's scroll view is brought clear by it", 0, listCover.getInt(list))
+            }
+            // Scrolled to the end, where both sit beside the actions, and laid
+            // out again: still none of their own.
+            instrumentation.runOnMainSync { outer.scrollTo(0, Int.MAX_VALUE / 2); chrome.requestLayout() }
+            instrumentation.waitForIdleSync()
+            SystemClock.sleep(300)
+            instrumentation.runOnMainSync {
+                assertTrue("the outer scroll view keeps its room", outer.paddingBottom > 0)
+                assertEquals(0, nestedScroller.paddingBottom)
+                assertEquals(0, listCover.getInt(list))
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     @Test
     fun liveTabUpdatesRetainToolbarViewsAndActionsUntilTheirSpecsChange() {
         val context = instrumentation.targetContext

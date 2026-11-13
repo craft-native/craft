@@ -1533,6 +1533,105 @@ final class NativeLayoutUnitTests: XCTestCase {
         try await assertTabbedScrollReachesBottom(controller)
     }
 
+    // The room is for what the actions float over. In 0.0.500 it also went to
+    // a scroll view in a sheet presented in front of them, and to a list
+    // inside the screen's own scroll view, measured where that list sat in a
+    // page that had not been scrolled to it.
+
+    func testASheetInFrontOfTheActionsIsNotGivenTheirRoom() async throws {
+        var root = tabScrollRoot()
+        let sheet: [String: Any] = [
+            "id": "sheet", "type": "Modal",
+            "props": ["key": "sheet", "visible": true, "animationType": "none", "presentationStyle": "pageSheet", "sheetDetents": ["large"]],
+            "children": [[
+                "id": "sheet-scroll", "type": "ScrollView", "props": ["testID": "sheet-scroll"], "style": ["flex": 1],
+                "children": [box("sheet-rows", style: ["height": 1600])],
+            ] as [String: Any]],
+        ]
+        root["children"] = ((root["children"] as? [[String: Any]]) ?? []) + [sheet]
+        let (controller, tabs, window) = try await bottomLayoutScreen(root)
+        defer {
+            CraftChrome.shared.floatingActionsMoved(to: nil, in: nil)
+            tabs.dismiss(animated: false)
+            window.isHidden = true
+        }
+        let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in controller.presentedViewController != nil }, object: nil)
+        await fulfillment(of: [presented], timeout: 5)
+        let sheetView = try XCTUnwrap(controller.presentedViewController?.view)
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        let actions = floatingActions(above: tabs, in: window)
+        let room = controller.view.convert(controller.view.safeAreaLayoutGuide.layoutFrame, to: window).maxY - actions.minY
+        CraftChrome.shared.floatingActionsMoved(to: actions, in: tabs.view)
+        await settle(controller)
+        sheetView.setNeedsLayout()
+        sheetView.layoutIfNeeded()
+        await settle(controller)
+        let inSheet = try XCTUnwrap(find("sheet-scroll", below: sheetView) as? UIScrollView)
+        XCTAssertGreaterThan(inSheet.convert(inSheet.bounds, to: window).maxY, actions.minY + 40, "the sheet must run down past where the actions are")
+        XCTAssertEqual(inSheet.contentInset.bottom, 0, accuracy: 0.5, "a sheet is in front of the actions: nothing of it is under them")
+        controller.insetScrollViewsForFloatingActions()
+        XCTAssertEqual(inSheet.contentInset.bottom, 0, accuracy: 0.5)
+        // The screen behind the sheet keeps its own.
+        XCTAssertEqual(scroll.contentInset.bottom, room, accuracy: 0.5)
+    }
+
+    func testAListInsideTheScreensScrollLeavesTheRoomToThatScroll() async throws {
+        let rows = (0..<6).map { index in
+            box("row-\(index)", style: ["height": 48], props: ["listRole": "item", "key": "row-\(index)"])
+        }
+        let list: [String: Any] = ["id": "inner-list", "type": "FlatList", "props": ["testID": "inner-list"], "style": ["height": 160], "children": rows]
+        let inner: [String: Any] = [
+            "id": "inner-scroll", "type": "ScrollView", "props": ["testID": "inner-scroll"], "style": ["height": 160],
+            "children": [box("inner-rows", style: ["height": 400])],
+        ]
+        let outer: [String: Any] = [
+            "id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
+            "children": [box("rows", style: ["height": 1600]), list, inner, box("last", style: ["height": 48])],
+        ]
+        let (controller, tabs, window) = try await bottomLayoutScreen(box("root", style: ["flex": 1], [outer]))
+        defer { CraftChrome.shared.floatingActionsMoved(to: nil, in: nil); window.isHidden = true }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        let innerList = try XCTUnwrap(find("inner-list", below: controller.view) as? CraftNativeFlatList)
+        let innerScroll = try XCTUnwrap(find("inner-scroll", below: controller.view) as? UIScrollView)
+        let actions = floatingActions(above: tabs, in: window)
+        let room = controller.view.convert(controller.view.safeAreaLayoutGuide.layoutFrame, to: window).maxY - actions.minY
+        CraftChrome.shared.floatingActionsMoved(to: actions, in: tabs.view)
+        await settle(controller)
+        // Both are below the fold: far past the actions in the window's terms,
+        // and nowhere near them on the glass.
+        XCTAssertGreaterThan(innerList.convert(innerList.bounds, to: window).maxY, window.bounds.maxY + 200)
+        XCTAssertEqual(innerList.contentInset.bottom, 0, accuracy: 0.5, "a list inside the screen's scroll view scrolls clear with it")
+        XCTAssertEqual(innerScroll.contentInset.bottom, 0, accuracy: 0.5, "a scroll view inside the screen's scroll view scrolls clear with it")
+        XCTAssertEqual(scroll.contentInset.bottom, room, accuracy: 0.5)
+        // Scrolled to the end, where they sit beside the actions, and measured
+        // again: still the outer scroll view's to clear, and by no more.
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom), animated: false)
+        await settle(controller)
+        controller.insetScrollViewsForFloatingActions()
+        XCTAssertEqual(innerList.contentInset.bottom, 0, accuracy: 0.5)
+        XCTAssertEqual(innerScroll.contentInset.bottom, 0, accuracy: 0.5)
+        XCTAssertEqual(scroll.contentInset.bottom, room, accuracy: 0.5)
+        let last = try XCTUnwrap(find("last", below: controller.view))
+        XCTAssertEqual(last.convert(last.bounds, to: window).maxY, actions.minY, accuracy: 1)
+    }
+
+    func testAScrollViewTallerThanTheScreenClearsNoMoreThanTheActionsReach() async throws {
+        // Not flexed: 3000 points tall inside a root that clips it, so it ends
+        // far below the glass.
+        let tall: [String: Any] = [
+            "id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["height": 3000, "flexShrink": 0],
+            "children": [box("rows", style: ["height": 4000])],
+        ]
+        let (controller, tabs, window) = try await bottomLayoutScreen(box("root", style: ["flex": 1, "overflow": "hidden"], [tall]))
+        defer { CraftChrome.shared.floatingActionsMoved(to: nil, in: nil); window.isHidden = true }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        let actions = floatingActions(above: tabs, in: window)
+        CraftChrome.shared.floatingActionsMoved(to: actions, in: tabs.view)
+        await settle(controller)
+        XCTAssertGreaterThan(scroll.convert(scroll.bounds, to: window).maxY, window.bounds.maxY + 1000)
+        XCTAssertLessThanOrEqual(scroll.contentInset.bottom, window.bounds.maxY - actions.minY + 0.5, "no more than from the top of the actions to the end of the glass")
+    }
+
     func testPlainScrollKeepsTheHomeIndicatorSafeArea() async throws {
         let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot(), tabbed: false)
         defer { window.isHidden = true }

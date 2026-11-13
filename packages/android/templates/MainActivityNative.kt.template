@@ -3080,6 +3080,9 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
         vertical.setPadding(vertical.paddingLeft, vertical.paddingTop, vertical.paddingRight, next)
     }
 
+    /** Whether this scrolls down the screen: what is inside it is brought clear of the actions by it. */
+    val scrollsVertically: Boolean get() = horizontalMode != true
+
     private var bounces = true
     private var alwaysBounceVertical = true
     private var alwaysBounceHorizontal = true
