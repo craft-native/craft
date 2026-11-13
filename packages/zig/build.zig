@@ -3439,6 +3439,9 @@ fn linkPlatformLibrariesMode(b: *std.Build, module: *std.Build.Module, target_os
             module.linkSystemLibrary("user32", .{});
             module.linkSystemLibrary("gdi32", .{});
             module.linkSystemLibrary("shell32", .{});
+            // `GetFileVersionInfoW` / `VerQueryValueW`, for `app.getInfo()`.Windows
+            // splits the version APIs into their own import library.
+            module.linkSystemLibrary("version", .{});
         },
         else => {},
     }
