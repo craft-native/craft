@@ -185,6 +185,41 @@ final class HostileNumbersUnitTests: XCTestCase {
         XCTAssertNotNil(controller.view.window)
     }
 
+    /// A grid's tracks are counted, and the count is the script's: as a
+    /// number, or inside `repeat(…)`. Nothing above reaches them, because a
+    /// number is not `display: "grid"`.
+    func testGridsOfAHostileNumberOfColumnsAndRows() throws {
+        let (controller, window) = try screen()
+        defer { window.isHidden = true }
+        func grid(_ type: String, _ style: [String: Any]) -> [String: Any] {
+            var style = style
+            style["display"] = "grid"
+            return [
+                "type": "View", "style": ["width": 320, "height": 480],
+                "children": [[
+                    "type": type, "props": ["key": "subject"], "style": style,
+                    "children": ["First", "Second", "Third"].map { ["type": "Text", "props": ["key": $0], "children": [$0]] as [String: Any] },
+                ] as [String: Any]],
+            ]
+        }
+        let tracks = ["gridColumns", "gridTemplateColumns", "gridTemplateRows", "gridAutoRows", "gap", "rowGap", "columnGap"]
+        for type in ["View", "ScrollView", "Pressable"] {
+            for number in Self.numbers {
+                for name in tracks { draw(grid(type, [name: number]), in: controller, window) }
+                draw(grid(type, Dictionary(tracks.map { ($0, number as Any) }, uniquingKeysWith: { first, _ in first })), in: controller, window)
+            }
+            for count in ["2147483647", "2147483648", "4294967296", "99999999999999999999", "0"] {
+                for name in ["gridTemplateColumns", "gridTemplateRows"] {
+                    draw(grid(type, [name: "repeat(\(count), 1fr)"]), in: controller, window)
+                }
+                draw(grid(type, [
+                    "gridTemplateColumns": "repeat(\(count), 1fr)", "gridTemplateRows": "repeat(\(count), minmax(0, 1fr))",
+                ]), in: controller, window)
+            }
+        }
+        XCTAssertNotNil(controller.view.window)
+    }
+
     /// Lengths written as text, transforms, and a drawing's own numbers:
     /// none of them is a plain number in a style or a prop.
     func testHostileLengthsTransformsAndDrawings() throws {

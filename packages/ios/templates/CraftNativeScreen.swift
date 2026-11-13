@@ -214,30 +214,33 @@ private func craftNativePickerValue(_ value: Any?) -> String? {
     return nil
 }
 
-private func craftNativeGridColumnCount(_ value: Any?) -> Int {
-    if let number = craftNativeNumber(value) { return max(1, number.intValue) }
-    guard let text = value as? String else { return 1 }
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.hasPrefix("repeat(") {
-        let digits = trimmed.dropFirst("repeat(".count).prefix { $0.isNumber }
-        if let count = Int(digits) { return max(1, count) }
-    }
-    let tracks = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" })
-    return max(1, tracks.count)
-}
+/// The most tracks a grid is given, either way. A count is whatever the
+/// script said (`gridTemplateRows: Number.MAX_VALUE`,
+/// `repeat(4294967296, 1fr)`), and the layout makes an array of rows that
+/// long and hands the shared engine both counts as a `UInt32`: the first ran
+/// the process out of memory and the second trapped. No screen has room to
+/// show more tracks than this.
+let craftNativeGridTrackLimit = 1024
 
-private func craftNativeGridRowCount(_ value: Any?) -> Int? {
-    if let number = craftNativeNumber(value) { return max(1, number.intValue) }
+func craftNativeGridTrackCount(_ value: Any?) -> Int? {
+    if let number = craftNativeNumber(value) {
+        return min(craftNativeGridTrackLimit, max(1, craftNativeInt(number.doubleValue)))
+    }
     guard let text = value as? String else { return nil }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     if trimmed.hasPrefix("repeat(") {
-        let digits = trimmed.dropFirst("repeat(".count).prefix { $0.isNumber }
-        if let count = Int(digits) { return max(1, count) }
+        let digits = trimmed.dropFirst("repeat(".count).prefix { ("0"..."9").contains($0) }
+        // Digits past what an Int holds are still a count, and still too many.
+        if !digits.isEmpty { return min(craftNativeGridTrackLimit, max(1, Int(digits) ?? craftNativeGridTrackLimit)) }
     }
     let tracks = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" })
-    return tracks.isEmpty ? nil : max(1, tracks.count)
+    return tracks.isEmpty ? nil : min(craftNativeGridTrackLimit, tracks.count)
 }
+
+private func craftNativeGridColumnCount(_ value: Any?) -> Int { craftNativeGridTrackCount(value) ?? 1 }
+
+private func craftNativeGridRowCount(_ value: Any?) -> Int? { craftNativeGridTrackCount(value) }
 
 /// Optional bridge to the shared Zig flex rule. Native hosts retain their
 /// local implementation when no Craft runtime is linked (the normal SDK

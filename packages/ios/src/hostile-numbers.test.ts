@@ -68,6 +68,23 @@ test('every style number is read through the bound, and every flex frame leaves 
   expect(screen).toContain('func up(_ value: CGFloat) -> CGFloat { (craftNativeLayoutNumber(value) * scale - 0.001).rounded(.up) / scale }')
 })
 
+test('a grid is counted no more tracks than a screen could show', () => {
+  // `gridTemplateRows: 1e30` appended to an array of row heights up to the
+  // count: the app froze for minutes, then ended. Past 2^32 the count also
+  // trapped on its way to the shared engine as a UInt32 (#528). The fixture's
+  // other cases never reached a grid: a number is not `display: "grid"`.
+  expect(screen).toContain('let craftNativeGridTrackLimit = 1024')
+  expect(screen).toContain('return min(craftNativeGridTrackLimit, max(1, craftNativeInt(number.doubleValue)))')
+  expect(screen).toContain('if !digits.isEmpty { return min(craftNativeGridTrackLimit, max(1, Int(digits) ?? craftNativeGridTrackLimit)) }')
+  expect(screen).toContain('return tracks.isEmpty ? nil : min(craftNativeGridTrackLimit, tracks.count)')
+  expect(screen).toContain('private func craftNativeGridColumnCount(_ value: Any?) -> Int { craftNativeGridTrackCount(value) ?? 1 }')
+  expect(screen).toContain('private func craftNativeGridRowCount(_ value: Any?) -> Int? { craftNativeGridTrackCount(value) }')
+  expect(screen).not.toContain('return max(1, number.intValue)')
+  expect(fixture).toContain('func testGridsOfAHostileNumberOfColumnsAndRows() throws {')
+  for (const count of ['2147483647', '2147483648', '4294967296', '99999999999999999999'])
+    expect(fixture).toContain(`"${count}"`)
+})
+
 test.skipIf(process.platform !== 'darwin')('a layout number is held inside 2^25 either side of zero, and is 0 when it is not a number', () => {
   const limit = 'let craftNativeLayoutLimit: CGFloat = 33_554_432'
   expect(screen).toContain(limit)
