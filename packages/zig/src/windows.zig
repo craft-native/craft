@@ -1031,6 +1031,42 @@ fn sendSystem(action: []const u8) !void {
 /// `craft.app.getInfo` on Windows. There is no bundle: the executable is the
 /// app. `version` and `bundleId` have no Win32 equivalent that does not mean
 /// reading the PE version resource, so they stay empty rather than guessed.
+/// The executable's version as `x.y.z.w`, read from its PE version resource.
+///
+/// Null when the binary carries no such resource, which is the common case for
+/// a freshly linked Zig executable. Reporting an invented `0.0.0.0` would be
+/// worse than reporting nothing, so the caller leaves the field empty.
+fn readExeVersion(allocator: std.mem.Allocator, exe_path: []const u8) ?[]u8 {
+    const path_w = toWideZ(allocator, exe_path) catch return null;
+    defer allocator.free(path_w);
+
+    var handle: u32 = 0;
+    const size = GetFileVersionInfoSizeW(path_w.ptr, &handle);
+    if (size == 0) return null;
+
+    const block = allocator.alloc(u8, size) catch return null;
+    defer allocator.free(block);
+    if (GetFileVersionInfoW(path_w.ptr, handle, size, block.ptr) == 0) return null;
+
+    var buffer: ?*anyopaque = null;
+    var length: u32 = 0;
+    // The root node of the version resource is a single backslash.
+    const root = [_:0]u16{'\\'};
+    if (VerQueryValueW(block.ptr, &root, &buffer, &length) == 0) return null;
+    if (length < @sizeOf(VS_FIXEDFILEINFO)) return null;
+    const info: *const VS_FIXEDFILEINFO = @ptrCast(@alignCast(buffer.?));
+    // A mismatched signature means the block is not what `VerQueryValueW` said
+    // it was; reading it anyway would print four numbers with no meaning.
+    if (info.dwSignature != 0xFEEF04BD) return null;
+
+    return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
+        info.dwFileVersionMS >> 16,
+        info.dwFileVersionMS & 0xFFFF,
+        info.dwFileVersionLS >> 16,
+        info.dwFileVersionLS & 0xFFFF,
+    }) catch null;
+}
+
 fn sendAppInfo() !void {
     const allocator = std.heap.c_allocator;
     var wide: [std.fs.max_path_bytes]u16 = undefined;
@@ -1046,11 +1082,19 @@ fn sendAppInfo() !void {
     else
         base;
 
+    const version_owned = readExeVersion(allocator, exe_path);
+    defer if (version_owned) |version_text| allocator.free(version_text);
+    const version_text: []const u8 = version_owned orelse "";
+
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(allocator);
     try buf.appendSlice(allocator, "{\"name\":\"");
     try appendJsonEscaped(allocator, &buf, name);
-    try buf.appendSlice(allocator, "\",\"version\":\"\",\"bundleId\":\"\",\"bundlePath\":\"");
+    try buf.appendSlice(allocator, "\",\"version\":\"");
+    try appendJsonEscaped(allocator, &buf, version_text);
+    // Windows has no bundle identifier; the field stays empty rather than
+    // echoing something that is not one.
+    try buf.appendSlice(allocator, "\",\"bundleId\":\"\",\"bundlePath\":\"");
     try appendJsonEscaped(allocator, &buf, dir);
     try buf.appendSlice(allocator, "\",\"executablePath\":\"");
     try appendJsonEscaped(allocator, &buf, exe_path);
@@ -2011,6 +2055,33 @@ extern "kernel32" fn GetEnvironmentVariableW(
     lp_buffer: ?[*]u16,
     n_size: u32,
 ) callconv(.c) u32;
+
+// `GetFileVersionInfoW` / `VerQueryValueW` live in their own import library.
+extern "version" fn GetFileVersionInfoSizeW(lp_filename: [*:0]const u16, lpdw_handle: ?*u32) callconv(.c) u32;
+extern "version" fn GetFileVersionInfoW(lp_filename: [*:0]const u16, dw_handle: u32, dw_len: u32, lp_data: ?*anyopaque) callconv(.c) c_int;
+extern "version" fn VerQueryValueW(
+    lp_block: ?*const anyopaque,
+    lp_sub_block: [*:0]const u16,
+    lplp_buffer: *?*anyopaque,
+    pu_len: *u32,
+) callconv(.c) c_int;
+
+/// `VS_FIXEDFILEINFO` from `verrsrc.h`.
+const VS_FIXEDFILEINFO = extern struct {
+    dwSignature: u32,
+    dwStrucVersion: u32,
+    dwFileVersionMS: u32,
+    dwFileVersionLS: u32,
+    dwProductVersionMS: u32,
+    dwProductVersionLS: u32,
+    dwFileFlagsMask: u32,
+    dwFileFlags: u32,
+    dwFileOS: u32,
+    dwFileType: u32,
+    dwFileSubtype: u32,
+    dwFileDateMS: u32,
+    dwFileDateLS: u32,
+};
 
 extern "kernel32" fn SetEnvironmentVariableW(
     lp_name: [*:0]const u16,
