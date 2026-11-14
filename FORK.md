@@ -149,6 +149,7 @@ Three scripts repeat measurements and exit non-zero when one stops holding:
 | `scripts/probe-windows-timers.ps1` | a 400ms deadline, an abort, two deadlines armed together, slot reuse |
 | `scripts/probe-windows-capabilities.ps1` | the rendered manifest: what is claimed and what is demoted |
 | `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
+| `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
 
 The rest of the table above was measured by hand.
 
@@ -179,6 +180,26 @@ Windows:
 - the control: a second launch under a *different* instance id does not exit, and
   two windows appear with nothing delivered. That is the state the probe fails
   on.
+
+## Multiple windows
+
+`craft.window.open({ name, html | url, title, width, height })` opens a second
+window running its own page, and resolves with the name it was given. On Windows
+the call cannot complete inside the WebView2 message callback -- WebView2 does not
+run async completion callbacks from inside its own event -- so it is queued and
+pumped from a posted message (`queueWindowOpen` / `processPendingOpens`). A
+regression there shows up as an `open()` that never resolves.
+
+Measured: the child window appeared with its own title while the caller's
+`open()` had already resolved with `{"name":"child"}`, and closing the child left
+the main window running.
+
+One measurement trap is worth recording. Both windows belong to a single process,
+so counting `craft` processes says nothing about how many windows exist, and
+`Process.MainWindowTitle` answers for only one of them. The probe enumerates
+top-level windows per process with `EnumWindows` instead. Counting processes
+first produced "one window" while two were on screen; the stderr log, which
+showed two WebView2 initialisations, is what settled it.
 
 ## The capability manifest says something different on Windows
 
