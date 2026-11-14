@@ -3434,6 +3434,19 @@ fn setWindowLimits(entry: desktop_window_registry.Entry, limits: desktop_window_
     }
 }
 
+/// The facade sends `{ "value": <bool> }`; the descriptive key is a legacy
+/// spelling that raw bridge callers still use. `bridge_window.zig` accepts both
+/// and defaults to true, and this has to agree with it: a key mismatch fails as
+/// InvalidParameter inside a fire-and-forget send, so the mutation simply never
+/// happens and nothing reports it. `window.setAlwaysOnTop(true)` looked like it
+/// worked for exactly that reason.
+fn boolArgument(data: ?[]const u8, descriptive_key: []const u8) bool {
+    const json = data orelse return true;
+    return json_utils.getBool(json, "value") orelse
+        json_utils.getBool(json, descriptive_key) orelse
+        true;
+}
+
 fn setWindowResizable(entry: desktop_window_registry.Entry, resizable: bool) !void {
     const hwnd: HWND = @ptrFromInt(entry.window);
     const current = entry.windowed_style orelse @as(isize, @bitCast(@as(usize, windowStyle(hwnd))));
@@ -3657,12 +3670,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "center")) {
         try centerWindow(hwnd);
     } else if (std.mem.eql(u8, action, "setResizable")) {
-        try setWindowResizable(entry, try desktop_window_controls.parseBool(data, "resizable"));
+        try setWindowResizable(entry, boolArgument(data, "resizable"));
     } else if (std.mem.eql(u8, action, "isResizable")) {
         const style: DWORD = if (entry.windowed_style) |saved| @truncate(@as(usize, @bitCast(saved))) else windowStyle(hwnd);
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
-        try setWindowAlwaysOnTop(hwnd, try desktop_window_controls.parseBool(data, "alwaysOnTop"));
+        try setWindowAlwaysOnTop(hwnd, boolArgument(data, "alwaysOnTop"));
     } else if (std.mem.eql(u8, action, "flashFrame")) {
         const flash = if (data) |json| json_utils.getBool(json, "flash") orelse true else true;
         const request = FLASHWINFO{
@@ -3677,7 +3690,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((windowExStyle(hwnd) & WS_EX_TOPMOST) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
-        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
+        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else boolArgument(data, "fullscreen");
         try setWindowFullscreen(entry, fullscreen);
     } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMinSize") or
         std.mem.eql(u8, action, "setMaximumSize") or std.mem.eql(u8, action, "setMaxSize"))

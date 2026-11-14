@@ -103,6 +103,19 @@ POSIX-only assumption had to move so that both platforms could share it.
   now.
 - **`shell.exec` existed in Zig but had no facade.** `bridge_shell.zig` already
   implemented it; `craft-bridge.js` simply never exposed it.
+- **`window.setAlwaysOnTop`, `setResizable` and `setFullscreen` did nothing.** The
+  facade sends `{"value":…}`; the Windows dispatcher parsed `alwaysOnTop`,
+  `resizable` and `fullscreen`. `parseBool` treats a missing key as
+  InvalidParameter, and these are fire-and-forget sends, so the failure had
+  nowhere to surface: the call reported success and the window never changed.
+  `bridge_window.zig` reads `value` first and the descriptive key as a legacy
+  fallback; the Windows path now does the same through one helper.
+- **Seven clipboard actions had no route.** `hasText`, `hasHTML`, `hasImage`,
+  `clear`, `writeHTML` and `readHTML` were implemented in `bridge_clipboard.zig`
+  for Windows and never reached: `handleDesktopText` dispatched only the two text
+  actions, so the rest answered UnknownAction. A page cannot tell that apart from
+  "the clipboard is empty". They are routed now, Windows-only, because the same
+  entry point is the GTK path and these implementations are no-ops there.
 
 ### Windows-specific traps worth knowing before editing this
 
@@ -150,6 +163,7 @@ Three scripts repeat measurements and exit non-zero when one stops holding:
 | `scripts/probe-windows-capabilities.ps1` | the rendered manifest: what is claimed and what is demoted |
 | `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
 | `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
+| `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState and the clipboard |
 
 The rest of the table above was measured by hand.
 
@@ -243,6 +257,16 @@ and was validated the same way: with the filter bypassed it reports
   Windows the emitters for macOS-only channels never register, so a page sees
   `unknown` rather than a per-platform answer. Namespaces are filtered; channels
   are not yet.
+- **`window.getFocused` answers `{}`.** Every other read returns a usable shape
+  (`getTitle` a string, `getSize` an object, `getState` a full state object), and
+  the native side builds a plain JSON string for this one. `getState().isFocused`
+  carries the same fact today, so this is a shape bug rather than a missing
+  capability.
+- **These window actions have no Windows arm at all**, and answer
+  PLATFORM_NOT_SUPPORTED: `setMovable`, `isMovable`, `setOpacity`, `getOpacity`,
+  `setHasShadow`, `setAspectRatio`, `startDrag`, `setBackgroundColor`,
+  `setVibrancy`, `setWebSidebarCollapsed`. Most are macOS-only concepts;
+  `setOpacity` and `setBackgroundColor` are not, and would be worth doing.
 
 ## Test baseline
 

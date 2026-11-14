@@ -59,10 +59,18 @@ test "desktop clipboard result escapes JSON text" {
     try std.testing.expectEqualStrings("Craft \\\"quoted\\\" \\\\ path\\n", result.items);
 }
 
-test "desktop text dispatcher rejects unsupported clipboard actions" {
+test "a clipboard action this desktop path cannot take is refused, not ignored" {
+    // macOS never reaches this entry point, so there is nothing to assert there.
     if (comptime builtin.os.tag == .macos) return;
     var bridge = ClipboardBridge.init(std.testing.allocator);
-    try std.testing.expectError(BridgeError.UnknownAction, bridge.handleDesktopText(A.write_h_t_m_l, null));
+    if (comptime builtin.os.tag == .windows) {
+        // Windows serves the text, HTML, clear and presence actions; the cursor
+        // history is the one the facade offers and this backend does not keep.
+        try std.testing.expectError(BridgeError.UnknownAction, bridge.handleDesktopText(A.history_snapshot, null));
+    } else {
+        // The GTK path only implements the two text actions.
+        try std.testing.expectError(BridgeError.UnknownAction, bridge.handleDesktopText(A.write_h_t_m_l, null));
+    }
 }
 
 // Import GTK clipboard API from linux.zig (works on both X11 and Wayland)
@@ -169,6 +177,22 @@ pub const ClipboardBridge = struct {
     pub fn handleDesktopText(self: *Self, action: []const u8, data: ?[]const u8) !void {
         if (std.mem.eql(u8, action, A.write_text)) return self.writeText(data);
         if (std.mem.eql(u8, action, A.read_text)) return self.readText();
+        // Everything below had a complete Windows implementation in this file and
+        // no route to it, so on Windows all of them answered UnknownAction. A page
+        // cannot tell that apart from "the clipboard is empty", which makes a
+        // working platform look broken.
+        //
+        // Windows only: `handleDesktopText` is also the GTK path on Linux, where
+        // these implementations compile to a no-op. Routing them there would
+        // leave the caller's request unanswered instead of refused.
+        if (comptime builtin.os.tag == .windows) {
+            if (std.mem.eql(u8, action, A.write_h_t_m_l)) return self.windowsWriteHTML(data);
+            if (std.mem.eql(u8, action, A.read_h_t_m_l)) return self.windowsReadHTML();
+            if (std.mem.eql(u8, action, A.clear)) return self.windowsClear();
+            if (std.mem.eql(u8, action, A.has_text)) return self.windowsHasText();
+            if (std.mem.eql(u8, action, A.has_h_t_m_l)) return self.windowsHasHTML();
+            if (std.mem.eql(u8, action, A.has_image)) return self.windowsHasImage();
+        }
         return BridgeError.UnknownAction;
     }
 
