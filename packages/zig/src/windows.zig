@@ -1242,8 +1242,215 @@ fn sendShell(action: []const u8, data: ?[]const u8) !void {
         return;
     }
     if (eql(u8, action, "spawn")) return spawnChild(arena, allocator, data orelse "");
+    if (eql(u8, action, "exec")) return execChild(arena, allocator, data orelse "");
     if (eql(u8, action, "kill")) return killChild(allocator, action, args.id);
     return error.PlatformNotSupported;
+}
+
+const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
+const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+const INFINITE: u32 = 0xFFFF_FFFF;
+
+/// Ceiling on what `exec` buffers, so a runaway command cannot grow the heap
+/// without bound. Well past any sane use of a captured stream.
+const exec_output_limit = 4 * 1024 * 1024;
+
+extern "kernel32" fn CreatePipe(
+    read_pipe: *?*anyopaque,
+    write_pipe: *?*anyopaque,
+    pipe_attributes: ?*anyopaque,
+    size: u32,
+) callconv(.c) c_int;
+extern "kernel32" fn SetHandleInformation(object: *anyopaque, mask: u32, flags: u32) callconv(.c) c_int;
+extern "kernel32" fn GetExitCodeProcess(process: *anyopaque, exit_code: *u32) callconv(.c) c_int;
+extern "kernel32" fn ReadFile(
+    h: *anyopaque,
+    buf: [*]u8,
+    n: u32,
+    read_bytes: *u32,
+    overlapped: ?*anyopaque,
+) callconv(.c) c_int;
+
+/// Run `command` through `cmd.exe` with one end of a pipe for both output
+/// streams, drain it, and return the exit code.
+///
+/// `stdout` and `stderr` share one pipe. Draining two pipes in sequence
+/// deadlocks as soon as the child fills the one nobody is reading, and a shell
+/// command line has no way to say which stream a line came from anyway. The
+/// cost is that the caller cannot tell them apart -- the same result `2>&1`
+/// gives.
+fn runCaptured(
+    arena: std.mem.Allocator,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    cwd: []const u8,
+    output: *std.ArrayListUnmanaged(u8),
+) !u32 {
+    var read_pipe: ?*anyopaque = null;
+    var write_pipe: ?*anyopaque = null;
+    if (CreatePipe(&read_pipe, &write_pipe, null, 0) == 0) return error.NativeCallFailed;
+    defer {
+        if (read_pipe) |handle| _ = CloseHandle(handle);
+        if (write_pipe) |handle| _ = CloseHandle(handle);
+    }
+
+    // The child inherits the write end. Ours must not stay open past the spawn
+    // or the read below waits for a writer that is us.
+    if (SetHandleInformation(write_pipe.?, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0)
+        return error.NativeCallFailed;
+
+    const cmdline = try std.fmt.allocPrint(arena, "cmd.exe /d /s /c \"chcp 65001>nul & {s}\"", .{command});
+    const cmd_w = try toWideZ(arena, cmdline);
+    const cwd_w: ?[:0]u16 = if (cwd.len > 0) try toWideZ(arena, cwd) else null;
+
+    var startup: STARTUPINFOW = std.mem.zeroes(STARTUPINFOW);
+    startup.cb = @sizeOf(STARTUPINFOW);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = write_pipe;
+    startup.hStdError = write_pipe;
+    startup.hStdInput = null;
+    var info: PROCESS_INFORMATION = std.mem.zeroes(PROCESS_INFORMATION);
+
+    // No `lpApplicationName`: with it set, `CreateProcessW` treats the value as
+    // a path and never consults `PATH`, so a bare `cmd.exe` is refused. Leaving
+    // it null makes the command line name the program, and the first token here
+    // is a bare `cmd.exe` with no quoting, so there is nothing to misparse.
+    if (CreateProcessW(
+        null,
+        @constCast(cmd_w.ptr),
+        null,
+        null,
+        1,
+        0,
+        null,
+        if (cwd_w) |cwd_path| cwd_path.ptr else null,
+        &startup,
+        &info,
+    ) == 0) {
+        std.log.warn("craft.shell.exec: CreateProcessW failed for '{s}'", .{cmdline});
+        return error.NativeCallFailed;
+    }
+    _ = CloseHandle(info.hThread);
+    defer _ = CloseHandle(info.hProcess);
+
+    _ = CloseHandle(write_pipe.?);
+    write_pipe = null;
+
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        var got: u32 = 0;
+        if (ReadFile(read_pipe.?, buf[0..].ptr, buf.len, &got, null) == 0) break;
+        if (got == 0) break;
+        try output.appendSlice(allocator, buf[0..got]);
+        if (output.items.len >= exec_output_limit) break;
+    }
+
+    _ = WaitForSingleObject(info.hProcess.?, INFINITE);
+    var exit_code: u32 = 0;
+    _ = GetExitCodeProcess(info.hProcess.?, &exit_code);
+    return exit_code;
+}
+
+const CP_ACP: u32 = 0;
+
+extern "kernel32" fn MultiByteToWideChar(
+    code_page: u32,
+    flags: u32,
+    bytes: [*]const u8,
+    byte_count: c_int,
+    wide: ?[*]u16,
+    wide_count: c_int,
+) callconv(.c) c_int;
+
+/// Turn captured console bytes into UTF-8.
+///
+/// `chcp 65001` in the command line does not help here: the code page belongs
+/// to a console, and a captured stream is a pipe. A program on a Chinese or
+/// Japanese Windows therefore writes in the ANSI code page, so bytes that are
+/// not valid UTF-8 are decoded with `CP_ACP` and re-encoded. Anything still
+/// unreadable falls back to `?` per byte, because losing a line beats losing
+/// the whole command.
+fn decodeConsoleBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) return allocator.dupe(u8, bytes);
+
+    if (bytes.len <= std.math.maxInt(c_int)) {
+        const wide_len = MultiByteToWideChar(CP_ACP, 0, bytes.ptr, @intCast(bytes.len), null, 0);
+        if (wide_len > 0) {
+            const wide = try allocator.alloc(u16, @intCast(wide_len));
+            defer allocator.free(wide);
+            if (MultiByteToWideChar(CP_ACP, 0, bytes.ptr, @intCast(bytes.len), wide.ptr, wide_len) > 0)
+                return std.unicode.utf16LeToUtf8Alloc(allocator, wide);
+        }
+    }
+    return sanitizeUtf8(allocator, bytes);
+}
+
+/// Replace bytes that are not valid UTF-8 with `?`.
+///
+/// A console program writes in whatever code page it likes; the command line
+/// asks `cmd` for UTF-8 first, but nothing stops the child from emitting other
+/// bytes. Escaping refuses a string that is not valid UTF-8, and failing the
+/// whole reply would throw away output the caller would rather have: a mangled
+/// character is better than a lost command.
+fn sanitizeUtf8(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) return allocator.dupe(u8, bytes);
+
+    var out = try allocator.alloc(u8, bytes.len);
+    errdefer allocator.free(out);
+    var index: usize = 0;
+    var written: usize = 0;
+    while (index < bytes.len) {
+        const length = std.unicode.utf8ByteSequenceLength(bytes[index]) catch {
+            out[written] = '?';
+            written += 1;
+            index += 1;
+            continue;
+        };
+        if (index + length > bytes.len or !std.unicode.utf8ValidateSlice(bytes[index..][0..length])) {
+            out[written] = '?';
+            written += 1;
+            index += 1;
+            continue;
+        }
+        @memcpy(out[written..][0..length], bytes[index..][0..length]);
+        written += length;
+        index += length;
+    }
+    return allocator.realloc(out, written) catch out[0..written];
+}
+
+/// `craft.shell.exec` on Windows: wait for a command and answer with its output.
+///
+/// Synchronous, like `bridge_shell.zig`, so a caller can `await` the result. Long
+/// running work belongs on `spawn`, which returns as soon as the process starts.
+fn execChild(arena: std.mem.Allocator, allocator: std.mem.Allocator, json: []const u8) !void {
+    const ExecArgs = struct {
+        command: []const u8 = "",
+        cwd: []const u8 = "",
+    };
+    const parsed = std.json.parseFromSlice(ExecArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    if (parsed.value.command.len == 0) return bridge_error.BridgeError.MissingData;
+
+    var output: std.ArrayListUnmanaged(u8) = .empty;
+    defer output.deinit(allocator);
+
+    const exit_code = try runCaptured(arena, allocator, parsed.value.command, parsed.value.cwd, &output);
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+    const clean = try decodeConsoleBytes(allocator, output.items);
+    defer allocator.free(clean);
+    try out.print(allocator, "{{\"exitCode\":{d},\"stdout\":\"", .{exit_code});
+    try bridge_error.appendJsonEscaped(allocator, &out, clean);
+    // `stderr` is folded into `stdout`; see `runCaptured`.
+    try out.appendSlice(allocator, "\",\"stderr\":\"\"}");
+
+    const owned = try out.toOwnedSlice(allocator);
+    defer allocator.free(owned);
+    bridge_error.sendResultToJS(allocator, "exec", owned);
 }
 
 /// One live child process. A fixed-capacity table rather than a hash map, so it
