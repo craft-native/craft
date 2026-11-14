@@ -96,6 +96,9 @@ function Stop-With {
 
 function Show-Lines {
     param([string[]] $Lines, [int] $Tail = 0)
+    # PowerShell wraps every stderr line of a native command in a
+    # RemoteException record; the text itself follows on the next line.
+    $Lines = @($Lines | Where-Object { "$_" -ne 'System.Management.Automation.RemoteException' })
     if ($Tail -gt 0 -and $Lines.Count -gt $Tail) {
         Write-Note "(showing the last $Tail of $($Lines.Count) lines)"
         $Lines = $Lines[($Lines.Count - $Tail)..($Lines.Count - 1)]

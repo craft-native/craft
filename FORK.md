@@ -35,6 +35,11 @@ mirror, merges upstream into the working branch, verifies with a build, and only
 then pushes. A merge that conflicts is aborted so the branch stays buildable; a
 merge that lands but fails to build is not pushed.
 
+Two things worth knowing about the build step: a running `craft.exe` holds its own
+binary open, so the script stops it first; and the repository root's `build.zig` is
+a delegator, so the binary it produces lands in
+`packages/zig/zig-out/bin/craft.exe`, not at the root.
+
 Exit codes: `0` in sync or synced, `1` precondition failed, `2` dirty tree,
 `3` conflict, `4` build failed, `5` push failed.
 
