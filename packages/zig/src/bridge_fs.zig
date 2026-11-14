@@ -3,6 +3,14 @@ const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
 const io_context = @import("io_context.zig");
 const fs_watch = @import("fs_watch.zig");
+
+/// The window whose request is being handled. Set by the Windows host before it
+/// dispatches, because a watch has to name the page it reports into.
+pub var current_window: u32 = 0;
+
+/// Hands a page script to the UI thread. Set by the Windows host; null
+/// elsewhere, where the sink already runs somewhere that can evaluate.
+pub var post_to_ui: ?*const fn (window_id: u32, script: []const u8) void = null;
 const request_context = @import("request_context.zig");
 
 const BridgeError = bridge_error.BridgeError;
@@ -750,6 +758,20 @@ pub const FSBridge = struct {
     /// A path that does not exist is `NotFound`, as `node:fs.watch` makes it
     /// ENOENT: FSEvents would watch it happily and never say a word.
     fn startNative(self: *Self, id: []const u8, path: []const u8, recursive: bool) !?NativeWatch {
+        if (comptime builtin.os.tag == .windows) {
+            // The sink runs on the reader thread, which must not call into the
+            // webview; `post_to_ui` carries each event back to the UI thread.
+            const native_watch = fs_watch.start(self.allocator, id, path, recursive, .{
+                .context = @ptrFromInt(@as(usize, current_window)),
+                .deliver = deliverToPage,
+            }) catch |err| return switch (err) {
+                error.FileNotFound => BridgeError.NotFound,
+                error.AccessDenied => BridgeError.PermissionDenied,
+                error.UnsupportedPlatform => BridgeError.PlatformNotSupported,
+                else => BridgeError.NativeCallFailed,
+            };
+            return .{ .watch = native_watch, .webview = current_window };
+        }
         if (comptime builtin.os.tag != .macos) return null;
         const macos = @import("macos.zig");
 
@@ -771,13 +793,24 @@ pub const FSBridge = struct {
         return .{ .watch = stream, .webview = @intFromPtr(webview) };
     }
 
-    /// The sink: one change, as a `craft:fs:change` event in the page. On the
-    /// main thread, where FSEvents' main-queue callback already is.
+    /// The sink: one change, as a `craft:fs:change` event in the page.
+    ///
+    /// On macOS this runs on the main thread, where FSEvents' main-queue
+    /// callback already is. On Windows it runs on a reader thread that must not
+    /// touch the webview, so the script is handed to the UI thread instead.
     fn deliverToPage(context: ?*anyopaque, id: []const u8, change: fs_watch.ChangeType, path: []const u8) void {
-        if (context == null) return;
         const allocator = std.heap.c_allocator;
         const script = fs_watch.eventScript(allocator, id, change, path) catch return;
         defer allocator.free(script);
+
+        if (comptime builtin.os.tag == .windows) {
+            const raw = context orelse return;
+            const window_id: u32 = @intCast(@intFromPtr(raw));
+            if (post_to_ui) |post| post(window_id, script);
+            return;
+        }
+        if (comptime builtin.os.tag != .macos) return;
+        if (context == null) return;
         @import("macos.zig").tryEvalJSInWebView(context, script) catch |err| {
             std.log.debug("fs watch: could not deliver a change to the page: {}", .{err});
         };

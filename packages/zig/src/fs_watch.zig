@@ -203,6 +203,10 @@ pub const Watch = struct {
     recursive: bool,
     sink: Sink,
     stream: ?*anyopaque = null,
+    /// Windows: the directory handle `ReadDirectoryChangesW` blocks on, and the
+    /// thread reading it. Both null on macOS, where FSEvents pushes instead.
+    dir_handle: ?*anyopaque = null,
+    reader: ?std.Thread = null,
     /// Set first thing in `stop`, and checked between the events of one batch.
     stopped: bool = false,
     /// When the watch started, against which a file's birth time says whether
@@ -276,6 +280,9 @@ fn earlier(a: Timespec, b: Timespec) bool {
 /// Start watching `path`. The sink is released when the watch is freed, which
 /// is also what happens to it if starting fails.
 pub fn start(allocator: std.mem.Allocator, id: []const u8, path: []const u8, recursive: bool, sink: Sink) Error!*Watch {
+    if (comptime builtin.os.tag == .windows)
+        return startWindows(allocator, id, path, recursive, sink);
+
     if (comptime builtin.os.tag != .macos) {
         if (sink.release) |release| release(sink.context);
         return error.UnsupportedPlatform;
@@ -351,6 +358,15 @@ pub fn stop(watch: *Watch) void {
             watch.stream = null;
         }
     }
+    if (comptime builtin.os.tag == .windows) {
+        // Cancelling is what unblocks the reader: `ReadDirectoryChangesW` waits
+        // until something changes or the call is aborted.
+        if (watch.dir_handle) |handle| _ = CancelIoEx(handle, null);
+        if (watch.reader) |reader| reader.join();
+        if (watch.dir_handle) |handle| _ = CloseHandle(handle);
+        watch.dir_handle = null;
+        watch.reader = null;
+    }
     watch.destroy();
 }
 
@@ -370,6 +386,208 @@ fn onEvents(
         if (watch.stopped) return;
         watch.handle(paths[index], flags[index]);
     }
+}
+
+// =============================================================================
+// Windows: ReadDirectoryChangesW
+// =============================================================================
+
+const invalid_handle_value: usize = std.math.maxInt(usize);
+
+const FILE_LIST_DIRECTORY: u32 = 0x0001;
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+const OPEN_EXISTING: u32 = 3;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+const FILE_NOTIFY_CHANGE_FILE_NAME: u32 = 0x0000_0001;
+const FILE_NOTIFY_CHANGE_DIR_NAME: u32 = 0x0000_0002;
+const FILE_NOTIFY_CHANGE_SIZE: u32 = 0x0000_0008;
+const FILE_NOTIFY_CHANGE_LAST_WRITE: u32 = 0x0000_0010;
+
+extern "kernel32" fn CreateFileW(
+    file_name: [*:0]const u16,
+    desired_access: u32,
+    share_mode: u32,
+    security_attributes: ?*anyopaque,
+    creation_disposition: u32,
+    flags_and_attributes: u32,
+    template_file: ?*anyopaque,
+) callconv(.c) usize;
+
+extern "kernel32" fn ReadDirectoryChangesW(
+    directory: *anyopaque,
+    buffer: [*]u8,
+    buffer_length: u32,
+    watch_subtree: c_int,
+    notify_filter: u32,
+    bytes_returned: ?*u32,
+    overlapped: ?*anyopaque,
+    completion_routine: ?*anyopaque,
+) callconv(.c) c_int;
+
+extern "kernel32" fn CancelIoEx(file: *anyopaque, overlapped: ?*anyopaque) callconv(.c) c_int;
+extern "kernel32" fn CloseHandle(object: ?*anyopaque) callconv(.c) c_int;
+
+/// The head of `FILE_NOTIFY_INFORMATION`. `FileName` follows it for
+/// `FileNameLength` bytes -- it is not NUL-terminated.
+const FILE_NOTIFY_INFORMATION = extern struct {
+    NextEntryOffset: u32,
+    Action: u32,
+    FileNameLength: u32,
+};
+
+fn widePath(allocator: std.mem.Allocator, text: []const u8) ![:0]u16 {
+    const buf = try allocator.alloc(u16, text.len + 1);
+    errdefer allocator.free(buf);
+    const length = std.unicode.utf8ToUtf16Le(buf, text) catch return error.NativeCallFailed;
+    buf[length] = 0;
+    return buf[0..length :0];
+}
+
+/// `FILE_ACTION_*` to the change the page is told about. A rename arrives as an
+/// old name and a new one, so it reads as a delete followed by a create.
+fn changeFor(action: u32) ?ChangeType {
+    return switch (action) {
+        1 => .create, // FILE_ACTION_ADDED
+        2 => .delete, // FILE_ACTION_REMOVED
+        3 => .modify, // FILE_ACTION_MODIFIED
+        4 => .delete, // FILE_ACTION_RENAMED_OLD_NAME
+        5 => .create, // FILE_ACTION_RENAMED_NEW_NAME
+        else => null,
+    };
+}
+
+fn startWindows(allocator: std.mem.Allocator, id: []const u8, path: []const u8, recursive: bool, sink: Sink) Error!*Watch {
+    const watch = allocator.create(Watch) catch {
+        if (sink.release) |release| release(sink.context);
+        return error.OutOfMemory;
+    };
+    watch.* = .{
+        .allocator = allocator,
+        .id = "",
+        .base = "",
+        .real_base = "",
+        .scope = .directory,
+        .recursive = recursive,
+        .sink = sink,
+    };
+    errdefer watch.destroy();
+
+    watch.id = allocator.dupe(u8, id) catch return error.OutOfMemory;
+    watch.base = allocator.dupe(u8, trimSlash(path)) catch return error.OutOfMemory;
+
+    const io = io_context.get();
+    const real = std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator) catch |err| return switch (err) {
+        error.FileNotFound, error.NotDir => error.FileNotFound,
+        error.AccessDenied, error.PermissionDenied => error.AccessDenied,
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.NativeCallFailed,
+    };
+    defer allocator.free(real);
+    watch.real_base = allocator.dupe(u8, trimSlash(real)) catch return error.OutOfMemory;
+
+    const stat = std.Io.Dir.cwd().statFile(io, real, .{}) catch return error.NativeCallFailed;
+    watch.scope = if (stat.kind == .directory) .directory else .file;
+
+    // `ReadDirectoryChangesW` reports on a directory, so a file is watched
+    // through its parent -- the arrangement the FSEvents path uses too.
+    const watched_dir = if (watch.scope == .directory)
+        watch.real_base
+    else
+        (std.fs.path.dirname(watch.real_base) orelse return error.NativeCallFailed);
+
+    const wide = widePath(allocator, watched_dir) catch return error.OutOfMemory;
+    defer allocator.free(wide);
+
+    const raw = CreateFileW(
+        wide.ptr,
+        FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        null,
+        OPEN_EXISTING,
+        // Required before a directory can be opened as a handle at all.
+        FILE_FLAG_BACKUP_SEMANTICS,
+        null,
+    );
+    if (raw == invalid_handle_value) return error.AccessDenied;
+    watch.dir_handle = @ptrFromInt(raw);
+
+    watch.reader = std.Thread.spawn(.{}, readLoop, .{watch}) catch return error.NativeCallFailed;
+    return watch;
+}
+
+fn readLoop(watch: *Watch) void {
+    var buffer: [64 * 1024]u8 align(4) = undefined;
+
+    while (true) {
+        var returned: u32 = 0;
+        const ok = ReadDirectoryChangesW(
+            watch.dir_handle orelse return,
+            &buffer,
+            @intCast(buffer.len),
+            if (watch.recursive) 1 else 0,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE,
+            &returned,
+            null,
+            null,
+        );
+        // `stop` cancels the pending call, which is how this loop ends.
+        if (ok == 0 or watch.stopped) return;
+        if (returned == 0) continue;
+        deliverBatch(watch, buffer[0..returned]);
+    }
+}
+
+fn deliverBatch(watch: *Watch, bytes: []const u8) void {
+    const allocator = watch.allocator;
+    const header_size = 12; // NextEntryOffset + Action + FileNameLength
+
+    var offset: usize = 0;
+    while (offset + header_size <= bytes.len) {
+        const header: *align(1) const FILE_NOTIFY_INFORMATION = @ptrCast(bytes.ptr + offset);
+        const name_units = header.FileNameLength / 2;
+        const name_start = offset + header_size;
+        if (name_start + name_units * 2 > bytes.len) return;
+
+        // The records sit at four-byte offsets inside an align(4) buffer, so the
+        // UTF-16 file name inside one is aligned.
+        const wide_name = @as([*]const u16, @ptrCast(@alignCast(bytes.ptr + name_start)))[0..name_units];
+        const name = std.unicode.utf16LeToUtf8Alloc(allocator, wide_name) catch {
+            if (header.NextEntryOffset == 0) return;
+            offset += header.NextEntryOffset;
+            continue;
+        };
+        defer allocator.free(name);
+
+        const full = std.fs.path.join(allocator, &.{ watch.real_base, name }) catch {
+            if (header.NextEntryOffset == 0) return;
+            offset += header.NextEntryOffset;
+            continue;
+        };
+        defer allocator.free(full);
+
+        if (changeFor(header.Action)) |change| deliverWindows(watch, full, change);
+
+        if (header.NextEntryOffset == 0) return;
+        offset += header.NextEntryOffset;
+    }
+}
+
+fn deliverWindows(watch: *Watch, real_path: []const u8, change: ChangeType) void {
+    if (watch.stopped) return;
+    // A file watch is anchored on its parent directory, so everything else that
+    // directory reports belongs to somebody else.
+    if (watch.scope == .file) {
+        const wanted = std.fs.path.basename(watch.real_base);
+        const reported = std.fs.path.basename(real_path);
+        if (!std.mem.eql(u8, wanted, reported)) return;
+    }
+    const shown = displayPath(watch.allocator, watch.base, watch.real_base, watch.scope, real_path) catch return;
+    defer watch.allocator.free(shown);
+    watch.sink.deliver(watch.sink.context, watch.id, change, shown);
 }
 
 // =============================================================================
@@ -543,7 +761,10 @@ test "the event script carries the detail the page routes on, escaped" {
 }
 
 test "off macOS a watch refuses, and still releases its sink" {
-    if (builtin.os.tag == .macos) return error.SkipZigTest;
+    // Windows has a real implementation now -- `ReadDirectoryChangesW` behind a
+    // reader thread -- so the premise "everywhere but macOS refuses" holds only
+    // for the remaining platforms.
+    if (builtin.os.tag == .macos or builtin.os.tag == .windows) return error.SkipZigTest;
     const Counter = struct {
         var released: usize = 0;
         fn deliver(_: ?*anyopaque, _: []const u8, _: ChangeType, _: []const u8) void {}

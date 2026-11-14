@@ -866,11 +866,16 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
         return;
     }
     if (eql(u8, kind, "fs")) {
-        // `bridge_fs.zig` replies on whichever channel the caller used; the
-        // `_req` path answers with `__craftBridgeResult`, which is what
-        // `craft-bridge.js` awaits.
-        var bridge = @import("bridge_fs.zig").FSBridge.init(std.heap.c_allocator);
-        defer bridge.deinit();
+        // Process-wide instance: `bridge_fs.zig` owns the watcher table, and a
+        // per-request bridge would destroy every watch as its reply returned.
+        const bridge = fsBridge() catch |err| {
+            replyBridgeError(action, err);
+            return;
+        };
+        // A watch has to name the page it reports into, and this is the only
+        // place that knows which window asked. Safe without a lock: dispatches
+        // run on the UI thread one at a time.
+        @import("bridge_fs.zig").current_window = entry.id;
         bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
         return;
     }
@@ -895,6 +900,85 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
         if (eql(u8, action, "getInfo")) return sendAppInfo();
     }
     return error.PlatformNotSupported;
+}
+
+/// The file-system bridge outlives a single message for the same reason the
+/// serial one does: it holds the live watch table.
+var global_fs_bridge: ?*@import("bridge_fs.zig").FSBridge = null;
+
+fn fsBridge() !*@import("bridge_fs.zig").FSBridge {
+    if (global_fs_bridge == null) {
+        const T = @import("bridge_fs.zig").FSBridge;
+        const bridge = try std.heap.c_allocator.create(T);
+        bridge.* = T.init(std.heap.c_allocator);
+        global_fs_bridge = bridge;
+    }
+    return global_fs_bridge.?;
+}
+
+// =============================================================================
+// UI-thread pump
+// =============================================================================
+
+const WM_CRAFT_PUMP: UINT = 0x8004; // WM_APP + 4
+
+const PumpEntry = struct {
+    window_id: u32,
+    script: []u8,
+};
+
+var pump_lock: std.atomic.Value(u32) = .init(0);
+var pump_entries: std.ArrayListUnmanaged(PumpEntry) = .empty;
+
+fn lockPump() void {
+    while (pump_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
+}
+
+fn unlockPump() void {
+    pump_lock.store(0, .release);
+}
+
+/// Hand `script` to the UI thread, where WebView2 will accept it.
+///
+/// `ExecuteScript` must run on the thread that created the controller, so a
+/// reader thread -- file watching, serial input -- cannot deliver a page event
+/// directly. It queues the script here and posts a message that wakes the loop.
+/// Safe to call from any thread.
+pub fn postToUi(window_id: u32, script: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const copy = allocator.dupe(u8, script) catch return;
+
+    lockPump();
+    pump_entries.append(allocator, .{ .window_id = window_id, .script = copy }) catch {
+        unlockPump();
+        allocator.free(copy);
+        return;
+    };
+    unlockPump();
+
+    // Any live window will do: the message only means "drain the queue".
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    for (desktop_windows.liveWebviews(&handles)) |webview| {
+        const target = desktop_windows.byWebview(webview) orelse continue;
+        _ = PostMessageW(@ptrFromInt(target.window), WM_CRAFT_PUMP, 0, 0);
+        break;
+    }
+}
+
+/// Run everything queued so far. UI thread only.
+fn drainPump() void {
+    var batch: std.ArrayListUnmanaged(PumpEntry) = .empty;
+    defer batch.deinit(std.heap.c_allocator);
+
+    lockPump();
+    std.mem.swap(std.ArrayListUnmanaged(PumpEntry), &batch, &pump_entries);
+    unlockPump();
+
+    for (batch.items) |item| {
+        defer std.heap.c_allocator.free(item.script);
+        const target = desktop_windows.byId(item.window_id) orelse continue;
+        evalInWebview(target.webview, item.script);
+    }
 }
 
 /// The serial bridge outlives a single message: `open` returns an id that a
@@ -3805,6 +3889,9 @@ pub const Window = struct {
             return error.WebMessageRegistrationFailed;
         }
         windows_desktop.lookup = &desktopTarget;
+        // A file watch reports from a reader thread; the pump is how it reaches
+        // the page without touching the webview off the UI thread.
+        @import("bridge_fs.zig").post_to_ui = &postToUi;
         windows_desktop.toggle_fullscreen = &desktopToggleFullscreen;
         windows_desktop.quit = &closeAllWindows;
         // Menu accelerators pressed while the page has focus arrive here and
@@ -4045,6 +4132,10 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         },
         windows_desktop.WM_CRAFT_DESKTOP => {
             windows_desktop.processPending();
+            return 0;
+        },
+        WM_CRAFT_PUMP => {
+            drainPump();
             return 0;
         },
         WM_HOTKEY => {
