@@ -159,11 +159,21 @@ if ($tipExists.Code -ne 0) {
     Stop-With -Code 1 -Message "upstream ref '$upstreamTip' does not exist"
 }
 
-$upstreamTag = (Invoke-Git @('describe', '--tags', '--abbrev=0', $upstreamTip)).Lines[0]
 $upstreamHead = (Invoke-Git @('log', '-1', '--format=%h %s', $upstreamTip)).Lines[0]
 
+# Label the merge by the tag only when that tag is the tip itself. describe's
+# nearest-tag answer would name a release the merge does not actually contain
+# whenever upstream main is ahead of its last tag.
+$exactTag = Invoke-Git @('describe', '--tags', '--exact-match', $upstreamTip)
+if ($exactTag.Code -eq 0) {
+    $upstreamLabel = $exactTag.Lines[0]
+} else {
+    $shortTip = (Invoke-Git @('rev-parse', '--short', $upstreamTip)).Lines[0]
+    $upstreamLabel = "$UpstreamRef@$shortTip (post-$((Invoke-Git @('describe', '--tags', '--abbrev=0', $upstreamTip)).Lines[0]))"
+}
+
 Write-Step 'divergence'
-Write-Note "upstream: $upstreamHead  ($upstreamTag)"
+Write-Note "upstream: $upstreamHead  [$upstreamLabel]"
 
 $behind = [int](Invoke-Git @('rev-list', '--count', "$Branch..$upstreamTip")).Lines[0]
 $ahead  = [int](Invoke-Git @('rev-list', '--count', "$upstreamTip..$Branch")).Lines[0]
@@ -214,7 +224,7 @@ if ($currentBranch -ne $Branch) {
     Show-Lines $checkout.Lines
 }
 
-$mergeMessage = "chore: merge upstream $upstreamTag into $Branch"
+$mergeMessage = "chore: merge upstream $upstreamLabel into $Branch"
 $messageFile = Join-Path $gitDir.Lines[0] 'FORK_SYNC_MERGE_MSG.txt'
 Set-Content -Path $messageFile -Value $mergeMessage -Encoding ASCII
 
@@ -303,5 +313,5 @@ if ($NoPush) {
 }
 
 Write-Host ''
-Write-Host "Done. $Branch is now based on $upstreamTag ($behind upstream commit(s) merged)." -ForegroundColor Green
+Write-Host "Done. $Branch is now based on $upstreamLabel ($behind upstream commit(s) merged)." -ForegroundColor Green
 exit 0
