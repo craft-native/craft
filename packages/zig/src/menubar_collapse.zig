@@ -1249,11 +1249,27 @@ fn clearHighlight(button: objc.id) void {
 }
 
 fn nanoTimestamp() ?u64 {
-    // Direct libc call — Zig 0.17 stripped `std.time.nanoTimestamp` and the
-    // replacement `Io.Clock.now` requires plumbing an `Io` through this code
-    // path, which isn't worth it for a debounce timer. CLOCK_MONOTONIC stays
-    // monotonic across NTP adjustments which is what we need for diffing
-    // intervals.
+    // `compat.zig` already answers this cross-platform (`QueryPerformanceCounter`
+    // on Windows), but this module reached for POSIX `clock_gettime` directly.
+    // On Windows `std.c.clockid_t` is `void`, so the declaration itself is a
+    // compile error the moment it is referenced — which took the whole Windows
+    // test build with it even though this file only ever runs on macOS.
+    if (comptime builtin.os.tag == .windows) {
+        const kern = struct {
+            extern "kernel32" fn QueryPerformanceCounter(lpPerformanceCount: *i64) callconv(.c) c_int;
+            extern "kernel32" fn QueryPerformanceFrequency(lpFrequency: *i64) callconv(.c) c_int;
+        };
+        var counter: i64 = 0;
+        var frequency: i64 = 0;
+        if (kern.QueryPerformanceFrequency(&frequency) == 0 or frequency <= 0) return null;
+        if (kern.QueryPerformanceCounter(&counter) == 0) return null;
+        const ticks: u128 = @intCast(counter);
+        const hz: u128 = @intCast(frequency);
+        return @intCast((ticks * std.time.ns_per_s) / hz);
+    }
+
+    // CLOCK_MONOTONIC stays monotonic across NTP adjustments, which is what the
+    // debounce timer needs for diffing intervals.
     var ts: std.c.timespec = undefined;
     if (std.c.clock_gettime(.MONOTONIC, &ts) != 0) return null;
     const sec_ns = @as(u64, @intCast(ts.sec)) * std.time.ns_per_s;

@@ -17,6 +17,12 @@ pub const MenubarCollapseBridge = struct {
     }
 
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
+        // `menubar_collapse` drives the macOS status bar through objc, and its
+        // debounce timer calls POSIX `clock_gettime`. Neither exists on
+        // Windows, and leaving that chain reachable made the whole Windows test
+        // build fail on a `std.c` signature. Refuse before touching it.
+        if (comptime builtin.os.tag != .macos) return error.PlatformNotSupported;
+
         if (std.mem.eql(u8, action, "init")) {
             if (std.mem.eql(u8, data, "nativeVisibility")) {
                 menubar_collapse.initNativeVisibility(true);

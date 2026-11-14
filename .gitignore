@@ -35,6 +35,7 @@ release/
 test-app/
 artifacts/native-lifecycle/
 artifacts/mobile-e2e/
+artifacts/fork-sync/
 
 # Logs
 *.log

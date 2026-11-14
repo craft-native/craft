@@ -13,6 +13,7 @@ const io_context = @import("io_context.zig");
 const desktop_deep_link = @import("desktop_deep_link.zig");
 const desktop_instance = @import("desktop_instance.zig");
 const windows_desktop = @import("windows_desktop.zig");
+const windows_tray = @import("windows_tray.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -129,6 +130,7 @@ pub const WM_MOVE: UINT = 0x0003;
 pub const WM_SIZE: UINT = 0x0005;
 pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
+pub const WM_TIMER: UINT = 0x0113;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_QUIT: UINT = 0x0012;
 const WM_COPYDATA: UINT = 0x004A;
@@ -839,14 +841,178 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
     if (eql(u8, kind, "dialog")) return windows_desktop.queueDialog(action, data, entry.id);
     if (eql(u8, kind, "nativeUI") and eql(u8, action, "showContextMenu"))
         return windows_desktop.queueContextMenu(data, entry.id);
+
+    // These namespaces used to answer PLATFORM_NOT_SUPPORTED outright, which
+    // is why a Windows page could not read the clock format, the screen list or
+    // its own executable path. They reply through `bridge_error.sendResultToJS`,
+    // and the caller has already pushed the request id, so the page gets a
+    // correlated answer.
+    if (eql(u8, kind, "system")) return sendSystem(action);
+    if (eql(u8, kind, "screen")) return sendScreen(action);
+    if (eql(u8, kind, "tray")) return handleTrayAction(entry, action, data);
+    if (eql(u8, kind, "shortcuts")) return handleShortcutAction(entry, action, data);
+    if (eql(u8, kind, "shell")) return sendShell(action, data);
+    if (eql(u8, kind, "power")) return sendPower(action);
+    if (eql(u8, kind, "autoLaunch")) return sendAutoLaunch(action);
+    if (eql(u8, kind, "permissions")) return sendPermissions(action);
+    if (eql(u8, kind, "log")) return sendLog(action, data);
+    if (eql(u8, kind, "capabilities")) {
+        // The manifest is rendered from `capability_registry.zig`, which lists
+        // the bridges that exist. It used to be unreachable here because that
+        // registry pulls in `bridge_screen.zig`, and that file imported
+        // `macos.zig` at file scope.
+        var bridge = @import("bridge_capabilities.zig").CapabilitiesBridge.init(std.heap.c_allocator);
+        defer bridge.deinit();
+        bridge.handleMessage(action, data orelse "") catch {};
+        return;
+    }
+    if (eql(u8, kind, "fs")) {
+        // Process-wide instance: `bridge_fs.zig` owns the watcher table, and a
+        // per-request bridge would destroy every watch as its reply returned.
+        const bridge = fsBridge() catch |err| {
+            replyBridgeError(action, err);
+            return;
+        };
+        // A watch has to name the page it reports into, and this is the only
+        // place that knows which window asked. Safe without a lock: dispatches
+        // run on the UI thread one at a time.
+        @import("bridge_fs.zig").current_window = entry.id;
+        bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
+        return;
+    }
+    if (eql(u8, kind, "serial")) {
+        // Must be the process-wide instance, not a per-request one: `open`
+        // hands the page an id whose meaning lives in the bridge's port map, so
+        // a fresh bridge per call would discard the mapping (and close the
+        // handle) before the following `write` arrives.
+        const bridge = serialBridge() catch |err| {
+            replyBridgeError(action, err);
+            return;
+        };
+        @import("bridge_serial.zig").current_window = entry.id;
+        bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
+        return;
+    }
+    if (eql(u8, kind, "timers")) {
+        // `entry.window` is this window's HWND, and `SetTimer` needs it so the
+        // deadline is delivered to a window this thread owns. Nothing is
+        // answered here for `sleep`: the reply belongs to the deadline.
+        return @import("bridge_timers_windows.zig").handle(action, data orelse "", entry.window, entry.id, entry.webview);
+    }
     if (eql(u8, kind, "app")) {
         if (eql(u8, action, "quit")) return closeAllWindows();
         if (eql(u8, action, "relaunch")) {
             try desktop_instance.spawnRelaunch(std.heap.c_allocator);
             return closeAllWindows();
         }
+        if (eql(u8, action, "getInfo")) return sendAppInfo();
     }
     return error.PlatformNotSupported;
+}
+
+/// The file-system bridge outlives a single message for the same reason the
+/// serial one does: it holds the live watch table.
+var global_fs_bridge: ?*@import("bridge_fs.zig").FSBridge = null;
+
+fn fsBridge() !*@import("bridge_fs.zig").FSBridge {
+    if (global_fs_bridge == null) {
+        const T = @import("bridge_fs.zig").FSBridge;
+        const bridge = try std.heap.c_allocator.create(T);
+        bridge.* = T.init(std.heap.c_allocator);
+        global_fs_bridge = bridge;
+    }
+    return global_fs_bridge.?;
+}
+
+// =============================================================================
+// UI-thread pump
+// =============================================================================
+
+const WM_CRAFT_PUMP: UINT = 0x8004; // WM_APP + 4
+
+const PumpEntry = struct {
+    window_id: u32,
+    script: []u8,
+};
+
+var pump_lock: std.atomic.Value(u32) = .init(0);
+var pump_entries: std.ArrayListUnmanaged(PumpEntry) = .empty;
+
+fn lockPump() void {
+    while (pump_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
+}
+
+fn unlockPump() void {
+    pump_lock.store(0, .release);
+}
+
+/// Hand `script` to the UI thread, where WebView2 will accept it.
+///
+/// `ExecuteScript` must run on the thread that created the controller, so a
+/// reader thread -- file watching, serial input -- cannot deliver a page event
+/// directly. It queues the script here and posts a message that wakes the loop.
+/// Safe to call from any thread.
+pub fn postToUi(window_id: u32, script: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const copy = allocator.dupe(u8, script) catch return;
+
+    lockPump();
+    pump_entries.append(allocator, .{ .window_id = window_id, .script = copy }) catch {
+        unlockPump();
+        allocator.free(copy);
+        return;
+    };
+    unlockPump();
+
+    // Any live window will do: the message only means "drain the queue".
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    for (desktop_windows.liveWebviews(&handles)) |webview| {
+        const target = desktop_windows.byWebview(webview) orelse continue;
+        _ = PostMessageW(@ptrFromInt(target.window), WM_CRAFT_PUMP, 0, 0);
+        break;
+    }
+}
+
+/// Run everything queued so far. UI thread only.
+fn drainPump() void {
+    var batch: std.ArrayListUnmanaged(PumpEntry) = .empty;
+    defer batch.deinit(std.heap.c_allocator);
+
+    lockPump();
+    std.mem.swap(std.ArrayListUnmanaged(PumpEntry), &batch, &pump_entries);
+    unlockPump();
+
+    for (batch.items) |item| {
+        defer std.heap.c_allocator.free(item.script);
+        const target = desktop_windows.byId(item.window_id) orelse continue;
+        evalInWebview(target.webview, item.script);
+    }
+}
+
+/// The serial bridge outlives a single message: `open` returns an id that a
+/// later `write` / `read` / `close` refers to, so the port map has to survive
+/// between dispatches. Mirrors `global_serial_bridge` in `macos.zig`.
+var global_serial_bridge: ?*@import("bridge_serial.zig").SerialBridge = null;
+
+fn serialBridge() !*@import("bridge_serial.zig").SerialBridge {
+    if (global_serial_bridge == null) {
+        const T = @import("bridge_serial.zig").SerialBridge;
+        const bridge = try std.heap.c_allocator.create(T);
+        bridge.* = T.init(std.heap.c_allocator);
+        global_serial_bridge = bridge;
+    }
+    return global_serial_bridge.?;
+}
+
+/// Answer a bridge handler's failure on the correlated reply channel.
+///
+/// `craft-bridge.js` `_req` only settles when `__craftBridgeResult` arrives, so
+/// swallowing the error here leaves the JS promise pending forever — the page
+/// simply stops at that `await` with no error and no timeout. Every handler we
+/// drive from this dispatcher therefore reports through here.
+fn replyBridgeError(action: []const u8, err: anyerror) void {
+    const be = @import("bridge_error.zig");
+    be.sendErrorToJS(std.heap.c_allocator, action, be.fromHandlerError(err));
 }
 
 /// Ask every window to close. The last one to go ends the message loop.
@@ -856,6 +1022,1670 @@ fn closeAllWindows() void {
         const entry = desktop_windows.byWebview(webview) orelse continue;
         _ = PostMessageW(@ptrFromInt(entry.window), WM_CLOSE, 0, 0);
     }
+}
+
+/// `craft.system` on Windows.
+///
+/// Served here rather than through `bridge_system.zig`: that module reaches
+/// `macos.zig`, which imports `bridge_dialog.zig` — a module whose Windows path
+/// is still a `@compileError`. Importing it from this dispatcher does not
+/// compile at all, so these are direct Win32 reads until that chain is made
+/// conditional.
+///
+/// Actions with no Win32 equivalent yet answer `PlatformNotSupported` instead
+/// of an empty string, so a page can tell "off" from "not implemented".
+fn sendSystem(action: []const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const eql = std.mem.eql;
+
+    if (eql(u8, action, "getHostname")) {
+        var buf: [256]u16 = undefined;
+        var size: u32 = buf.len;
+        if (GetComputerNameW(&buf, &size) == 0) return bridge_error.BridgeError.NativeCallFailed;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..size]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "hostname", utf8);
+    }
+    if (eql(u8, action, "getUsername")) {
+        var buf: [256]u16 = undefined;
+        var size: u32 = buf.len;
+        if (GetUserNameW(&buf, &size) == 0) return bridge_error.BridgeError.NativeCallFailed;
+        // `GetUserNameW` counts the terminating NUL in `size`.
+        const len: usize = if (size > 0 and buf[size - 1] == 0) size - 1 else size;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "username", utf8);
+    }
+    if (eql(u8, action, "getSystemVersion")) {
+        var info: RTL_OSVERSIONINFOW = std.mem.zeroes(RTL_OSVERSIONINFOW);
+        info.dwOSVersionInfoSize = @intCast(@sizeOf(RTL_OSVERSIONINFOW));
+        if (RtlGetVersion(&info) != 0) return bridge_error.BridgeError.NativeCallFailed;
+        var num: [96]u8 = undefined;
+        const text = try std.fmt.bufPrint(&num, "Windows {d}.{d} (build {d})", .{
+            info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber,
+        });
+        return sendJsonField(allocator, action, "version", text);
+    }
+    if (eql(u8, action, "getLocale") or eql(u8, action, "getLanguage")) {
+        var buf: [LOCALE_NAME_MAX_LENGTH]u16 = undefined;
+        const written = GetUserDefaultLocaleName(&buf, @intCast(buf.len));
+        if (written <= 0) return bridge_error.BridgeError.NativeCallFailed;
+        const reported: usize = @min(@as(usize, @intCast(written)), buf.len);
+        const len: usize = if (reported > 0 and buf[reported - 1] == 0) reported - 1 else reported;
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+        defer allocator.free(utf8);
+        if (eql(u8, action, "getLocale")) return sendJsonField(allocator, action, "locale", utf8);
+        // `getLanguage` wants the bare tag: "zh-CN" -> "zh".
+        const tag_end = std.mem.indexOfScalar(u8, utf8, '-') orelse utf8.len;
+        return sendJsonField(allocator, action, "language", utf8[0..tag_end]);
+    }
+    if (eql(u8, action, "getTimezone")) {
+        var tz: TIME_ZONE_INFORMATION = std.mem.zeroes(TIME_ZONE_INFORMATION);
+        const state = GetTimeZoneInformation(&tz);
+        if (state == 0xFFFFFFFF) return bridge_error.BridgeError.NativeCallFailed;
+        // TIME_ZONE_ID_DAYLIGHT = 2
+        const name = if (state == 2) tz.DaylightName[0..] else tz.StandardName[0..];
+        var n: usize = 0;
+        while (n < name.len and name[n] != 0) : (n += 1) {}
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, name[0..n]);
+        defer allocator.free(utf8);
+        return sendJsonField(allocator, action, "timezone", utf8);
+    }
+
+    // Accessibility flags would each need their own SystemParametersInfo read;
+    // a fabricated default is worse than saying so.
+    if (eql(u8, action, "getAccentColor")) {
+        // DWM keeps the accent colour as an ARGB DWORD. Reading it is the same
+        // value the taskbar and Start menu are painted with, and unlike
+        // `GetSysColor(COLOR_HIGHLIGHT)` it tracks the user's chosen accent
+        // rather than the legacy 3D highlight.
+        var value: u32 = 0;
+        var size: u32 = @sizeOf(u32);
+        const status = RegGetValueW(
+            HKEY_CURRENT_USER,
+            std.unicode.utf8ToUtf16LeStringLiteral("Software\\Microsoft\\Windows\\DWM"),
+            std.unicode.utf8ToUtf16LeStringLiteral("ColorizationColor"),
+            RRF_RT_REG_DWORD,
+            null,
+            &value,
+            &size,
+        );
+        if (status != 0) return bridge_error.BridgeError.NativeCallFailed;
+        var hex: [8]u8 = undefined;
+        const color = std.fmt.bufPrint(&hex, "#{x:0>6}", .{value & 0x00FFFFFF}) catch
+            return bridge_error.BridgeError.NativeCallFailed;
+        return sendJsonField(allocator, action, "color", color);
+    }
+
+    return bridge_error.BridgeError.PlatformNotSupported;
+}
+
+/// `craft.app.getInfo` on Windows. There is no bundle: the executable is the
+/// app. `version` and `bundleId` have no Win32 equivalent that does not mean
+/// reading the PE version resource, so they stay empty rather than guessed.
+/// The executable's version as `x.y.z.w`, read from its PE version resource.
+///
+/// Null when the binary carries no such resource, which is the common case for
+/// a freshly linked Zig executable. Reporting an invented `0.0.0.0` would be
+/// worse than reporting nothing, so the caller leaves the field empty.
+fn readExeVersion(allocator: std.mem.Allocator, exe_path: []const u8) ?[]u8 {
+    const path_w = toWideZ(allocator, exe_path) catch return null;
+    defer allocator.free(path_w);
+
+    var handle: u32 = 0;
+    const size = GetFileVersionInfoSizeW(path_w.ptr, &handle);
+    if (size == 0) return null;
+
+    const block = allocator.alloc(u8, size) catch return null;
+    defer allocator.free(block);
+    if (GetFileVersionInfoW(path_w.ptr, handle, size, block.ptr) == 0) return null;
+
+    var buffer: ?*anyopaque = null;
+    var length: u32 = 0;
+    // The root node of the version resource is a single backslash.
+    const root = [_:0]u16{'\\'};
+    if (VerQueryValueW(block.ptr, &root, &buffer, &length) == 0) return null;
+    if (length < @sizeOf(VS_FIXEDFILEINFO)) return null;
+    const info: *const VS_FIXEDFILEINFO = @ptrCast(@alignCast(buffer.?));
+    // A mismatched signature means the block is not what `VerQueryValueW` said
+    // it was; reading it anyway would print four numbers with no meaning.
+    if (info.dwSignature != 0xFEEF04BD) return null;
+
+    return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
+        info.dwFileVersionMS >> 16,
+        info.dwFileVersionMS & 0xFFFF,
+        info.dwFileVersionLS >> 16,
+        info.dwFileVersionLS & 0xFFFF,
+    }) catch null;
+}
+
+fn sendAppInfo() !void {
+    const allocator = std.heap.c_allocator;
+    var wide: [std.fs.max_path_bytes]u16 = undefined;
+    const written = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+    if (written == 0) return bridge_error.BridgeError.NativeCallFailed;
+    const exe_path = try std.unicode.utf16LeToUtf8Alloc(allocator, wide[0..@min(@as(usize, written), wide.len)]);
+    defer allocator.free(exe_path);
+
+    const dir = std.fs.path.dirname(exe_path) orelse "";
+    const base = std.fs.path.basename(exe_path);
+    const name = if (base.len > 4 and std.ascii.eqlIgnoreCase(base[base.len - 4 ..], ".exe"))
+        base[0 .. base.len - 4]
+    else
+        base;
+
+    const version_owned = readExeVersion(allocator, exe_path);
+    defer if (version_owned) |version_text| allocator.free(version_text);
+    const version_text: []const u8 = version_owned orelse "";
+
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"name\":\"");
+    try appendJsonEscaped(allocator, &buf, name);
+    try buf.appendSlice(allocator, "\",\"version\":\"");
+    try appendJsonEscaped(allocator, &buf, version_text);
+    // Windows has no bundle identifier; the field stays empty rather than
+    // echoing something that is not one.
+    try buf.appendSlice(allocator, "\",\"bundleId\":\"\",\"bundlePath\":\"");
+    try appendJsonEscaped(allocator, &buf, dir);
+    try buf.appendSlice(allocator, "\",\"executablePath\":\"");
+    try appendJsonEscaped(allocator, &buf, exe_path);
+    try buf.appendSlice(allocator, "\",\"sandboxed\":false}");
+
+    const json = try buf.toOwnedSlice(allocator);
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, "getInfo", json);
+}
+
+fn appendJsonEscaped(allocator: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    const esc_buf = try allocator.alloc(u8, s.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    try out.appendSlice(allocator, try bridge_error.escapeJsonString(esc_buf, s));
+}
+
+/// Answer a single-field `{ "<key>": "<value>" }` result, the shape every
+/// `craft.system.*` getter resolves through.
+fn sendJsonField(allocator: std.mem.Allocator, action: []const u8, key: []const u8, value: []const u8) !void {
+    const esc_buf = try allocator.alloc(u8, value.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    const escaped = try bridge_error.escapeJsonString(esc_buf, value);
+    const json = try std.fmt.allocPrint(allocator, "{{\"{s}\":\"{s}\"}}", .{ key, escaped });
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
+/// Answer a single-field `{ "<key>": true|false }` result.
+fn sendJsonBool(allocator: std.mem.Allocator, action: []const u8, key: []const u8, value: bool) !void {
+    var buf: [96]u8 = undefined;
+    const json = try std.fmt.bufPrint(&buf, "{{\"{s}\":{s}}}", .{ key, if (value) "true" else "false" });
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
+/// The string fields every request in this section may carry. One flat struct
+/// with `ignore_unknown_fields` keeps per-action parsing to a single call; the
+/// caller owns the arena that the slices point into.
+const BridgeArgs = struct {
+    url: []const u8 = "",
+    path: []const u8 = "",
+    name: []const u8 = "",
+    value: []const u8 = "",
+    level: []const u8 = "",
+    message: []const u8 = "",
+    id: []const u8 = "",
+};
+
+fn parseBridgeArgs(arena: std.mem.Allocator, json: []const u8) !BridgeArgs {
+    if (json.len == 0) return .{};
+    const parsed = std.json.parseFromSlice(BridgeArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    return parsed.value;
+}
+
+/// UTF-8 to a NUL-terminated UTF-16 buffer. UTF-16 units never outnumber the
+/// UTF-8 bytes they encode, so `s.len + 1` is always enough.
+fn toWideZ(allocator: std.mem.Allocator, s: []const u8) ![:0]u16 {
+    const buf = try allocator.alloc(u16, s.len + 1);
+    errdefer allocator.free(buf);
+    const n = std.unicode.utf8ToUtf16Le(buf, s) catch return bridge_error.BridgeError.InvalidParameter;
+    buf[n] = 0;
+    return buf[0..n :0];
+}
+
+/// `ShellExecuteW` reports failure with a small positive code rather than a
+/// negative error value: anything at or below 32 is one of the documented
+/// failures (file not found, no association, refused by the shell, ...).
+fn shellExecute(operation: [*:0]const u16, file: [*:0]const u16, params: ?[*:0]const u16) !void {
+    if (ShellExecuteW(null, operation, file, params, null, SW_SHOWNORMAL) <= 32)
+        return bridge_error.BridgeError.NativeCallFailed;
+}
+
+const HKEY_CLASSES_ROOT: ?*anyopaque = @ptrFromInt(0x8000_0000);
+
+/// Whether Windows has a handler for the URL's scheme.
+///
+/// `ShellExecuteW` alone cannot answer this: for a scheme nothing is registered
+/// for, it raises the "how do you want to open this" picker and still reports
+/// success, so the page could not tell a URL that opened from one that went
+/// nowhere. Protocols live under `HKEY_CLASSES_ROOT`, which is the same lookup
+/// the shell itself performs.
+fn schemeIsRegistered(arena: std.mem.Allocator, url: []const u8) !bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return true;
+    const scheme = url[0..colon];
+    // A single letter is a drive letter (`C:\...`), not a protocol.
+    if (scheme.len <= 1) return true;
+    for (scheme) |ch| {
+        if (!std.ascii.isAlphanumeric(ch) and ch != '+' and ch != '-' and ch != '.') return true;
+    }
+    var hkey: ?*anyopaque = undefined;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, try toWideZ(arena, scheme), 0, KEY_QUERY_VALUE, &hkey) != 0)
+        return false;
+    _ = RegCloseKey(hkey);
+    return true;
+}
+
+/// `craft.shell` on Windows.
+fn sendShell(action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const args = try parseBridgeArgs(arena, data orelse "");
+
+    if (eql(u8, action, "openUrl")) {
+        if (args.url.len == 0) return bridge_error.BridgeError.MissingData;
+        if (!try schemeIsRegistered(arena, args.url)) return bridge_error.BridgeError.NativeCallFailed;
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, args.url), null);
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    if (eql(u8, action, "openPath")) {
+        if (args.path.len == 0) return bridge_error.BridgeError.MissingData;
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, args.path), null);
+        return;
+    }
+    if (eql(u8, action, "showInFinder")) {
+        if (args.path.len == 0) return bridge_error.BridgeError.MissingData;
+        // Windows has no "reveal" verb of its own; Explorer takes the selection
+        // as a switch on its command line instead.
+        const select = try std.fmt.allocPrint(arena, "/select,\"{s}\"", .{args.path});
+        try shellExecute(try toWideZ(arena, "open"), try toWideZ(arena, "explorer.exe"), try toWideZ(arena, select));
+        return;
+    }
+    if (eql(u8, action, "getEnv")) {
+        if (args.name.len == 0) return bridge_error.BridgeError.MissingData;
+        var buf: [32767]u16 = undefined;
+        const n = GetEnvironmentVariableW(try toWideZ(arena, args.name), &buf, @intCast(buf.len));
+        // `n` is the length excluding the terminator, or the required length
+        // when the buffer was too small.
+        if (n == 0 or n >= buf.len) return sendJsonField(allocator, action, "value", "");
+        const value = try std.unicode.utf16LeToUtf8Alloc(allocator, buf[0..n]);
+        defer allocator.free(value);
+        try sendJsonField(allocator, action, "value", value);
+        return;
+    }
+    if (eql(u8, action, "setEnv")) {
+        if (args.name.len == 0) return bridge_error.BridgeError.MissingData;
+        if (SetEnvironmentVariableW(try toWideZ(arena, args.name), try toWideZ(arena, args.value)) == 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        return;
+    }
+    if (eql(u8, action, "spawn")) return spawnChild(arena, allocator, data orelse "");
+    if (eql(u8, action, "exec")) return execChild(arena, allocator, data orelse "");
+    if (eql(u8, action, "kill")) return killChild(allocator, action, args.id);
+    return error.PlatformNotSupported;
+}
+
+const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
+const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+const INFINITE: u32 = 0xFFFF_FFFF;
+
+/// Ceiling on what `exec` buffers, so a runaway command cannot grow the heap
+/// without bound. Well past any sane use of a captured stream.
+const exec_output_limit = 4 * 1024 * 1024;
+
+extern "kernel32" fn CreatePipe(
+    read_pipe: *?*anyopaque,
+    write_pipe: *?*anyopaque,
+    pipe_attributes: ?*anyopaque,
+    size: u32,
+) callconv(.c) c_int;
+extern "kernel32" fn SetHandleInformation(object: *anyopaque, mask: u32, flags: u32) callconv(.c) c_int;
+extern "kernel32" fn GetExitCodeProcess(process: *anyopaque, exit_code: *u32) callconv(.c) c_int;
+extern "kernel32" fn ReadFile(
+    h: *anyopaque,
+    buf: [*]u8,
+    n: u32,
+    read_bytes: *u32,
+    overlapped: ?*anyopaque,
+) callconv(.c) c_int;
+
+/// Run `command` through `cmd.exe` with one end of a pipe for both output
+/// streams, drain it, and return the exit code.
+///
+/// `stdout` and `stderr` share one pipe. Draining two pipes in sequence
+/// deadlocks as soon as the child fills the one nobody is reading, and a shell
+/// command line has no way to say which stream a line came from anyway. The
+/// cost is that the caller cannot tell them apart -- the same result `2>&1`
+/// gives.
+fn runCaptured(
+    arena: std.mem.Allocator,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    cwd: []const u8,
+    output: *std.ArrayListUnmanaged(u8),
+) !u32 {
+    var read_pipe: ?*anyopaque = null;
+    var write_pipe: ?*anyopaque = null;
+    if (CreatePipe(&read_pipe, &write_pipe, null, 0) == 0) return error.NativeCallFailed;
+    defer {
+        if (read_pipe) |handle| _ = CloseHandle(handle);
+        if (write_pipe) |handle| _ = CloseHandle(handle);
+    }
+
+    // The child inherits the write end. Ours must not stay open past the spawn
+    // or the read below waits for a writer that is us.
+    if (SetHandleInformation(write_pipe.?, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0)
+        return error.NativeCallFailed;
+
+    const cmdline = try std.fmt.allocPrint(arena, "cmd.exe /d /s /c \"chcp 65001>nul & {s}\"", .{command});
+    const cmd_w = try toWideZ(arena, cmdline);
+    const cwd_w: ?[:0]u16 = if (cwd.len > 0) try toWideZ(arena, cwd) else null;
+
+    var startup: STARTUPINFOW = std.mem.zeroes(STARTUPINFOW);
+    startup.cb = @sizeOf(STARTUPINFOW);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = write_pipe;
+    startup.hStdError = write_pipe;
+    startup.hStdInput = null;
+    var info: PROCESS_INFORMATION = std.mem.zeroes(PROCESS_INFORMATION);
+
+    // No `lpApplicationName`: with it set, `CreateProcessW` treats the value as
+    // a path and never consults `PATH`, so a bare `cmd.exe` is refused. Leaving
+    // it null makes the command line name the program, and the first token here
+    // is a bare `cmd.exe` with no quoting, so there is nothing to misparse.
+    if (CreateProcessW(
+        null,
+        @constCast(cmd_w.ptr),
+        null,
+        null,
+        1,
+        0,
+        null,
+        if (cwd_w) |cwd_path| cwd_path.ptr else null,
+        &startup,
+        &info,
+    ) == 0) {
+        std.log.warn("craft.shell.exec: CreateProcessW failed for '{s}'", .{cmdline});
+        return error.NativeCallFailed;
+    }
+    _ = CloseHandle(info.hThread);
+    defer _ = CloseHandle(info.hProcess);
+
+    _ = CloseHandle(write_pipe.?);
+    write_pipe = null;
+
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        var got: u32 = 0;
+        if (ReadFile(read_pipe.?, buf[0..].ptr, buf.len, &got, null) == 0) break;
+        if (got == 0) break;
+        try output.appendSlice(allocator, buf[0..got]);
+        if (output.items.len >= exec_output_limit) break;
+    }
+
+    _ = WaitForSingleObject(info.hProcess.?, INFINITE);
+    var exit_code: u32 = 0;
+    _ = GetExitCodeProcess(info.hProcess.?, &exit_code);
+    return exit_code;
+}
+
+const CP_ACP: u32 = 0;
+
+extern "kernel32" fn MultiByteToWideChar(
+    code_page: u32,
+    flags: u32,
+    bytes: [*]const u8,
+    byte_count: c_int,
+    wide: ?[*]u16,
+    wide_count: c_int,
+) callconv(.c) c_int;
+
+/// Turn captured console bytes into UTF-8.
+///
+/// `chcp 65001` in the command line does not help here: the code page belongs
+/// to a console, and a captured stream is a pipe. A program on a Chinese or
+/// Japanese Windows therefore writes in the ANSI code page, so bytes that are
+/// not valid UTF-8 are decoded with `CP_ACP` and re-encoded. Anything still
+/// unreadable falls back to `?` per byte, because losing a line beats losing
+/// the whole command.
+fn decodeConsoleBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) return allocator.dupe(u8, bytes);
+
+    if (bytes.len <= std.math.maxInt(c_int)) {
+        const wide_len = MultiByteToWideChar(CP_ACP, 0, bytes.ptr, @intCast(bytes.len), null, 0);
+        if (wide_len > 0) {
+            const wide = try allocator.alloc(u16, @intCast(wide_len));
+            defer allocator.free(wide);
+            if (MultiByteToWideChar(CP_ACP, 0, bytes.ptr, @intCast(bytes.len), wide.ptr, wide_len) > 0)
+                return std.unicode.utf16LeToUtf8Alloc(allocator, wide);
+        }
+    }
+    return sanitizeUtf8(allocator, bytes);
+}
+
+/// Replace bytes that are not valid UTF-8 with `?`.
+///
+/// A console program writes in whatever code page it likes; the command line
+/// asks `cmd` for UTF-8 first, but nothing stops the child from emitting other
+/// bytes. Escaping refuses a string that is not valid UTF-8, and failing the
+/// whole reply would throw away output the caller would rather have: a mangled
+/// character is better than a lost command.
+fn sanitizeUtf8(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) return allocator.dupe(u8, bytes);
+
+    var out = try allocator.alloc(u8, bytes.len);
+    errdefer allocator.free(out);
+    var index: usize = 0;
+    var written: usize = 0;
+    while (index < bytes.len) {
+        const length = std.unicode.utf8ByteSequenceLength(bytes[index]) catch {
+            out[written] = '?';
+            written += 1;
+            index += 1;
+            continue;
+        };
+        if (index + length > bytes.len or !std.unicode.utf8ValidateSlice(bytes[index..][0..length])) {
+            out[written] = '?';
+            written += 1;
+            index += 1;
+            continue;
+        }
+        @memcpy(out[written..][0..length], bytes[index..][0..length]);
+        written += length;
+        index += length;
+    }
+    return allocator.realloc(out, written) catch out[0..written];
+}
+
+/// `craft.shell.exec` on Windows: wait for a command and answer with its output.
+///
+/// Synchronous, like `bridge_shell.zig`, so a caller can `await` the result. Long
+/// running work belongs on `spawn`, which returns as soon as the process starts.
+fn execChild(arena: std.mem.Allocator, allocator: std.mem.Allocator, json: []const u8) !void {
+    const ExecArgs = struct {
+        command: []const u8 = "",
+        cwd: []const u8 = "",
+    };
+    const parsed = std.json.parseFromSlice(ExecArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    if (parsed.value.command.len == 0) return bridge_error.BridgeError.MissingData;
+
+    var output: std.ArrayListUnmanaged(u8) = .empty;
+    defer output.deinit(allocator);
+
+    const exit_code = try runCaptured(arena, allocator, parsed.value.command, parsed.value.cwd, &output);
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+    const clean = try decodeConsoleBytes(allocator, output.items);
+    defer allocator.free(clean);
+    try out.print(allocator, "{{\"exitCode\":{d},\"stdout\":\"", .{exit_code});
+    try bridge_error.appendJsonEscaped(allocator, &out, clean);
+    // `stderr` is folded into `stdout`; see `runCaptured`.
+    try out.appendSlice(allocator, "\",\"stderr\":\"\"}");
+
+    const owned = try out.toOwnedSlice(allocator);
+    defer allocator.free(owned);
+    bridge_error.sendResultToJS(allocator, "exec", owned);
+}
+
+/// One live child process. A fixed-capacity table rather than a hash map, so it
+/// needs no allocator and a failed insert cannot leak the id it copied.
+const SpawnSlot = struct {
+    id: [64]u8 = undefined,
+    id_len: usize = 0,
+    handle: ?*anyopaque = null,
+};
+
+const max_spawns = 32;
+var spawn_slots: [max_spawns]SpawnSlot = @splat(.{});
+var spawn_count: usize = 0;
+
+/// Drop slots whose process has already exited, closing the handle. Runs before
+/// every spawn: a page that starts many short commands would otherwise fill the
+/// table with finished children and leak a handle per process.
+fn reapSpawns() void {
+    var write_index: usize = 0;
+    for (spawn_slots[0..spawn_count]) |slot| {
+        if (slot.handle) |handle| {
+            // WAIT_OBJECT_0 means the process signalled, i.e. it has exited.
+            if (WaitForSingleObject(handle, 0) == 0) {
+                _ = CloseHandle(handle);
+                continue;
+            }
+        }
+        spawn_slots[write_index] = slot;
+        write_index += 1;
+    }
+    spawn_count = write_index;
+}
+
+/// Quote one argument the way Windows' `CommandLineToArgvW` parser reads it
+/// back: a bare token needs no quoting, anything holding a space, tab or quote
+/// is wrapped, embedded quotes are escaped, and the backslashes that land in
+/// front of the closing quote are doubled so they are not read as escapes.
+fn appendQuotedArg(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, arg: []const u8) !void {
+    if (arg.len != 0 and std.mem.indexOfAny(u8, arg, " \t\"") == null)
+        return out.appendSlice(allocator, arg);
+
+    try out.append(allocator, '"');
+    var backslashes: usize = 0;
+    for (arg) |ch| {
+        if (ch == '\\') {
+            backslashes += 1;
+            continue;
+        }
+        if (ch == '"') {
+            try out.appendNTimes(allocator, '\\', backslashes * 2 + 1);
+            try out.append(allocator, '"');
+            backslashes = 0;
+            continue;
+        }
+        try out.appendNTimes(allocator, '\\', backslashes);
+        backslashes = 0;
+        try out.append(allocator, ch);
+    }
+    try out.appendNTimes(allocator, '\\', backslashes * 2);
+    try out.append(allocator, '"');
+}
+
+/// `craft.shell.spawn` on Windows.
+///
+/// The child inherits our stdout and stderr, matching `bridge_shell.zig`: the
+/// page asked for a process, not for a pipe. `opts.shell` runs the command
+/// through `cmd.exe`, and arguments are refused there because a shell command
+/// line is one string -- accepting both would silently drop the arguments.
+fn spawnChild(arena: std.mem.Allocator, allocator: std.mem.Allocator, json: []const u8) !void {
+    const SpawnArgs = struct {
+        id: []const u8 = "",
+        command: []const u8 = "",
+        cwd: []const u8 = "",
+        args: []const []const u8 = &.{},
+        shell: bool = false,
+    };
+    const parsed = std.json.parseFromSlice(SpawnArgs, arena, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return bridge_error.BridgeError.InvalidJSON;
+    const sp = parsed.value;
+
+    if (sp.id.len == 0 or sp.command.len == 0) return bridge_error.BridgeError.MissingData;
+    if (sp.id.len >= spawn_slots[0].id.len) return bridge_error.BridgeError.InvalidParameter;
+    if (sp.args.len > 256) return bridge_error.BridgeError.InvalidParameter;
+
+    var cmdline: std.ArrayListUnmanaged(u8) = .empty;
+    defer cmdline.deinit(allocator);
+
+    if (sp.shell) {
+        if (sp.args.len != 0) return bridge_error.BridgeError.InvalidParameter;
+        // `cmd.exe` is the program here, and the command goes in verbatim:
+        // cmd has its own quote handling (`/s` strips the outer pair) and does
+        // not treat `\\"` as an escape, so the argv quoting above would corrupt
+        // it. A `>` or `|` inside is the shell's job to interpret.
+        try cmdline.appendSlice(allocator, "cmd.exe /d /s /c \"");
+        try cmdline.appendSlice(allocator, sp.command);
+        try cmdline.append(allocator, '"');
+    } else {
+        try appendQuotedArg(&cmdline, allocator, sp.command);
+        for (sp.args) |arg| {
+            try cmdline.append(allocator, ' ');
+            try appendQuotedArg(&cmdline, allocator, arg);
+        }
+    }
+
+    var startup: STARTUPINFOW = std.mem.zeroes(STARTUPINFOW);
+    startup.cb = @sizeOf(STARTUPINFOW);
+    var info: PROCESS_INFORMATION = std.mem.zeroes(PROCESS_INFORMATION);
+
+    reapSpawns();
+    if (spawn_count >= max_spawns) {
+        std.log.warn("craft.shell.spawn: refusing '{s}', {d} children are still running", .{ sp.command, spawn_count });
+        return bridge_error.BridgeError.NativeCallFailed;
+    }
+
+    // The program to start and the command line that names it are two different
+    // things in shell mode: `cmd.exe` runs, and the caller's text is an argument
+    // to it.
+    const app_name: []const u8 = if (sp.shell) "cmd.exe" else sp.command;
+    const app_w = try toWideZ(arena, app_name);
+    const cmd_w = try toWideZ(arena, cmdline.items);
+    const cwd_w: ?[:0]u16 = if (sp.cwd.len > 0) try toWideZ(arena, sp.cwd) else null;
+
+    // `CreateProcessW` does not search `PATH` when `lpApplicationName` is given:
+    // it treats the value as a path relative to the working directory, so a bare
+    // `ping.exe` fails. Resolving through `SearchPathW` first is what makes
+    // `spawn('p', 'ping.exe', ...)` behave like typing it into a shell.
+    const app_ptr: [*:0]const u16 = blk: {
+        var search_buf: [std.fs.max_path_bytes]u16 = undefined;
+        const found = SearchPathW(null, app_w.ptr, null, @intCast(search_buf.len), &search_buf, null);
+        if (found > 0 and found < search_buf.len) {
+            const copy = try arena.alloc(u16, found + 1);
+            @memcpy(copy[0..found], search_buf[0..found]);
+            copy[found] = 0;
+            break :blk copy[0..found :0].ptr;
+        }
+        break :blk app_w.ptr;
+    };
+
+    // `bInheritHandles = TRUE` without STARTF_USESTDHANDLES hands the child our
+    // standard handles, which is how its output reaches the same console.
+    if (CreateProcessW(
+        app_ptr,
+        @constCast(cmd_w.ptr),
+        null,
+        null,
+        1,
+        0,
+        null,
+        if (cwd_w) |cwd| cwd.ptr else null,
+        &startup,
+        &info,
+    ) == 0) {
+        std.log.warn("craft.shell.spawn: CreateProcessW failed for '{s}' (command line: {s})", .{ app_name, cmdline.items });
+        return bridge_error.BridgeError.NativeCallFailed;
+    }
+    // The thread handle is not needed; the process handle is what `kill` uses.
+    _ = CloseHandle(info.hThread);
+
+    var slot = &spawn_slots[spawn_count];
+    @memcpy(slot.id[0..sp.id.len], sp.id);
+    slot.id_len = sp.id.len;
+    slot.handle = info.hProcess;
+    spawn_count += 1;
+
+    var escaped_buf: [512]u8 = undefined;
+    const escaped = bridge_error.escapeJsonString(&escaped_buf, sp.id) catch return bridge_error.BridgeError.InvalidParameter;
+    var reply_buf: [600]u8 = undefined;
+    const reply = try std.fmt.bufPrint(&reply_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{escaped});
+    bridge_error.sendResultToJS(allocator, "spawn", reply);
+}
+
+/// `craft.shell.kill` on Windows: terminate the child and release its handle.
+fn killChild(allocator: std.mem.Allocator, action: []const u8, id: []const u8) !void {
+    if (id.len == 0) return bridge_error.BridgeError.MissingData;
+
+    var index: usize = 0;
+    while (index < spawn_count) : (index += 1) {
+        const slot = &spawn_slots[index];
+        if (!std.mem.eql(u8, slot.id[0..slot.id_len], id)) continue;
+
+        if (slot.handle) |handle| {
+            _ = TerminateProcess(handle, 1);
+            _ = CloseHandle(handle);
+        }
+        // Compact the table: this slot goes, the rest shift down.
+        var k = index;
+        while (k + 1 < spawn_count) : (k += 1) spawn_slots[k] = spawn_slots[k + 1];
+        spawn_count -= 1;
+
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    return bridge_error.BridgeError.NotFound;
+}
+
+// =============================================================================
+// Windows: global shortcuts
+// =============================================================================
+
+const accelerator = @import("accelerator.zig");
+// Only the detail/script helpers are borrowed: they own the JSON shapes and the
+// escaping, so the page sees the same payload on every platform. The registry
+// itself is not reused because its `Platform` callback hands out a Carbon
+// keycode, which means nothing to `RegisterHotKey`.
+const shortcut_registry = @import("shortcut_registry.zig");
+
+const MOD_ALT: u32 = 0x0001;
+const MOD_CONTROL: u32 = 0x0002;
+const MOD_SHIFT: u32 = 0x0004;
+const MOD_NOREPEAT: u32 = 0x4000;
+const WM_HOTKEY: UINT = 0x0312;
+
+extern "user32" fn RegisterHotKey(hwnd: ?HWND, id: c_int, modifiers: u32, vk: u32) callconv(.c) c_int;
+extern "user32" fn UnregisterHotKey(hwnd: ?HWND, id: c_int) callconv(.c) c_int;
+
+/// A registered shortcut. `bound` is false between `disable` and `enable`, which
+/// is exactly when the key is not reserved.
+const ShortcutSlot = struct {
+    id: [64]u8 = undefined,
+    id_len: usize = 0,
+    accelerator: [96]u8 = undefined,
+    accel_len: usize = 0,
+    hotkey_id: u32 = 0,
+    window: usize = 0,
+    bound: bool = false,
+};
+
+const max_shortcuts = 32;
+var shortcut_slots: [max_shortcuts]ShortcutSlot = @splat(.{});
+var shortcut_count: usize = 0;
+var next_hotkey_id: u32 = 1;
+
+fn shortcutSlot(id: []const u8) ?*ShortcutSlot {
+    for (shortcut_slots[0..shortcut_count]) |*slot| {
+        if (std.mem.eql(u8, slot.id[0..slot.id_len], id)) return slot;
+    }
+    return null;
+}
+
+/// The Windows virtual-key code for a canonical key name from `key_codes.zig`.
+///
+/// Letters and digits are their own ASCII codes, which is why they are handled
+/// separately rather than listed. `0x5B` (the Windows key) has no Carbon
+/// counterpart and so never appears here.
+fn virtualKeyFor(name: []const u8) ?u16 {
+    if (name.len == 1) {
+        const ch = name[0];
+        if ((ch >= 'A' and ch <= 'Z') or (ch >= '0' and ch <= '9'))
+            return @intCast(std.ascii.toUpper(ch));
+    }
+    if (name.len >= 2 and name.len <= 3 and name[0] == 'F') {
+        if (std.fmt.parseInt(u16, name[1..], 10)) |number| {
+            if (number >= 1 and number <= 24) return @intCast(0x70 + number - 1);
+        } else |_| {}
+    }
+    const table = [_]struct { name: []const u8, vk: u16 }{
+        .{ .name = "Return", .vk = 0x0D },
+        .{ .name = "Enter", .vk = 0x0D },
+        .{ .name = "Tab", .vk = 0x09 },
+        .{ .name = "Space", .vk = 0x20 },
+        // Carbon's `Delete` is the key above Return that erases backwards.
+        .{ .name = "Delete", .vk = 0x08 },
+        .{ .name = "Backspace", .vk = 0x08 },
+        .{ .name = "Del", .vk = 0x08 },
+        .{ .name = "ForwardDelete", .vk = 0x2E },
+        .{ .name = "Escape", .vk = 0x1B },
+        .{ .name = "Esc", .vk = 0x1B },
+        .{ .name = "Left", .vk = 0x25 },
+        .{ .name = "ArrowLeft", .vk = 0x25 },
+        .{ .name = "Up", .vk = 0x26 },
+        .{ .name = "ArrowUp", .vk = 0x26 },
+        .{ .name = "Right", .vk = 0x27 },
+        .{ .name = "ArrowRight", .vk = 0x27 },
+        .{ .name = "Down", .vk = 0x28 },
+        .{ .name = "ArrowDown", .vk = 0x28 },
+        .{ .name = "Home", .vk = 0x24 },
+        .{ .name = "End", .vk = 0x23 },
+        .{ .name = "PageUp", .vk = 0x21 },
+        .{ .name = "PgUp", .vk = 0x21 },
+        .{ .name = "PageDown", .vk = 0x22 },
+        .{ .name = "PgDn", .vk = 0x22 },
+        .{ .name = "Help", .vk = 0x2F },
+        // Punctuation, by US layout. A global hotkey is a physical key, so this
+        // is the same trade-off the Carbon codes make.
+        .{ .name = "-", .vk = 0xBD },
+        .{ .name = "Minus", .vk = 0xBD },
+        .{ .name = "=", .vk = 0xBB },
+        .{ .name = "Equal", .vk = 0xBB },
+        .{ .name = "Plus", .vk = 0xBB },
+        .{ .name = "[", .vk = 0xDB },
+        .{ .name = "BracketLeft", .vk = 0xDB },
+        .{ .name = "]", .vk = 0xDD },
+        .{ .name = "BracketRight", .vk = 0xDD },
+        .{ .name = "\\", .vk = 0xDC },
+        .{ .name = "Backslash", .vk = 0xDC },
+        .{ .name = ";", .vk = 0xBA },
+        .{ .name = "Semicolon", .vk = 0xBA },
+        .{ .name = "'", .vk = 0xDE },
+        .{ .name = "Quote", .vk = 0xDE },
+        .{ .name = ",", .vk = 0xBC },
+        .{ .name = "Comma", .vk = 0xBC },
+        .{ .name = ".", .vk = 0xBE },
+        .{ .name = "Period", .vk = 0xBE },
+        .{ .name = "/", .vk = 0xBF },
+        .{ .name = "Slash", .vk = 0xBF },
+        .{ .name = "`", .vk = 0xC0 },
+        .{ .name = "Backquote", .vk = 0xC0 },
+        .{ .name = "Grave", .vk = 0xC0 },
+        .{ .name = "Keypad0", .vk = 0x60 },
+        .{ .name = "Keypad1", .vk = 0x61 },
+        .{ .name = "Keypad2", .vk = 0x62 },
+        .{ .name = "Keypad3", .vk = 0x63 },
+        .{ .name = "Keypad4", .vk = 0x64 },
+        .{ .name = "Keypad5", .vk = 0x65 },
+        .{ .name = "Keypad6", .vk = 0x66 },
+        .{ .name = "Keypad7", .vk = 0x67 },
+        .{ .name = "Keypad8", .vk = 0x68 },
+        .{ .name = "Keypad9", .vk = 0x69 },
+        .{ .name = "KeypadMultiply", .vk = 0x6A },
+        .{ .name = "KeypadPlus", .vk = 0x6B },
+        .{ .name = "KeypadMinus", .vk = 0x6D },
+        .{ .name = "KeypadDecimal", .vk = 0x6E },
+        .{ .name = "KeypadDivide", .vk = 0x6F },
+        .{ .name = "KeypadEnter", .vk = 0x0D },
+        .{ .name = "KeypadEquals", .vk = 0x0C },
+        .{ .name = "KeypadClear", .vk = 0x0C },
+    };
+    for (table) |entry| {
+        if (std.mem.eql(u8, name, entry.name)) return entry.vk;
+    }
+    return null;
+}
+
+/// Windows has no Command key. `CmdOrCtrl` already collapses to ctrl during
+/// parsing, and a bare `Cmd` maps to Ctrl because that is the key a Windows
+/// user reaches for in the same position.
+fn windowsModifiers(modifiers: accelerator.Modifiers) u32 {
+    var flags: u32 = 0;
+    if (modifiers.cmd or modifiers.ctrl) flags |= MOD_CONTROL;
+    if (modifiers.alt) flags |= MOD_ALT;
+    if (modifiers.shift) flags |= MOD_SHIFT;
+    return flags;
+}
+
+fn sendShortcutEvent(webview: usize, name: []const u8, detail: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const script = shortcut_registry.eventScript(allocator, name, detail) catch return;
+    defer allocator.free(script);
+    evalInWebview(webview, script);
+}
+
+fn reportShortcutError(webview: usize, id: []const u8, code: []const u8, message: []const u8) void {
+    const allocator = std.heap.c_allocator;
+    const detail = shortcut_registry.errorDetail(allocator, id, code, message) catch return;
+    defer allocator.free(detail);
+    sendShortcutEvent(webview, "craft:shortcut:error", detail);
+}
+
+/// Reserve `slot`'s key again. Used by `register` and by `enable`.
+fn bindShortcut(slot: *ShortcutSlot, modifiers: u32, vk: u16) bool {
+    const hotkey_id: c_int = @intCast(slot.hotkey_id);
+    if (RegisterHotKey(@ptrFromInt(slot.window), hotkey_id, modifiers | MOD_NOREPEAT, vk) == 0)
+        return false;
+    slot.bound = true;
+    return true;
+}
+
+fn unbindShortcut(slot: *ShortcutSlot) void {
+    if (!slot.bound) return;
+    _ = UnregisterHotKey(@ptrFromInt(slot.window), @intCast(slot.hotkey_id));
+    slot.bound = false;
+}
+
+/// `craft.shortcuts` on Windows.
+fn handleShortcutAction(entry: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+    const payload = data orelse "";
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const args = try parseBridgeArgs(arena, payload);
+
+    if (eql(u8, action, "register")) {
+        const RegisterPayload = struct {
+            id: []const u8 = "",
+            accelerator: []const u8 = "",
+        };
+        const parsed = std.json.parseFromSlice(RegisterPayload, arena, payload, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        }) catch return bridge_error.BridgeError.InvalidJSON;
+        const id = parsed.value.id;
+        if (id.len == 0) return bridge_error.BridgeError.MissingData;
+        if (id.len >= shortcut_slots[0].id.len) return bridge_error.BridgeError.InvalidParameter;
+
+        const binding = accelerator.parse(parsed.value.accelerator) catch {
+            reportShortcutError(entry.webview, id, "INVALID_ACCELERATOR", "That accelerator could not be parsed.");
+            return;
+        };
+        var rendered: [96]u8 = undefined;
+        const canonical = accelerator.format(&rendered, binding) catch return bridge_error.BridgeError.InvalidParameter;
+
+        const vk = virtualKeyFor(binding.key) orelse {
+            reportShortcutError(entry.webview, id, "UNSUPPORTED_KEY", "Windows cannot bind this key globally.");
+            return;
+        };
+        const modifiers = windowsModifiers(binding.modifiers);
+        // Without a modifier a global hotkey would swallow a plain keystroke in
+        // every application on the machine.
+        if (modifiers == 0) {
+            reportShortcutError(entry.webview, id, "INVALID_ACCELERATOR", "A global shortcut needs at least one modifier.");
+            return;
+        }
+
+        // Re-registering an id replaces it, and the old reservation goes first:
+        // otherwise the same accelerator would collide with craft's own entry.
+        if (shortcutSlot(id)) |slot| unbindShortcut(slot);
+        const slot = shortcutSlot(id) orelse blk: {
+            if (shortcut_count >= max_shortcuts) {
+                reportShortcutError(entry.webview, id, "LIMIT_REACHED", "Too many shortcuts are registered.");
+                return;
+            }
+            const fresh = &shortcut_slots[shortcut_count];
+            shortcut_count += 1;
+            break :blk fresh;
+        };
+
+        @memcpy(slot.id[0..id.len], id);
+        slot.id_len = id.len;
+        @memcpy(slot.accelerator[0..canonical.len], canonical);
+        slot.accel_len = canonical.len;
+        slot.window = entry.window;
+        slot.hotkey_id = next_hotkey_id;
+        slot.bound = false;
+
+        if (!bindShortcut(slot, modifiers, vk)) {
+            // Another application, or the system, already owns the combination.
+            reportShortcutError(entry.webview, id, "ALREADY_REGISTERED", "Another application already uses that combination.");
+            return;
+        }
+        next_hotkey_id += 1;
+        return;
+    }
+
+    if (eql(u8, action, "unregister")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        const slot = shortcutSlot(args.id) orelse return bridge_error.BridgeError.NotFound;
+        unbindShortcut(slot);
+        const index = (@intFromPtr(slot) - @intFromPtr(&shortcut_slots[0])) / @sizeOf(ShortcutSlot);
+        var k = index;
+        while (k + 1 < shortcut_count) : (k += 1) shortcut_slots[k] = shortcut_slots[k + 1];
+        shortcut_count -= 1;
+        return;
+    }
+    if (eql(u8, action, "unregisterAll")) {
+        for (shortcut_slots[0..shortcut_count]) |*slot| unbindShortcut(slot);
+        shortcut_count = 0;
+        return;
+    }
+    if (eql(u8, action, "enable") or eql(u8, action, "disable")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        const slot = shortcutSlot(args.id) orelse return bridge_error.BridgeError.NotFound;
+        if (eql(u8, action, "disable")) {
+            unbindShortcut(slot);
+            return;
+        }
+        if (slot.bound) return;
+        const binding = accelerator.parse(slot.accelerator[0..slot.accel_len]) catch return bridge_error.BridgeError.InvalidParameter;
+        const vk = virtualKeyFor(binding.key) orelse return bridge_error.BridgeError.InvalidParameter;
+        if (!bindShortcut(slot, windowsModifiers(binding.modifiers), vk))
+            reportShortcutError(entry.webview, args.id, "ALREADY_REGISTERED", "Another application already uses that combination.");
+        return;
+    }
+    if (eql(u8, action, "isRegistered")) {
+        if (args.id.len == 0) return bridge_error.BridgeError.MissingData;
+        return sendJsonBool(allocator, action, "value", shortcutSlot(args.id) != null);
+    }
+    if (eql(u8, action, "list")) {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(allocator);
+        try out.appendSlice(allocator, "{\"shortcuts\":[");
+        for (shortcut_slots[0..shortcut_count], 0..) |slot, index| {
+            if (index != 0) try out.append(allocator, ',');
+            try out.appendSlice(allocator, "{\"id\":\"");
+            try appendJsonEscaped(allocator, &out, slot.id[0..slot.id_len]);
+            try out.appendSlice(allocator, "\",\"accelerator\":\"");
+            try appendJsonEscaped(allocator, &out, slot.accelerator[0..slot.accel_len]);
+            try out.appendSlice(allocator, if (slot.bound) "\",\"enabled\":true}" else "\",\"enabled\":false}");
+        }
+        try out.appendSlice(allocator, "]}");
+        const owned = try out.toOwnedSlice(allocator);
+        defer allocator.free(owned);
+        bridge_error.sendResultToJS(allocator, action, owned);
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+// =============================================================================
+// Windows: system tray
+// =============================================================================
+
+var global_tray: ?*windows_tray.WindowsTray = null;
+/// The tray's context menu, as the bare array `craft.tray.setMenu` sent. Null
+/// until a menu is set, and a right click without one reports only the click.
+var tray_menu_json: ?[]u8 = null;
+
+/// The tray this process owns, anchored to the window that will receive its
+/// click messages.
+///
+/// `tray.zig` asks `windows_tray` to build its own message-only window, and that
+/// path cannot work: it calls `CreateWindowExW` with a class name nothing ever
+/// registers, so it fails before an icon appears. Anchoring the icon to the app
+/// window is also what makes `WM_TRAYICON` reach the proc below; a window of the
+/// system's own class has a procedure that is not ours.
+fn ensureTray(allocator: std.mem.Allocator, window: usize, title: []const u8) !*windows_tray.WindowsTray {
+    if (global_tray) |tray| return tray;
+    const tray = try allocator.create(windows_tray.WindowsTray);
+    errdefer allocator.destroy(tray);
+    tray.* = try windows_tray.WindowsTray.init(allocator, @ptrFromInt(window), title);
+    global_tray = tray;
+    return tray;
+}
+
+/// `craft.tray` on Windows.
+fn handleTrayAction(entry: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+    // `setTitle` and `setTooltip` send their text bare rather than as JSON.
+    const payload = data orelse "";
+
+    if (eql(u8, action, "getState")) {
+        var buf: [128]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"visible\":{s},\"title\":\"\",\"tooltip\":\"\"}}", .{
+            if (global_tray != null) "true" else "false",
+        });
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "setTitle")) {
+        const tray = try ensureTray(allocator, entry.window, payload);
+        try tray.setTitle(payload);
+        return;
+    }
+    if (eql(u8, action, "setTooltip")) {
+        const tray = try ensureTray(allocator, entry.window, payload);
+        try tray.setTooltip(payload);
+        return;
+    }
+    if (eql(u8, action, "show")) {
+        _ = try ensureTray(allocator, entry.window, payload);
+        return;
+    }
+    if (eql(u8, action, "destroy") or eql(u8, action, "hide")) {
+        if (global_tray) |tray| {
+            tray.deinit();
+            allocator.destroy(tray);
+            global_tray = null;
+        }
+        return;
+    }
+    if (eql(u8, action, "setMenu")) {
+        // Kept as the page sent it: `windows_desktop.showTrayMenuAt` parses it
+        // with the same `tray_menu` parser the macOS bridge uses.
+        if (tray_menu_json) |old| allocator.free(old);
+        tray_menu_json = try allocator.dupe(u8, payload);
+        // A menu with no icon would never be reachable, so setting one creates
+        // the tray the same way a tooltip does.
+        _ = try ensureTray(allocator, entry.window, "Craft");
+        return;
+    }
+    // `setIcon`, `setBadge` and `pollActions` have no counterpart here: the icon
+    // is the stock application icon, the tray badge is a macOS surface, and
+    // clicks and menu choices are pushed rather than polled. All three are
+    // `_send` on the facade, so answering nothing is the right shape.
+    if (eql(u8, action, "setIcon") or eql(u8, action, "setBadge") or
+        eql(u8, action, "pollActions")) return;
+    return error.PlatformNotSupported;
+}
+
+/// `SYSTEM_POWER_STATUS` from `winbase.h` (12 bytes with `DWORD` alignment).
+const SYSTEM_POWER_STATUS = extern struct {
+    ACLineStatus: u8 = 0,
+    BatteryFlag: u8 = 0,
+    BatteryLifePercent: u8 = 0,
+    SystemStatusFlag: u8 = 0,
+    BatteryLifeTime: u32 = 0,
+    BatteryFullLifeTime: u32 = 0,
+};
+
+const BATTERY_FLAG_CHARGING: u8 = 0x08;
+const BATTERY_PERCENT_UNKNOWN: u8 = 255;
+const BATTERY_LIFE_UNKNOWN: u32 = 0xFFFF_FFFF;
+
+/// `craft.power` on Windows.
+fn sendPower(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var status: SYSTEM_POWER_STATUS = .{};
+    const known = GetSystemPowerStatus(&status) != 0;
+    const ac_online = known and status.ACLineStatus == 1;
+    const charging = known and (status.BatteryFlag & BATTERY_FLAG_CHARGING) != 0;
+
+    if (eql(u8, action, "isCharging")) return sendJsonBool(allocator, action, "value", charging);
+    if (eql(u8, action, "isPluggedIn")) return sendJsonBool(allocator, action, "value", ac_online);
+    // Battery saver exists as a user setting, but Windows exposes no query for
+    // its state to a desktop process, so this reports false rather than
+    // inventing an answer.
+    if (eql(u8, action, "isLowPowerMode")) return sendJsonBool(allocator, action, "value", false);
+
+    if (eql(u8, action, "getBatteryLevel")) {
+        if (!known or status.BatteryLifePercent == BATTERY_PERCENT_UNKNOWN) {
+            bridge_error.sendResultToJS(allocator, action, "{\"level\":null}");
+            return;
+        }
+        // Formatted from integers so the value is exactly the percentage the
+        // OS reported, with no float rounding in between.
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"level\":{d}.{d:0>2}}}", .{
+            status.BatteryLifePercent / 100,
+            status.BatteryLifePercent % 100,
+        });
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "getBatteryState")) {
+        const state = if (!known or status.BatteryLifePercent == BATTERY_PERCENT_UNKNOWN)
+            "unknown"
+        else if (charging)
+            "charging"
+        else if (ac_online and status.BatteryLifePercent == 100)
+            "charged"
+        else if (!ac_online)
+            "unplugged"
+        else
+            "unknown";
+        return sendJsonField(allocator, action, "state", state);
+    }
+    if (eql(u8, action, "getTimeRemaining")) {
+        if (!known or status.BatteryLifeTime == BATTERY_LIFE_UNKNOWN or status.BatteryLifeTime == 0) {
+            bridge_error.sendResultToJS(allocator, action, "{\"minutes\":null}");
+            return;
+        }
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"minutes\":{d}}}", .{status.BatteryLifeTime / 60});
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    // `getThermalState` has no Win32 equivalent; Windows throttles silently and
+    // the WinRT sensor API needs a package identity.
+    if (eql(u8, action, "getThermalState")) return sendJsonField(allocator, action, "state", "nominal");
+    if (eql(u8, action, "getUptimeSeconds")) {
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"seconds\":{d}}}", .{GetTickCount64() / 1000});
+        bridge_error.sendResultToJS(allocator, action, json);
+        return;
+    }
+    if (eql(u8, action, "preventSleep")) {
+        // `ES_CONTINUOUS` holds the request in force until it is cleared, which
+        // is what `allowSleep` pairs with.
+        if (SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) == 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        return;
+    }
+    if (eql(u8, action, "allowSleep")) {
+        _ = SetThreadExecutionState(ES_CONTINUOUS);
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+const RUN_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+/// The registry value name: the executable's base name without `.exe`, so one
+/// app cannot silently overwrite another app's entry unless they share a name.
+fn autoLaunchValueName(allocator: std.mem.Allocator) ![]u8 {
+    var wide: [std.fs.max_path_bytes]u16 = undefined;
+    const n = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+    if (n == 0) return bridge_error.BridgeError.NativeCallFailed;
+    const exe = try std.unicode.utf16LeToUtf8Alloc(allocator, wide[0..@min(@as(usize, n), wide.len)]);
+    defer allocator.free(exe);
+    const base = std.fs.path.basename(exe);
+    const name = if (base.len > 4 and std.ascii.eqlIgnoreCase(base[base.len - 4 ..], ".exe"))
+        base[0 .. base.len - 4]
+    else
+        base;
+    return allocator.dupe(u8, name);
+}
+
+/// `craft.autoLaunch` on Windows, through the per-user `Run` key.
+fn sendAutoLaunch(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const value_name = try toWideZ(arena, try autoLaunchValueName(arena));
+    const key_path = try toWideZ(arena, RUN_KEY);
+
+    if (eql(u8, action, "isEnabled")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, key_path, 0, KEY_QUERY_VALUE, &hkey) != 0)
+            return sendJsonBool(allocator, action, "value", false);
+        defer _ = RegCloseKey(hkey);
+        var size: u32 = 0;
+        const rc = RegQueryValueExW(hkey, value_name, null, null, null, &size);
+        // A zero-length or single-NUL-stub value is a leftover, not an entry
+        // that would actually start anything.
+        return sendJsonBool(allocator, action, "value", rc == 0 and size > 2);
+    }
+    if (eql(u8, action, "enable")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, key_path, 0, null, 0, KEY_SET_VALUE, null, &hkey, null) != 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        defer _ = RegCloseKey(hkey);
+
+        var wide: [std.fs.max_path_bytes]u16 = undefined;
+        const n = GetModuleFileNameW(null, &wide, @intCast(wide.len));
+        if (n == 0) return bridge_error.BridgeError.NativeCallFailed;
+        const exe = try std.unicode.utf16LeToUtf8Alloc(arena, wide[0..@min(@as(usize, n), wide.len)]);
+        // Quoted, because an unquoted path containing a space is parsed as
+        // "run the part before the space with the rest as arguments".
+        const command = try std.fmt.allocPrint(arena, "\"{s}\"", .{exe});
+        const command_w = try toWideZ(arena, command);
+        const bytes: u32 = @intCast((command_w.len + 1) * 2);
+        if (RegSetValueExW(hkey, value_name, 0, REG_SZ, @ptrCast(command_w.ptr), bytes) != 0)
+            return bridge_error.BridgeError.NativeCallFailed;
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    if (eql(u8, action, "disable")) {
+        var hkey: ?*anyopaque = undefined;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE, &hkey) != 0) {
+            // No key means nothing was ever registered, which is the state the
+            // caller asked for.
+            bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+            return;
+        }
+        defer _ = RegCloseKey(hkey);
+        // A missing value is also already-disabled, not a failure.
+        _ = RegDeleteValueW(hkey, value_name);
+        bridge_error.sendResultToJS(allocator, action, "{\"ok\":true}");
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+/// `craft.permissions` on Windows.
+///
+/// There is no per-capability grant table to consult: a packaged app declares
+/// its capabilities in the manifest and the user consents once at install,
+/// while an unpackaged app is unrestricted. Reporting `granted` describes what
+/// the OS will actually do instead of inventing a prompt that does not exist.
+fn sendPermissions(action: []const u8) !void {
+    const eql = std.mem.eql;
+    const allocator = std.heap.c_allocator;
+
+    if (eql(u8, action, "check") or eql(u8, action, "request"))
+        return sendJsonField(allocator, action, "status", "granted");
+
+    if (eql(u8, action, "openSettings")) {
+        try shellExecute(try toWideZ(std.heap.c_allocator, "open"), try toWideZ(std.heap.c_allocator, "ms-settings:privacy"), null);
+        return;
+    }
+    return error.PlatformNotSupported;
+}
+
+/// `craft.log` on Windows: writes through `std.log` so the lines land wherever
+/// the rest of the process's output goes.
+fn sendLog(action: []const u8, data: ?[]const u8) !void {
+    if (!std.mem.eql(u8, action, "log")) return error.PlatformNotSupported;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena_state.deinit();
+    const args = try parseBridgeArgs(arena_state.allocator(), data orelse "");
+
+    if (std.mem.eql(u8, args.level, "error")) {
+        std.log.err("[js] {s}", .{args.message});
+    } else if (std.mem.eql(u8, args.level, "warn")) {
+        std.log.warn("[js] {s}", .{args.message});
+    } else if (std.mem.eql(u8, args.level, "debug")) {
+        std.log.debug("[js] {s}", .{args.message});
+    } else {
+        std.log.info("[js] {s}", .{args.message});
+    }
+}
+
+// =============================================================================
+// Windows: shell / power / autoLaunch / permissions / log
+// =============================================================================
+
+const SW_SHOWNORMAL: c_int = 1;
+
+// `HKEY_CURRENT_USER` is declared further down next to `RegGetValueW`; the
+// handles here are the same `?*anyopaque` shape, so they are not redeclared.
+const KEY_QUERY_VALUE: u32 = 0x0001;
+const KEY_SET_VALUE: u32 = 0x0002;
+const REG_SZ: u32 = 1;
+
+const ES_CONTINUOUS: u32 = 0x8000_0000;
+const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+
+extern "shell32" fn ShellExecuteW(
+    hwnd: ?HWND,
+    lp_operation: [*:0]const u16,
+    lp_file: [*:0]const u16,
+    lp_parameters: ?[*:0]const u16,
+    lp_directory: ?[*:0]const u16,
+    n_show_cmd: c_int,
+) callconv(.c) usize;
+
+extern "kernel32" fn GetEnvironmentVariableW(
+    lp_name: [*:0]const u16,
+    lp_buffer: ?[*]u16,
+    n_size: u32,
+) callconv(.c) u32;
+
+// `GetFileVersionInfoW` / `VerQueryValueW` live in their own import library.
+extern "version" fn GetFileVersionInfoSizeW(lp_filename: [*:0]const u16, lpdw_handle: ?*u32) callconv(.c) u32;
+extern "version" fn GetFileVersionInfoW(lp_filename: [*:0]const u16, dw_handle: u32, dw_len: u32, lp_data: ?*anyopaque) callconv(.c) c_int;
+extern "version" fn VerQueryValueW(
+    lp_block: ?*const anyopaque,
+    lp_sub_block: [*:0]const u16,
+    lplp_buffer: *?*anyopaque,
+    pu_len: *u32,
+) callconv(.c) c_int;
+
+/// `VS_FIXEDFILEINFO` from `verrsrc.h`.
+const VS_FIXEDFILEINFO = extern struct {
+    dwSignature: u32,
+    dwStrucVersion: u32,
+    dwFileVersionMS: u32,
+    dwFileVersionLS: u32,
+    dwProductVersionMS: u32,
+    dwProductVersionLS: u32,
+    dwFileFlagsMask: u32,
+    dwFileFlags: u32,
+    dwFileOS: u32,
+    dwFileType: u32,
+    dwFileSubtype: u32,
+    dwFileDateMS: u32,
+    dwFileDateLS: u32,
+};
+
+extern "kernel32" fn SetEnvironmentVariableW(
+    lp_name: [*:0]const u16,
+    lp_value: ?[*:0]const u16,
+) callconv(.c) c_int;
+
+extern "kernel32" fn GetSystemPowerStatus(lp_status: *SYSTEM_POWER_STATUS) callconv(.c) c_int;
+extern "kernel32" fn GetTickCount64() callconv(.c) u64;
+extern "kernel32" fn SetThreadExecutionState(flags: u32) callconv(.c) u32;
+
+extern "kernel32" fn CreateProcessW(
+    lp_application_name: ?[*:0]const u16,
+    lp_command_line: ?[*:0]u16,
+    lp_process_attributes: ?*anyopaque,
+    lp_thread_attributes: ?*anyopaque,
+    b_inherit_handles: c_int,
+    dw_creation_flags: u32,
+    lp_environment: ?*anyopaque,
+    lp_current_directory: ?[*:0]const u16,
+    lp_startup_info: *STARTUPINFOW,
+    lp_process_information: *PROCESS_INFORMATION,
+) callconv(.c) c_int;
+
+extern "kernel32" fn TerminateProcess(h: ?*anyopaque, code: u32) callconv(.c) c_int;
+extern "kernel32" fn WaitForSingleObject(h: ?*anyopaque, milliseconds: u32) callconv(.c) u32;
+extern "kernel32" fn CloseHandle(h: ?*anyopaque) callconv(.c) c_int;
+
+/// Resolves a bare executable name through the same search order a shell uses
+/// (`PATH`, `PATHEXT` and the application directory).
+extern "kernel32" fn SearchPathW(
+    lp_path: ?[*:0]const u16,
+    lp_file_name: [*:0]const u16,
+    lp_extension: ?[*:0]const u16,
+    n_buffer_length: u32,
+    lp_buffer: ?[*]u16,
+    lp_file_part: ?*?[*]u16,
+) callconv(.c) u32;
+
+/// `STARTUPINFOW` from `processthreadsapi.h`. Left zeroed except `cb`, which
+/// makes the child inherit our standard handles instead of receiving pipes.
+const STARTUPINFOW = extern struct {
+    cb: u32 = 0,
+    lpReserved: ?[*:0]u16 = null,
+    lpDesktop: ?[*:0]u16 = null,
+    lpTitle: ?[*:0]u16 = null,
+    dwX: u32 = 0,
+    dwY: u32 = 0,
+    dwXSize: u32 = 0,
+    dwYSize: u32 = 0,
+    dwXCountChars: u32 = 0,
+    dwYCountChars: u32 = 0,
+    dwFillAttribute: u32 = 0,
+    dwFlags: u32 = 0,
+    wShowWindow: u16 = 0,
+    cbReserved2: u16 = 0,
+    lpReserved2: ?*u8 = null,
+    hStdInput: ?*anyopaque = null,
+    hStdOutput: ?*anyopaque = null,
+    hStdError: ?*anyopaque = null,
+};
+
+const PROCESS_INFORMATION = extern struct {
+    hProcess: ?*anyopaque = null,
+    hThread: ?*anyopaque = null,
+    dwProcessId: u32 = 0,
+    dwThreadId: u32 = 0,
+};
+
+extern "advapi32" fn RegOpenKeyExW(
+    h_key: ?*anyopaque,
+    lp_sub_key: [*:0]const u16,
+    ul_options: u32,
+    sam_desired: u32,
+    phk_result: *?*anyopaque,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegCreateKeyExW(
+    h_key: ?*anyopaque,
+    lp_sub_key: [*:0]const u16,
+    reserved: u32,
+    lp_class: ?[*:0]const u16,
+    dw_options: u32,
+    sam_desired: u32,
+    lp_security_attributes: ?*anyopaque,
+    phk_result: *?*anyopaque,
+    lpdw_disposition: ?*u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegSetValueExW(
+    h_key: ?*anyopaque,
+    lp_value_name: [*:0]const u16,
+    reserved: u32,
+    dw_type: u32,
+    lp_data: [*]const u8,
+    cb_data: u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegQueryValueExW(
+    h_key: ?*anyopaque,
+    lp_value_name: [*:0]const u16,
+    lp_reserved: ?*u32,
+    lp_type: ?*u32,
+    lp_data: ?[*]u8,
+    lpcb_data: *u32,
+) callconv(.c) c_int;
+
+extern "advapi32" fn RegDeleteValueW(h_key: ?*anyopaque, lp_value_name: [*:0]const u16) callconv(.c) c_int;
+extern "advapi32" fn RegCloseKey(h_key: ?*anyopaque) callconv(.c) c_int;
+
+/// `craft.screen` on Windows.
+///
+/// Answered here for the same reason: `bridge_screen.zig` also reaches
+/// `macos.zig`, so the AppKit implementation stays where it is until that
+/// dependency chain is made conditional.
+fn sendScreen(action: []const u8) !void {
+    const primary_only = std.mem.eql(u8, action, "getPrimary");
+    if (!primary_only and !std.mem.eql(u8, action, "getDisplays"))
+        return bridge_error.BridgeError.UnknownAction;
+
+    const allocator = std.heap.c_allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    var sink = MonitorSink{ .out = &buf, .primary_only = primary_only };
+    if (!primary_only) try buf.appendSlice(allocator, "{\"displays\":[");
+    // `EnumDisplayMonitors` returns 0 both on failure *and* when a callback
+    // stops it early — which is exactly what `getPrimary` does once it finds
+    // the primary monitor. Treating that as an error made `screen.getPrimary`
+    // report a native failure while holding a perfectly good result. The sink
+    // is the authority: it knows whether anything was written.
+    _ = EnumDisplayMonitors(null, null, monitorEnumProc, @bitCast(@intFromPtr(&sink)));
+    if (sink.failed) return bridge_error.BridgeError.AllocationFailed;
+
+    if (primary_only) {
+        // No monitor claimed PRIMARY: answer with an empty object rather than
+        // inventing geometry that does not exist.
+        if (!sink.wrote_any) try buf.appendSlice(allocator, "{}");
+    } else {
+        try buf.appendSlice(allocator, "]}");
+    }
+
+    const json = try buf.toOwnedSlice(allocator);
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, if (primary_only) "getPrimary" else "getDisplays", json);
+}
+
+const LOCALE_NAME_MAX_LENGTH: usize = 85;
+
+const RTL_OSVERSIONINFOW = extern struct {
+    dwOSVersionInfoSize: u32,
+    dwMajorVersion: u32,
+    dwMinorVersion: u32,
+    dwBuildNumber: u32,
+    dwPlatformId: u32,
+    szCSDVersion: [128]u16,
+};
+
+const SYSTEMTIME_W = extern struct {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+};
+
+const TIME_ZONE_INFORMATION = extern struct {
+    Bias: i32,
+    StandardName: [32]u16,
+    StandardDate: SYSTEMTIME_W,
+    StandardBias: i32,
+    DaylightName: [32]u16,
+    DaylightDate: SYSTEMTIME_W,
+    DaylightBias: i32,
+};
+
+extern "kernel32" fn GetModuleFileNameW(hModule: ?*anyopaque, lpFilename: [*]u16, nSize: u32) callconv(.c) u32;
+extern "kernel32" fn GetComputerNameW(lpBuffer: [*]u16, nSize: *u32) callconv(.c) c_int;
+extern "advapi32" fn GetUserNameW(lpBuffer: [*]u16, pcbBuffer: *u32) callconv(.c) c_int;
+extern "kernel32" fn GetUserDefaultLocaleName(lpLocaleName: [*]u16, cchLocaleName: c_int) callconv(.c) c_int;
+extern "kernel32" fn GetTimeZoneInformation(lpTimeZoneInformation: *TIME_ZONE_INFORMATION) callconv(.c) u32;
+
+const HKEY_CURRENT_USER: ?*anyopaque = @ptrFromInt(0x80000001);
+const RRF_RT_REG_DWORD: u32 = 0x00000010;
+
+extern "advapi32" fn RegGetValueW(
+    hkey: ?*anyopaque,
+    lp_sub_key: ?[*:0]const u16,
+    lp_value: ?[*:0]const u16,
+    dw_flags: u32,
+    pdw_type: ?*u32,
+    pv_data: ?*anyopaque,
+    pcb_data: ?*u32,
+) callconv(.c) c_long;
+
+/// Reports the real OS version. `GetVersionExW` lies on anything newer than
+/// Windows 8.1 unless the binary ships a compatibility manifest, so the
+/// undoctored `ntdll` call is the one that tells the truth.
+extern "ntdll" fn RtlGetVersion(lpVersionInformation: *RTL_OSVERSIONINFOW) callconv(.c) c_long;
+
+const MONITORINFOEXW = extern struct {
+    cbSize: DWORD,
+    rcMonitor: RECT,
+    rcWork: RECT,
+    dwFlags: DWORD,
+    szDevice: [32]u16,
+};
+
+const MONITORINFOF_PRIMARY: DWORD = 0x1;
+
+extern "user32" fn EnumDisplayMonitors(
+    hdc: ?*anyopaque,
+    lprcClip: ?*const RECT,
+    lpfnEnum: *const fn (?*anyopaque, ?*anyopaque, *RECT, isize) callconv(.c) c_int,
+    dwData: isize,
+) callconv(.c) c_int;
+
+/// System DPI, i.e. the scale of the primary monitor. Per-monitor DPI needs
+/// `GetDpiForMonitor` from shcore; reporting the system value is honest and is
+/// what a single-scale layout is drawn against.
+extern "user32" fn GetDpiForSystem() callconv(.c) UINT;
+
+const MonitorSink = struct {
+    out: *std.ArrayListUnmanaged(u8),
+    primary_only: bool,
+    index: usize = 0,
+    wrote_any: bool = false,
+    failed: bool = false,
+};
+
+fn monitorEnumProc(hmonitor: ?*anyopaque, _: ?*anyopaque, _: *RECT, data: isize) callconv(.c) c_int {
+    const sink: *MonitorSink = @ptrFromInt(@as(usize, @bitCast(data)));
+    var info: MONITORINFOEXW = std.mem.zeroes(MONITORINFOEXW);
+    info.cbSize = @intCast(@sizeOf(MONITORINFOEXW));
+    if (GetMonitorInfoW(hmonitor orelse return 1, @ptrCast(&info)) == 0) return 1;
+
+    const is_primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    if (sink.primary_only and !is_primary) return 1;
+
+    if (sink.wrote_any) {
+        sink.out.append(std.heap.c_allocator, ',') catch {
+            sink.failed = true;
+            return 0;
+        };
+    }
+    appendMonitorJson(sink, &info, is_primary) catch {
+        sink.failed = true;
+        return 0;
+    };
+    sink.wrote_any = true;
+    sink.index += 1;
+
+    // One is all `getPrimary` needs; stop enumerating.
+    if (sink.primary_only) return 0;
+    return 1;
+}
+
+fn appendMonitorJson(sink: *MonitorSink, info: *const MONITORINFOEXW, is_primary: bool) !void {
+    const allocator = std.heap.c_allocator;
+    var device_len: usize = 0;
+    while (device_len < info.szDevice.len and info.szDevice[device_len] != 0) : (device_len += 1) {}
+    const device_utf8 = try std.unicode.utf16LeToUtf8Alloc(allocator, info.szDevice[0..device_len]);
+    defer allocator.free(device_utf8);
+
+    const esc_buf = try allocator.alloc(u8, device_utf8.len * 6 + 1);
+    defer allocator.free(esc_buf);
+    const escaped = try bridge_error.escapeJsonString(esc_buf, device_utf8);
+
+    const scale = @as(f64, @floatFromInt(GetDpiForSystem())) / 96.0;
+    const monitor = info.rcMonitor;
+    const work = info.rcWork;
+
+    var num: [768]u8 = undefined;
+    const written = try std.fmt.bufPrint(&num, "{{\"id\":{d},\"name\":\"{s}\",\"x\":{d},\"y\":{d}," ++
+        "\"width\":{d},\"height\":{d},\"workX\":{d},\"workY\":{d}," ++
+        "\"workWidth\":{d},\"workHeight\":{d},\"scaleFactor\":{d:.2},\"primary\":{s}}}", .{
+        sink.index,
+        escaped,
+        monitor.left,
+        monitor.top,
+        monitor.right - monitor.left,
+        monitor.bottom - monitor.top,
+        work.left,
+        work.top,
+        work.right - work.left,
+        work.bottom - work.top,
+        scale,
+        if (is_primary) "true" else "false",
+    });
+    try sink.out.appendSlice(allocator, written);
 }
 
 fn desktopTarget(id: u32) ?windows_desktop.Target {
@@ -1067,6 +2897,10 @@ const NavigationStartingHandler = extern struct {
 
     fn invoke(self: *NavigationStartingHandler, _: *ICoreWebView2, _: *anyopaque) callconv(.c) HRESULT {
         if (desktop_windows.byId(self.window_id) != null) invalidateEvaluations(self.window_id);
+        // Deadlines armed by the page that is leaving cannot be answered into
+        // the page that is arriving: those request ids do not exist there, and
+        // the deadline would keep the machine awake for nobody.
+        @import("bridge_timers_windows.zig").forgetWindow(self.window_id);
         return S_OK;
     }
 };
@@ -1600,6 +3434,19 @@ fn setWindowLimits(entry: desktop_window_registry.Entry, limits: desktop_window_
     }
 }
 
+/// The facade sends `{ "value": <bool> }`; the descriptive key is a legacy
+/// spelling that raw bridge callers still use. `bridge_window.zig` accepts both
+/// and defaults to true, and this has to agree with it: a key mismatch fails as
+/// InvalidParameter inside a fire-and-forget send, so the mutation simply never
+/// happens and nothing reports it. `window.setAlwaysOnTop(true)` looked like it
+/// worked for exactly that reason.
+fn boolArgument(data: ?[]const u8, descriptive_key: []const u8) bool {
+    const json = data orelse return true;
+    return json_utils.getBool(json, "value") orelse
+        json_utils.getBool(json, descriptive_key) orelse
+        true;
+}
+
 fn setWindowResizable(entry: desktop_window_registry.Entry, resizable: bool) !void {
     const hwnd: HWND = @ptrFromInt(entry.window);
     const current = entry.windowed_style orelse @as(isize, @bitCast(@as(usize, windowStyle(hwnd))));
@@ -1823,12 +3670,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "center")) {
         try centerWindow(hwnd);
     } else if (std.mem.eql(u8, action, "setResizable")) {
-        try setWindowResizable(entry, try desktop_window_controls.parseBool(data, "resizable"));
+        try setWindowResizable(entry, boolArgument(data, "resizable"));
     } else if (std.mem.eql(u8, action, "isResizable")) {
         const style: DWORD = if (entry.windowed_style) |saved| @truncate(@as(usize, @bitCast(saved))) else windowStyle(hwnd);
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
-        try setWindowAlwaysOnTop(hwnd, try desktop_window_controls.parseBool(data, "alwaysOnTop"));
+        try setWindowAlwaysOnTop(hwnd, boolArgument(data, "alwaysOnTop"));
     } else if (std.mem.eql(u8, action, "flashFrame")) {
         const flash = if (data) |json| json_utils.getBool(json, "flash") orelse true else true;
         const request = FLASHWINFO{
@@ -1843,7 +3690,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((windowExStyle(hwnd) & WS_EX_TOPMOST) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
-        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
+        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else boolArgument(data, "fullscreen");
         try setWindowFullscreen(entry, fullscreen);
     } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMinSize") or
         std.mem.eql(u8, action, "setMaximumSize") or std.mem.eql(u8, action, "setMaxSize"))
@@ -2067,6 +3914,10 @@ pub const Window = struct {
             return error.WebMessageRegistrationFailed;
         }
         windows_desktop.lookup = &desktopTarget;
+        // A file watch reports from a reader thread; the pump is how it reaches
+        // the page without touching the webview off the UI thread.
+        @import("bridge_fs.zig").post_to_ui = &postToUi;
+        @import("bridge_serial.zig").post_to_ui = &postToUi;
         windows_desktop.toggle_fullscreen = &desktopToggleFullscreen;
         windows_desktop.quit = &closeAllWindows;
         // Menu accelerators pressed while the page has focus arrive here and
@@ -2309,6 +4160,66 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             windows_desktop.processPending();
             return 0;
         },
+        WM_CRAFT_PUMP => {
+            drainPump();
+            return 0;
+        },
+        WM_TIMER => {
+            // A deadline the page armed through `craft.timers.sleep` has been
+            // reached. SetTimer only ever addresses the window that armed it,
+            // so the id needs no further disambiguation. An id of ours that
+            // names no live entry falls through to DefWindowProc untouched.
+            if (@import("bridge_timers_windows.zig").takeFired(@truncate(wParam))) |fired| {
+                if (desktop_windows.byId(fired.window_id)) |target| {
+                    window_context.push(target.window, target.webview);
+                    defer window_context.pop();
+                    request_context.push(fired.request_id);
+                    defer request_context.pop();
+                    bridge_error.sendResultToJS(std.heap.c_allocator, "sleep", "{\"fired\":true}");
+                }
+                return 0;
+            }
+        },
+        WM_HOTKEY => {
+            // `wParam` carries the id handed to `RegisterHotKey`.
+            const pressed_id: u32 = @truncate(wParam);
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |window_entry| {
+                for (shortcut_slots[0..shortcut_count]) |slot| {
+                    if (!slot.bound or slot.hotkey_id != pressed_id) continue;
+                    const detail = shortcut_registry.triggeredDetail(std.heap.c_allocator, slot.id[0..slot.id_len], slot.accelerator[0..slot.accel_len]) catch break;
+                    defer std.heap.c_allocator.free(detail);
+                    sendShortcutEvent(window_entry.webview, "craft:shortcut", detail);
+                    break;
+                }
+            }
+            return 0;
+        },
+        windows_tray.WindowsTray.WM_TRAYICON => {
+            const event = windows_tray.handleTrayMessage(wParam, @bitCast(lParam));
+            const button: []const u8 = switch (event) {
+                .left_click => "left",
+                .right_click => "right",
+                else => "",
+            };
+            if (button.len > 0) {
+                if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                    // A right click opens the tray menu when one was set; the
+                    // page is told about the choice, not about the click.
+                    if (std.mem.eql(u8, button, "right")) {
+                        if (tray_menu_json) |items_json| {
+                            windows_desktop.showTrayMenuAt(entry.window, entry.webview, items_json) catch |err| {
+                                std.log.warn("craft.tray: the context menu could not be shown: {s}", .{@errorName(err)});
+                            };
+                            return 0;
+                        }
+                    }
+                    var script_buf: [96]u8 = undefined;
+                    const script = std.fmt.bufPrint(&script_buf, "if(window.__craftDeliverTrayClick)window.__craftDeliverTrayClick('{s}');", .{button}) catch "";
+                    if (script.len > 0) evalInWebview(entry.webview, script);
+                }
+                return 0;
+            }
+        },
         WM_COMMAND => {
             // High word 0 and no control handle: a menu item, or an
             // accelerator turned into one.
@@ -2354,6 +4265,9 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 deliverWindowEvent(entry, "close", "");
             }
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                // Deadlines belong to the window that armed them; once it is
+                // gone the page cannot receive their answers.
+                @import("bridge_timers_windows.zig").forgetWindow(entry.id);
                 const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
                 discardPendingOpens(entry.id);
                 windows_desktop.windowDestroyed(entry.id);

@@ -801,6 +801,13 @@
       }, opts || {})))
     },
     kill:         function (id)               { return _send('shell', 'kill', _stringify({ id: String(id) })) },
+    // exec(command, opts) — run one command line through the platform shell and
+    // resolve with `{ exitCode, stdout, stderr }`. `spawn` is fire-and-forget by
+    // design; this is the call that waits for the result. Native already
+    // implemented it on macOS/Linux; the facade simply never exposed it.
+    exec:         function (command, opts) {
+      return _req('shell', 'exec', _stringify(Object.assign({ command: String(command) }, opts || {})))
+    },
     getEnv:       function (name)             { return _req('shell', 'getEnv', _stringify({ name: String(name) })).then(function (r) { return r && r.value }) },
     setEnv:       function (name, value)      { return _send('shell', 'setEnv', _stringify({ name: String(name), value: String(value) })) },
   }

@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const bridge_error = @import("bridge_error.zig");
+const tray_menu = @import("tray_menu.zig");
 const desktop_dialog = @import("desktop_dialog.zig");
 const desktop_instance = @import("desktop_instance.zig");
 const desktop_menu = @import("desktop_menu.zig");
@@ -39,6 +40,7 @@ extern "user32" fn TrackPopupMenu(menu: HMENU, flags: UINT, x: c_int, y: c_int, 
 extern "user32" fn ClientToScreen(window: HWND, point: *POINT) callconv(.c) BOOL;
 extern "user32" fn SetForegroundWindow(window: HWND) callconv(.c) BOOL;
 extern "user32" fn GetKeyState(key: c_int) callconv(.c) c_short;
+extern "user32" fn GetAsyncKeyState(key: c_int) callconv(.c) c_short;
 extern "user32" fn GetAncestor(window: HWND, flags: UINT) callconv(.c) ?HWND;
 extern "user32" fn SendInput(count: UINT, inputs: [*]const INPUT, size: c_int) callconv(.c) UINT;
 extern "user32" fn MessageBoxW(window: ?HWND, text: LPCWSTR, caption: LPCWSTR, flags: UINT) callconv(.c) c_int;
@@ -283,7 +285,14 @@ fn performRole(id: u32, host: Target, role: desktop_menu.Role) void {
 }
 
 fn keyHeld(key: c_int) bool {
-    return GetKeyState(key) < 0;
+    // `GetAsyncKeyState`, not `GetKeyState`. The latter answers from the
+    // calling thread's message queue, but the WebView2 path reaches here from
+    // the AcceleratorKeyPressed callback, which WebView2 dispatches on its own
+    // input thread -- a thread whose queue the modifier was never delivered to.
+    // Measured against the message-loop path both report the same state, so
+    // this changes nothing there; it is chosen because its contract holds
+    // whichever thread asks.
+    return GetAsyncKeyState(key) < 0;
 }
 
 /// The menu command a key press activates in window `id`, if any.
@@ -557,6 +566,96 @@ fn runContextMenu(request: *const Request, target: Target, data: ?[]const u8) !v
     const script = try desktop_menu.contextEventScript(allocator, json);
     defer allocator.free(script);
     win.evalInWebview(live.webview, script);
+}
+
+// ---------------------------------------------------------------------------
+// Tray menu
+// ---------------------------------------------------------------------------
+
+extern "user32" fn GetCursorPos(point: *POINT) callconv(.c) BOOL;
+
+fn wideText(arena: std.mem.Allocator, text: []const u8) ![:0]u16 {
+    const buf = try arena.alloc(u16, text.len + 1);
+    const length = std.unicode.utf8ToUtf16Le(buf, text) catch return error.InvalidUtf8;
+    buf[length] = 0;
+    return buf[0..length :0];
+}
+
+/// Append `items` to `popup`, numbering each selectable entry and recording the
+/// id it stands for. Those numbers are what `TrackPopupMenu` returns, and `ids`
+/// turns one back into an action; submenu entries share the same list because
+/// the numbers are unique across the whole popup.
+fn appendTrayItems(
+    popup: HMENU,
+    items: []const tray_menu.MenuItemConfig,
+    ids: *std.ArrayListUnmanaged([]const u8),
+    arena: std.mem.Allocator,
+) !void {
+    for (items) |*item| {
+        if (std.mem.eql(u8, item.type, "separator")) {
+            _ = AppendMenuW(popup, MF_SEPARATOR, 0, null);
+            continue;
+        }
+        const label = item.label orelse item.id orelse continue;
+        const text = try wideText(arena, label);
+        var flags: UINT = 0;
+        if (!item.enabled) flags |= MF_GRAYED;
+        if (item.checked) flags |= MF_CHECKED;
+
+        if (item.submenu) |submenu| {
+            if (submenu.len > 0) {
+                const nested = CreatePopupMenu() orelse continue;
+                try appendTrayItems(nested, submenu, ids, arena);
+                if (AppendMenuW(popup, flags | MF_POPUP, @intFromPtr(nested), text.ptr) == 0) _ = DestroyMenu(nested);
+                continue;
+            }
+        }
+        // Ids start at 1: `TrackPopupMenu` returns 0 when the user dismissed the
+        // menu, so zero has to stay unused.
+        const command = ids.items.len + 1;
+        try ids.append(arena, item.id orelse item.action orelse "");
+        _ = AppendMenuW(popup, flags, command, text.ptr);
+    }
+}
+
+/// Show the tray's context menu at the pointer and report the choice to the page
+/// as `craft:tray:menuAction`.
+///
+/// The items come from `craft.tray.setMenu`, which sends a bare array.
+/// `tray_menu.parseMenuJSON` is the same parser the macOS bridge uses, so an
+/// item means the same thing on both platforms. `deliverActionScript` likewise
+/// owns the delivery, which is what the page's `onMenuAction` listens for.
+pub fn showTrayMenuAt(window: usize, webview: usize, items_json: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const items = tray_menu.parseMenuJSON(arena, items_json) catch return error.InvalidMenuJSON;
+
+    const hwnd: HWND = @ptrFromInt(window);
+    const popup = CreatePopupMenu() orelse return error.NativeCallFailed;
+    defer _ = DestroyMenu(popup);
+
+    var ids: std.ArrayListUnmanaged([]const u8) = .empty;
+    try appendTrayItems(popup, items, &ids, arena);
+
+    var point: POINT = undefined;
+    if (GetCursorPos(&point) == 0) return error.NativeCallFailed;
+    // A popup only closes on an outside click when its owner is the foreground
+    // window, and needs one more message afterwards to finish closing.
+    _ = SetForegroundWindow(hwnd);
+    // TPM_RIGHTBUTTON | TPM_RETURNCMD
+    const chosen = TrackPopupMenu(popup, 0x0002 | 0x0100, point.x, point.y, 0, hwnd, null);
+    _ = win.PostMessageW(hwnd, WM_NULL, 0, 0);
+    if (chosen <= 0) return;
+
+    const index: usize = @intCast(chosen);
+    if (index > ids.items.len) return;
+    const action = ids.items[index - 1];
+    if (action.len == 0) return;
+
+    var script_buf: [256]u8 = undefined;
+    const script = tray_menu.deliverActionScript(&script_buf, action) orelse return;
+    win.evalInWebview(webview, script);
 }
 
 // ---------------------------------------------------------------------------
