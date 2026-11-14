@@ -142,14 +142,43 @@ not by inspection alone.
 
 ### Automated check
 
-`scripts/probe-windows-timers.ps1` re-runs the timer probes against a built
-`craft.exe` and exits non-zero when any of them stops holding. It is the only
-part of the table above that is automated; the rest was measured by hand.
+Three scripts repeat measurements and exit non-zero when one stops holding:
 
-It was checked the way a regression check has to be: with the missed-deadline
-reply removed from the cancel path, the script fails. `craft.timers.sleep` passes
-timeout 0 to the RPC, so an unanswered deadline surfaces as a promise that never
-settles rather than as a silent success.
+| Script | What it re-checks |
+| --- | --- |
+| `scripts/probe-windows-timers.ps1` | a 400ms deadline, an abort, two deadlines armed together, slot reuse |
+| `scripts/probe-windows-capabilities.ps1` | the rendered manifest: what is claimed and what is demoted |
+| `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
+
+The rest of the table above was measured by hand.
+
+Each was checked the way a regression check has to be -- by making it fail.
+Removing the missed-deadline reply from the timer cancel path makes the timer
+probe fail. Bypassing the manifest filter makes the capability probe report
+`haptics=declared`. Launching the second instance under a different
+`--single-instance` id makes the single-instance probe see two windows and no
+delivered payload.
+
+One trap worth knowing before editing these probes: the JS facade's `_evt`
+unwraps `event.detail`, so a callback receives the detail object itself. Writing
+`e.detail.args` reads a property that does not exist, throws, and silently
+leaves the title unchanged -- which looks exactly like a broken native path.
+
+## Second instance and deep links
+
+A launch carrying `--single-instance <id>` finds the running instance through a
+named mutex and forwards its payload over `WM_COPYDATA`, then exits. Measured on
+Windows:
+
+- a second launch with `--instance-arg hello` handed off in 128ms; the first
+  instance's page received `craft:secondInstance` with `args: ["hello"]`, and
+  exactly one window survived.
+- a launch with `--deep-link craftprobe://abc` delivered both `craft:deepLink`
+  (the URL on its own) and `craft:secondInstance` with `url` set, which is what
+  the facade documents.
+- the control: a second launch under a *different* instance id does not exit, and
+  two windows appear with nothing delivered. That is the state the probe fails
+  on.
 
 ## The capability manifest says something different on Windows
 
