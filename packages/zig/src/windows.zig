@@ -130,6 +130,7 @@ pub const WM_MOVE: UINT = 0x0003;
 pub const WM_SIZE: UINT = 0x0005;
 pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
+pub const WM_TIMER: UINT = 0x0113;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_QUIT: UINT = 0x0012;
 const WM_COPYDATA: UINT = 0x004A;
@@ -891,6 +892,12 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
         @import("bridge_serial.zig").current_window = entry.id;
         bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
         return;
+    }
+    if (eql(u8, kind, "timers")) {
+        // `entry.window` is this window's HWND, and `SetTimer` needs it so the
+        // deadline is delivered to a window this thread owns. Nothing is
+        // answered here for `sleep`: the reply belongs to the deadline.
+        return @import("bridge_timers_windows.zig").handle(action, data orelse "", entry.window, entry.id, entry.webview);
     }
     if (eql(u8, kind, "app")) {
         if (eql(u8, action, "quit")) return closeAllWindows();
@@ -2890,6 +2897,10 @@ const NavigationStartingHandler = extern struct {
 
     fn invoke(self: *NavigationStartingHandler, _: *ICoreWebView2, _: *anyopaque) callconv(.c) HRESULT {
         if (desktop_windows.byId(self.window_id) != null) invalidateEvaluations(self.window_id);
+        // Deadlines armed by the page that is leaving cannot be answered into
+        // the page that is arriving: those request ids do not exist there, and
+        // the deadline would keep the machine awake for nobody.
+        @import("bridge_timers_windows.zig").forgetWindow(self.window_id);
         return S_OK;
     }
 };
@@ -4140,6 +4151,22 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             drainPump();
             return 0;
         },
+        WM_TIMER => {
+            // A deadline the page armed through `craft.timers.sleep` has been
+            // reached. SetTimer only ever addresses the window that armed it,
+            // so the id needs no further disambiguation. An id of ours that
+            // names no live entry falls through to DefWindowProc untouched.
+            if (@import("bridge_timers_windows.zig").takeFired(@truncate(wParam))) |fired| {
+                if (desktop_windows.byId(fired.window_id)) |target| {
+                    window_context.push(target.window, target.webview);
+                    defer window_context.pop();
+                    request_context.push(fired.request_id);
+                    defer request_context.pop();
+                    bridge_error.sendResultToJS(std.heap.c_allocator, "sleep", "{\"fired\":true}");
+                }
+                return 0;
+            }
+        },
         WM_HOTKEY => {
             // `wParam` carries the id handed to `RegisterHotKey`.
             const pressed_id: u32 = @truncate(wParam);
@@ -4225,6 +4252,9 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 deliverWindowEvent(entry, "close", "");
             }
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                // Deadlines belong to the window that armed them; once it is
+                // gone the page cannot receive their answers.
+                @import("bridge_timers_windows.zig").forgetWindow(entry.id);
                 const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
                 discardPendingOpens(entry.id);
                 windows_desktop.windowDestroyed(entry.id);

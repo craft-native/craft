@@ -81,6 +81,7 @@ POSIX-only assumption had to move so that both platforms could share it.
 | `log` | `debug`, `info`, `warn`, `error` |
 | `tray` | `setTitle`, `setTooltip`, `getState`, `setMenu`, click events |
 | `shortcuts` | `register`, `unregister`, `unregisterAll`, `enable`, `disable`, `isRegistered`, `list` |
+| `timers` | `sleep`, `cancel`, `cancelAll` -- `SetTimer` on the owning window, with `SetThreadExecutionState` held while a deadline is pending |
 | `menu` | `setApplicationMenu`, `onAction` |
 
 ### Defects fixed while wiring them up
@@ -137,6 +138,18 @@ not by inspection alone.
 | `tray` | registered, state `0 -> 1`; left click delivered; right-click menu of three items (two disabled, one separator) delivered `{"action":"act-one"}` |
 | `shortcuts` | registered; `Ctrl+Alt+F9` fired while the window was unfocused |
 | `menu` | `WM_COMMAND` delivered `{"id":"probeItem"}`; the `Ctrl+Shift+9` accelerator matched |
+| `timers` | a 400ms deadline resolved in 394-409ms; aborting a 5000ms one rejected with `AbortError`; a 200ms and a 600ms deadline armed together landed at ~200ms and ~605ms; a later 150ms deadline reused the freed slot |
+
+### Automated check
+
+`scripts/probe-windows-timers.ps1` re-runs the timer probes against a built
+`craft.exe` and exits non-zero when any of them stops holding. It is the only
+part of the table above that is automated; the rest was measured by hand.
+
+It was checked the way a regression check has to be: with the missed-deadline
+reply removed from the cancel path, the script fails. `craft.timers.sleep` passes
+timeout 0 to the RPC, so an unanswered deadline surfaces as a promise that never
+settles rather than as a silent success.
 
 ### Known gaps
 
