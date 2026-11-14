@@ -28,6 +28,88 @@ extern "c" fn closedir(dirp: ?*anyopaque) c_int;
 /// regular libc `open` / `read` / `write` plus a `termios` baud-rate
 /// configuration step.
 ///
+/// The window whose request is being handled, and how a reader thread gets a
+/// script onto the UI thread. Both set by the Windows host.
+pub var current_window: u32 = 0;
+pub var post_to_ui: ?*const fn (window_id: u32, script: []const u8) void = null;
+
+extern "kernel32" fn Sleep(milliseconds: u32) callconv(.c) void;
+
+/// A thread reading one open port, so the page hears about input without
+/// polling for it. Ports are opened with a zero read timeout, so `ReadFile`
+/// returns at once; an idle port costs a short sleep per turn.
+const Reader = struct {
+    handle: usize = 0,
+    id: u32 = 0,
+    stop: std.atomic.Value(bool) = .init(false),
+    thread: ?std.Thread = null,
+};
+
+const max_readers = 16;
+var readers: [max_readers]?*Reader = @splat(null);
+
+/// Post one chunk to the page as `craft:serial:data`.
+///
+/// Base64, because serial input is bytes and a JSON string cannot carry arbitrary
+/// ones: the facade's `read` answers text, but a device sends whatever it likes.
+fn emitSerialData(allocator: std.mem.Allocator, id: u32, bytes: []const u8) void {
+    const post = post_to_ui orelse return;
+    const encoder = std.base64.standard.Encoder;
+    const encoded = allocator.alloc(u8, encoder.calcSize(bytes.len)) catch return;
+    defer allocator.free(encoded);
+    _ = encoder.encode(encoded, bytes);
+
+    const script = std.fmt.allocPrint(
+        allocator,
+        "if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('craft:serial:data',{{detail:{{id:{d},base64:'{s}'}}}}));",
+        .{ id, encoded },
+    ) catch return;
+    defer allocator.free(script);
+    post(current_window, script);
+}
+
+fn readerLoop(reader: *Reader) void {
+    var buffer: [1024]u8 = undefined;
+    while (!reader.stop.load(.acquire)) {
+        var got: u32 = 0;
+        if (ReadFile(@ptrFromInt(reader.handle), &buffer, @intCast(buffer.len), &got, null) == 0) return;
+        if (got > 0) {
+            emitSerialData(std.heap.c_allocator, reader.id, buffer[0..got]);
+        } else {
+            // Nothing waiting: back off rather than spin. 20 ms is well under a
+            // person's perception and costs almost nothing when idle.
+            Sleep(20);
+        }
+    }
+}
+
+fn startReader(allocator: std.mem.Allocator, id: u32, handle: usize) void {
+    if (post_to_ui == null) return;
+    for (&readers) |*slot| {
+        if (slot.* != null) continue;
+        const reader = allocator.create(Reader) catch return;
+        reader.* = .{ .handle = handle, .id = id };
+        reader.thread = std.Thread.spawn(.{}, readerLoop, .{reader}) catch {
+            allocator.destroy(reader);
+            return;
+        };
+        slot.* = reader;
+        return;
+    }
+}
+
+fn stopReader(allocator: std.mem.Allocator, id: u32) void {
+    for (&readers) |*slot| {
+        const reader = slot.* orelse continue;
+        if (reader.id != id) continue;
+        reader.stop.store(true, .release);
+        if (reader.thread) |thread| thread.join();
+        allocator.destroy(reader);
+        slot.* = null;
+        return;
+    }
+}
+
 pub const SerialBridge = struct {
     allocator: std.mem.Allocator,
     /// Open ports. A POSIX file descriptor or a Win32 `HANDLE`, both widened to
@@ -48,6 +130,9 @@ pub const SerialBridge = struct {
     pub fn deinit(self: *Self) void {
         var it = self.ports.iterator();
         while (it.next()) |entry| {
+            // Stop the reader before its handle goes away, or it reads from a
+            // closed handle.
+            if (comptime builtin.os.tag == .windows) stopReader(self.allocator, entry.key_ptr.*);
             if (comptime builtin.os.tag == .windows) {
                 _ = CloseHandle(@ptrFromInt(entry.value_ptr.*));
             } else {
@@ -248,6 +333,7 @@ pub const SerialBridge = struct {
 
         const id = try parseId(parsed.value.id);
         if (self.ports.fetchRemove(id)) |entry| {
+            if (comptime builtin.os.tag == .windows) stopReader(self.allocator, id);
             if (comptime builtin.os.tag == .windows) {
                 _ = CloseHandle(@ptrFromInt(entry.value));
             } else {
@@ -361,6 +447,10 @@ pub const SerialBridge = struct {
         self.next_id +%= 1;
         if (self.next_id == 0) self.next_id = 1;
         try self.ports.put(id, raw);
+
+        // Everything read from here on is pushed to the page as well, so a UI
+        // does not have to poll.
+        startReader(self.allocator, id, raw);
 
         var buf: [96]u8 = undefined;
         const json = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"id\":\"{d}\"}}", .{id});

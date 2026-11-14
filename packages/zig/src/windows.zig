@@ -888,6 +888,7 @@ fn handleDesktopAction(entry: desktop_window_registry.Entry, kind: []const u8, a
             replyBridgeError(action, err);
             return;
         };
+        @import("bridge_serial.zig").current_window = entry.id;
         bridge.handleMessage(action, data orelse "") catch |err| replyBridgeError(action, err);
         return;
     }
@@ -3892,6 +3893,7 @@ pub const Window = struct {
         // A file watch reports from a reader thread; the pump is how it reaches
         // the page without touching the webview off the UI thread.
         @import("bridge_fs.zig").post_to_ui = &postToUi;
+        @import("bridge_serial.zig").post_to_ui = &postToUi;
         windows_desktop.toggle_fullscreen = &desktopToggleFullscreen;
         windows_desktop.quit = &closeAllWindows;
         // Menu accelerators pressed while the page has focus arrive here and
