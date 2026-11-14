@@ -100,6 +100,56 @@ pub const registry = [_]capabilities.NamespaceDecl{
 };
 
 /// Rendered for `craft.capabilities()`. Caller frees.
+///
+/// This registry describes the audited macOS dispatch chain, so on Windows the
+/// rendered manifest is filtered through that backend's routed set: a
+/// `declared` namespace Windows cannot dispatch has nothing to promise there.
 pub fn manifestJson(gpa: @import("std").mem.Allocator) ![]u8 {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag == .windows) {
+        const windows_backend = @import("capabilities_windows.zig");
+        return capabilities.buildManifestFor(gpa, &registry, &windows_backend.routed, windows_backend.demotion_reason);
+    }
     return capabilities.buildManifest(gpa, &registry);
+}
+
+test "the windows manifest demotes a declared namespace this backend cannot dispatch" {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const std = @import("std");
+    const windows_backend = @import("capabilities_windows.zig");
+
+    const json = try manifestJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+    const spaces = parsed.value.object.get("namespaces") orelse return error.MissingNamespaces;
+    const namespaces = spaces.object;
+
+    // The failure this guards against: the registry gains a `declared` row (and
+    // the macOS chain gains its arm) while nothing here can reach it. The
+    // manifest would promise the surface on Windows and the first call would
+    // answer PLATFORM_NOT_SUPPORTED -- which is what `haptics` did before this
+    // filter existed.
+    var demoted: usize = 0;
+    for (registry) |ns| {
+        if (ns.status != .declared) continue;
+        const entry = (namespaces.get(ns.name) orelse return error.MissingNamespace).object;
+        const status = (entry.get("status") orelse return error.MissingStatus).string;
+        if (windows_backend.routes(ns.name)) {
+            // Reachable here, so the claim and its action table both survive.
+            try std.testing.expectEqualStrings("declared", status);
+            try std.testing.expect(entry.get("actions") != null);
+        } else {
+            // Not reachable, so it keeps neither the claim nor the names of
+            // actions that belong to the chain that does have the arm.
+            try std.testing.expectEqualStrings("unavailable", status);
+            try std.testing.expectEqualStrings(windows_backend.demotion_reason, (entry.get("reason") orelse return error.MissingReason).string);
+            try std.testing.expect(entry.get("actions") == null);
+            demoted += 1;
+        }
+    }
+    // The demotion has to be doing work; `haptics` alone makes it non-vacuous.
+    try std.testing.expect(demoted >= 1);
 }

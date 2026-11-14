@@ -151,6 +151,30 @@ reply removed from the cancel path, the script fails. `craft.timers.sleep` passe
 timeout 0 to the RPC, so an unanswered deadline surfaces as a promise that never
 settles rather than as a silent success.
 
+## The capability manifest says something different on Windows
+
+`capability_registry.zig` describes the audited macOS dispatch chain, and its
+`declared` rows are claims about that chain. On Windows they were wrong: the
+manifest said `haptics` was declared, and the first call answered
+PLATFORM_NOT_SUPPORTED. `docs/FEATURES.md` has carried
+`Platform feature detection` as an open item for exactly this reason.
+
+A backend now renders the manifest through its own routed set. A `declared`
+namespace the backend cannot dispatch is demoted to `unavailable` with a reason
+and loses its action table, because those action names describe the chain that
+does have the arm. Only `declared` is touched: `undeclared` (craft claims
+nothing), `unrouted` (nothing can reach it anywhere) and `unavailable` (known not
+to work) are already true on every backend.
+
+On Windows today that demotes `haptics` and nothing else; `timers` stays declared
+because it is now actually routed. `capability_registry.zig` carries a test that
+fails if the registry gains a `declared` row the Windows set cannot dispatch, so
+the manifest cannot drift back into overclaiming.
+
+`scripts/probe-windows-capabilities.ps1` checks the rendered manifest end to end
+and was validated the same way: with the filter bypassed it reports
+`haptics=declared` and exits non-zero.
+
 ### Known gaps
 
 - **`serial.onData` is implemented but not verified end to end.** The test
@@ -164,6 +188,11 @@ settles rather than as a silent success.
   would create a contract the project has not chosen.
 - **`app.getInfo().bundleId` is empty.** Windows has no bundle identifier, and
   returning a placeholder would be worse than returning nothing.
+- **Event channels are not demoted per platform.** The manifest's `channels`
+  section answers `live` or `unknown` from whether an emitter registered, and on
+  Windows the emitters for macOS-only channels never register, so a page sees
+  `unknown` rather than a per-platform answer. Namespaces are filtered; channels
+  are not yet.
 
 ## Test baseline
 
