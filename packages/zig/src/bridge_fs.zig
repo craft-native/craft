@@ -325,7 +325,11 @@ pub const FSBridge = struct {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[FSBridge] appendFile: {s}\n", .{path});
 
-        const file = std.Io.Dir.cwd().openFile(io_context.get(), path, .{ .mode = .write_only }) catch |err| {
+        // `read_write`, not `write_only`: appending needs the file's current
+        // size, and on Windows a handle opened write-only refuses both the stat
+        // and the positional write that follows -- with AccessDenied, which the
+        // caller never sees because this action is fire-and-forget.
+        const file = std.Io.Dir.cwd().openFile(io_context.get(), path, .{ .mode = .read_write }) catch |err| {
             self.sendFSError(callback_id, "appendFile", path, err);
             return;
         };
@@ -600,11 +604,16 @@ pub const FSBridge = struct {
     }
 
     /// Remove directory
-    /// JSON: {"path": "/path/to/dir", "callbackId": "cb1"}
+    /// JSON: {"path": "/path/to/dir", "recursive": true, "callbackId": "cb1"}
     fn rmdir(self: *Self, data: []const u8) !void {
         const parsed = try parsePayload(struct {
             path: []const u8 = "",
             callbackId: []const u8 = "",
+            // `craft.fs.rmdir(path, { recursive: true })` has always sent this,
+            // and this side never read it: every rmdir was non-recursive, so a
+            // directory with anything in it failed with DirNotEmpty while the
+            // caller's promise resolved.
+            recursive: bool = false,
         }, self.allocator, data);
         defer parsed.deinit();
         const path = parsed.value.path;
@@ -613,12 +622,19 @@ pub const FSBridge = struct {
         if (path.len == 0) return BridgeError.MissingData;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[FSBridge] rmdir: {s}\n", .{path});
+            std.debug.print("[FSBridge] rmdir: {s} (recursive={})\n", .{ path, parsed.value.recursive });
 
-        std.Io.Dir.cwd().deleteDir(io_context.get(), path) catch |err| {
-            self.sendFSError(callback_id, "rmdir", path, err);
-            return;
-        };
+        if (parsed.value.recursive) {
+            std.Io.Dir.cwd().deleteTree(io_context.get(), path) catch |err| {
+                self.sendFSError(callback_id, "rmdir", path, err);
+                return;
+            };
+        } else {
+            std.Io.Dir.cwd().deleteDir(io_context.get(), path) catch |err| {
+                self.sendFSError(callback_id, "rmdir", path, err);
+                return;
+            };
+        }
 
         self.sendFSSuccess(callback_id, "rmdir");
     }
@@ -1223,6 +1239,13 @@ pub const FSBridge = struct {
 
     /// Send error callback
     fn sendFSError(_: *Self, callback_id: []const u8, action: []const u8, path: []const u8, err: anyerror) void {
+        // Every mutating fs action is a fire-and-forget send: the page gets a
+        // resolved promise the moment the message is posted, and nothing on the
+        // page is listening for a reply. Without this line a failed write, copy
+        // or rmdir is indistinguishable from a successful one from any side of
+        // the bridge -- it cost a probe round trip to learn that appendFile was
+        // failing silently.
+        std.log.warn("craft.fs.{s} failed for '{s}': {}", .{ action, path, err });
         // A `_req` fails through `__craftBridgeError`, which the page turns
         // into a rejected promise. Without this branch the call would sit
         // unanswered until it timed out.

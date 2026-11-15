@@ -142,6 +142,20 @@ POSIX-only assumption had to move so that both platforms could share it.
   nowhere to surface: the call reported success and the window never changed.
   `bridge_window.zig` reads `value` first and the descriptive key as a legacy
   fallback; the Windows path now does the same through one helper.
+- **`fs.appendFile` threw every append away.** It opened the file write-only and
+  then asked that handle for its size and wrote at that offset, which Windows
+  answers with AccessDenied -- and since the action is a fire-and-forget send, the
+  page saw a resolved promise. An app appending to a log lost every line after the
+  first. It opens `read_write` now, and the probe checks the append by reading the
+  file back.
+- **`fs.rmdir` ignored `recursive`.** The facade has always sent it; this side
+  never parsed it, so removing any directory with something in it failed with
+  DirNotEmpty while the caller's promise resolved. It routes to `deleteTree` now.
+- **fs failures said nothing to anyone.** Every mutating fs action is
+  fire-and-forget, so `sendFSError` reached no one: a failed write, copy or rmdir
+  was indistinguishable from a successful one. It logs a warning naming the
+  action, the path and the error now -- which is how the two bugs above were
+  found rather than guessed at.
 - **`window.getFocused` returned an object that did not exist.** The native side
   answers `null` when none of our windows is focused, which is the documented
   `Promise<Window | null>`; the facade's `_orEmpty` normalised every null payload
@@ -214,6 +228,7 @@ The probes it runs:
 | `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
 | `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity, an oversized title, and the clipboard |
 | `scripts/probe-windows-notification.ps1` | the toast path runs, and a title or body cannot become PowerShell |
+| `scripts/probe-windows-fs.ps1` | write, append, copy, move, delete, recursive rmdir -- each read back |
 
 The rest of the table above was measured by hand.
 

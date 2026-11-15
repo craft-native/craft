@@ -29,7 +29,8 @@ $probes = @(
     @{ Name = 'window-state';    Script = 'probe-windows-window-state.ps1';    Covers = 'geometry, flags, focus, opacity, clipboard, oversized input' },
     @{ Name = 'single-instance'; Script = 'probe-windows-single-instance.ps1'; Covers = 'second launch hand-off and deep links' },
     @{ Name = 'multiwindow';     Script = 'probe-windows-multiwindow.ps1';     Covers = 'a second window and its teardown' },
-    @{ Name = 'notification';    Script = 'probe-windows-notification.ps1';    Covers = 'the toast runs, and a title is not PowerShell' }
+    @{ Name = 'notification';    Script = 'probe-windows-notification.ps1';    Covers = 'the toast runs, and a title is not PowerShell' },
+    @{ Name = 'fs';              Script = 'probe-windows-fs.ps1';              Covers = 'write, append, copy, move, delete, rmdir, read back' }
 )
 
 if ($Build) {
