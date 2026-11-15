@@ -89,7 +89,7 @@ POSIX-only assumption had to move so that both platforms could share it.
 | `system` | `getHostname`, `getUsername`, `getSystemVersion`, `getLocale`, `getLanguage`, `getTimezone`, `getAccentColor` |
 | `screen` | `getDisplays`, `getPrimary` -- real `MONITORINFOEXW` data, DPI scale, primary flag |
 | `app` | `getInfo` -- `executablePath`, and `version` from the PE version resource |
-| `fs` | all 16 actions, including `watch` on `ReadDirectoryChangesW` |
+| `fs` | all 16 actions, including `watch` on `ReadDirectoryChangesW` -- which reports a rename as `delete` + `create`, stays quiet about what the watch does not own, and ends with a `delete` of the base if the watched directory is renamed or deleted |
 | `capabilities` | the full namespace manifest |
 | `serial` | `list`, `open`, `write`, `read`, `close`, and `onData` push |
 | `notifications` | `getPermissionStatus` |
@@ -167,6 +167,23 @@ POSIX-only assumption had to move so that both platforms could share it.
   actions, so the rest answered UnknownAction. A page cannot tell that apart from
   "the clipboard is empty". They are routed now, Windows-only, because the same
   entry point is the GTK path and these implementations are no-ops there.
+- **A watch died silently when its directory was renamed or deleted.**
+  `ReadDirectoryChangesW` reports the children of the directory it was handed,
+  never that directory itself, so the change that takes the directory away ended
+  the pending call instead of being reported. The reader returned, the page kept
+  a watch that could never speak again, and nothing was logged. FSEvents does
+  report it, so both now read as a `delete` of the watched path -- a rename
+  cannot be told from a delete without also watching the parent, and what a page
+  does about either is the same.
+- **After a rename the watch went on reporting paths that did not exist.** The
+  handle survives a rename, and so does the pending `ReadDirectoryChangesW`, so
+  events kept arriving spelled from the old name: a page following them looked
+  for `mv1/in.txt` while the file was at `mv2/in.txt`. Which of this and the
+  silent death above happened depended on whether the call was pending when the
+  rename landed, so the same action gave one or the other at random. The reader
+  checks that the watched directory still resolves before handing on a batch --
+  one `stat` per batch, not per event -- and ends the watch with a `delete` of
+  the base when it does not.
 
 ### Windows-specific traps worth knowing before editing this
 
@@ -191,7 +208,7 @@ not by inspection alone.
 | `screen` | 3840x1080, `workHeight` 1032, `\\.\DISPLAY1` |
 | `app.getInfo` | `executablePath` exact; `version` reads `6.2.26100.9818` from notepad, empty from an exe with no version resource |
 | `fs` | 70 entries in a home directory, 45 directories / 25 files; file contents read back |
-| `fs.watch` | external file creation delivered `{"type":"modify","path":"...\\hello.txt"}` |
+| `fs.watch` | external file creation delivered `{"type":"modify","path":"...\\hello.txt"}`; a create / append / rename / delete each reported, a rename as `delete` + `create`; a non-recursive watch stayed silent about a nested write; a single-file watch ignored a sibling written beside it and delivered its own change to both `onChange` and the per-watch callback; a recursive watch reported `...\\sub\\deep2.txt`; `unwatch` stopped delivery; a missing path rejected with `NOT_FOUND`; deleting or renaming the watched directory delivered one `delete` of that path and stopped the watch |
 | `capabilities` | 54 namespaces |
 | `serial` | `["COM1","COM3","COM4"]`; COM99 rejected; open, 4 bytes written, 0 read back, close |
 | `shell` | env round-trip; unregistered scheme refused without touching https/http/mailto; spawn writes a file; `kill` stops `ping`; `opts.shell` both redirect and pipe |
@@ -229,6 +246,7 @@ The probes it runs:
 | `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity, an oversized title, and the clipboard |
 | `scripts/probe-windows-notification.ps1` | the toast path runs, and a title or body cannot become PowerShell |
 | `scripts/probe-windows-fs.ps1` | write, append, copy, move, delete, recursive rmdir -- each read back |
+| `scripts/probe-windows-fs-watch.ps1` | a watch speaks about what changed and stays quiet about what it does not own, in both directions; a root that is deleted or renamed is reported once |
 
 The rest of the table above was measured by hand.
 
@@ -237,7 +255,16 @@ Removing the missed-deadline reply from the timer cancel path makes the timer
 probe fail. Bypassing the manifest filter makes the capability probe report
 `haptics=declared`. Launching the second instance under a different
 `--single-instance` id makes the single-instance probe see two windows and no
-delivered payload.
+delivered payload. Forcing `ReadDirectoryChangesW` to watch the subtree and
+disabling the single-file filter makes the watch probe report `NORECURSE=LEAK`
+and `SIBLING=2` -- the two assertions that say a watch stays quiet are the ones
+that would otherwise pass by never firing at all.
+
+`probe-windows-notification.ps1` is the one probe that has failed and then passed
+with nothing changed: once inside a full suite run, twice on its own. It is the
+only one that has to observe a spawned `powershell` by its `StartTime`, so treat
+a lone failure here as a question rather than a verdict -- read the log before
+believing it.
 
 One trap worth knowing before editing these probes: the JS facade's `_evt`
 unwraps `event.detail`, so a callback receives the detail object itself. Writing

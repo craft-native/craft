@@ -535,10 +535,48 @@ fn readLoop(watch: *Watch) void {
             null,
         );
         // `stop` cancels the pending call, which is how this loop ends.
-        if (ok == 0 or watch.stopped) return;
+        if (watch.stopped) return;
+        if (ok == 0) {
+            // `ReadDirectoryChangesW` reports the children of the directory it
+            // was handed, never that directory itself, so the change that takes
+            // the directory away -- a delete, or a rename -- can end the pending
+            // call instead of being reported. Before this the reader just
+            // returned and the page kept a watch that could never speak again.
+            if (watch.scope == .directory and rootGone(watch)) {
+                deliverRootGone(watch);
+            } else {
+                std.log.warn("craft.fs.watch: reading '{s}' failed while it still exists; the watch is over", .{watch.base});
+            }
+            return;
+        }
         if (returned == 0) continue;
+        // A rename leaves the handle -- and the pending call -- alive, so the
+        // batch that follows is spelled from a name that no longer resolves.
+        // Handing those paths to the page is worse than ending the watch: every
+        // one of them points at nothing. Checking the root here costs one stat
+        // per batch, and the call is not pending at this point.
+        if (watch.scope == .directory and rootGone(watch)) {
+            deliverRootGone(watch);
+            return;
+        }
         deliverBatch(watch, buffer[0..returned]);
     }
+}
+
+/// Whether the directory the watch was started on still resolves.
+fn rootGone(watch: *Watch) bool {
+    _ = std.Io.Dir.cwd().statFile(io_context.get(), watch.real_base, .{}) catch return true;
+    return false;
+}
+
+/// The watched directory is gone. FSEvents reports that (`accepts` keeps a
+/// delete or a rename of the base), so do the same rather than going quiet --
+/// what a page does about either is the same: re-arm, or tell the user the
+/// folder moved. A rename cannot be told from a delete without watching the
+/// parent as well, so both read as `delete` of the watched path.
+fn deliverRootGone(watch: *Watch) void {
+    std.log.warn("craft.fs.watch: '{s}' is gone; reporting delete and stopping the watch", .{watch.base});
+    watch.sink.deliver(watch.sink.context, watch.id, .delete, if (watch.base.len == 0) "/" else watch.base);
 }
 
 fn deliverBatch(watch: *Watch, bytes: []const u8) void {
