@@ -4571,9 +4571,24 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     private var sheetController: CraftNativeSheetController?
     var isPresentedAsSheet: Bool { sheetController != nil }
 
+    /// The Modal's name. While UIKit presents the content as a sheet this
+    /// view is hidden and the sheet's own view is what a reader is in, so
+    /// the name goes there too, as a group's: it says which dialog this is
+    /// and never stands in for what the dialog holds.
+    override var accessibilityLabel: String? {
+        didSet { nameSheet() }
+    }
+
+    private func nameSheet() {
+        guard let view = sheetController?.view else { return }
+        view.accessibilityLabel = accessibilityLabel
+        view.accessibilityContainerType = accessibilityLabel == nil ? .none : .semanticGroup
+    }
+
     private func configureSheet(_ controller: CraftNativeSheetController) {
         controller.isModalInPresentation = onRequestClose == nil
         controller.view.accessibilityViewIsModal = true
+        nameSheet()
         guard let sheet = controller.sheetPresentationController else { return }
         let choices = sheetDetents.filter { $0 == "medium" || $0 == "large" }
         let values = choices.isEmpty ? ["large"] : Array(Set(choices)).sorted { $0 == "medium" && $1 == "large" }
@@ -6385,8 +6400,11 @@ final class CraftNativeTextField: UITextField {
         super.editingRect(forBounds: bounds.inset(by: padding))
     }
 
+    /// Where the text will be. UIKit's own placeholderRect asks textRect,
+    /// which has taken the padding; insetting the bounds here as well put
+    /// the hint a second padding in, and the words moved on the first key.
     override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
-        super.placeholderRect(forBounds: bounds.inset(by: padding))
+        textRect(forBounds: bounds)
     }
 
     override var intrinsicContentSize: CGSize {
@@ -10192,7 +10210,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             picker.update(options: options,
                           selected: craftNativePickerValue(props["selectedValue"]) ?? craftNativePickerValue(props["value"]),
                           enabled: props["disabled"] as? Bool != true,
-                          handler: handler, font: textFont(style, default: .preferredFont(forTextStyle: .body)),
+                          // The body size before any scaling: textFont scales
+                          // it for the text size. The system's body font is
+                          // scaled already, and scaling that again drew a
+                          // Picker with no fontSize at 149 points at the
+                          // largest accessibility size.
+                          handler: handler, font: textFont(style, default: .systemFont(ofSize: 17)),
                           foreground: color(style["color"]) ?? .label) { [weak self, weak picker] value, index in
                 guard let self, let picker, let handler = self.handlers[ObjectIdentifier(picker)] else { return }
                 self.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": value, "index": index]])

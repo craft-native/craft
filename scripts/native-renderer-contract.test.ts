@@ -2224,6 +2224,26 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`pressFeedback={false}` turns it off for a view')
   })
 
+  it('pads a TextInput placeholder once, scales a Picker default font once and names a presented sheet on iOS', () => {
+    // UIKit's placeholderRect asks textRect, which has taken the padding:
+    // insetting the bounds as well began the hint a second padding in (#540).
+    expect(ios).not.toContain('super.placeholderRect(forBounds: bounds.inset(by: padding))')
+    expect(ios).toContain('override func placeholderRect(forBounds bounds: CGRect) -> CGRect {\n        textRect(forBounds: bounds)')
+    // textFont scales its default for the text size. The system's body
+    // font is scaled already: handed in as the default it was scaled twice,
+    // 149 pt at the largest accessibility size (#537). No default is one.
+    expect(ios).toContain('handler: handler, font: textFont(style, default: .systemFont(ofSize: 17)),')
+    expect(ios).not.toMatch(/textFont\([^\n]*default: \.preferredFont\(/)
+    // The Modal's own view is hidden while its content is a sheet (#535).
+    expect(ios).toContain('override var accessibilityLabel: String? {\n        didSet { nameSheet() }')
+    expect(ios).toContain('view.accessibilityContainerType = accessibilityLabel == nil ? .none : .semanticGroup')
+    for (const name of [
+      'testATextInputsPlaceholderStartsWhereItsTextWill',
+      'testAPickersTitleIsScaledForTextSizeOnce',
+      'testAPresentedSheetCarriesItsModalsName',
+    ]) expect(iosNativeUnitTests).toContain(`func ${name}(`)
+  })
+
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')
