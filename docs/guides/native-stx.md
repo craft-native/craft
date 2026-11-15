@@ -262,6 +262,20 @@ containers block both press and long-press callbacks on both hosts. On
 `TouchableHighlight`, `underlayColor` temporarily replaces the authored
 background during a press and `onShowUnderlay`/`onHideUnderlay` follow the
 same lifecycle on iOS and Android.
+
+Anything that can be pressed shows the touch while the finger is on it, not
+after it has lifted. A `Pressable` or `TouchableOpacity` dims to its
+`activeOpacity`, a `TouchableHighlight` shows its underlay, and any other view
+with `onPress` (a row that is a plain `View`, a pressable `Text`) is covered
+with the grey a system row turns: the label colour at 12%, in the view's own
+`borderRadius`, drawn over it so the row's text is not dimmed. On Android that
+is the platform's pressed ripple. Inside something that scrolls the feedback
+waits a moment, as a table row's does, so a list does not flash under a flick;
+a tap quicker than the wait is still shown, briefly. When a control or another
+pressable view inside it is under the finger, that one shows the touch and the
+outer view does not. `pressFeedback={false}` turns it off for a view, such as
+a backdrop, or one that draws its own pressed state from `onPressIn`.
+
 The shared `Pressable` contract intentionally omits platform-specific
 `hitSlop`, ripple, retention-offset, and long-press-delay options until both
 hosts implement them.
@@ -976,8 +990,15 @@ metadata and traits. The portable roles include `button`, `image`, `header`,
 `link`, `search`, `none`, `adjustable`, `checkbox`, `combobox`, `menu`,
 `menuitem`, `progressbar`, `radio`, `radiogroup`, `scrollbar`, `spinbutton`,
 `switch`, `tab`, `tablist`, `timer`, `toolbar`, `list`, `menubar`, `summary`,
-and `alert`; unknown roles retain the platform control's native class.
+`alert`, and `group`; unknown roles retain the platform control's native class.
 `accessibilityState` supports `disabled`, `selected`, and `checked`.
+
+A `View` with an `accessibilityLabel` and only text or pictures inside is one
+stop for a screen reader, and the label stands in for what it holds. A
+labelled `View` that holds a control is a named group instead: the reader is
+told the name and still reaches each button, link and field inside. A view
+that is itself pressed stays one stop. `accessibilityRole="group"` makes any
+view a group, named when it has a label.
 
 A visible blocking `Modal` contains screen-reader navigation: UIKit marks it
 modal, while Android hides the sibling content behind the top blocking modal
@@ -1490,6 +1511,29 @@ craft.session.onChange((token) => {
   account = token
   resetScreen()
 })
+```
+
+### App updates (macOS)
+
+On the AppKit host, `craft.updater` updates an app people download: `status()`
+(sync), `check()`, `install()`, `relaunch()` and `onChange(callback)`, around an
+`UpdateStatus` whose `state` runs `idle`, `checking`, `current`, `available`,
+`downloading`, `installing`, `installed`, or `error`. The host installs it
+itself, like `craft.session`, and it is there in every build: a Mac App Store
+build, or an app with no `updates` in its `craft-app.json`, answers
+`state: 'unavailable', selfUpdating: false` with a `reason`. Each change also
+reaches every window as `CRAFT_EVENT` `craftUpdaterChange`. The feed, the
+checks an update has to pass and the build flag are in the
+[macOS host's README](../../packages/macos/README.md#in-app-updates-craftupdater).
+
+```js
+const stop = craft.updater.onChange((status) => {
+  if (status.state === 'available') offer(status.version, status.notes)
+  if (status.state === 'downloading') showProgress(status.progress)
+  if (status.state === 'installed') askToRelaunch(() => craft.updater.relaunch())
+  if (status.state === 'error') show(status.error)
+})
+if (craft.updater.status().state === 'available') await craft.updater.install()
 ```
 
 ### Snapshots

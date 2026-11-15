@@ -150,6 +150,31 @@ private fun craftNativeBoolean(value: Any?, fallback: Boolean = false): Boolean 
 private fun craftNativeInt(value: Any?, fallback: Int): Int = (value as? Number)?.toInt() ?: fallback
 
 /**
+ * Whether a view shows anything under the finger. It does unless it says
+ * `pressFeedback={false}` (or `"none"`); STX's HTML parser lowercases a bound
+ * prop it does not know, so that spelling is read too.
+ */
+internal fun craftNativePressFeedback(props: JSONObject): Boolean {
+    val value = props.opt("pressFeedback")?.takeUnless { it == JSONObject.NULL }
+        ?: props.opt("pressfeedback")?.takeUnless { it == JSONObject.NULL }
+    return value != false && value != "none"
+}
+
+/**
+ * What a plain view with a press handler is covered with while it is touched:
+ * the platform's own pressed state, in the label colour and the view's own
+ * corners. A press handler alone used to show nothing, so a tappable row was
+ * silent under the finger (#538). A ripple is drawn by the view's pressed
+ * state, which the platform already holds back inside a scrolling container
+ * until the touch is known not to be a scroll.
+ */
+internal class CraftNativePressHighlight(val color: Int, val radius: Float) : android.graphics.drawable.RippleDrawable(
+    ColorStateList.valueOf(color),
+    null,
+    GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = radius },
+)
+
+/**
  * Where a field's text and hint begin, vertically.
  *
  * The platform's `Widget.EditText` carries `gravity = center_vertical`, and
@@ -7124,9 +7149,10 @@ class MainActivity : AppCompatActivity() {
             "TouchableOpacity", "TouchableHighlight", "Pressable" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
                 val disabled = craftNativeBoolean(props.opt("disabled"))
-                screen.pressActiveOpacities[this] = craftNativeFiniteFloat(props, "activeOpacity", 0.5f)
+                val feedback = craftNativePressFeedback(props)
+                screen.pressActiveOpacities[this] = if (feedback) craftNativeFiniteFloat(props, "activeOpacity", 0.5f) else 1f
                 screen.pressBaseOpacities[this] = craftNativeFiniteFloat(style, "opacity", 1f)
-                if (type == "TouchableHighlight" && !disabled) {
+                if (type == "TouchableHighlight" && !disabled && feedback) {
                     craftNativeOptionalString(props.opt("underlayColor"))?.let { screen.pressUnderlayColors[this] = color(it, Color.TRANSPARENT) }
                         ?: screen.pressUnderlayColors.remove(this)
                 } else {
@@ -7560,14 +7586,18 @@ class MainActivity : AppCompatActivity() {
                             else -> true
                         }
                     }
+                    // A touchable dims or shows its underlay; it has no highlight.
+                    applyPressHighlight(control, style, false)
                 } else {
                     control.setOnTouchListener(null)
                     if (screen.pressBaseBackgrounds.containsKey(control)) control.background = screen.pressBaseBackgrounds[control]
                     control.setOnClickListener {
                         dispatchNativePress(screen, control)
                     }
+                    applyPressHighlight(control, style, craftNativePressFeedback(props))
                 }
             } else {
+                applyPressHighlight(control, style, false)
                 screen.handlers.remove(control)
                 // Clearing a listener makes a View clickable again, so the
                 // flag goes last: a clickable Text inside a pressable row
@@ -7741,6 +7771,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureContainer(layout: CraftNativeFlexLayout, style: JSONObject) {
         layout.configure(style, resources.displayMetrics.density)
+    }
+
+    /**
+     * Puts the pressed highlight on a view that can be pressed, or takes it
+     * off one that no longer can or that opted out. The same colour and
+     * corners keep the drawable they have: a render must not restart a
+     * ripple that is under a finger.
+     */
+    private fun applyPressHighlight(view: View, style: JSONObject, shown: Boolean) {
+        val current = view.foreground as? CraftNativePressHighlight
+        if (!shown) {
+            if (current != null) view.foreground = null
+            return
+        }
+        val label = defaultTextColor
+        val color = Color.argb(31, Color.red(label), Color.green(label), Color.blue(label))
+        val radius = dp(craftNativeNonNegativeDouble(style, "borderRadius", 0.0)).toFloat()
+        if (current?.color == color && current.radius == radius) return
+        view.foreground = CraftNativePressHighlight(color, radius)
     }
 
     private fun craftNativeResizeMode(style: JSONObject, props: JSONObject): String {

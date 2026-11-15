@@ -471,6 +471,7 @@ export interface BaseProps {
     | 'timer'
     | 'toolbar'
     | 'scrollbar'
+    | 'group'
   /** Native list chrome slot for keyed FlatList/SectionList children. */
   listRole?: 'header' | 'item' | 'separator' | 'empty' | 'footer'
   /** Matches a view across an animated state change. */
@@ -516,6 +517,14 @@ export interface ViewProps extends BaseProps {
   onClick?: () => void
   /** Long press handler */
   onLongPress?: () => void
+  /**
+   * What the view shows under the finger when it can be pressed. A view with
+   * `onPress` is covered with the platform's row highlight while it is
+   * touched, and a `Pressable` or `TouchableOpacity` dims; `false` (or
+   * `'none'`) shows nothing, for a backdrop or a view that draws its own
+   * pressed state.
+   */
+  pressFeedback?: boolean | 'none'
   /** Layout change handler */
   onLayout?: (event: LayoutEvent) => void
 }

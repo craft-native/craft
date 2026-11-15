@@ -55,7 +55,7 @@ class NativeHostileNumbersTest {
             "mostRecentEventCount", "multiline", "muted", "name", "nonModal", "numColumns", "numberOfLines",
             "objectFit", "objectPosition", "onEndReachedThreshold", "opacity", "pageIndex", "pagingEnabled", "passwordRules", "paused",
             "pictureInPicture", "pitchEnabled", "placeholder", "placeholderTextColor", "pointerEvents", "polylines",
-            "presentationStyle", "preserveAspectRatio", "progressBackgroundColor", "progressViewOffset",
+            "presentationStyle", "preserveAspectRatio", "pressFeedback", "pressfeedback", "progressBackgroundColor", "progressViewOffset",
             "refreshControl", "refreshing", "region", "repeatCount",
             "resizeMode", "returnKeyType", "rotateEnabled", "scale", "scrollEnabled", "scrollTarget", "secureTextEntry",
             "selectable", "selectedDetent", "selectedValue", "selectionColor", "sheetDetents", "showsCompass",

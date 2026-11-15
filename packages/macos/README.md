@@ -11,6 +11,7 @@ The script engine is zig-js. Pass its checkout and built public static archive
 as `zigJS: { source, library }`, and the pinned Zig compiler as `zig`.
 The host imports zig-js's `ZigJS` module and owns its Objective-C bridge objects.
 It never links the system JavaScriptCore, and links WebKit only when built with `webkit: true` (see below).
+The in-app updater is compiled only when built with `updater: true` (see below).
 The build enforces the first half: after linking, it fails if the host imports any
 JavaScriptCore function or links `JavaScriptCore.framework`, since a WebKit build sits one
 framework away from it and zig-js exports the same C names (`assertZigJsEngine`).
@@ -99,6 +100,119 @@ under a name that never overwrites). Links to other apps' schemes (`mailto:`,
 inputs use native sheets on the tab's window. A window that closes closes the
 tabs it owns.
 
+## Cookies
+
+Native windows share one in-memory cookie store, which every `fetch` sends and fills, as a browser
+does. `fetch(url, { credentials: 'omit' })` leaves it out of that request: no stored cookie is sent, the
+response's cookies are not kept, and a `Cookie` header the screen sets goes out as written. Use it for
+an API reached with a bearer token.
+
+## In-app updates: `craft.updater`
+
+An app people download (Developer ID, notarized) can update itself. Build the
+host with `updater: true` and name the feed in the bundle's
+`Contents/Resources/craft-app.json`:
+
+```ts
+await buildMacOSNative({ outdir: 'dist/native', nativeBundle: 'dist/native-screen.js', updater: true })
+```
+
+```json
+"updates": {
+  "feedUrl": "https://example.com/api/updates",
+  "publicKeys": { "main": "ed25519-public:<base64url SPKI DER>" },
+  "channel": "stable",
+  "checkEveryHours": 24
+}
+```
+
+Without `updater: true` nothing of the updater is compiled (`-D CRAFT_UPDATER`
+and `CraftMacUpdater.swift` are left out), which is what a Mac App Store build
+must do: the Store installs its updates. `craft.updater` is there either way,
+so a settings screen needs no branch; in a host without the updater, or with no
+`updates` key, every call answers `state: 'unavailable', selfUpdating: false`
+with a `reason`.
+
+The host installs `craft.updater` itself, before the screen's bundle runs:
+
+| Method | Answers |
+|---|---|
+| `status()` | the `UpdateStatus`, synchronously |
+| `check()` | a promise of the status after asking the feed; never rejects, a failure is `state: 'error'` |
+| `install()` | a promise that resolves at `installed` or `error`: downloads, verifies, swaps the bundle |
+| `relaunch()` | quits and starts the installed version; rejects when nothing is installed |
+| `onChange(callback)` | every state and progress change, in every window; returns a function that stops it |
+
+```ts
+interface UpdateStatus {
+  currentVersion: string
+  state: 'unavailable' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'installing' | 'installed' | 'error'
+  selfUpdating: boolean   // false when this copy cannot replace itself
+  reason?: string         // why not, as a sentence for the UI
+  version?: string        // the update's version, from `available` on
+  notes?: string
+  publishedAt?: string
+  progress?: number       // 0..1 while downloading
+  error?: string
+  lastCheckedAt?: string  // ISO time of the last check the feed answered
+}
+```
+
+The same module answers the capability protocol, for a runtime that wraps it
+itself: `API_REQUEST` module `Updater`, methods `status`, `check`, `install`
+(each answers an `UpdateStatus`) and `relaunch` (answers `null`, or `API_ERROR`
+`UPDATER_ERROR`), no arguments. Every change also reaches every window as
+`CRAFT_EVENT` `craftUpdaterChange` with the status as its detail, and a host
+built with the updater lists `updater` among its capabilities.
+
+**The feed.** The host asks `GET <feedUrl>/darwin/<arm64|x64>?current=<version>`
+(plus `channel=<channel>` unless it is `stable`) when the app has launched and
+every `checkEveryHours` after (24 when absent, 0 for never, fractions allowed).
+204 means nothing newer. Otherwise the answer is a signed manifest:
+`{ version, url, sha256, size, sourceRevision, platform, architecture,
+signingKeyId, signature, publishedAt?, notes? }`, the format Stacks'
+`buddy release:desktop` publishes. The feed and the download must be HTTPS;
+plain HTTP is accepted only for `localhost`, `127.0.0.1` and `::1`, and a
+redirect is followed only to an address that passes the same rule.
+
+**What is checked.** An update is installed only when all of this holds:
+
+- the manifest's Ed25519 signature verifies, over exactly the bytes the release
+  signed (`JSON.stringify` of the ten fields above without `signature`, in that
+  order, the checksum in lower case, `null` for an absent date or notes), with
+  the key in `publicKeys` the manifest names;
+- it is a `darwin` build for this architecture, and strictly newer
+  (`major.minor.patch`; a pre-release tag takes no part in the order);
+- the download has the manifest's size and SHA-256;
+- the archive (`update.zip`, made with `ditto -c -k --keepParent`, unpacked
+  with `ditto -x -k`) holds exactly one `.app`, whose code signature is intact
+  in every nested binary, and which has the running app's identifier and comes
+  from the running app's developer: a certificate Apple issued to the same
+  team (`anchor apple generic and identifier "<id>" and certificate
+  leaf[subject.OU] = "<team>"`).
+
+The new bundle is unpacked beside the old one and the two exchange places in
+one step (`renamex_np` with `RENAME_SWAP`); on a volume that cannot do that the
+old bundle is moved aside and put back if the new one cannot take its place.
+Whatever fails, the app that was there is still there, and `state` is `error`
+with the reason in `error`. After `installed`, `relaunch()` quits through the
+usual path (a screen's `onQuit` still gets its moment) while a detached shell
+waits for the process to go and runs `/usr/bin/open -n <app>` with the
+arguments this launch had.
+
+**When a copy cannot update itself.** `selfUpdating` is false, with a `reason`:
+
+| Copy | `state` | Feed asked |
+|---|---|---|
+| No `updates` in `craft-app.json`, or a host built without the updater | `unavailable` | never |
+| Has an App Store receipt (`Contents/_MASReceipt/receipt`), or runs in the App Sandbox | `unavailable` | never |
+| Not an app bundle; translocated by Gatekeeper; on a read-only volume (a disk image); in a folder this account cannot change; not signed by a team (ad hoc) | as checked | yes |
+
+A copy in the last row still learns that an update exists, and `install()`
+answers `error` with the reason (move it to Applications). An ad hoc signed app
+is replaced only under the test driver (`--test-dir`), by a bundle with an
+intact signature and the same identifier, which is how the swap is tested.
+
 ## Hosted-API apps
 
 An app with its own local agent (Attic) is launched with `--api-url` and gets its
@@ -164,6 +278,9 @@ Drop `action-<n>.json` files into the directory and each gets a `result-<n>.json
 `{ "action": "command", "id" }`, `appearance` (`value`: light or dark), `resize`,
 `screenshot`, `close`, `quit`, and, aimed at a control by its testID (`target`),
 `press`, `type` (`text`), `submit`, `key` (`key`, `shift`) and `hover` (`value`).
+The snapshot (`state.json`) carries the updater's status as `updater`. An action
+that already has its result file is not run again, so an app that relaunches
+into the same directory (after an update) starts with a clean slate.
 
 ## Text editing, sidebar and shadows
 
@@ -171,8 +288,14 @@ A multi-line `TextInput` reports the caret and selection with `onSelectionChange
 (`{ start, end }`, UTF-16 offsets) and takes a `selection` prop to move it. With the
 `markdown` prop the text stays plain markdown, drawn as Notes would show it:
 headings, bold, italic, code, quotes, bullets and checklists with finished items struck
-through, restyled after every edit. `NativeSidebar` takes `rowHeight` and
-`labelFontSize` (24 and 15 give a Things-like source list). `shadow-*` classes draw a
+through, restyled after every edit. A heading's `#` marks show, dimmed, on the line the caret is on
+and fold away on every other line, so a note reads as Notes shows it while its text stays plain markdown. `NativeSidebar` takes `rowHeight`,
+`labelFontSize` and `labelFontWeight` (`regular`, `medium`, `semibold` or `bold`), and two
+insets measured from its own edges: `selectionInset`, how far the selection pill stands in
+(default 4), and `contentInset`, how far a row's icon and count stand inside the pill (default
+20). `rowHeight="24" labelFontSize="14" labelFontWeight="semibold" selectionInset="12"
+contentInset="7"` gives a Things-like source list. Section headers scroll with their rows, and
+an icon keeps its colour on the selected row. `shadow-*` classes draw a
 real layer shadow. With `--test-dir`, the driver's `key` action sends `return`, `tab`,
 `escape`, `up`, `down` or `backspace` to a text control as a command, so submit and
 accept-completion handlers can be exercised without a keyboard.

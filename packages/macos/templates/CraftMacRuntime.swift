@@ -132,6 +132,9 @@ final class CraftMacRuntime {
         #if CRAFT_WEBKIT
         list.append("web")
         #endif
+        #if CRAFT_UPDATER
+        list.append("updater")
+        #endif
         return list
     }
     let route: String
@@ -217,6 +220,16 @@ final class CraftMacRuntime {
         }
         let storageSet: @convention(block) (String, String) -> Void = { key, json in UserDefaults.standard.set(json, forKey: "craft.native." + key) }
         let secureGet: @convention(block) (String) -> String? = { key in CraftMacKeychain.get(key) }
+        // craft.updater: the status is read in place; a check, an install or a relaunch is asked of
+        // the main thread and answered through `updaterAnswer`.
+        let updaterStatus: @convention(block) () -> String = { Self.json(CraftMacApplication.shared.updaterStatus()) }
+        let updaterCall: @convention(block) (String, Int) -> Void = { [weak self] method, call in
+            DispatchQueue.main.async {
+                CraftMacApplication.shared.updater(method) { status, failure in self?.updaterAnswer(call, status, failure) }
+            }
+        }
+        context.setObject(updaterStatus, forKeyedSubscript: "craftNativeUpdaterStatus" as NSString)
+        context.setObject(updaterCall, forKeyedSubscript: "craftNativeUpdater" as NSString)
         context.setObject(storageGet, forKeyedSubscript: "craftNativeStorageGet" as NSString)
         context.setObject(storageSet, forKeyedSubscript: "craftNativeStorageSet" as NSString)
         context.setObject(secureGet, forKeyedSubscript: "craftNativeSecureGet" as NSString)
@@ -252,6 +265,31 @@ final class CraftMacRuntime {
             setSync: function(key, value) { craftNativeStorageSet(String(key), JSON.stringify(value === undefined ? null : value)); }
         };
         craft.secureStorage = { getSync: function(key) { var value = craftNativeSecureGet(String(key)); return value === null || value === undefined ? null : value; } };
+        craft.updater = (function() {
+            var listeners = [], calls = {}, sequence = 0;
+            function read(text) { try { return JSON.parse(text); } catch (e) { return null; } }
+            globalThis.__craftUpdaterChanged = function(text) {
+                var status = read(text); if (!status) return;
+                listeners.slice().forEach(function(listener) { try { listener(status); } catch (e) { console.error(String(e)); } });
+            };
+            globalThis.__craftUpdaterAnswer = function(id, text, failure) {
+                var call = calls[id]; if (!call) return; delete calls[id];
+                if (typeof failure === 'string') call.reject(new Error(failure)); else call.resolve(read(text));
+            };
+            function ask(method) {
+                return new Promise(function(resolve, reject) { var id = ++sequence; calls[id] = { resolve: resolve, reject: reject }; craftNativeUpdater(method, id); });
+            }
+            return {
+                status: function() { return read(craftNativeUpdaterStatus()); },
+                check: function() { return ask('check'); },
+                install: function() { return ask('install'); },
+                relaunch: function() { return ask('relaunch').then(function() {}); },
+                onChange: function(callback) {
+                    listeners.push(callback);
+                    return function() { var index = listeners.indexOf(callback); if (index >= 0) listeners.splice(index, 1); };
+                }
+            };
+        })();
         globalThis.console = {};
         ['log','info','warn','error','debug'].forEach(function(level) {
             console[level] = function() { craftNativeLog(level, Array.from(arguments).map(String).join(' ')); };
@@ -370,6 +408,32 @@ final class CraftMacRuntime {
                 ZJSContextRunMicrotasks(context)
             }
         }
+    }
+
+    static func json(_ value: Any) -> String {
+        (try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+    }
+
+    /// The answer to a `craft.updater` call made by this screen: its promise settles on the screen's thread.
+    private func updaterAnswer(_ call: Int, _ status: Any, _ failure: String?) {
+        let text = Self.json(status)
+        thread.run { [weak self] in
+            guard let self, !self.stopped, let context = self.context else { return }
+            context.objectForKeyedSubscript("__craftUpdaterAnswer")?.call(withArguments: [call, text, failure ?? NSNull()] as [Any])
+            ZJSContextRunMicrotasks(context)
+        }
+    }
+
+    /// The updater's state or progress changed: `craft.updater.onChange` hears it in this screen, and
+    /// the screen's own listeners hear `craftUpdaterChange`, as they hear every desktop event.
+    func updaterChanged(_ status: [String: Any]) {
+        let text = Self.json(status)
+        thread.run { [weak self] in
+            guard let self, !self.stopped, let context = self.context else { return }
+            context.objectForKeyedSubscript("__craftUpdaterChanged")?.call(withArguments: [text])
+            ZJSContextRunMicrotasks(context)
+        }
+        send("CRAFT_EVENT", ["event": "craftUpdaterChange", "detail": status])
     }
 
     func event(_ id: String?, payload: [String: Any] = [:]) {
@@ -529,6 +593,10 @@ final class CraftMacRuntime {
         case "Web": CraftMacWebTabs.shared.perform(method, args, owner: self, answer: { [weak self] value in self?.answer(id, value) }, fail: { [weak self] code, message in self?.fail(id, code, message) })
         #endif
         case "Desktop": CraftMacApplication.shared.perform(method, args: args, scene: scene, reply: { [weak self] value in self?.answer(id, value) })
+        case "Updater":
+            CraftMacApplication.shared.updater(method) { [weak self] status, failure in
+                if let failure { self?.fail(id, "UPDATER_ERROR", failure) } else { self?.answer(id, status) }
+            }
         case "Notifications": CraftMacApplication.shared.notification(method, options: options, reply: { [weak self] value in self?.answer(id, value) })
         default: fail(id, "CAPABILITY_DISABLED", "Unsupported native capability \(module).\(method)")
         }
@@ -587,6 +655,10 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: url)
         request.httpMethod = (options["method"] as? String ?? "GET").uppercased()
         for (key, value) in options["headers"] as? [String: String] ?? [:] { request.setValue(value, forHTTPHeaderField: key) }
+        // fetch's `credentials: 'omit'`: the session's cookie store is neither sent with this request nor given
+        // what the response sets, and a Cookie header the screen wrote itself goes out as written. For a
+        // bearer-token client, whose windows otherwise share one store and send each other's cookies.
+        if options["credentials"] as? String == "omit" { request.httpShouldHandleCookies = false }
         if let body = options["body"] as? String { request.httpBody = Data(body.utf8) }
         return request
     }

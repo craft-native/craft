@@ -1850,6 +1850,55 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertGreaterThan(label.font.pointSize, 16)
     }
 
+    /// A Picker with no fontSize began from the system's body font, which is
+    /// already scaled for the device's text size, and scaled it again: 149
+    /// points at the largest accessibility size where a TextInput beside it
+    /// drew at 48, in a button 198 points tall showing two letters.
+    ///
+    /// The device's own text size is what the old default read, so this
+    /// fails on it only when the simulator is set larger than the default
+    /// (`xcrun simctl ui <udid> content_size accessibility-extra-extra-extra-large`).
+    func testAPickersTitleIsScaledForTextSizeOnce() throws {
+        // In a window, where UIKit applies the text size to what it draws.
+        let window = try hostWindow()
+        let host = UIViewController()
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        host.addChild(controller)
+        controller.view.frame = host.view.bounds
+        controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        host.view.addSubview(controller.view)
+        host.setOverrideTraitCollection(
+            UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge),
+            forChild: controller
+        )
+        controller.didMove(toParent: host)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let items: [[String: Any]] = [["label": "Select an option", "value": ""]]
+        controller.render(document([
+            ["type": "TextInput", "props": ["key": "field", "value": "Select an option"], "style": ["fontSize": 17]],
+            ["type": "Picker", "props": ["key": "sized", "items": items], "style": ["fontSize": 17]],
+            ["type": "Picker", "props": ["key": "plain", "items": items]],
+        ]))
+        controller.view.layoutIfNeeded()
+
+        let field = try XCTUnwrap(find(UITextField.self, key: "field", below: controller.view))
+        let sized = try XCTUnwrap(find(CraftNativePickerView.self, key: "sized", below: controller.view))
+        let plain = try XCTUnwrap(find(CraftNativePickerView.self, key: "plain", below: controller.view))
+        sized.layoutIfNeeded()
+        plain.layoutIfNeeded()
+        XCTAssertEqual(sized.traitCollection.preferredContentSizeCategory, .accessibilityExtraExtraExtraLarge)
+        let expected = UIFontMetrics(forTextStyle: .body).scaledValue(for: 17, compatibleWith: controller.traitCollection)
+        XCTAssertGreaterThan(expected, 40)
+        XCTAssertEqual(try XCTUnwrap(field.font).pointSize, expected, accuracy: 0.1)
+        XCTAssertEqual(try XCTUnwrap(sized.titleLabel).font.pointSize, expected, accuracy: 0.5)
+        // With no fontSize it is the body size, scaled the same once.
+        XCTAssertEqual(try XCTUnwrap(plain.titleLabel).font.pointSize, expected, accuracy: 0.5)
+        // One line of that size, as tall as the Picker that names its size.
+        XCTAssertEqual(plain.frame.height, sized.frame.height, accuracy: 0.5)
+    }
+
     func testItalicNativeTextKeepsDynamicTypeScaling() throws {
         let host = UIViewController()
         let controller = CraftNativeScreenController(config: CraftConfig())
@@ -2183,6 +2232,23 @@ final class NativeRenderUnitTests: XCTestCase {
         let plain = try XCTUnwrap(find(UIImageView.self, key: "plain", below: controller.view))
         XCTAssertFalse(plain.isAccessibilityElement)
         XCTAssertNil(plain.accessibilityLabel)
+    }
+
+    func testShortLeadingPreservesLargeFontMetrics() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        for (size, ratio) in [(CGFloat(32), CGFloat(1.08)), (CGFloat(76), CGFloat(1.15))] {
+            let key = "display-\(Int(size))"
+            controller.render(document([node("Text", key: key, text: "ÁÜ GOOD EVENING, CHRIS 60:00 gj", style: [
+                "fontSize": size, "lineHeight": size * ratio, "letterSpacing": 0.5
+            ])]))
+            let label = try XCTUnwrap(find(UILabel.self, key: key, below: controller.view))
+            let paragraph = try XCTUnwrap(label.attributedText?.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertGreaterThanOrEqual(paragraph.minimumLineHeight, label.font.lineHeight)
+            XCTAssertGreaterThanOrEqual(paragraph.maximumLineHeight, label.font.lineHeight)
+            let measured = label.sizeThatFits(CGSize(width: 2000, height: CGFloat.greatestFiniteMagnitude))
+            XCTAssertGreaterThanOrEqual(measured.height, floor(label.font.lineHeight))
+        }
     }
 
     func testSharedLayoutColorAndTextStylesMapToUIKit() throws {
@@ -4596,6 +4662,55 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(CraftNativeScreenController.textContentType(["autoComplete": "off"]))
     }
 
+    /// The placeholder took the padding twice: UIKit's placeholderRect asks
+    /// textRect, which already insets, for bounds this class had inset too.
+    /// With 16 points of padding the hint began at 32 and typed text at 16,
+    /// so the words jumped on the first keystroke.
+    func testATextInputsPlaceholderStartsWhereItsTextWill() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([
+            // Its own border, so UIKit adds no inset of its own: the padding is the whole of it.
+            ["type": "TextInput", "props": ["key": "email", "placeholder": "Email"],
+             "style": ["paddingHorizontal": 16, "height": 48, "width": 300, "borderWidth": 1]],
+            ["type": "TextInput", "props": ["key": "name", "placeholder": "Name"],
+             "style": ["paddingLeft": 12, "paddingRight": 20, "paddingTop": 6, "paddingBottom": 10, "height": 60, "width": 300, "borderWidth": 1]],
+            // The system's rounded field insets its text 7 points more, and the hint with it.
+            ["type": "TextInput", "props": ["key": "plain", "placeholder": "Plain"], "style": ["paddingHorizontal": 16, "height": 48, "width": 300]],
+        ]))
+        let email = try XCTUnwrap(find(CraftNativeTextField.self, key: "email", below: controller.view))
+        let name = try XCTUnwrap(find(CraftNativeTextField.self, key: "name", below: controller.view))
+        let plain = try XCTUnwrap(find(CraftNativeTextField.self, key: "plain", below: controller.view))
+        let bounds = CGRect(x: 0, y: 0, width: 300, height: 48)
+        XCTAssertEqual(email.textRect(forBounds: bounds).minX, 16)
+        XCTAssertEqual(email.textRect(forBounds: bounds).maxX, 284)
+        XCTAssertEqual(email.placeholderRect(forBounds: bounds), email.textRect(forBounds: bounds))
+        XCTAssertEqual(email.editingRect(forBounds: bounds).minX, 16)
+        XCTAssertEqual(email.editingRect(forBounds: bounds).maxX, 284)
+
+        let tall = CGRect(x: 0, y: 0, width: 300, height: 60)
+        XCTAssertEqual(name.textRect(forBounds: tall), CGRect(x: 12, y: 6, width: 268, height: 44))
+        XCTAssertEqual(name.placeholderRect(forBounds: tall), name.textRect(forBounds: tall))
+        XCTAssertEqual(name.editingRect(forBounds: tall), name.textRect(forBounds: tall))
+
+        XCTAssertEqual(plain.borderStyle, .roundedRect)
+        XCTAssertGreaterThan(plain.textRect(forBounds: bounds).minX, 16)
+        XCTAssertEqual(plain.placeholderRect(forBounds: bounds), plain.textRect(forBounds: bounds))
+
+        // What is drawn, not only what is reported: the hint's label begins
+        // where typed text will once the field has laid out.
+        func label(_ text: String, below view: UIView) -> UILabel? {
+            if let label = view as? UILabel, label.text == text { return label }
+            return view.subviews.lazy.compactMap { label(text, below: $0) }.first
+        }
+        for (field, text) in [(email, "Email"), (plain, "Plain")] {
+            field.frame = bounds
+            field.layoutIfNeeded()
+            let hint = try XCTUnwrap(label(text, below: field))
+            XCTAssertEqual(hint.convert(hint.bounds, to: field).minX, field.textRect(forBounds: bounds).minX, accuracy: 0.5, text)
+        }
+    }
+
     func testDelayedInputAcknowledgementDoesNotStealFocusFromTheNextField() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
@@ -5625,6 +5740,80 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(find(UIButton.self, key: "drawer-action", below: drawer)).isAccessibilityElement)
     }
 
+    /// A plain view with a label was one accessibility element whatever it
+    /// held, and UIKit does not look inside an element: the button in a
+    /// labelled pager, or the close button in a labelled panel, could not be
+    /// reached by VoiceOver at all.
+    func testALabelledViewThatHoldsControlsIsANamedGroup() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func document(pagerHasButton: Bool) -> [String: Any] {
+            let page: [String: Any] = ["type": "Text", "props": ["key": "page"], "children": ["Welcome"]]
+            let next: [String: Any] = ["type": "Pressable", "props": ["key": "next", "accessibilityLabel": "Next"], "events": ["onPress": "next"],
+                                       "children": [["type": "Text", "children": ["Next"]]]]
+            return self.document([
+                ["type": "View", "props": ["key": "pager", "accessibilityLabel": "Tour"], "children": pagerHasButton ? [page, next] : [page]],
+                // The control is a plain pressed view two levels down, with no label of its own.
+                ["type": "View", "props": ["key": "panel", "accessibilityLabel": "Filters"], "children": [[
+                    "type": "View", "props": ["key": "panel-row"], "children": [[
+                        "type": "View", "props": ["key": "panel-close"], "events": ["onPress": "close"],
+                        "children": [["type": "Text", "children": ["Close"]]],
+                    ]],
+                ]]],
+                ["type": "View", "props": ["key": "form", "accessibilityLabel": "Sign in"], "children": [
+                    ["type": "TextInput", "props": ["key": "form-email", "placeholder": "Email"]],
+                ]],
+                // Only text inside: the label stands in for it, as before.
+                ["type": "View", "props": ["key": "summary", "accessibilityLabel": "Order 5, shipped"], "children": [
+                    ["type": "Text", "children": ["Order 5"]], ["type": "Text", "children": ["Shipped"]],
+                ]],
+                // Pressed itself: it stays the one thing to press.
+                ["type": "View", "props": ["key": "card", "accessibilityLabel": "Open order 5"], "events": ["onPress": "open"], "children": [
+                    ["type": "Button", "props": ["key": "card-more"], "children": ["More"]],
+                ]],
+                // Said outright, for a box of plain text.
+                ["type": "View", "props": ["key": "totals", "accessibilityLabel": "Totals", "accessibilityRole": "group"], "children": [
+                    ["type": "Text", "props": ["key": "total"], "children": ["42"]],
+                ]],
+                ["type": "View", "props": ["key": "unnamed", "accessibilityRole": "group"], "children": [
+                    ["type": "Text", "children": ["Plain"]],
+                ]],
+            ])
+        }
+        func view(_ key: String) throws -> UIView { try XCTUnwrap(find(UIView.self, key: key, below: controller.view), key) }
+        controller.render(document(pagerHasButton: true))
+
+        for (key, label) in [("pager", "Tour"), ("panel", "Filters"), ("form", "Sign in"), ("totals", "Totals")] {
+            let group = try view(key)
+            XCTAssertFalse(group.isAccessibilityElement, "\(key) must not hide what it holds")
+            XCTAssertEqual(group.accessibilityContainerType, .semanticGroup, key)
+            XCTAssertEqual(group.accessibilityLabel, label)
+        }
+        XCTAssertTrue(try view("next").isAccessibilityElement)
+        XCTAssertTrue(try view("next").accessibilityTraits.contains(.button))
+        XCTAssertTrue(try view("form-email").isAccessibilityElement)
+        XCTAssertTrue(try view("total").isAccessibilityElement)
+
+        let summary = try view("summary")
+        XCTAssertTrue(summary.isAccessibilityElement)
+        XCTAssertEqual(summary.accessibilityContainerType, UIAccessibilityContainerType.none)
+        let card = try view("card")
+        XCTAssertTrue(card.isAccessibilityElement)
+        XCTAssertEqual(card.accessibilityContainerType, UIAccessibilityContainerType.none)
+        let unnamed = try view("unnamed")
+        XCTAssertFalse(unnamed.isAccessibilityElement)
+        XCTAssertEqual(unnamed.accessibilityContainerType, UIAccessibilityContainerType.none, "a group with no name announces nothing")
+
+        // The button goes: the same view is one element again.
+        controller.render(document(pagerHasButton: false))
+        let pager = try view("pager")
+        XCTAssertTrue(pager.isAccessibilityElement)
+        XCTAssertEqual(pager.accessibilityContainerType, UIAccessibilityContainerType.none)
+        controller.render(document(pagerHasButton: true))
+        XCTAssertFalse(pager.isAccessibilityElement)
+        XCTAssertEqual(pager.accessibilityContainerType, .semanticGroup)
+    }
+
     func testSwitchAccessibilityMatchesUIKitAcrossValueAndEnabledChanges() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
@@ -6199,6 +6388,43 @@ final class NativePlatformControlTests: XCTestCase {
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController == nil }, object: nil)
         wait(for: [dismissed], timeout: 3)
         XCTAssertNil(screen.presentedViewController)
+    }
+
+    /// A Modal's accessibilityLabel stayed on the Modal's own view in the
+    /// screen, which is hidden while UIKit presents the sheet. The sheet a
+    /// reader lands in had no name and was no group, so VoiceOver entered
+    /// "Outer dialog" without being told which dialog it was in.
+    func testAPresentedSheetCarriesItsModalsName() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func document(_ label: String?, visible: Bool = true) -> [String: Any] {
+            var props: [String: Any] = ["key": "sheet", "visible": visible, "animationType": "none", "presentationStyle": "pageSheet", "sheetDetents": ["large"]]
+            if let label { props["accessibilityLabel"] = label }
+            return ["type": "Modal", "props": props, "children": [["type": "Text", "props": ["key": "sheet-text"], "children": ["Body"]]]]
+        }
+        screen.render(document("Outer dialog"))
+        let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController != nil }, object: nil)
+        wait(for: [presented], timeout: 3)
+        let sheet = try XCTUnwrap(screen.presentedViewController?.view)
+        XCTAssertEqual(sheet.accessibilityLabel, "Outer dialog")
+        XCTAssertEqual(sheet.accessibilityContainerType, .semanticGroup)
+        XCTAssertFalse(sheet.isAccessibilityElement, "the name is the group's: what is in the sheet is still read")
+        XCTAssertTrue(sheet.accessibilityViewIsModal)
+
+        // The name follows the Modal while the sheet is up.
+        screen.render(document("Renamed dialog"))
+        XCTAssertEqual(sheet.accessibilityLabel, "Renamed dialog")
+        screen.render(document(nil))
+        XCTAssertNil(sheet.accessibilityLabel)
+        XCTAssertEqual(sheet.accessibilityContainerType, UIAccessibilityContainerType.none)
+
+        screen.render(document("Outer dialog", visible: false))
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController == nil }, object: nil)
+        wait(for: [dismissed], timeout: 3)
     }
 }
 

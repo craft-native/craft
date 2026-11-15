@@ -4232,6 +4232,14 @@ private class CraftNativeFlowView: UIStackView {
 private final class CraftNativeSafeAreaView: CraftNativeFlowView {
     private var edges: Set<String> = ["top", "right", "bottom", "left"]
 
+    /// The screen's leading scroll view owns the status bar's inset, and this
+    /// view sits empty above it (trackContentScrollView). It takes no top
+    /// inset then: taking it would make it as tall as the status bar, and the
+    /// scroll view would no longer be the first thing on the screen.
+    var yieldsTopInset = false {
+        didSet { if yieldsTopInset != oldValue { updateSafeAreaPadding() } }
+    }
+
     func setSafeAreaEdges(_ raw: Any?) {
         guard let values = raw as? [Any] else {
             edges = ["top", "right", "bottom", "left"]
@@ -4253,7 +4261,7 @@ private final class CraftNativeSafeAreaView: CraftNativeFlowView {
     private func updateSafeAreaPadding() {
         let insets = safeAreaInsets
         safeAreaPadding = UIEdgeInsets(
-            top: edges.contains("top") ? insets.top : 0,
+            top: edges.contains("top") && !yieldsTopInset ? insets.top : 0,
             left: edges.contains("left") ? insets.left : 0,
             bottom: edges.contains("bottom") ? insets.bottom : 0,
             right: edges.contains("right") ? insets.right : 0
@@ -4563,9 +4571,24 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     private var sheetController: CraftNativeSheetController?
     var isPresentedAsSheet: Bool { sheetController != nil }
 
+    /// The Modal's name. While UIKit presents the content as a sheet this
+    /// view is hidden and the sheet's own view is what a reader is in, so
+    /// the name goes there too, as a group's: it says which dialog this is
+    /// and never stands in for what the dialog holds.
+    override var accessibilityLabel: String? {
+        didSet { nameSheet() }
+    }
+
+    private func nameSheet() {
+        guard let view = sheetController?.view else { return }
+        view.accessibilityLabel = accessibilityLabel
+        view.accessibilityContainerType = accessibilityLabel == nil ? .none : .semanticGroup
+    }
+
     private func configureSheet(_ controller: CraftNativeSheetController) {
         controller.isModalInPresentation = onRequestClose == nil
         controller.view.accessibilityViewIsModal = true
+        nameSheet()
         guard let sheet = controller.sheetPresentationController else { return }
         let choices = sheetDetents.filter { $0 == "medium" || $0 == "large" }
         let values = choices.isEmpty ? ["large"] : Array(Set(choices)).sorted { $0 == "medium" && $1 == "large" }
@@ -6377,8 +6400,11 @@ final class CraftNativeTextField: UITextField {
         super.editingRect(forBounds: bounds.inset(by: padding))
     }
 
+    /// Where the text will be. UIKit's own placeholderRect asks textRect,
+    /// which has taken the padding; insetting the bounds here as well put
+    /// the hint a second padding in, and the words moved on the first key.
     override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
-        super.placeholderRect(forBounds: bounds.inset(by: padding))
+        textRect(forBounds: bounds)
     }
 
     override var intrinsicContentSize: CGSize {
@@ -6992,6 +7018,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var pressFeedbackRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
+    /// Views that show something under the finger: every pressable one that
+    /// has not opted out (`pressFeedback={false}`).
+    private var pressFeedbackViews: Set<ObjectIdentifier> = []
+    /// The grey a plain pressable view is covered with while it is touched.
+    private var pressHighlights: [ObjectIdentifier: CALayer] = [:]
+    /// Feedback that is waiting to see whether the touch is a scroll.
+    private var pendingPressFeedback: [ObjectIdentifier: DispatchWorkItem] = [:]
+    /// When each view's feedback went on, to keep a quick tap visible.
+    private var pressFeedbackShownAt: [ObjectIdentifier: CFTimeInterval] = [:]
+    /// Inside a scroll view the feedback waits this long, as a table row's
+    /// does: a touch that turns out to be a scroll never shows it.
+    static let pressFeedbackScrollDelay: TimeInterval = 0.1
+    /// And once shown it stays at least this long, so a tap is seen.
+    static let pressFeedbackMinimum: TimeInterval = 0.12
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var imageErrors: [ObjectIdentifier: String] = [:]
@@ -7251,9 +7291,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // released, it stays drawn until the destination says what it wants.
         CraftChrome.shared.releaseTabAccessory(ownedBy: self)
         // Popped (or its stack dismissed) while the bar was away: it comes
-        // back for whatever shows next, a web page included.
+        // back for whatever shows next, a web page included. Unless what
+        // shows next is a screen of this stack that puts the bar away too:
+        // that one says so only once it is on screen, after this, so the bar
+        // and the floating actions slid in for the length of the pop and out
+        // again, and stayed in for the whole of a back-swipe (#530).
         if tabBarHiddenApplied, isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
-            CraftChrome.shared.setHiddenByScreen(false)
+            let stackGoes = isBeingDismissed || navigationController?.isBeingDismissed == true
+            let revealed = stackGoes ? nil : navigationController?.topViewController as? CraftNativeScreenController
+            if revealed === self || revealed?.wantsTabBarHidden != true {
+                CraftChrome.shared.setHiddenByScreen(false)
+            }
         }
     }
 
@@ -8425,6 +8473,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return titleFromOptions || prefersLargeTitle == true || !(navigationItem.rightBarButtonItems ?? []).isEmpty
     }
     private weak var trackedScrollView: UIScrollView?
+    /// Empty SafeAreaViews above the leading scroll view, which owns their top inset.
+    private let yieldedSafeAreas = NSHashTable<CraftNativeSafeAreaView>.weakObjects()
 
     /// `craft.navigation.setOptions`: this screen's bar. Every key is
     /// optional and only the keys given change.
@@ -8496,8 +8546,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         }
         if options.keys.contains("backButton") {
-            backButtonSpec = options["backButton"] as? [String: Any]
-            backButtonItem = nil
+            let spec = options["backButton"] as? [String: Any]
+            // The same symbol and label keep the item they have: a screen
+            // that names it in an effect that runs again must not replace
+            // the button under a finger.
+            let same = spec?["symbol"] as? String == backButtonSpec?["symbol"] as? String
+                && spec?["accessibilityLabel"] as? String == backButtonSpec?["accessibilityLabel"] as? String
+                && (spec == nil) == (backButtonSpec == nil)
+            backButtonSpec = spec
+            if !same { backButtonItem = nil }
         }
         if options.keys.contains("leftButtons") {
             let buttons = (options["leftButtons"] as? [[String: Any]]) ?? []
@@ -8839,17 +8896,39 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         /// The scroll view the screen starts with, when nothing sits above it:
         /// the root's first child, its first, and so on, none padded on top.
+        /// Empty siblings above it do not count. An empty SafeAreaView among
+        /// them is remembered: once the root runs under the status bar it
+        /// would take that inset and stop being empty, the scroll view would
+        /// stop leading, the root would return inside the safe area and the
+        /// view would be empty again. A screen with an empty header above its
+        /// scroll view flipped between the two layouts and stopped in either.
+        var emptySafeAreasAbove: [CraftNativeSafeAreaView] = []
         func leading(_ node: RenderedNode) -> RenderedNode? {
             if let scroll = node.view as? CraftNativeScrollView { return scroll.isVertical && scroll.isScrollEnabled ? node : nil }
             if let list = node.view as? CraftNativeFlatList {
                 return list.isScrollEnabled && (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal ? node : nil
             }
             guard paddingInsets(node.style).top == 0,
-                  let first = node.children.first(where: { $0.type != "Modal" && !$0.view.isHidden && $0.view.bounds.height > 0 }) else { return nil }
-            return leading(first)
+                  let index = node.children.firstIndex(where: { $0.type != "Modal" && !$0.view.isHidden && $0.view.bounds.height > 0 }) else { return nil }
+            for skipped in node.children[..<index] where skipped.type != "Modal" && !skipped.view.isHidden {
+                if let safeArea = skipped.view as? CraftNativeSafeAreaView { emptySafeAreasAbove.append(safeArea) }
+            }
+            return leading(node.children[index])
         }
         let scroll = find(renderedRoot)
         let leadingScroll = leading(renderedRoot)
+        // The leading scroll view owns the top inset; the empty SafeAreaViews
+        // it passed give theirs up, and get it back when it no longer leads
+        // (the header gained content, or the scroll view left the screen).
+        let yielding = leadingScroll == nil ? [] : emptySafeAreasAbove
+        for view in yieldedSafeAreas.allObjects where !yielding.contains(where: { $0 === view }) {
+            view.yieldsTopInset = false
+            yieldedSafeAreas.remove(view)
+        }
+        for view in yielding where !view.yieldsTopInset {
+            view.yieldsTopInset = true
+            yieldedSafeAreas.add(view)
+        }
         // The leading scroller may overflow beneath navigation chrome.
         // A bounded list inside a form must clip its rows to its viewport.
         if let leadingScroll, leadingScroll.style["overflow"] as? String != "hidden" {
@@ -10131,7 +10210,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             picker.update(options: options,
                           selected: craftNativePickerValue(props["selectedValue"]) ?? craftNativePickerValue(props["value"]),
                           enabled: props["disabled"] as? Bool != true,
-                          handler: handler, font: textFont(style, default: .preferredFont(forTextStyle: .body)),
+                          // The body size before any scaling: textFont scales
+                          // it for the text size. The system's body font is
+                          // scaled already, and scaling that again drew a
+                          // Picker with no fontSize at 149 points at the
+                          // largest accessibility size.
+                          handler: handler, font: textFont(style, default: .systemFont(ofSize: 17)),
                           foreground: color(style["color"]) ?? .label) { [weak self, weak picker] value, index in
                 guard let self, let picker, let handler = self.handlers[ObjectIdentifier(picker)] else { return }
                 self.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": value, "index": index]])
@@ -10497,9 +10581,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if type != "Button" && type != "Link" && type != "Checkbox" && type != "TextInput" && type != "Picker" && type != "SegmentedControl" && type != "DatePicker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" && type != "StatusBar" && type != "RefreshControl" && type != "Map" {
             let disabled = props["disabled"] as? Bool == true
             updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
+            // STX's HTML parser lowercases a bound prop it does not know.
+            let feedback = props["pressFeedback"] ?? props["pressfeedback"]
             updatePressFeedback(
                 disabled ? nil : nonEmptyHandler(events["onPressIn"]),
                 disabled ? nil : nonEmptyHandler(events["onPressOut"]),
+                shown: !disabled && feedback as? Bool != false && feedback as? String != "none",
                 for: result
             )
             updateUnderlayHandlers(
@@ -11027,6 +11114,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
+        pressFeedbackViews.remove(id)
+        pressHighlights.removeValue(forKey: id)?.removeFromSuperlayer()
+        pendingPressFeedback.removeValue(forKey: id)?.cancel()
+        pressFeedbackShownAt.removeValue(forKey: id)
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
         imageErrors.removeValue(forKey: id)
@@ -11176,12 +11267,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if !ownsTouches(view) { view.isUserInteractionEnabled = actionable || longPressHandlers[id] != nil || view is CraftNativeFlowView }
     }
 
-    private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, for view: UIView) {
+    /// What a view does under the finger, before the press is known to be
+    /// one. A press handler alone used to get nothing: a tappable row was
+    /// silent when touched, and a `Pressable` dimmed only after the finger
+    /// had lifted (#538). Anything that can be pressed now watches for the
+    /// touch itself, unless it says `pressFeedback={false}`.
+    private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, shown: Bool, for view: UIView) {
         let id = ObjectIdentifier(view)
         if let pressIn, !pressIn.isEmpty { pressInHandlers[id] = pressIn } else { pressInHandlers.removeValue(forKey: id) }
         if let pressOut, !pressOut.isEmpty { pressOutHandlers[id] = pressOut } else { pressOutHandlers.removeValue(forKey: id) }
         let hasUnderlay = (view as? CraftNativeFlowView)?.pressUnderlayColor != nil
-        guard pressInHandlers[id] != nil || pressOutHandlers[id] != nil || hasUnderlay else {
+        let watched = pressInHandlers[id] != nil || pressOutHandlers[id] != nil || hasUnderlay
+        let pressable = handlers[id] != nil || linkTargets[id] != nil
+        if shown, watched || pressable { pressFeedbackViews.insert(id) } else {
+            pressFeedbackViews.remove(id)
+            pendingPressFeedback.removeValue(forKey: id)?.cancel()
+            if pressFeedbackShownAt[id] != nil { setPressFeedback(false, on: view) }
+        }
+        guard watched || (shown && pressable) else {
             if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) { view.removeGestureRecognizer(recognizer) }
             if let pressable = view as? CraftNativeFlowView { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
             if !ownsTouches(view) { view.isUserInteractionEnabled = handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }
@@ -11197,6 +11300,102 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             view.addGestureRecognizer(recognizer)
         }
         if !ownsTouches(view) { view.isUserInteractionEnabled = true }
+    }
+
+    /// Whether `view` is the one to show the touch at `point`: not when a
+    /// control or another pressable view inside it is under the finger, which
+    /// shows its own. A switch in a row does not light the row.
+    private func showsPressFeedback(_ view: UIView, at point: CGPoint) -> Bool {
+        guard pressFeedbackViews.contains(ObjectIdentifier(view)) else { return false }
+        var candidate = view.hitTest(point, with: nil)
+        while let current = candidate, current !== view {
+            if current is UIControl || pressFeedbackViews.contains(ObjectIdentifier(current)) { return false }
+            candidate = current.superview
+        }
+        return true
+    }
+
+    /// A touch came down on `view`. Internal for XCTest, which cannot make a
+    /// touch: the recognizer's action calls this and nothing else.
+    func pressFeedbackBegan(on view: UIView, at point: CGPoint) {
+        let id = ObjectIdentifier(view)
+        if let handler = pressInHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let handler = underlayShowHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        guard showsPressFeedback(view, at: point) else { return }
+        pendingPressFeedback.removeValue(forKey: id)?.cancel()
+        var ancestor = view.superview
+        while let current = ancestor, !((current as? UIScrollView)?.isScrollEnabled == true) { ancestor = current.superview }
+        guard ancestor != nil else { return setPressFeedback(true, on: view) }
+        // In something that scrolls, wait: the touch may be the start of a
+        // scroll, and a list must not flash under a flick.
+        let show = DispatchWorkItem { [weak self, weak view] in
+            guard let self, let view else { return }
+            self.pendingPressFeedback.removeValue(forKey: id)
+            self.setPressFeedback(true, on: view)
+        }
+        pendingPressFeedback[id] = show
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pressFeedbackScrollDelay, execute: show)
+    }
+
+    /// The touch on `view` is over: lifted (`pressed`), or taken by a scroll
+    /// or another gesture. Internal for XCTest.
+    func pressFeedbackEnded(on view: UIView, pressed: Bool) {
+        let id = ObjectIdentifier(view)
+        if let handler = pressOutHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let handler = underlayHideHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let waiting = pendingPressFeedback.removeValue(forKey: id) {
+            waiting.cancel()
+            // Lifted before the wait was over: a tap, and it is still shown.
+            // Taken by a scroll: it never is.
+            guard pressed else { return }
+            setPressFeedback(true, on: view)
+        }
+        guard let shownAt = pressFeedbackShownAt[id] else { return setPressFeedback(false, on: view) }
+        let remaining = Self.pressFeedbackMinimum - (CACurrentMediaTime() - shownAt)
+        guard pressed, remaining > 0 else { return setPressFeedback(false, on: view) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self, weak view] in
+            guard let self, let view, self.pressFeedbackShownAt[id] == shownAt else { return }
+            self.setPressFeedback(false, on: view)
+        }
+    }
+
+    /// Shows or clears what `view` does under the finger. A touchable dims
+    /// or shows its underlay, as it is configured to. Anything else that can
+    /// be pressed is covered with the grey a system row turns: the label
+    /// colour, faint enough to read through, in the view's own corners.
+    private func setPressFeedback(_ on: Bool, on view: UIView) {
+        let id = ObjectIdentifier(view)
+        if on { pressFeedbackShownAt[id] = CACurrentMediaTime() } else { pressFeedbackShownAt.removeValue(forKey: id) }
+        if let pressable = view as? CraftNativeFlowView, pressable.pressUnderlayColor != nil || pressable.pressActiveOpacity != nil {
+            if on, let underlayColor = pressable.pressUnderlayColor { pressable.backgroundColor = underlayColor }
+            if !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
+            let alpha = pressable.pressBaseOpacity * (on ? pressable.pressActiveOpacity ?? 1 : 1)
+            UIView.animate(withDuration: 0.1) { pressable.alpha = alpha }
+            return
+        }
+        if let pressable = view as? CraftNativeFlowView, !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
+        guard on else {
+            pressHighlights[id]?.opacity = 0
+            return
+        }
+        let highlight = pressHighlights[id] ?? {
+            let layer = CALayer()
+            layer.zPosition = 1000
+            layer.opacity = 0
+            pressHighlights[id] = layer
+            return layer
+        }()
+        if highlight.superlayer !== view.layer { view.layer.addSublayer(highlight) }
+        // Placed without animation; only its opacity is animated.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        highlight.frame = view.bounds
+        highlight.cornerRadius = view.layer.cornerRadius
+        highlight.cornerCurve = view.layer.cornerCurve
+        highlight.maskedCorners = view.layer.maskedCorners
+        highlight.backgroundColor = UIColor.label.withAlphaComponent(0.12).resolvedColor(with: view.traitCollection).cgColor
+        CATransaction.commit()
+        highlight.opacity = 1
     }
 
     private func updateUnderlayHandlers(_ show: String?, _ hide: String?, for view: UIView) {
@@ -11632,10 +11831,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         addTextDecorationAttributes(style, to: &attributes)
         if let shadow = textShadow(style) { attributes[.shadow] = shadow }
+        // A CSS line box may be shorter than its font while glyphs paint outside
+        // it. UIKit clips that same paragraph inside a UILabel. Preserve the
+        // resolved font metrics for layout and drawing, including custom faces
+        // whose ascenders exceed their point size and Dynamic Type scaling.
         if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, label.font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, label.font.lineHeight)
             paragraph.alignment = label.textAlignment
             attributes[.paragraphStyle] = paragraph
         }
@@ -11689,8 +11892,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, font.lineHeight)
             attributes[.paragraphStyle] = paragraph
         }
         addTextDecorationAttributes(style, to: &attributes)
@@ -11717,8 +11920,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // then paints a second line outside the field instead of scrolling.
         if singleLine { paragraph.lineBreakMode = .byClipping }
         if let lineHeight = styleNumber(style["lineHeight"]) {
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, font.lineHeight)
         }
         attributes[.paragraphStyle] = paragraph
         addTextDecorationAttributes(style, to: &attributes)
@@ -12125,6 +12328,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
     }
 
+    /// Whether anything shown below `view` can be acted on: a control, a
+    /// text field, or a view with a press, a link or a hold of its own.
+    /// Children are drawn before their parent's accessibility is applied.
+    private func holdsControls(_ view: UIView) -> Bool {
+        view.subviews.contains { child in
+            if child.isHidden { return false }
+            let id = ObjectIdentifier(child)
+            if child is UIControl || (child as? UITextView)?.isEditable == true { return true }
+            if handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil { return true }
+            return holdsControls(child)
+        }
+    }
+
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
         let id = ObjectIdentifier(view)
         view.accessibilityLabel = (props["accessibilityLabel"] as? String)
@@ -12156,9 +12372,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let controlledVideo = type == "Video" && (props["controls"] as? Bool) == true
         // Compact single-choice pickers are accessible menu buttons. Controls
         // containing several independent elements remain semantic groups.
+        // A plain view with a name is one element, and UIKit does not look
+        // inside an element: its label stands in for the text it holds. One
+        // that holds something to act on is a group instead, or the button
+        // in a labelled pager or panel could not be reached at all. A view
+        // that is pressed itself stays the one thing to press, and `group`
+        // says so outright for a box of plain text.
+        let pressed = handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil
+        let group = role == "group"
+            || (role == nil && ["View", "SafeAreaView", "KeyboardAvoidingView"].contains(type)
+                && view.accessibilityLabel != nil && !pressed && holdsControls(view))
         let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)
             || ["tablist", "radiogroup", "list", "menu", "menubar", "toolbar"].contains(role ?? "")
-            || controlledVideo
+            || controlledVideo || group
         view.isAccessibilityElement = !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))
         view.accessibilityContainerType = container && (view.accessibilityLabel != nil || controlledVideo) ? .semanticGroup : .none
         // Keep the interaction trait native controls expose. Rebuilding this
@@ -12615,37 +12841,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let target = linkTargets[id] { hybridEvents?.nativeScreen(self, open: target, props: [:]) }
             return
         }
-        if pressInHandlers[id] == nil, pressOutHandlers[id] == nil,
-           let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
-            UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in
-                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
-            }
-        }
+        // What it looks like under the finger was shown when the finger came
+        // down (pressFeedbackBegan), not here, after it has lifted.
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
 
     @objc private func viewPressFeedback(_ sender: UILongPressGestureRecognizer) {
         guard let view = sender.view else { return }
-        let id = ObjectIdentifier(view)
         switch sender.state {
-        case .began:
-            if let pressable = view as? CraftNativeFlowView {
-                if let underlayColor = pressable.pressUnderlayColor { pressable.backgroundColor = underlayColor }
-                if let activeOpacity = pressable.pressActiveOpacity {
-                    UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }
-                }
-            }
-            if let handler = pressInHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-            if let handler = underlayShowHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-        case .ended, .cancelled, .failed:
-            if let pressable = view as? CraftNativeFlowView {
-                pressable.backgroundColor = pressable.pressBaseBackgroundColor
-                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
-            }
-            if let handler = pressOutHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-            if let handler = underlayHideHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-        default:
-            break
+        case .began: pressFeedbackBegan(on: view, at: sender.location(in: view))
+        case .ended: pressFeedbackEnded(on: view, pressed: true)
+        case .cancelled, .failed: pressFeedbackEnded(on: view, pressed: false)
+        default: break
         }
     }
 

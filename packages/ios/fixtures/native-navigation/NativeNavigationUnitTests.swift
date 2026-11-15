@@ -1,3 +1,4 @@
+import Combine
 import UIKit
 import WebKit
 import XCTest
@@ -1177,6 +1178,52 @@ final class NativeNavigationUnitTests: XCTestCase {
         home.popViewController(animated: false)
         await renderFrames()
         XCTAssertNil(CraftChrome.shared.tabAccessory)
+    }
+
+    /// Two screens in one stack that both put the bar away: an inbox with
+    /// `tabBarHiddenWhenPushed`, and the conversation pushed from it with
+    /// `tabBarHidden`. Going back, the conversation brought the bar back as
+    /// it left, and the inbox put it away again once it was on screen: the
+    /// bar and the floating actions slid in for the length of the pop, and
+    /// stayed for the whole of a back-swipe (#530).
+    func testPoppingBetweenTwoScreensThatHideTheBarNeverShowsIt() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        shell.open("/linked-details")
+        await displayWait("the inbox is pushed") {
+            home.transitionCoordinator == nil && home.viewControllers.count == 2
+        }
+        let inbox = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        inbox.evaluateScript("craft.navigation.setOptions({tabBarHiddenWhenPushed:true})")
+        await displayWait("the pushed inbox puts the bar away") { CraftChrome.shared.hiddenByScreen }
+        CraftHybrid.shared.open("/capabilities")
+        await displayWait("the conversation is pushed") {
+            home.transitionCoordinator == nil && home.viewControllers.count == 3
+        }
+        let conversation = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        conversation.evaluateScript("craft.navigation.setOptions({tabBarHidden:true})")
+        await displayWait("the conversation keeps the bar away") { CraftChrome.shared.hiddenByScreen }
+        await renderFrames()
+        XCTAssertFalse(CraftChrome.shared.tabBarVisible)
+
+        // Every value the bar's visibility takes from here to the end of the pop.
+        var shown: [Bool] = []
+        let watching = CraftChrome.shared.$tabBarVisible.dropFirst().sink { shown.append($0) }
+        home.popViewController(animated: true)
+        await displayWait("the pop to the inbox completed") {
+            home.transitionCoordinator == nil && home.topViewController === inbox
+        }
+        await renderFrames()
+        watching.cancel()
+        XCTAssertEqual(shown.filter { $0 }, [], "the bar was brought back on the way to a screen that hides it")
+        XCTAssertTrue(CraftChrome.shared.hiddenByScreen)
+        XCTAssertFalse(CraftChrome.shared.tabBarVisible)
+
+        // On to the first screen, which wants its bar: it comes back.
+        home.popViewController(animated: false)
+        await displayWait("the bar returns for the screen that shows it") {
+            home.transitionCoordinator == nil && !CraftChrome.shared.hiddenByScreen
+        }
+        XCTAssertTrue(CraftChrome.shared.tabBarVisible)
     }
 
     func testPreparedTabOptionsCannotReplaceVisibleScreenChrome() async throws {

@@ -195,8 +195,31 @@ final class CraftMacTextView: NSTextView {
     /// The font the markdown styling is built from. NSTextView's own `font` answers the font at the caret, which a heading changes.
     var baseFont: NSFont?
     override func didChangeText() { ghost = ""; super.didChangeText(); restyle() }
+    /// The line the caret was on when the text was last styled: a heading's `#` marks show on that line only.
+    private var styledCaretLine = NSRange(location: NSNotFound, length: 0)
+    private var styling = false
+    private func caretLine() -> NSRange {
+        let text = string as NSString
+        let caret = selectedRange()
+        guard caret.location <= text.length else { return NSRange(location: NSNotFound, length: 0) }
+        return text.lineRange(for: NSRange(location: caret.location, length: min(caret.length, text.length - caret.location)))
+    }
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // Moving the caret onto or off a heading shows or folds its marks. Not while an edit or a drag is in flight:
+        // the edit restyles when it lands, and a drag restyles when it ends.
+        guard markdown, !styling, !stillSelecting, textStorage?.editedMask.isEmpty != false, caretLine() != styledCaretLine else { return }
+        restyle()
+    }
+    // After the window has recorded the change: inside these calls it still names the previous responder.
+    override func becomeFirstResponder() -> Bool { let took = super.becomeFirstResponder(); if took { DispatchQueue.main.async { [weak self] in self?.restyle() } }; return took }
+    override func resignFirstResponder() -> Bool { let left = super.resignFirstResponder(); if left { DispatchQueue.main.async { [weak self] in self?.restyle() } }; return left }
     func restyle() {
-        guard markdown, let storage = textStorage else { return }
+        guard markdown, !styling, let storage = textStorage else { return }
+        styling = true; defer { styling = false }
+        let editing = caretLine()
+        styledCaretLine = editing
+        let focused = window?.firstResponder === self
         let base = baseFont ?? font ?? NSFont.systemFont(ofSize: 13)
         let text = string as NSString
         let full = NSRange(location: 0, length: text.length)
@@ -219,7 +242,11 @@ final class CraftMacTextView: NSTextView {
             if let hashes = line.prefix(while: { $0 == "#" }) as Substring?, (1...3).contains(hashes.count), line.dropFirst(hashes.count).hasPrefix(" ") {
                 let size: CGFloat = [1: base.pointSize + 11, 2: base.pointSize + 6, 3: base.pointSize + 3][hashes.count]!
                 storage.addAttribute(.font, value: traits(NSFont.systemFont(ofSize: size), .bold), range: range)
-                storage.addAttributes(dim, range: NSRange(location: range.location, length: hashes.count + 1))
+                let marks = NSRange(location: range.location, length: hashes.count + 1)
+                // A heading reads as a heading, as in Notes: its marks are dimmed on the line being edited, where
+                // they can be changed, and folded to nothing on every other line. The text stays plain markdown.
+                if focused, editing.location == range.location { storage.addAttributes(dim, range: marks) }
+                else { storage.addAttributes([.font: NSFont.systemFont(ofSize: 0.01), .foregroundColor: NSColor.clear], range: marks) }
             }
             else if line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
                 storage.addAttributes(dim, range: NSRange(location: range.location, length: 6))
@@ -939,11 +966,17 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
 }
 
 final class CraftMacSidebarRow: NSTableRowView {
+    /// How far the selection pill stands in from the sidebar's edges (`selectionInset`).
+    var inset: CGFloat = 4
+    /// The pill is a quiet grey in both appearances, so what stands on it is drawn as on any other row.
+    /// AppKit otherwise reads a selected row as a dark, emphasized one and draws its label and icon white,
+    /// which on the light appearance's pale pill cannot be read.
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            NSColor.unemphasizedSelectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 7, yRadius: 7).fill()
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: inset, dy: 1), xRadius: 7, yRadius: 7).fill()
         }
     }
 }
@@ -959,12 +992,24 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     /// `rowHeight` and `labelFontSize` props: a Things-like sidebar is 24 points tall at 15.
     var rowHeight: CGFloat = 32
     var labelSize: CGFloat = 13
+    /// `labelFontWeight`: `regular` (the default), `medium`, `semibold` or `bold`.
+    var labelWeight: NSFont.Weight = .regular
+    /// `selectionInset`: the selection pill's distance from the sidebar's edges.
+    var selectionInset: CGFloat = 4
+    /// `contentInset`: how far a row's icon (or its label, with no icon) and its badge stand inside the pill.
+    var contentInset: CGFloat = 20
     init(box: CraftMacBox) {
         self.box = box; super.init(frame: .zero)
         hasVerticalScroller = true; drawsBackground = false
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("label")); outline.addTableColumn(column); outline.outlineTableColumn = column
         outline.headerView = nil; outline.style = .plain; outline.backgroundColor = .clear
         outline.rowSizeStyle = .default; outline.indentationPerLevel = 0
+        // A section header scrolls away with its rows. A floating one pins to the top of the
+        // sidebar and draws a rule under itself, which under a transparent title bar is a
+        // hairline across the sidebar beside the traffic lights.
+        outline.floatsGroupRows = false
+        // Cells span the row, so `selectionInset` and `contentInset` are measured from the sidebar's own edges.
+        outline.intercellSpacing = .zero
         outline.dataSource = self; outline.delegate = self; outline.autoresizesOutlineColumn = true; documentView = outline
     }
     required init?(coder: NSCoder) { fatalError("Native sidebar is created from STX") }
@@ -975,7 +1020,11 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
         func size(_ key: String) -> CGFloat? { number(props[key]) ?? (props[key] as? String).flatMap(Double.init).map { CGFloat($0) } }
         rowHeight = size("rowHeight") ?? 32
         labelSize = size("labelFontSize") ?? 13
-        let next = String(decoding: data, as: UTF8.self) + "|\(rowHeight)|\(labelSize)"
+        let weights: [String: NSFont.Weight] = ["regular": .regular, "medium": .medium, "semibold": .semibold, "bold": .bold]
+        labelWeight = (props["labelFontWeight"] as? String).flatMap { weights[$0] } ?? .regular
+        selectionInset = size("selectionInset") ?? 4
+        contentInset = size("contentInset") ?? 20
+        let next = String(decoding: data, as: UTF8.self) + "|\(rowHeight)|\(labelSize)|\(labelWeight.rawValue)|\(selectionInset)|\(contentInset)"
         if next != fingerprint { fingerprint = next; sections = raw.map(Item.init); outline.reloadData(); outline.expandItem(nil, expandChildren: true) }
         if let selected = props["selected"] as? String { for index in 0..<outline.numberOfRows { if (outline.item(atRow: index) as? Item)?.id == selected { outline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false); break } } }
     }
@@ -990,18 +1039,21 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
         return item.children.isEmpty ? rowHeight : item.label.isEmpty ? 12 : max(24, rowHeight - 4)
     }
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        let row = CraftMacSidebarRow(); row.isEmphasized = false; return row
+        let row = CraftMacSidebarRow(); row.isEmphasized = false; row.inset = selectionInset; return row
     }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let item = item as! Item
         let cell = NSTableCellView(); let label = NSTextField(labelWithString: item.label)
-        label.font = NSFont.systemFont(ofSize: labelSize); label.lineBreakMode = .byTruncatingTail; cell.textField = label; cell.addSubview(label)
+        label.font = NSFont.systemFont(ofSize: labelSize, weight: labelWeight); label.lineBreakMode = .byTruncatingTail; cell.textField = label; cell.addSubview(label)
         if !item.children.isEmpty { label.font = NSFont.systemFont(ofSize: 11, weight: .semibold); label.textColor = .secondaryLabelColor }
         label.translatesAutoresizingMaskIntoConstraints = false
-        let badge = NSTextField(labelWithString: item.badge); badge.font = NSFont.systemFont(ofSize: 11); badge.textColor = .secondaryLabelColor
-        badge.translatesAutoresizingMaskIntoConstraints = false; badge.setContentHuggingPriority(.required, for: .horizontal); cell.addSubview(badge)
-        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: item.icon.isEmpty ? 16 : 39), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -16), badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-        if !item.icon.isEmpty { let image = NSImageView(image: CraftMacSymbols.image(item.icon) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: (rowHeight - 16) / 2, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
+        let badge = NSTextField(labelWithString: item.badge); badge.font = NSFont.systemFont(ofSize: 11, weight: labelWeight); badge.textColor = .secondaryLabelColor
+        badge.translatesAutoresizingMaskIntoConstraints = false; badge.setContentHuggingPriority(.required, for: .horizontal); badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal); cell.addSubview(badge)
+        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: selectionInset + contentInset + (item.icon.isEmpty ? 0 : 24)), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -(selectionInset + contentInset)), badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+        if !item.icon.isEmpty { let image = NSImageView(image: CraftMacSymbols.image(item.icon) ?? NSImage()); image.contentTintColor = item.color; // Not the cell's `imageView`: AppKit recolours that one white on a selected row, and a list's icon keeps its colour.
+            image.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(image)
+            NSLayoutConstraint.activate([image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: selectionInset + contentInset), image.centerYAnchor.constraint(equalTo: cell.centerYAnchor), image.widthAnchor.constraint(equalToConstant: 18), image.heightAnchor.constraint(equalToConstant: 18)]) }
         cell.setAccessibilityIdentifier(item.id); cell.setAccessibilityLabel(item.label)
         return cell
     }

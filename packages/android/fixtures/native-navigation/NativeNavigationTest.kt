@@ -46,6 +46,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -3171,6 +3172,96 @@ class NativeNavigationTest {
                 expectEvents("held,pressed,pressed,pressed,pressed,held", "a long press alone")
             } finally { scenario.close() }
         }
+    }
+
+    /**
+     * A view that can be pressed shows the touch (#538).
+     *
+     * A press handler alone used to get a click listener and nothing else: a
+     * tappable row was silent under the finger. It now carries the
+     * platform's pressed highlight, drawn by the view's own pressed state,
+     * so a real touch lights it and lifting clears it. The three touchables
+     * keep what they do (they dim, or show an underlay) and get none.
+     */
+    @Test
+    fun aViewThatCanBePressedShowsThePlatformsHighlightUnderTheFinger() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        lateinit var screen: Any
+        fun render(rows: String) {
+            scenario.onActivity {
+                val document = JSONObject("""{"id":"root","type":"View","style":{"width":300,"height":500},"children":[$rows]}""")
+                MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                    .apply { isAccessible = true }.invoke(activity, screen, document)
+            }
+        }
+        fun row(id: String, type: String = "View", props: String = "", events: String = """{"onPress":"pressed"}""", style: String = """{"height":60}""") =
+            """{"id":"$id","type":"$type","props":{"testID":"$id"$props},"style":$style,"events":$events}"""
+        fun touch(view: View, action: Int, began: Long) {
+            scenario.onActivity {
+                val event = MotionEvent.obtain(began, SystemClock.uptimeMillis(), action, view.width / 2f, view.height / 2f, 0)
+                try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+        }
+        fun awaitPressed(view: View, expected: Boolean): Boolean {
+            val deadline = SystemClock.uptimeMillis() + 2000
+            var pressed = !expected
+            while (pressed != expected && SystemClock.uptimeMillis() < deadline) {
+                scenario.onActivity { pressed = view.isPressed }
+                if (pressed != expected) SystemClock.sleep(20)
+            }
+            return pressed
+        }
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            scenario.onActivity {
+                screen = requireNotNull((MainActivity::class.java.getDeclaredField("screens")
+                    .apply { isAccessible = true }.get(activity) as List<*>).last())
+            }
+            render(listOf(
+                row("row", style = """{"height":60,"borderRadius":12}"""),
+                row("quiet", props = ""","pressFeedback":false"""),
+                row("lowercased", props = ""","pressfeedback":"none""""),
+                row("plain", events = "{}"),
+                row("dim", type = "Pressable"),
+                row("label", type = "Text"),
+            ).joinToString(","))
+            val row = awaitView(activity, "row") { it.width > 0 && it.height > 0 }
+            scenario.onActivity {
+                val highlight = row.foreground
+                assertTrue("a press handler alone carries the pressed highlight, found $highlight", highlight is CraftNativePressHighlight)
+                highlight as CraftNativePressHighlight
+                assertEquals("in the view's own corners", 12 * activity.resources.displayMetrics.density, highlight.radius, 1f)
+                assertEquals("faint enough to read the row through", 31, Color.alpha(highlight.color))
+                assertNull("opted out", find(activity.window.decorView, "quiet")!!.foreground)
+                assertNull("opted out, as STX's parser spells it", find(activity.window.decorView, "lowercased")!!.foreground)
+                assertNull("nothing to press, nothing to show", find(activity.window.decorView, "plain")!!.foreground)
+                assertNull("a Pressable dims instead", find(activity.window.decorView, "dim")!!.foreground)
+                assertTrue("a pressable Text is highlighted too", find(activity.window.decorView, "label")!!.foreground is CraftNativePressHighlight)
+            }
+
+            // A real touch: the platform presses the view, which is what
+            // draws the highlight, and lifting releases it.
+            val began = SystemClock.uptimeMillis()
+            touch(row, MotionEvent.ACTION_DOWN, began)
+            assertTrue("the view is pressed while the finger is on it", awaitPressed(row, true))
+            scenario.onActivity {
+                assertTrue("and its highlight is in the pressed state",
+                    row.foreground.state.contains(android.R.attr.state_pressed))
+            }
+            touch(row, MotionEvent.ACTION_UP, began)
+            assertFalse("lifting releases it", awaitPressed(row, false))
+
+            // The same render again keeps the drawable it has: a ripple under
+            // a finger must not be restarted by an update.
+            val before = row.foreground
+            render(listOf(row("row", style = """{"height":60,"borderRadius":12}""")).joinToString(","))
+            scenario.onActivity { assertSame(before, row.foreground) }
+            // Its handler goes, and the highlight with it.
+            render(listOf(row("row", events = "{}", style = """{"height":60,"borderRadius":12}""")).joinToString(","))
+            scenario.onActivity { assertNull(find(activity.window.decorView, "row")!!.foreground) }
+        } finally { scenario.close() }
     }
 
     /**

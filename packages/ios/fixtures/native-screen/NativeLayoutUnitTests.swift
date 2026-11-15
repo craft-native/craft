@@ -1075,6 +1075,178 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertNil(controller.navigationItem.compactScrollEdgeAppearance)
     }
 
+    // #538: a press handler alone got nothing under the finger. A tappable
+    // row was silent when touched, and a Pressable dimmed only after the
+    // finger had lifted. XCTest cannot make a touch, so these drive what the
+    // zero-delay recognizer calls.
+
+    private func pressable(_ key: String, _ type: String = "View", style: [String: Any] = ["height": 56], props: [String: Any] = [:],
+                           events: [String: Any] = ["onPress": "pressed"], _ children: [[String: Any]] = []) -> [String: Any] {
+        ["id": key, "type": type, "props": props.merging(["testID": key]) { $1 }, "style": style, "events": events, "children": children]
+    }
+
+    private func pressHighlight(of view: UIView) -> CALayer? {
+        view.layer.sublayers?.first { $0.zPosition == 1000 }
+    }
+
+    private func isHighlighted(_ view: UIView) -> Bool { (pressHighlight(of: view)?.opacity ?? 0) > 0 }
+
+    private func touchWatchers(on view: UIView) -> Int {
+        (view.gestureRecognizers ?? []).filter { ($0 as? UILongPressGestureRecognizer)?.minimumPressDuration == 0 }.count
+    }
+
+    private func pause(_ seconds: TimeInterval) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    func testAPressableViewIsHighlightedWhileItIsTouched() async throws {
+        let controller = screen(box("root", style: ["flex": 1], [
+            pressable("row", style: ["height": 56, "borderRadius": 12, "backgroundColor": "#ffffff"]),
+            pressable("quiet", props: ["pressFeedback": false]),
+            pressable("lowercased", props: ["pressfeedback": "none"]),
+            box("plain", style: ["height": 56]),
+            pressable("dim", "Pressable"),
+            pressable("under", "TouchableHighlight", props: ["underlayColor": "#ff0000", "activeOpacity": 1]),
+            pressable("off", "Pressable", props: ["disabled": true]),
+        ]))
+        func view(_ key: String) throws -> UIView { try XCTUnwrap(find(key, below: controller.view), "no view \(key)") }
+        let middle = CGPoint(x: 20, y: 20)
+
+        // A plain view with a press handler: the grey a system row turns,
+        // over the whole view, in its own corners, the moment it is touched.
+        let row = try view("row")
+        XCTAssertEqual(touchWatchers(on: row), 1, "a press handler alone is enough to watch for the touch")
+        XCTAssertFalse(isHighlighted(row))
+        controller.pressFeedbackBegan(on: row, at: middle)
+        XCTAssertTrue(isHighlighted(row), "nothing here scrolls: it shows at once")
+        let highlight = try XCTUnwrap(pressHighlight(of: row))
+        XCTAssertEqual(highlight.frame, row.bounds)
+        XCTAssertEqual(highlight.cornerRadius, row.layer.cornerRadius)
+        XCTAssertEqual(highlight.maskedCorners, row.layer.maskedCorners)
+        XCTAssertEqual(UIColor(cgColor: try XCTUnwrap(highlight.backgroundColor)).cgColor.alpha, 0.12, accuracy: 0.001, "faint enough to read the row through")
+        XCTAssertEqual(row.alpha, 1, "a row is not dimmed: dimmed text reads as disabled")
+        // Lifted straight away: a tap, and it is still seen.
+        controller.pressFeedbackEnded(on: row, pressed: true)
+        XCTAssertTrue(isHighlighted(row))
+        await pause(0.3)
+        XCTAssertFalse(isHighlighted(row))
+        // Taken by another gesture: cleared at once, with nothing to wait for.
+        controller.pressFeedbackBegan(on: row, at: middle)
+        controller.pressFeedbackEnded(on: row, pressed: false)
+        XCTAssertFalse(isHighlighted(row))
+
+        // Opted out, in either spelling: not even watched.
+        for key in ["quiet", "lowercased"] {
+            let quiet = try view(key)
+            XCTAssertEqual(touchWatchers(on: quiet), 0, key)
+            controller.pressFeedbackBegan(on: quiet, at: middle)
+            XCTAssertFalse(isHighlighted(quiet), key)
+        }
+        // And a view nobody can press shows nothing.
+        let plain = try view("plain")
+        XCTAssertEqual(touchWatchers(on: plain), 0)
+        controller.pressFeedbackBegan(on: plain, at: middle)
+        XCTAssertFalse(isHighlighted(plain))
+
+        // A Pressable dims, as it always has, but when it is touched.
+        let dim = try view("dim")
+        XCTAssertEqual(touchWatchers(on: dim), 1)
+        controller.pressFeedbackBegan(on: dim, at: middle)
+        XCTAssertEqual(dim.alpha, 0.5, accuracy: 0.001)
+        XCTAssertFalse(isHighlighted(dim), "one kind of feedback, not two")
+        controller.pressFeedbackEnded(on: dim, pressed: false)
+        XCTAssertEqual(dim.alpha, 1, accuracy: 0.001)
+
+        // An underlay is its own highlight.
+        let under = try view("under")
+        controller.pressFeedbackBegan(on: under, at: middle)
+        XCTAssertEqual(under.backgroundColor, UIColor(hex: "#ff0000"))
+        XCTAssertEqual(under.alpha, 1, accuracy: 0.001)
+        controller.pressFeedbackEnded(on: under, pressed: false)
+        XCTAssertNotEqual(under.backgroundColor, UIColor(hex: "#ff0000"))
+
+        // Disabled: nothing to press, nothing to show.
+        let off = try view("off")
+        XCTAssertEqual(touchWatchers(on: off), 0)
+
+        // A render that takes the handler away takes the feedback with it.
+        controller.render(box("root", style: ["flex": 1], [pressable("row", events: [:])]))
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(touchWatchers(on: try view("row")), 0)
+    }
+
+    func testATouchInsideAScrollViewWaitsToSeeWhetherItIsAScroll() async throws {
+        let controller = screen(box("root", style: ["flex": 1], [[
+            "id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
+            "children": [pressable("row"), pressable("dim", "Pressable"), box("rest", style: ["height": 1200])],
+        ]]))
+        let row = try XCTUnwrap(find("row", below: controller.view))
+        let dim = try XCTUnwrap(find("dim", below: controller.view))
+        let middle = CGPoint(x: 20, y: 20)
+        let wait = CraftNativeScreenController.pressFeedbackScrollDelay
+
+        // Held: shown once the wait is over, and not before.
+        controller.pressFeedbackBegan(on: row, at: middle)
+        controller.pressFeedbackBegan(on: dim, at: middle)
+        XCTAssertFalse(isHighlighted(row), "a list must not flash under the start of a flick")
+        XCTAssertEqual(dim.alpha, 1, accuracy: 0.001)
+        await pause(wait + 0.15)
+        XCTAssertTrue(isHighlighted(row))
+        XCTAssertEqual(dim.alpha, 0.5, accuracy: 0.001)
+        controller.pressFeedbackEnded(on: row, pressed: true)
+        controller.pressFeedbackEnded(on: dim, pressed: true)
+        await pause(0.3)
+        XCTAssertFalse(isHighlighted(row))
+        XCTAssertEqual(dim.alpha, 1, accuracy: 0.001)
+
+        // A scroll takes the touch before the wait is over: never shown.
+        controller.pressFeedbackBegan(on: row, at: middle)
+        controller.pressFeedbackEnded(on: row, pressed: false)
+        await pause(wait + 0.15)
+        XCTAssertFalse(isHighlighted(row))
+
+        // A tap quicker than the wait is still a press, and is still shown.
+        controller.pressFeedbackBegan(on: row, at: middle)
+        controller.pressFeedbackEnded(on: row, pressed: true)
+        XCTAssertTrue(isHighlighted(row))
+        await pause(0.3)
+        XCTAssertFalse(isHighlighted(row))
+    }
+
+    func testOnlyWhatIsUnderTheFingerShowsTheTouch() throws {
+        let controller = screen(box("root", style: ["flex": 1], [
+            pressable("row", style: ["height": 80, "flexDirection": "row", "alignItems": "center"], [
+                pressable("inner", style: ["width": 60, "height": 40]),
+                ["id": "toggle", "type": "Switch", "props": ["testID": "toggle", "value": true]],
+                box("space", style: ["flex": 1, "height": 40]),
+            ]),
+        ]))
+        let row = try XCTUnwrap(find("row", below: controller.view))
+        let inner = try XCTUnwrap(find("inner", below: controller.view))
+        let toggle = try XCTUnwrap(find("toggle", below: controller.view))
+        let space = try XCTUnwrap(find("space", below: controller.view))
+        func centre(_ view: UIView) -> CGPoint { view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: row) }
+
+        // On the pressable view inside the row: that one's to show.
+        controller.pressFeedbackBegan(on: row, at: centre(inner))
+        controller.pressFeedbackBegan(on: inner, at: CGPoint(x: 10, y: 10))
+        XCTAssertFalse(isHighlighted(row))
+        XCTAssertTrue(isHighlighted(inner))
+        controller.pressFeedbackEnded(on: row, pressed: false)
+        controller.pressFeedbackEnded(on: inner, pressed: false)
+
+        // On a switch in the row: the switch answers for itself.
+        controller.pressFeedbackBegan(on: row, at: centre(toggle))
+        XCTAssertFalse(isHighlighted(row), "a control in a row does not light the row")
+        controller.pressFeedbackEnded(on: row, pressed: false)
+
+        // On the row's own space: the row.
+        controller.pressFeedbackBegan(on: row, at: centre(space))
+        XCTAssertTrue(isHighlighted(row))
+        controller.pressFeedbackEnded(on: row, pressed: false)
+        XCTAssertFalse(isHighlighted(row))
+    }
+
     // #527: `leftButtons` sit beside Back, so a screen that closes rather
     // than goes back (an inbox opened over the app) could not put an X where
     // the chevron is.
@@ -1106,6 +1278,13 @@ final class NativeLayoutUnitTests: XCTestCase {
         // go beside it rather than over it.
         pushed.evaluateScript("craft.navigation.setOptions({ title: 'Inbox' })")
         XCTAssertEqual(leading(pushed), ["nav-back", "nav-edit"])
+        // Asked for again with the same symbol and label, as an effect that
+        // runs again does: the same item, not a new one.
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close messages' } })")
+        XCTAssertTrue(pushed.navigationItem.leftBarButtonItems?.first === close)
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })")
+        XCTAssertFalse(pushed.navigationItem.leftBarButtonItems?.first === close, "a new label is a new item")
+        XCTAssertEqual(pushed.navigationItem.leftBarButtonItems?.first?.accessibilityLabel, "Close")
         pushed.evaluateScript("craft.navigation.setOptions({ leftButtons: [] })")
         XCTAssertEqual(leading(pushed), ["nav-back"])
         XCTAssertTrue(pushed.navigationItem.hidesBackButton)
@@ -1705,6 +1884,55 @@ final class NativeLayoutUnitTests: XCTestCase {
         defer { window.isHidden = true }
         XCTAssertGreaterThan(controller.view.safeAreaInsets.bottom, 0)
         XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+    }
+
+    func testEmptySafeAreaHeaderAboveALeadingScrollTakesNoInset() async throws {
+        // A site header that draws nothing natively: a SafeAreaView whose only
+        // child is empty, above the screen's scroll view. The scroll view
+        // leads the screen and runs under the status bar. The header must not
+        // take the status bar's inset there: as tall as the status bar it is
+        // no longer empty, the scroll view no longer leads, and the screen
+        // flips between two layouts from one pass to the next.
+        func root(banner: Bool) -> [String: Any] {
+            box("root", style: ["flex": 1], [
+                ["id": "header", "type": "SafeAreaView", "props": ["testID": "header"], "style": ["top": 0, "zIndex": 50],
+                 "children": [box("banner-slot", banner ? [box("banner", style: ["height": 40])] : [])]],
+                ["id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
+                 "children": [box("rows", style: ["height": 1600])]],
+            ])
+        }
+        let (controller, _, window) = try await bottomLayoutScreen(root(banner: false), tabbed: false)
+        defer { window.isHidden = true }
+        let inset = controller.view.safeAreaInsets.top
+        XCTAssertGreaterThan(inset, 0)
+        for pass in 0..<6 {
+            XCTAssertEqual(try frame("header", in: controller).height, 0, accuracy: 0.5, "pass \(pass): an empty header takes no room")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, 0, accuracy: 0.5, "pass \(pass): the leading scroll view runs under the status bar")
+            controller.view.setNeedsLayout()
+            await settle(controller)
+        }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        XCTAssertEqual(scroll.adjustedContentInset.top, inset, accuracy: 0.5, "and insets its own content by the status bar")
+
+        // With a banner in it the header is the first thing on the screen:
+        // the root stays inside the safe area and nothing is inset twice.
+        controller.render(root(banner: true))
+        for pass in 0..<4 {
+            await settle(controller)
+            XCTAssertEqual(try frame("header", in: controller).minY, inset, accuracy: 0.5, "pass \(pass): the banner starts below the status bar")
+            XCTAssertEqual(try frame("header", in: controller).height, 40, accuracy: 0.5, "pass \(pass): and is only as tall as its banner")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, inset + 40, accuracy: 0.5, "pass \(pass)")
+            controller.view.setNeedsLayout()
+        }
+
+        // And empty again, the scroll view leads again.
+        controller.render(root(banner: false))
+        for pass in 0..<4 {
+            await settle(controller)
+            XCTAssertEqual(try frame("header", in: controller).height, 0, accuracy: 0.5, "pass \(pass)")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, 0, accuracy: 0.5, "pass \(pass)")
+            controller.view.setNeedsLayout()
+        }
     }
 
     func testTabbedFlatListExtendsItsViewportAndKeepsTheLastCellReachable() async throws {
