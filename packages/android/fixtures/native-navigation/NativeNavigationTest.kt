@@ -1325,6 +1325,177 @@ class NativeNavigationTest {
     }
 
     /**
+     * #541: a Modal here is a view inside the screen, between the bars, and
+     * its scrim covered only the screen. Around an open blocking sheet the
+     * tab row and the bar stayed bright and live (a tab could be tapped or
+     * swiped to under it), the grouped actions were drawn over the sheet's
+     * corner, and the sheet's own scroll view was given room for them.
+     */
+    @Test
+    fun aBlockingModalPutsTheBarsAndTheFloatingActionsBehindIt() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        lateinit var screen: Any
+        lateinit var chrome: CraftNativeChrome
+        fun render(modal: String) {
+            scenario.onActivity {
+                val document = JSONObject("""{"id":"root","type":"View","style":{"flex":1},"children":[
+                    {"id":"own","type":"ScrollView","props":{"testID":"own-scroll"},"style":{"flex":1},"children":[{"id":"own-rows","type":"View","style":{"height":3000}}]},
+                    {"id":"sheet","type":"Modal","props":{"testID":"sheet","animationType":"none","presentationStyle":"pageSheet","sheetDetents":["large"],$modal},"children":[
+                        {"id":"sheet-scroll","type":"ScrollView","props":{"testID":"sheet-scroll"},"style":{"flex":1},"children":[{"id":"sheet-rows","type":"View","style":{"height":3000}}]}]}]}""")
+                MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                    .apply { isAccessible = true }.invoke(activity, screen, document)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        fun <T> onMain(read: () -> T): T {
+            var value: T? = null
+            scenario.onActivity { value = read() }
+            @Suppress("UNCHECKED_CAST")
+            return value as T
+        }
+        fun room(id: String): Int {
+            val scroll = awaitView(activity, id)
+            return onMain { requireNotNull(findType(scroll, android.widget.ScrollView::class.java)) { "$id has no vertical scroller" }.paddingBottom }
+        }
+        /** Waits until the screen's scroll view has, or has not, been given room for the actions. */
+        fun awaitRoom(id: String, wanted: (Int) -> Boolean, message: String): Int {
+            var found = -1
+            repeat(50) {
+                found = room(id)
+                if (wanted(found)) return found
+                SystemClock.sleep(100)
+            }
+            throw AssertionError("$message; room $found, reach ${onMain { chrome.floatingActionsReach() }}")
+        }
+        fun touch(x: Float, y: Float, vararg moves: Pair<Float, Float>) {
+            scenario.onActivity {
+                val began = SystemClock.uptimeMillis()
+                fun send(action: Int, atX: Float, atY: Float) {
+                    val event = MotionEvent.obtain(began, SystemClock.uptimeMillis(), action, atX, atY, 0)
+                    try { chrome.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+                send(MotionEvent.ACTION_DOWN, x, y)
+                for ((moveX, moveY) in moves) send(MotionEvent.ACTION_MOVE, moveX, moveY)
+                val (endX, endY) = moves.lastOrNull() ?: (x to y)
+                send(MotionEvent.ACTION_UP, endX, endY)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            scenario.onActivity {
+                screen = requireNotNull((MainActivity::class.java.getDeclaredField("screens")
+                    .apply { isAccessible = true }.get(activity) as List<*>).last())
+                chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+            }
+            // What the bars would do, counted instead of done.
+            var tabTaps = 0
+            var swipes = 0
+            scenario.onActivity {
+                chrome.onTab = { tabTaps += 1 }
+                chrome.onTabSwipeStart = { _, _, _ -> swipes += 1; false }
+                chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject(
+                    """{"path":"/capabilities","title":"Messages","symbol":"message","layout":"vertical","companions":[{"path":"/add","title":"Add","symbol":"plus"}]}"""
+                )), 0, "Home")
+            }
+            val tabRow = onMain { chrome.getChildAt(chrome.childCount - 1) as ViewGroup }
+            val cell = onMain { (tabRow.getChildAt(0) as ViewGroup).getChildAt(1) }
+            fun centre(view: View): Pair<Float, Float> = onMain {
+                val at = IntArray(2); val origin = IntArray(2)
+                view.getLocationOnScreen(at); chrome.getLocationOnScreen(origin)
+                (at[0] - origin[0] + view.width / 2f) to (at[1] - origin[1] + view.height / 2f)
+            }
+            val body = onMain { chrome.content.parent as View }
+            val (midX, midY) = centre(body)
+
+            // No Modal up: the actions float, the screen's scroll view has
+            // room for them, and the bars answer.
+            render(""""visible":false""")
+            val ownRoom = awaitRoom("own-scroll", { it > 0 }, "the screen's scroll view is given room for the actions")
+            val group = onMain { requireNotNull(find(chrome, "craft-tab-accessory-group")) }
+            assertEquals(View.VISIBLE, onMain { group.visibility })
+            assertFalse(onMain { chrome.blockedByModal })
+            val (cellX, cellY) = centre(cell)
+            touch(cellX, cellY)
+            assertEquals("a tab takes a tap", 1, tabTaps)
+            touch(midX + 150f, midY, (midX - 150f) to midY)
+            assertEquals("a sideways drag on the screen starts a tab swipe", 1, swipes)
+
+            // A blocking sheet: the bars are behind it.
+            render(""""visible":true""")
+            assertTrue(onMain { chrome.blockedByModal })
+            assertTrue("dimmed as the screen is", onMain { chrome.dimmedByModal })
+            assertEquals("the actions are not drawn over the sheet", View.INVISIBLE, onMain { group.visibility })
+            assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, onMain { tabRow.importantForAccessibility })
+            touch(cellX, cellY)
+            assertEquals("a tab behind the sheet takes nothing", 1, tabTaps)
+            touch(midX + 150f, midY, (midX - 150f) to midY)
+            assertEquals("and no tab is swiped to under it", 1, swipes)
+            // The sheet runs down to where the actions were, and is under nothing.
+            val sheetScroll = awaitView(activity, "sheet-scroll")
+            val (sheetEnd, actionsTop) = onMain {
+                val at = IntArray(2)
+                sheetScroll.getLocationOnScreen(at)
+                val end = at[1] + sheetScroll.height
+                group.getLocationOnScreen(at)
+                end to at[1]
+            }
+            assertTrue("the sheet must reach past where the actions float ($sheetEnd, $actionsTop)", sheetEnd > actionsTop)
+            awaitRoom("sheet-scroll", { it == 0 }, "a sheet in front of the actions is given no room for them")
+            SystemClock.sleep(300)
+            assertEquals(0, room("sheet-scroll"))
+            assertEquals("the screen behind keeps its room, and does not move under the scrim", ownRoom, room("own-scroll"))
+
+            // A transparent Modal blocks without dimming; a non-modal one does neither.
+            render(""""visible":true,"transparent":true""")
+            assertTrue(onMain { chrome.blockedByModal })
+            assertFalse(onMain { chrome.dimmedByModal })
+            render(""""visible":true,"nonModal":true""")
+            assertFalse(onMain { chrome.blockedByModal })
+            assertEquals(View.VISIBLE, onMain { group.visibility })
+
+            // Closed: everything is back.
+            render(""""visible":true""")
+            assertTrue(onMain { chrome.blockedByModal })
+            render(""""visible":false""")
+            assertFalse(onMain { chrome.blockedByModal })
+            assertFalse(onMain { chrome.dimmedByModal })
+            assertEquals(View.VISIBLE, onMain { group.visibility })
+            assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO, onMain { tabRow.importantForAccessibility })
+            touch(cellX, cellY)
+            assertEquals(2, tabTaps)
+            assertEquals(ownRoom, awaitRoom("own-scroll", { it == ownRoom }, "the room is as it was"))
+
+            // The same when only the Modal is redrawn, as a binding does.
+            var revision = 0
+            fun show(visible: Boolean) {
+                revision++
+                scenario.onActivity {
+                    MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, JSONObject::class.java)
+                        .apply { isAccessible = true }.invoke(activity, screen, JSONObject("""{
+                          "version":1,"batchId":"sheet-$revision","baseRevision":${revision - 1},"revision":$revision,
+                          "operations":[{"op":"updateNode","id":"sheet","patch":{"props":{"visible":$visible}}}]
+                        }"""))
+                }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            }
+            show(true)
+            assertTrue(onMain { chrome.blockedByModal })
+            assertEquals(View.INVISIBLE, onMain { group.visibility })
+            touch(cellX, cellY)
+            assertEquals(2, tabTaps)
+            show(false)
+            assertFalse(onMain { chrome.blockedByModal })
+            assertEquals(View.VISIBLE, onMain { group.visibility })
+        } finally {
+            scenario.close()
+        }
+    }
+
+    /**
      * #523: grouped actions float over the trailing end of whatever scrolls
      * behind them, and nothing was reserved, so the end of a screen could
      * not be brought out from under them.

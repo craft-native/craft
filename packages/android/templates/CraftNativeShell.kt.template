@@ -1191,7 +1191,7 @@ internal class CraftNativeChrome(
                 horizontalScrollDeferred = overHorizontalScroll
                 if (overHorizontalScroll) parent?.requestDisallowInterceptTouchEvent(true)
                 val overActions = android.graphics.Rect().let { accessoryGroup.getGlobalVisibleRect(it) && it.contains(event.rawX.toInt(), event.rawY.toInt()) }
-                swipeTracking = tabs.size > 1 && tabSwipeEnabled && !overActions && !overHorizontalScroll && tabRow.visibility == View.VISIBLE && event.y < tabRow.top
+                swipeTracking = tabs.size > 1 && tabSwipeEnabled && !blockedByModal && !overActions && !overHorizontalScroll && tabRow.visibility == View.VISIBLE && event.y < tabRow.top
                 swipeIntercepted = false
                 swipeDownX = event.x
                 swipeDownY = event.y
@@ -1343,12 +1343,64 @@ internal class CraftNativeChrome(
     }
 
     /**
+     * A blocking Modal is up on the screen shown.
+     *
+     * A Modal here is a view inside the screen, between the bars, and its
+     * scrim covers only the screen. The bars stayed bright and live around
+     * it: a tab could be tapped or swiped to under an open sheet, the bar's
+     * buttons answered, and the grouped actions were drawn over the sheet's
+     * corner (#541). While one is up the bars are behind it: dimmed as the
+     * screen is (unless the Modal is transparent), out of reach of touch
+     * and of TalkBack, and the floating actions are not shown.
+     */
+    internal var blockedByModal = false
+        private set
+    internal var dimmedByModal = false
+        private set
+    private val modalScrim = android.graphics.Paint().apply { color = Color.argb(82, 0, 0, 0) }
+    private var modalTouchOnBars = false
+
+    /** Which views are a blocking Modal: nothing inside one is under the floating actions. */
+    internal var isBlockingModal: ((View) -> Boolean)? = null
+
+    internal fun setBlockedByModal(blocked: Boolean, dimmed: Boolean) {
+        val dims = blocked && dimmed
+        if (blockedByModal == blocked && dimmedByModal == dims) return
+        blockedByModal = blocked
+        dimmedByModal = dims
+        val reach = if (blocked) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        for (view in listOf(bar, largeTitleView, tabRow)) view.importantForAccessibility = reach
+        layoutAccessoryGroup(tabBarHiddenByScreen)
+        requestLayout()
+        invalidate()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (blockedByModal) {
+            // The whole gesture belongs to where it began: on the bars it
+            // goes nowhere, on the screen it goes to the Modal.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) modalTouchOnBars = event.y < body.top || event.y >= body.bottom
+            if (modalTouchOnBars) return true
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchDraw(canvas: android.graphics.Canvas) {
+        super.dispatchDraw(canvas)
+        if (!dimmedByModal) return
+        canvas.drawRect(0f, 0f, width.toFloat(), body.top.toFloat(), modalScrim)
+        canvas.drawRect(0f, body.bottom.toFloat(), width.toFloat(), height.toFloat(), modalScrim)
+    }
+
+    /**
      * How far the grouped actions reach up from the tab bar, in pixels: their
      * height and their lift above it. Zero when they are not floating over
      * the screen (no group, a hidden bar, or actions that sit in the tab row).
+     * Actions a Modal has hidden still hold their place: the screen behind
+     * the Modal keeps its room, and does not move under the scrim.
      */
     internal fun floatingActionsReach(): Int =
-        if (accessoryGroup.parent === body && accessoryGroup.visibility == View.VISIBLE && accessoryGroup.height > 0) (body.height - accessoryGroup.top).coerceAtLeast(0)
+        if (accessoryGroup.parent === body && accessoryGroup.visibility != View.GONE && accessoryGroup.height > 0) (body.height - accessoryGroup.top).coerceAtLeast(0)
         else 0
 
     private var floatingClearancePosted = false
@@ -1380,7 +1432,11 @@ internal class CraftNativeChrome(
         // its own: where it sits in a page not yet scrolled to it says
         // nothing about the screen, and a short list below the fold was
         // given the whole reach and scrolled inside its box into blank space.
+        // A blocking Modal is in front of the actions, which are hidden
+        // while it is up: a sheet's scroll view that ends at the bottom of
+        // the screen is under nothing.
         fun visit(view: View, inside: Boolean) {
+            if (!inside && isBlockingModal?.invoke(view) == true) return visit(view, true)
             when (view) {
                 is CraftNativeFlatList -> view.setFloatingCover(if (inside) 0 else cover(view))
                 is CraftNativeScrollView -> {
@@ -1420,7 +1476,12 @@ internal class CraftNativeChrome(
         accessoryGroup.orientation = if (vertical) VERTICAL else HORIZONTAL
         companionRow.orientation = accessoryGroup.orientation
         accessoryGroup.setPadding(if (grouped) dp(2) else 0, if (grouped) dp(2) else 0, if (grouped) dp(2) else 0, if (grouped) dp(2) else 0)
-        accessoryGroup.visibility = if (accessorySpec == null || hidden || tabs.isEmpty()) View.GONE else View.VISIBLE
+        accessoryGroup.visibility = when {
+            accessorySpec == null || hidden || tabs.isEmpty() -> View.GONE
+            // Floating over the screen, they would be drawn over a Modal.
+            grouped && blockedByModal -> View.INVISIBLE
+            else -> View.VISIBLE
+        }
         accessoryGroup.tag = if (grouped) "craft-tab-accessory-group" else null
         accessoryGroup.elevation = if (grouped) dp(6).toFloat() else 0f
         accessoryGroup.clipToOutline = grouped

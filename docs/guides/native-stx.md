@@ -1009,6 +1009,11 @@ modal, while Android hides the sibling content behind the top blocking modal
 from TalkBack. Hiding it or changing it to `nonModal` restores the surrounding
 content's authored accessibility roles. Non-modal overlays above it stay
 accessible; presented UIKit sheets retain containment too.
+On Android the bars around the screen go behind a blocking `Modal` as well,
+since a Modal there is drawn inside the screen: the navigation bar and the tab
+row are dimmed with the screen (not for a `transparent` Modal), take no touch
+and no tab swipe, are hidden from TalkBack, and the grouped tab actions are
+not drawn while it is up. System Back still closes the Modal.
 `accessibilityLanguage` accepts a BCP 47 language tag such as `de-DE`, choosing
 the voice for that node without changing the app's locale. Android exposes the
 language through text locales and speech spans for text, labels and hints.

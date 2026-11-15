@@ -5501,6 +5501,7 @@ class MainActivity : AppCompatActivity() {
             haptic()
             if (index == currentTab) popToRoot() else selectTab(index)
         }
+        bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }
         bars.onTabSwipeStart = { dx, x, y -> beginTabSwipe(dx, x, y) }
         bars.onTabSwipeMove = { dx -> updateTabSwipe(dx) }
         bars.onTabSwipeEnd = { dx, cancelled -> finishTabSwipe(dx, cancelled) }
@@ -6096,6 +6097,7 @@ class MainActivity : AppCompatActivity() {
         visibleScreen = screen
         if (screen.frameRequested) postFrame(screen)
         if (bars != null) applyChrome(screen)
+        syncChromeModalBlock()
         applyScreenBackground(screen)
         if (previous !== screen) {
             if (previous != null && previous.active) send(previous, "SCREEN_FOCUS", JSONObject().put("focused", false))
@@ -6495,7 +6497,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyMutation(screen: Screen, payload: JSONObject): CraftNativeMutationResult {
         val result = screen.mutations.apply(payload)
-        if (!result.requiresFullRender && applyTargetedUpdates(screen, result.affectedNodeIds)) return result
+        if (!result.requiresFullRender && applyTargetedUpdates(screen, result.affectedNodeIds)) {
+            // A targeted update can show or hide a Modal.
+            syncChromeModalBlock()
+            return result
+        }
         result.document?.let { renderCommitted(screen, it) } ?: clearRenderedTree(screen)
         return result
     }
@@ -6622,6 +6628,7 @@ class MainActivity : AppCompatActivity() {
         screen.view.setViewportChild(tree)
         screen.view.setChildStyle(tree, craftNativeComponentLayoutStyle(document), resources.displayMetrics.density)
         promoteModalOverlays(screen)
+        syncChromeModalBlock()
         updateSafeAreaViews()
         // A full render can change a view's custom layout style without
         // changing the root bounds. Ensure native @layout observers still see
@@ -6673,6 +6680,23 @@ class MainActivity : AppCompatActivity() {
         craftNativeModalAccessibility(screen.view, screen.modalAccessibility) {
             it is CraftNativeModalView && it.blocksBackground && screen.modalVisibility[it] == true
         }
+    }
+
+    /**
+     * Tells the bars whether a blocking Modal is up on the screen shown, so
+     * they go behind it with the screen: after every draw or targeted
+     * update of that screen, and when another screen is shown in its place.
+     */
+    private fun syncChromeModalBlock() {
+        var blocked = false
+        var dimmed = false
+        visibleScreen?.modalVisibility?.forEach { (view, visible) ->
+            val modal = view as? CraftNativeModalView ?: return@forEach
+            if (!visible || !modal.blocksBackground) return@forEach
+            blocked = true
+            if (!modal.transparent) dimmed = true
+        }
+        chrome?.setBlockedByModal(blocked, dimmed)
     }
 
     private fun updateStatusBarProps(screen: Screen, props: JSONObject) {

@@ -4612,6 +4612,29 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('the viewport, the safe area and the web')
   })
 
+  it('puts the Android bars and floating actions behind a blocking Modal', () => {
+    // A Modal there is a view inside the screen, between the bars. Around
+    // an open sheet the tab row and the bar stayed bright and live, and the
+    // grouped actions were drawn over the sheet (#541).
+    expect(androidChrome).toContain('internal fun setBlockedByModal(blocked: Boolean, dimmed: Boolean) {')
+    // A gesture that begins on the bars goes nowhere; no tab is swiped to.
+    expect(androidChrome).toContain('if (event.actionMasked == MotionEvent.ACTION_DOWN) modalTouchOnBars = event.y < body.top || event.y >= body.bottom')
+    expect(androidChrome).toContain('swipeTracking = tabs.size > 1 && tabSwipeEnabled && !blockedByModal && !overActions')
+    // Dimmed as the screen is, above and below it.
+    expect(androidChrome).toContain('canvas.drawRect(0f, body.bottom.toFloat(), width.toFloat(), height.toFloat(), modalScrim)')
+    // The actions are hidden, and still hold their place for the screen
+    // behind: it keeps its room and does not move under the scrim.
+    expect(androidChrome).toContain('grouped && blockedByModal -> View.INVISIBLE')
+    expect(androidChrome).toContain('accessoryGroup.parent === body && accessoryGroup.visibility != View.GONE && accessoryGroup.height > 0')
+    // Nothing inside the Modal is under them.
+    expect(androidChrome).toContain('if (!inside && isBlockingModal?.invoke(view) == true) return visit(view, true)')
+    expect(android).toContain('bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }')
+    expect(android).toContain('private fun syncChromeModalBlock() {')
+    expect(android).toContain('if (!modal.transparent) dimmed = true')
+    expect(androidNavigationTest).toContain('fun aBlockingModalPutsTheBarsAndTheFloatingActionsBehindIt()')
+    expect(guide).toContain('On Android the bars around the screen go behind a blocking `Modal`')
+  })
+
   it('exercises the pushed-screen tab accessory on both maintained hosts', () => {
     expect(navigationDetails).toContain("path: '/capabilities'")
     expect(navigationDetails).toContain("accessibilityLabel: 'Open capabilities'")
