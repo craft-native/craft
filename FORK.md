@@ -58,6 +58,25 @@ schtasks /create /tn "craft fork sync" /sc daily /st 10:00 ^
   /tr "powershell -NoProfile -ExecutionPolicy Bypass -File G:\Code\Zig\craft\scripts\fork-sync.ps1"
 ```
 
+### When github.com cannot be reached
+
+This machine resolves github.com to an edge that times out (`Failed to connect to
+github.com:443 after 21140 ms`), which makes both the fetch and the push in the
+script fail. The working fix is an address override supplied through the
+environment, so that no IP is pinned in the repository and nothing has to be
+undone when that edge rotates:
+
+```powershell
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'http.curloptResolve'
+$env:GIT_CONFIG_VALUE_0 = 'github.com:443:140.82.112.3'
+.\scripts\fork-sync.ps1
+```
+
+The override reaches the script's own git calls because the child processes
+inherit it. When the fetch does fail, the script exits 1 with the fetch error and
+touches nothing -- it does not half-merge.
+
 ## What is different from upstream
 
 Everything below is Windows-side. Nothing macOS-side was changed except where a
