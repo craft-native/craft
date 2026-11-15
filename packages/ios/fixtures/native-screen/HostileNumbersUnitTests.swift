@@ -31,7 +31,7 @@ final class HostileNumbersUnitTests: XCTestCase {
         "mostRecentEventCount", "multiline", "muted", "name", "nonModal", "numColumns", "numberOfLines",
         "onEndReachedThreshold", "opacity", "pageIndex", "pagingEnabled", "passwordRules", "paused",
         "pictureInPicture", "pitchEnabled", "placeholder", "placeholderTextColor", "pointerEvents", "polylines",
-        "presentationStyle", "preserveAspectRatio", "refreshControl", "refreshing", "region", "repeatCount",
+        "presentationStyle", "preserveAspectRatio", "pressFeedback", "pressfeedback", "refreshControl", "refreshing", "region", "repeatCount",
         "resizeMode", "returnKeyType", "rotateEnabled", "scale", "scrollEnabled", "scrollTarget", "secureTextEntry",
         "selectable", "selectedDetent", "selectedValue", "selectionColor", "sheetDetents", "showsCompass",
         "showsHorizontalScrollIndicator", "showsScale", "showsUserLocation", "showsVerticalScrollIndicator", "size",

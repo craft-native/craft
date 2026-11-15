@@ -262,6 +262,20 @@ containers block both press and long-press callbacks on both hosts. On
 `TouchableHighlight`, `underlayColor` temporarily replaces the authored
 background during a press and `onShowUnderlay`/`onHideUnderlay` follow the
 same lifecycle on iOS and Android.
+
+Anything that can be pressed shows the touch while the finger is on it, not
+after it has lifted. A `Pressable` or `TouchableOpacity` dims to its
+`activeOpacity`, a `TouchableHighlight` shows its underlay, and any other view
+with `onPress` (a row that is a plain `View`, a pressable `Text`) is covered
+with the grey a system row turns: the label colour at 12%, in the view's own
+`borderRadius`, drawn over it so the row's text is not dimmed. On Android that
+is the platform's pressed ripple. Inside something that scrolls the feedback
+waits a moment, as a table row's does, so a list does not flash under a flick;
+a tap quicker than the wait is still shown, briefly. When a control or another
+pressable view inside it is under the finger, that one shows the touch and the
+outer view does not. `pressFeedback={false}` turns it off for a view, such as
+a backdrop, or one that draws its own pressed state from `onPressIn`.
+
 The shared `Pressable` contract intentionally omits platform-specific
 `hitSlop`, ripple, retention-offset, and long-press-delay options until both
 hosts implement them.

@@ -7000,6 +7000,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var pressFeedbackRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
+    /// Views that show something under the finger: every pressable one that
+    /// has not opted out (`pressFeedback={false}`).
+    private var pressFeedbackViews: Set<ObjectIdentifier> = []
+    /// The grey a plain pressable view is covered with while it is touched.
+    private var pressHighlights: [ObjectIdentifier: CALayer] = [:]
+    /// Feedback that is waiting to see whether the touch is a scroll.
+    private var pendingPressFeedback: [ObjectIdentifier: DispatchWorkItem] = [:]
+    /// When each view's feedback went on, to keep a quick tap visible.
+    private var pressFeedbackShownAt: [ObjectIdentifier: CFTimeInterval] = [:]
+    /// Inside a scroll view the feedback waits this long, as a table row's
+    /// does: a touch that turns out to be a scroll never shows it.
+    static let pressFeedbackScrollDelay: TimeInterval = 0.1
+    /// And once shown it stays at least this long, so a tap is seen.
+    static let pressFeedbackMinimum: TimeInterval = 0.12
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var imageErrors: [ObjectIdentifier: String] = [:]
@@ -10544,9 +10558,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if type != "Button" && type != "Link" && type != "Checkbox" && type != "TextInput" && type != "Picker" && type != "SegmentedControl" && type != "DatePicker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" && type != "StatusBar" && type != "RefreshControl" && type != "Map" {
             let disabled = props["disabled"] as? Bool == true
             updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
+            // STX's HTML parser lowercases a bound prop it does not know.
+            let feedback = props["pressFeedback"] ?? props["pressfeedback"]
             updatePressFeedback(
                 disabled ? nil : nonEmptyHandler(events["onPressIn"]),
                 disabled ? nil : nonEmptyHandler(events["onPressOut"]),
+                shown: !disabled && feedback as? Bool != false && feedback as? String != "none",
                 for: result
             )
             updateUnderlayHandlers(
@@ -11074,6 +11091,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
+        pressFeedbackViews.remove(id)
+        pressHighlights.removeValue(forKey: id)?.removeFromSuperlayer()
+        pendingPressFeedback.removeValue(forKey: id)?.cancel()
+        pressFeedbackShownAt.removeValue(forKey: id)
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
         imageErrors.removeValue(forKey: id)
@@ -11223,12 +11244,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if !ownsTouches(view) { view.isUserInteractionEnabled = actionable || longPressHandlers[id] != nil || view is CraftNativeFlowView }
     }
 
-    private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, for view: UIView) {
+    /// What a view does under the finger, before the press is known to be
+    /// one. A press handler alone used to get nothing: a tappable row was
+    /// silent when touched, and a `Pressable` dimmed only after the finger
+    /// had lifted (#538). Anything that can be pressed now watches for the
+    /// touch itself, unless it says `pressFeedback={false}`.
+    private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, shown: Bool, for view: UIView) {
         let id = ObjectIdentifier(view)
         if let pressIn, !pressIn.isEmpty { pressInHandlers[id] = pressIn } else { pressInHandlers.removeValue(forKey: id) }
         if let pressOut, !pressOut.isEmpty { pressOutHandlers[id] = pressOut } else { pressOutHandlers.removeValue(forKey: id) }
         let hasUnderlay = (view as? CraftNativeFlowView)?.pressUnderlayColor != nil
-        guard pressInHandlers[id] != nil || pressOutHandlers[id] != nil || hasUnderlay else {
+        let watched = pressInHandlers[id] != nil || pressOutHandlers[id] != nil || hasUnderlay
+        let pressable = handlers[id] != nil || linkTargets[id] != nil
+        if shown, watched || pressable { pressFeedbackViews.insert(id) } else {
+            pressFeedbackViews.remove(id)
+            pendingPressFeedback.removeValue(forKey: id)?.cancel()
+            if pressFeedbackShownAt[id] != nil { setPressFeedback(false, on: view) }
+        }
+        guard watched || (shown && pressable) else {
             if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) { view.removeGestureRecognizer(recognizer) }
             if let pressable = view as? CraftNativeFlowView { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
             if !ownsTouches(view) { view.isUserInteractionEnabled = handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }
@@ -11244,6 +11277,102 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             view.addGestureRecognizer(recognizer)
         }
         if !ownsTouches(view) { view.isUserInteractionEnabled = true }
+    }
+
+    /// Whether `view` is the one to show the touch at `point`: not when a
+    /// control or another pressable view inside it is under the finger, which
+    /// shows its own. A switch in a row does not light the row.
+    private func showsPressFeedback(_ view: UIView, at point: CGPoint) -> Bool {
+        guard pressFeedbackViews.contains(ObjectIdentifier(view)) else { return false }
+        var candidate = view.hitTest(point, with: nil)
+        while let current = candidate, current !== view {
+            if current is UIControl || pressFeedbackViews.contains(ObjectIdentifier(current)) { return false }
+            candidate = current.superview
+        }
+        return true
+    }
+
+    /// A touch came down on `view`. Internal for XCTest, which cannot make a
+    /// touch: the recognizer's action calls this and nothing else.
+    func pressFeedbackBegan(on view: UIView, at point: CGPoint) {
+        let id = ObjectIdentifier(view)
+        if let handler = pressInHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let handler = underlayShowHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        guard showsPressFeedback(view, at: point) else { return }
+        pendingPressFeedback.removeValue(forKey: id)?.cancel()
+        var ancestor = view.superview
+        while let current = ancestor, !((current as? UIScrollView)?.isScrollEnabled == true) { ancestor = current.superview }
+        guard ancestor != nil else { return setPressFeedback(true, on: view) }
+        // In something that scrolls, wait: the touch may be the start of a
+        // scroll, and a list must not flash under a flick.
+        let show = DispatchWorkItem { [weak self, weak view] in
+            guard let self, let view else { return }
+            self.pendingPressFeedback.removeValue(forKey: id)
+            self.setPressFeedback(true, on: view)
+        }
+        pendingPressFeedback[id] = show
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pressFeedbackScrollDelay, execute: show)
+    }
+
+    /// The touch on `view` is over: lifted (`pressed`), or taken by a scroll
+    /// or another gesture. Internal for XCTest.
+    func pressFeedbackEnded(on view: UIView, pressed: Bool) {
+        let id = ObjectIdentifier(view)
+        if let handler = pressOutHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let handler = underlayHideHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        if let waiting = pendingPressFeedback.removeValue(forKey: id) {
+            waiting.cancel()
+            // Lifted before the wait was over: a tap, and it is still shown.
+            // Taken by a scroll: it never is.
+            guard pressed else { return }
+            setPressFeedback(true, on: view)
+        }
+        guard let shownAt = pressFeedbackShownAt[id] else { return setPressFeedback(false, on: view) }
+        let remaining = Self.pressFeedbackMinimum - (CACurrentMediaTime() - shownAt)
+        guard pressed, remaining > 0 else { return setPressFeedback(false, on: view) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self, weak view] in
+            guard let self, let view, self.pressFeedbackShownAt[id] == shownAt else { return }
+            self.setPressFeedback(false, on: view)
+        }
+    }
+
+    /// Shows or clears what `view` does under the finger. A touchable dims
+    /// or shows its underlay, as it is configured to. Anything else that can
+    /// be pressed is covered with the grey a system row turns: the label
+    /// colour, faint enough to read through, in the view's own corners.
+    private func setPressFeedback(_ on: Bool, on view: UIView) {
+        let id = ObjectIdentifier(view)
+        if on { pressFeedbackShownAt[id] = CACurrentMediaTime() } else { pressFeedbackShownAt.removeValue(forKey: id) }
+        if let pressable = view as? CraftNativeFlowView, pressable.pressUnderlayColor != nil || pressable.pressActiveOpacity != nil {
+            if on, let underlayColor = pressable.pressUnderlayColor { pressable.backgroundColor = underlayColor }
+            if !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
+            let alpha = pressable.pressBaseOpacity * (on ? pressable.pressActiveOpacity ?? 1 : 1)
+            UIView.animate(withDuration: 0.1) { pressable.alpha = alpha }
+            return
+        }
+        if let pressable = view as? CraftNativeFlowView, !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
+        guard on else {
+            pressHighlights[id]?.opacity = 0
+            return
+        }
+        let highlight = pressHighlights[id] ?? {
+            let layer = CALayer()
+            layer.zPosition = 1000
+            layer.opacity = 0
+            pressHighlights[id] = layer
+            return layer
+        }()
+        if highlight.superlayer !== view.layer { view.layer.addSublayer(highlight) }
+        // Placed without animation; only its opacity is animated.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        highlight.frame = view.bounds
+        highlight.cornerRadius = view.layer.cornerRadius
+        highlight.cornerCurve = view.layer.cornerCurve
+        highlight.maskedCorners = view.layer.maskedCorners
+        highlight.backgroundColor = UIColor.label.withAlphaComponent(0.12).resolvedColor(with: view.traitCollection).cgColor
+        CATransaction.commit()
+        highlight.opacity = 1
     }
 
     private func updateUnderlayHandlers(_ show: String?, _ hide: String?, for view: UIView) {
@@ -12666,37 +12795,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let target = linkTargets[id] { hybridEvents?.nativeScreen(self, open: target, props: [:]) }
             return
         }
-        if pressInHandlers[id] == nil, pressOutHandlers[id] == nil,
-           let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
-            UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in
-                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
-            }
-        }
+        // What it looks like under the finger was shown when the finger came
+        // down (pressFeedbackBegan), not here, after it has lifted.
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
 
     @objc private func viewPressFeedback(_ sender: UILongPressGestureRecognizer) {
         guard let view = sender.view else { return }
-        let id = ObjectIdentifier(view)
         switch sender.state {
-        case .began:
-            if let pressable = view as? CraftNativeFlowView {
-                if let underlayColor = pressable.pressUnderlayColor { pressable.backgroundColor = underlayColor }
-                if let activeOpacity = pressable.pressActiveOpacity {
-                    UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }
-                }
-            }
-            if let handler = pressInHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-            if let handler = underlayShowHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-        case .ended, .cancelled, .failed:
-            if let pressable = view as? CraftNativeFlowView {
-                pressable.backgroundColor = pressable.pressBaseBackgroundColor
-                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
-            }
-            if let handler = pressOutHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-            if let handler = underlayHideHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
-        default:
-            break
+        case .began: pressFeedbackBegan(on: view, at: sender.location(in: view))
+        case .ended: pressFeedbackEnded(on: view, pressed: true)
+        case .cancelled, .failed: pressFeedbackEnded(on: view, pressed: false)
+        default: break
         }
     }
 

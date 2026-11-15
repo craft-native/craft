@@ -2122,12 +2122,12 @@ describe('native renderer component contract', () => {
   it('keeps pressable container disabled behavior aligned across hosts', () => {
     expect(ios).toContain('let disabled = props["disabled"] as? Bool == true')
     expect(ios).toContain('pressable.pressBaseOpacity = styleNumber(style["opacity"]) ?? 1')
-    expect(ios).toContain('pressable.pressBaseOpacity * activeOpacity')
+    expect(ios).toContain('let alpha = pressable.pressBaseOpacity * (on ? pressable.pressActiveOpacity ?? 1 : 1)')
     expect(ios).toContain('number(props["activeOpacity"]) ?? 0.5')
     expect(ios).toContain('pressable.pressUnderlayColor = type == "TouchableHighlight" && !disabled ? color(props["underlayColor"]) : nil')
     expect(ios).toContain('underlayShowHandlers[id]')
     expect(ios).toContain('underlayHideHandlers[id]')
-    expect(android).toContain('screen.pressActiveOpacities[this] = craftNativeFiniteFloat(props, "activeOpacity", 0.5f)')
+    expect(android).toContain('screen.pressActiveOpacities[this] = if (feedback) craftNativeFiniteFloat(props, "activeOpacity", 0.5f) else 1f')
     expect(android).toContain('view.alpha = base * active')
     expect(android).toContain('screen.pressUnderlayColors[this]')
     expect(android).toContain('screen.pressUnderlayShowHandlers[view]')
@@ -2186,6 +2186,42 @@ describe('native renderer component contract', () => {
     expect(android).toContain('val pressOutHandler = craftNativeEventName(events, "onPressOut")')
     expect(android).toContain('screen.pressInHandlers[view]')
     expect(android).toContain('screen.pressOutHandlers[view]')
+  })
+
+  it('shows a press under the finger for anything that can be pressed, on both hosts', () => {
+    // A press handler alone got nothing: a tappable row was silent when
+    // touched. On UIKit a Pressable dimmed only in viewPressed, after the
+    // finger had lifted; the zero-delay recognizer was installed only for
+    // onPressIn/onPressOut or an underlay. Android gave a plain view with
+    // onPress a click listener and nothing else (#538).
+    expect(ios).toContain('private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, shown: Bool, for view: UIView) {')
+    expect(ios).toContain('guard watched || (shown && pressable) else {')
+    expect(ios).toContain('shown: !disabled && feedback as? Bool != false && feedback as? String != "none",')
+    expect(ios).toContain('case .began: pressFeedbackBegan(on: view, at: sender.location(in: view))')
+    // A row is covered, not dimmed: the label colour at 12%, in its corners.
+    expect(ios).toContain('highlight.backgroundColor = UIColor.label.withAlphaComponent(0.12).resolvedColor(with: view.traitCollection).cgColor')
+    expect(ios).toContain('highlight.cornerRadius = view.layer.cornerRadius')
+    // In something that scrolls it waits, and a flick never shows it.
+    expect(ios).toContain('static let pressFeedbackScrollDelay: TimeInterval = 0.1')
+    expect(ios).toContain('guard pressed else { return }')
+    // A control or a pressable view inside it shows the touch instead.
+    expect(ios).toContain('if current is UIControl || pressFeedbackViews.contains(ObjectIdentifier(current)) { return false }')
+    // And nothing is flashed after the fact any more.
+    expect(ios).not.toContain('UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in')
+    // Android: the platform's own pressed state draws it, which already
+    // holds back inside a scrolling container.
+    expect(android).toContain('internal class CraftNativePressHighlight(val color: Int, val radius: Float) : android.graphics.drawable.RippleDrawable(')
+    expect(android).toContain('applyPressHighlight(control, style, craftNativePressFeedback(props))')
+    expect(android).toContain('val color = Color.argb(31, Color.red(label), Color.green(label), Color.blue(label))')
+    expect(android).toContain('if (current?.color == color && current.radius == radius) return')
+    expect(android).toContain('screen.pressActiveOpacities[this] = if (feedback) craftNativeFiniteFloat(props, "activeOpacity", 0.5f) else 1f')
+    for (const name of [
+      'testAPressableViewIsHighlightedWhileItIsTouched',
+      'testATouchInsideAScrollViewWaitsToSeeWhetherItIsAScroll',
+      'testOnlyWhatIsUnderTheFingerShowsTheTouch',
+    ]) expect(iosLayoutUnitTests).toContain(`func ${name}(`)
+    expect(androidNavigationTest).toContain('fun aViewThatCanBePressedShowsThePlatformsHighlightUnderTheFinger()')
+    expect(guide).toContain('`pressFeedback={false}` turns it off for a view')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {
