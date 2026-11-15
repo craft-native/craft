@@ -171,7 +171,8 @@ A multi-line `TextInput` reports the caret and selection with `onSelectionChange
 (`{ start, end }`, UTF-16 offsets) and takes a `selection` prop to move it. With the
 `markdown` prop the text stays plain markdown, drawn as Notes would show it:
 headings, bold, italic, code, quotes, bullets and checklists with finished items struck
-through, restyled after every edit. `NativeSidebar` takes `rowHeight`,
+through, restyled after every edit. A heading's `#` marks show, dimmed, on the line the caret is on
+and fold away on every other line, so a note reads as Notes shows it while its text stays plain markdown. `NativeSidebar` takes `rowHeight`,
 `labelFontSize` and `labelFontWeight` (`regular`, `medium`, `semibold` or `bold`), and two
 insets measured from its own edges: `selectionInset`, how far the selection pill stands in
 (default 4), and `contentInset`, how far a row's icon and count stand inside the pill (default

@@ -195,8 +195,31 @@ final class CraftMacTextView: NSTextView {
     /// The font the markdown styling is built from. NSTextView's own `font` answers the font at the caret, which a heading changes.
     var baseFont: NSFont?
     override func didChangeText() { ghost = ""; super.didChangeText(); restyle() }
+    /// The line the caret was on when the text was last styled: a heading's `#` marks show on that line only.
+    private var styledCaretLine = NSRange(location: NSNotFound, length: 0)
+    private var styling = false
+    private func caretLine() -> NSRange {
+        let text = string as NSString
+        let caret = selectedRange()
+        guard caret.location <= text.length else { return NSRange(location: NSNotFound, length: 0) }
+        return text.lineRange(for: NSRange(location: caret.location, length: min(caret.length, text.length - caret.location)))
+    }
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // Moving the caret onto or off a heading shows or folds its marks. Not while an edit or a drag is in flight:
+        // the edit restyles when it lands, and a drag restyles when it ends.
+        guard markdown, !styling, !stillSelecting, textStorage?.editedMask.isEmpty != false, caretLine() != styledCaretLine else { return }
+        restyle()
+    }
+    // After the window has recorded the change: inside these calls it still names the previous responder.
+    override func becomeFirstResponder() -> Bool { let took = super.becomeFirstResponder(); if took { DispatchQueue.main.async { [weak self] in self?.restyle() } }; return took }
+    override func resignFirstResponder() -> Bool { let left = super.resignFirstResponder(); if left { DispatchQueue.main.async { [weak self] in self?.restyle() } }; return left }
     func restyle() {
-        guard markdown, let storage = textStorage else { return }
+        guard markdown, !styling, let storage = textStorage else { return }
+        styling = true; defer { styling = false }
+        let editing = caretLine()
+        styledCaretLine = editing
+        let focused = window?.firstResponder === self
         let base = baseFont ?? font ?? NSFont.systemFont(ofSize: 13)
         let text = string as NSString
         let full = NSRange(location: 0, length: text.length)
@@ -219,7 +242,11 @@ final class CraftMacTextView: NSTextView {
             if let hashes = line.prefix(while: { $0 == "#" }) as Substring?, (1...3).contains(hashes.count), line.dropFirst(hashes.count).hasPrefix(" ") {
                 let size: CGFloat = [1: base.pointSize + 11, 2: base.pointSize + 6, 3: base.pointSize + 3][hashes.count]!
                 storage.addAttribute(.font, value: traits(NSFont.systemFont(ofSize: size), .bold), range: range)
-                storage.addAttributes(dim, range: NSRange(location: range.location, length: hashes.count + 1))
+                let marks = NSRange(location: range.location, length: hashes.count + 1)
+                // A heading reads as a heading, as in Notes: its marks are dimmed on the line being edited, where
+                // they can be changed, and folded to nothing on every other line. The text stays plain markdown.
+                if focused, editing.location == range.location { storage.addAttributes(dim, range: marks) }
+                else { storage.addAttributes([.font: NSFont.systemFont(ofSize: 0.01), .foregroundColor: NSColor.clear], range: marks) }
             }
             else if line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
                 storage.addAttributes(dim, range: NSRange(location: range.location, length: 6))

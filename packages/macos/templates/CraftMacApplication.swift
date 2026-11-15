@@ -550,7 +550,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             return ["ok": true]
         }
         // A control by its testID, driven the way a person would: pressed, typed into, submitted, a key, the pointer over it.
-        if ["press", "type", "submit", "key", "hover", "menu"].contains(kind) {
+        // `key` with a `value` (return, tab, escape, an arrow) is a command for a focused text control, handled
+        // further down; with a `key` it is the screen's own onKeyPress. Both were taken here, so the command form
+        // answered ok without focusing the control or moving its caret.
+        if ["press", "type", "submit", "hover", "menu"].contains(kind) || (kind == "key" && action["value"] == nil) {
             guard let target = action["target"] as? String,
                   let box = scene.renderer.boxes.values.first(where: { ($0.props["testID"] as? String ?? $0.props["testId"] as? String ?? $0.id) == target }) else { return ["ok": false, "error": "No control \(action["target"] ?? "")"] }
             let text = action["text"] as? String ?? ""
