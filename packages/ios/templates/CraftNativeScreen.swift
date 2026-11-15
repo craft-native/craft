@@ -12328,6 +12328,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
     }
 
+    /// Whether anything shown below `view` can be acted on: a control, a
+    /// text field, or a view with a press, a link or a hold of its own.
+    /// Children are drawn before their parent's accessibility is applied.
+    private func holdsControls(_ view: UIView) -> Bool {
+        view.subviews.contains { child in
+            if child.isHidden { return false }
+            let id = ObjectIdentifier(child)
+            if child is UIControl || (child as? UITextView)?.isEditable == true { return true }
+            if handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil { return true }
+            return holdsControls(child)
+        }
+    }
+
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
         let id = ObjectIdentifier(view)
         view.accessibilityLabel = (props["accessibilityLabel"] as? String)
@@ -12359,9 +12372,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let controlledVideo = type == "Video" && (props["controls"] as? Bool) == true
         // Compact single-choice pickers are accessible menu buttons. Controls
         // containing several independent elements remain semantic groups.
+        // A plain view with a name is one element, and UIKit does not look
+        // inside an element: its label stands in for the text it holds. One
+        // that holds something to act on is a group instead, or the button
+        // in a labelled pager or panel could not be reached at all. A view
+        // that is pressed itself stays the one thing to press, and `group`
+        // says so outright for a box of plain text.
+        let pressed = handlers[id] != nil || linkTargets[id] != nil || longPressHandlers[id] != nil
+        let group = role == "group"
+            || (role == nil && ["View", "SafeAreaView", "KeyboardAvoidingView"].contains(type)
+                && view.accessibilityLabel != nil && !pressed && holdsControls(view))
         let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)
             || ["tablist", "radiogroup", "list", "menu", "menubar", "toolbar"].contains(role ?? "")
-            || controlledVideo
+            || controlledVideo || group
         view.isAccessibilityElement = !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))
         view.accessibilityContainerType = container && (view.accessibilityLabel != nil || controlledVideo) ? .semanticGroup : .none
         // Keep the interaction trait native controls expose. Rebuilding this

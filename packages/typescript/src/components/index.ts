@@ -471,6 +471,7 @@ export interface BaseProps {
     | 'timer'
     | 'toolbar'
     | 'scrollbar'
+    | 'group'
   /** Native list chrome slot for keyed FlatList/SectionList children. */
   listRole?: 'header' | 'item' | 'separator' | 'empty' | 'footer'
   /** Matches a view across an animated state change. */

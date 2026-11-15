@@ -990,8 +990,15 @@ metadata and traits. The portable roles include `button`, `image`, `header`,
 `link`, `search`, `none`, `adjustable`, `checkbox`, `combobox`, `menu`,
 `menuitem`, `progressbar`, `radio`, `radiogroup`, `scrollbar`, `spinbutton`,
 `switch`, `tab`, `tablist`, `timer`, `toolbar`, `list`, `menubar`, `summary`,
-and `alert`; unknown roles retain the platform control's native class.
+`alert`, and `group`; unknown roles retain the platform control's native class.
 `accessibilityState` supports `disabled`, `selected`, and `checked`.
+
+A `View` with an `accessibilityLabel` and only text or pictures inside is one
+stop for a screen reader, and the label stands in for what it holds. A
+labelled `View` that holds a control is a named group instead: the reader is
+told the name and still reaches each button, link and field inside. A view
+that is itself pressed stays one stop. `accessibilityRole="group"` makes any
+view a group, named when it has a label.
 
 A visible blocking `Modal` contains screen-reader navigation: UIKit marks it
 modal, while Android hides the sibling content behind the top blocking modal

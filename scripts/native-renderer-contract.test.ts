@@ -2244,6 +2244,18 @@ describe('native renderer component contract', () => {
     ]) expect(iosNativeUnitTests).toContain(`func ${name}(`)
   })
 
+  it('makes a labelled view that holds controls a named group on iOS', () => {
+    // One element whatever it held, and UIKit does not look inside an
+    // element: a button in a labelled pager could not be reached (#536).
+    expect(ios).toContain('private func holdsControls(_ view: UIView) -> Bool {')
+    expect(ios).toContain('let group = role == "group"')
+    expect(ios).toContain('&& view.accessibilityLabel != nil && !pressed && holdsControls(view))')
+    expect(ios).toContain('|| controlledVideo || group')
+    expect(iosNativeUnitTests).toContain('func testALabelledViewThatHoldsControlsIsANamedGroup(')
+    expect(guide).toContain('labelled `View` that holds a control is a named group')
+    expect(componentTypes).toContain("    | 'group'")
+  })
+
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')

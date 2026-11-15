@@ -5740,6 +5740,80 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(find(UIButton.self, key: "drawer-action", below: drawer)).isAccessibilityElement)
     }
 
+    /// A plain view with a label was one accessibility element whatever it
+    /// held, and UIKit does not look inside an element: the button in a
+    /// labelled pager, or the close button in a labelled panel, could not be
+    /// reached by VoiceOver at all.
+    func testALabelledViewThatHoldsControlsIsANamedGroup() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func document(pagerHasButton: Bool) -> [String: Any] {
+            let page: [String: Any] = ["type": "Text", "props": ["key": "page"], "children": ["Welcome"]]
+            let next: [String: Any] = ["type": "Pressable", "props": ["key": "next", "accessibilityLabel": "Next"], "events": ["onPress": "next"],
+                                       "children": [["type": "Text", "children": ["Next"]]]]
+            return self.document([
+                ["type": "View", "props": ["key": "pager", "accessibilityLabel": "Tour"], "children": pagerHasButton ? [page, next] : [page]],
+                // The control is a plain pressed view two levels down, with no label of its own.
+                ["type": "View", "props": ["key": "panel", "accessibilityLabel": "Filters"], "children": [[
+                    "type": "View", "props": ["key": "panel-row"], "children": [[
+                        "type": "View", "props": ["key": "panel-close"], "events": ["onPress": "close"],
+                        "children": [["type": "Text", "children": ["Close"]]],
+                    ]],
+                ]]],
+                ["type": "View", "props": ["key": "form", "accessibilityLabel": "Sign in"], "children": [
+                    ["type": "TextInput", "props": ["key": "form-email", "placeholder": "Email"]],
+                ]],
+                // Only text inside: the label stands in for it, as before.
+                ["type": "View", "props": ["key": "summary", "accessibilityLabel": "Order 5, shipped"], "children": [
+                    ["type": "Text", "children": ["Order 5"]], ["type": "Text", "children": ["Shipped"]],
+                ]],
+                // Pressed itself: it stays the one thing to press.
+                ["type": "View", "props": ["key": "card", "accessibilityLabel": "Open order 5"], "events": ["onPress": "open"], "children": [
+                    ["type": "Button", "props": ["key": "card-more"], "children": ["More"]],
+                ]],
+                // Said outright, for a box of plain text.
+                ["type": "View", "props": ["key": "totals", "accessibilityLabel": "Totals", "accessibilityRole": "group"], "children": [
+                    ["type": "Text", "props": ["key": "total"], "children": ["42"]],
+                ]],
+                ["type": "View", "props": ["key": "unnamed", "accessibilityRole": "group"], "children": [
+                    ["type": "Text", "children": ["Plain"]],
+                ]],
+            ])
+        }
+        func view(_ key: String) throws -> UIView { try XCTUnwrap(find(UIView.self, key: key, below: controller.view), key) }
+        controller.render(document(pagerHasButton: true))
+
+        for (key, label) in [("pager", "Tour"), ("panel", "Filters"), ("form", "Sign in"), ("totals", "Totals")] {
+            let group = try view(key)
+            XCTAssertFalse(group.isAccessibilityElement, "\(key) must not hide what it holds")
+            XCTAssertEqual(group.accessibilityContainerType, .semanticGroup, key)
+            XCTAssertEqual(group.accessibilityLabel, label)
+        }
+        XCTAssertTrue(try view("next").isAccessibilityElement)
+        XCTAssertTrue(try view("next").accessibilityTraits.contains(.button))
+        XCTAssertTrue(try view("form-email").isAccessibilityElement)
+        XCTAssertTrue(try view("total").isAccessibilityElement)
+
+        let summary = try view("summary")
+        XCTAssertTrue(summary.isAccessibilityElement)
+        XCTAssertEqual(summary.accessibilityContainerType, UIAccessibilityContainerType.none)
+        let card = try view("card")
+        XCTAssertTrue(card.isAccessibilityElement)
+        XCTAssertEqual(card.accessibilityContainerType, UIAccessibilityContainerType.none)
+        let unnamed = try view("unnamed")
+        XCTAssertFalse(unnamed.isAccessibilityElement)
+        XCTAssertEqual(unnamed.accessibilityContainerType, UIAccessibilityContainerType.none, "a group with no name announces nothing")
+
+        // The button goes: the same view is one element again.
+        controller.render(document(pagerHasButton: false))
+        let pager = try view("pager")
+        XCTAssertTrue(pager.isAccessibilityElement)
+        XCTAssertEqual(pager.accessibilityContainerType, UIAccessibilityContainerType.none)
+        controller.render(document(pagerHasButton: true))
+        XCTAssertFalse(pager.isAccessibilityElement)
+        XCTAssertEqual(pager.accessibilityContainerType, .semanticGroup)
+    }
+
     func testSwitchAccessibilityMatchesUIKitAcrossValueAndEnabledChanges() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
