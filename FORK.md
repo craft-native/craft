@@ -266,9 +266,18 @@ and was validated the same way: with the filter bypassed it reports
   reader thread does not disturb the existing flow -- open, write, read, close all
   behave as before and the process stays responsive. Delivery uses the same
   `postToUi` path that `fs.watch` proved.
-- **`updater` is not implemented.** It has no Win32 API to wrap: it needs an
-  agreed feed format and a decision on signature verification, and guessing at one
-  would create a contract the project has not chosen.
+- **`updater` is not implemented on Windows, and what it must match now exists.**
+  Upstream shipped the AppKit host's in-app updater in v0.0.503/504: the bundle
+  names `feedUrl`, `publicKeys` (Ed25519, base64url SPKI DER), `channel` and
+  `checkEveryHours` under `updates` in `craft-app.json`, and the host installs
+  `craft.updater` with `check()` / `install()` before the screen runs. None of
+  that is Windows-shaped — there is no Win32 API to wrap and the install step has
+  to replace a running executable — but the feed and the signature are no longer
+  open questions, so a Windows implementation now has a contract to match rather
+  than one to invent.
+  The status the manifest reports for `updater` on Windows is right
+  (`unavailable`), though the reason it carries still quotes Sparkle, which is a
+  macOS detail.
 - **`app.getInfo().bundleId` is empty.** Windows has no bundle identifier, and
   returning a placeholder would be worse than returning nothing.
 - **Event channels are not demoted per platform.** The manifest's `channels`
