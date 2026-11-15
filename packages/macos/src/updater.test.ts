@@ -86,7 +86,8 @@ afterAll(() => {
   Bun.spawnSync(['hdiutil', 'detach', '-quiet', '-force', join(scratch, 'volume')])
   rmSync(scratch, { recursive: true, force: true })
   rmSync(join(homedir(), 'Library/Caches', fixtureIdentifier), { recursive: true, force: true })
-})
+// Detaching a disk image can wait on the system; the inherited 5 s is not a budget for it.
+}, 60_000)
 
 async function run(args: string[], cwd = root): Promise<string> {
   const child = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' })
