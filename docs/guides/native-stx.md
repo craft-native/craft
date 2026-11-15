@@ -1492,6 +1492,29 @@ craft.session.onChange((token) => {
 })
 ```
 
+### App updates (macOS)
+
+On the AppKit host, `craft.updater` updates an app people download: `status()`
+(sync), `check()`, `install()`, `relaunch()` and `onChange(callback)`, around an
+`UpdateStatus` whose `state` runs `idle`, `checking`, `current`, `available`,
+`downloading`, `installing`, `installed`, or `error`. The host installs it
+itself, like `craft.session`, and it is there in every build: a Mac App Store
+build, or an app with no `updates` in its `craft-app.json`, answers
+`state: 'unavailable', selfUpdating: false` with a `reason`. Each change also
+reaches every window as `CRAFT_EVENT` `craftUpdaterChange`. The feed, the
+checks an update has to pass and the build flag are in the
+[macOS host's README](../../packages/macos/README.md#in-app-updates-craftupdater).
+
+```js
+const stop = craft.updater.onChange((status) => {
+  if (status.state === 'available') offer(status.version, status.notes)
+  if (status.state === 'downloading') showProgress(status.progress)
+  if (status.state === 'installed') askToRelaunch(() => craft.updater.relaunch())
+  if (status.state === 'error') show(status.error)
+})
+if (craft.updater.status().state === 'available') await craft.updater.install()
+```
+
 ### Snapshots
 
 `craft.snapshots.get(name)` (sync) and `craft.snapshots.set(name, value)` (a

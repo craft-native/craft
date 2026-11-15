@@ -192,6 +192,61 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     /// A quit waiting for screens to finish (`craft.desktop.onQuit`), for at most `quitGrace` seconds.
     private var pendingQuit: (token: String, waiting: Set<String>, timeout: Timer)?
     static let quitGrace: TimeInterval = 3
+    /// `updates` in `craft-app.json`: the app's update feed. Read only by a host built with the updater.
+    var updates: Any?
+    #if CRAFT_UPDATER
+    private(set) var updater: CraftMacUpdater?
+    #endif
+    /// The version this bundle says it is.
+    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
+
+    /// Makes the updater before any screen starts, so a screen's first `craft.updater.status()` is already true.
+    func prepareUpdater() {
+        #if CRAFT_UPDATER
+        let updater = CraftMacUpdater(config: updates, currentVersion: Self.version, allowAdHoc: testDirectory != nil)
+        updater.onChange = { [weak self] status in
+            guard let self else { return }
+            // Every window, and the main screen while it still waits for its window.
+            for runtime in self.scenes.values.map(\.runtime) + [self.preparedMain].compactMap({ $0 }) { runtime.updaterChanged(status) }
+        }
+        self.updater = updater
+        #endif
+    }
+    /// `UpdateStatus`, from any thread. A host built without the updater (a Mac App Store build)
+    /// answers that it cannot update itself, and never asks a feed.
+    func updaterStatus() -> [String: Any] {
+        #if CRAFT_UPDATER
+        if let updater { return updater.status() }
+        #endif
+        return ["currentVersion": Self.version, "state": "unavailable", "selfUpdating": false, "reason": "This build of the app does not update itself."]
+    }
+    /// `craft.updater` and the `Updater` capability: `status`, `check`, `install` answer an
+    /// `UpdateStatus`; `relaunch` answers nothing and quits, or says why it cannot.
+    func updater(_ method: String, reply: @escaping (Any, String?) -> Void) {
+        switch method {
+        case "status": reply(updaterStatus(), nil)
+        case "check", "install":
+            #if CRAFT_UPDATER
+            if let updater {
+                if method == "check" { updater.check { reply($0, nil) } } else { updater.install { reply($0, nil) } }
+                return
+            }
+            #endif
+            reply(updaterStatus(), nil)
+        case "relaunch":
+            #if CRAFT_UPDATER
+            if let updater {
+                if let failure = updater.relaunch() { reply(NSNull(), failure); return }
+                reply(NSNull(), nil)
+                // From the run loop rather than a main-queue block (see applicationShouldTerminate).
+                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+                return
+            }
+            #endif
+            reply(NSNull(), "No update is installed.")
+        default: reply(NSNull(), "Unsupported updater operation: \(method)")
+        }
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) { CraftTrace.mark("will finish launching") }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -205,6 +260,9 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         if preparedColorScheme != (CraftMacColor.isDark ? "dark" : "light") { appearanceChanged() }
         startTestDriver()
         launched = true
+        #if CRAFT_UPDATER
+        updater?.start()
+        #endif
         if let failure = sessionFailure { sessionFailed(failure) }
     }
     /// Asks the agent for the session cookie (`CraftMacNetwork.authorize`) as the app starts, before
@@ -502,10 +560,12 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             guard let self else { return }
             let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
             for file in files where file.lastPathComponent.hasPrefix("action-") && file.pathExtension == "json" && !self.processedActions.contains(file.lastPathComponent) {
+                // Answered by an earlier launch into this directory (the app relaunched after an update).
+                let result = directory.appendingPathComponent(file.lastPathComponent.replacingOccurrences(of: "action-", with: "result-"))
+                if FileManager.default.fileExists(atPath: result.path) { self.processedActions.insert(file.lastPathComponent); continue }
                 guard let data = try? Data(contentsOf: file), let action = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                 self.processedActions.insert(file.lastPathComponent)
-                let result = self.testAction(action)
-                if let bytes = try? JSONSerialization.data(withJSONObject: result) { try? bytes.write(to: directory.appendingPathComponent(file.lastPathComponent.replacingOccurrences(of: "action-", with: "result-")), options: .atomic) }
+                if let bytes = try? JSONSerialization.data(withJSONObject: self.testAction(action)) { try? bytes.write(to: result, options: .atomic) }
             }
             if let data = try? JSONSerialization.data(withJSONObject: self.snapshot()) { try? data.write(to: directory.appendingPathComponent("state.json"), options: .atomic) }
         }
@@ -642,7 +702,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
             return ["name": scene.name, "title": scene.window.title, "route": scene.runtime.route, "contextClass": String(describing: ZigJSContext.self), "nodes": nodes, "viewClasses": classes(scene.renderer.root), "viewportWidth": Double(scene.reportedViewportWidth), "errors": scene.runtime.errors]
         }
         let webViews = windows.reduce(0) { count, window in count + ((window["viewClasses"] as? [String] ?? []).filter { $0.contains("WKWebView") || $0 == "WebView" }.count) }
-        return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews, "menu": testMenu]
+        return ["renderer": "appkit", "scriptEngine": "zig-js", "appearance": CraftMacColor.isDark ? "dark" : "light", "windows": windows, "webViews": webViews, "menu": testMenu, "updater": updaterStatus()]
     }
 }
 
@@ -681,6 +741,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.network = CraftMacNetwork(base: api)
         let testDirectory = argument("--test-dir")
         if !testDirectory.isEmpty { application.testDirectory = URL(fileURLWithPath: testDirectory, isDirectory: true) }
+        application.updates = packaged["updates"]
+        application.prepareUpdater()
         if application.requiresSession { application.authorize() }
         application.prepareMainScreen()
         let app = NSApplication.shared

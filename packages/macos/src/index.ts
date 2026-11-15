@@ -25,6 +25,15 @@ export interface MacOSNativeBuildOptions {
    * then links no WebKit at all, and `WebView` reports itself unsupported.
    */
   webkit?: boolean
+  /**
+   * Compile the in-app updater behind `craft.updater`: the host asks the feed
+   * named by `updates` in `craft-app.json`, verifies and installs a newer
+   * build, and relaunches. For a build people download (Developer ID) and for
+   * development. Off by default, and it must stay off for a Mac App Store
+   * build: the host then holds none of the updater's code, and `craft.updater`
+   * answers `unavailable`.
+   */
+  updater?: boolean
 }
 
 /** Compile Craft's AppKit host and the shared Zig layout core. No WebKit unless `webkit` is set. */
@@ -57,7 +66,8 @@ export async function buildMacOSNative(options: MacOSNativeBuildOptions): Promis
   await run(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wno-incomplete-implementation', '-I', join(engine.source, 'include'), '-include', join(engine.source, 'include/ZigJS.h'), '-c', join(engine.source, 'src/objc_bridge.m'), '-o', bridge])
   await run([zig, 'build-obj', join(engine.source, 'src/objc_abi_dispatch.zig'), assembly, '-O', 'ReleaseFast', `-femit-bin=${dispatch}`])
   const web = options.webkit ? ['-D', 'CRAFT_WEBKIT', '-framework', 'WebKit', join(templates, 'CraftMacWebView.swift')] : []
-  await run(['swiftc', '-O', '-swift-version', '5', '-I', join(engine.source, 'include'), '-framework', 'Cocoa', '-framework', 'AVKit', '-framework', 'UserNotifications', ...web,
+  const updater = options.updater ? ['-D', 'CRAFT_UPDATER', join(templates, 'CraftMacUpdater.swift')] : []
+  await run(['swiftc', '-O', '-swift-version', '5', '-I', join(engine.source, 'include'), '-framework', 'Cocoa', '-framework', 'AVKit', '-framework', 'UserNotifications', ...web, ...updater,
     join(templates, 'CraftMacRuntime.swift'), join(templates, 'CraftMacRenderer.swift'), join(templates, 'CraftMacApplication.swift'), mutation,
     bridge, dispatch, engine.library,
     '-Xlinker', '-force_load', '-Xlinker', layoutLibrary, '-Xlinker', '-export_dynamic', '-o', executable])
