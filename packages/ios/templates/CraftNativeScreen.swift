@@ -11632,10 +11632,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         addTextDecorationAttributes(style, to: &attributes)
         if let shadow = textShadow(style) { attributes[.shadow] = shadow }
+        // A CSS line box may be shorter than its font while glyphs paint outside
+        // it. UIKit clips that same paragraph inside a UILabel. Preserve the
+        // resolved font metrics for layout and drawing, including custom faces
+        // whose ascenders exceed their point size and Dynamic Type scaling.
         if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, label.font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, label.font.lineHeight)
             paragraph.alignment = label.textAlignment
             attributes[.paragraphStyle] = paragraph
         }
@@ -11689,8 +11693,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let spacing = styleNumber(style["letterSpacing"]) { attributes[.kern] = spacing }
         if let lineHeight = styleNumber(style["lineHeight"]) {
             let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, font.lineHeight)
             attributes[.paragraphStyle] = paragraph
         }
         addTextDecorationAttributes(style, to: &attributes)
@@ -11717,8 +11721,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // then paints a second line outside the field instead of scrolling.
         if singleLine { paragraph.lineBreakMode = .byClipping }
         if let lineHeight = styleNumber(style["lineHeight"]) {
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
+            paragraph.minimumLineHeight = max(lineHeight, font.lineHeight)
+            paragraph.maximumLineHeight = max(lineHeight, font.lineHeight)
         }
         attributes[.paragraphStyle] = paragraph
         addTextDecorationAttributes(style, to: &attributes)

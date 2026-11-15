@@ -2185,6 +2185,23 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(plain.accessibilityLabel)
     }
 
+    func testShortLeadingPreservesLargeFontMetrics() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        for (size, ratio) in [(CGFloat(32), CGFloat(1.08)), (CGFloat(76), CGFloat(1.15))] {
+            let key = "display-\(Int(size))"
+            controller.render(document([node("Text", key: key, text: "ÁÜ GOOD EVENING, CHRIS 60:00 gj", style: [
+                "fontSize": size, "lineHeight": size * ratio, "letterSpacing": 0.5
+            ])]))
+            let label = try XCTUnwrap(find(UILabel.self, key: key, below: controller.view))
+            let paragraph = try XCTUnwrap(label.attributedText?.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertGreaterThanOrEqual(paragraph.minimumLineHeight, label.font.lineHeight)
+            XCTAssertGreaterThanOrEqual(paragraph.maximumLineHeight, label.font.lineHeight)
+            let measured = label.sizeThatFits(CGSize(width: 2000, height: CGFloat.greatestFiniteMagnitude))
+            XCTAssertGreaterThanOrEqual(measured.height, floor(label.font.lineHeight))
+        }
+    }
+
     func testSharedLayoutColorAndTextStylesMapToUIKit() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
