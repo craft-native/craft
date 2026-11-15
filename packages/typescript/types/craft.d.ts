@@ -2028,6 +2028,21 @@ export interface DeviceInfo {
   screenHeight: number;
   pixelRatio: number;
   platform: 'ios' | 'android';
+  /**
+   * The locale the app is running in: its region and formats. On iOS its
+   * language is the one of the app's own localizations the system matched,
+   * so an app that declares only English reads `en_…` on every phone. To
+   * choose a language, read `languages`.
+   */
+  locale?: string;
+  /**
+   * The phone's preferred languages, most preferred first, as BCP 47 tags
+   * (`['de-DE', 'en-GB']`): what an app chooses its language from before
+   * anyone has signed in. Take the first one the app supports.
+   */
+  languages?: readonly string[];
+  /** The phone's time zone, as an IANA name (`Europe/Berlin`). */
+  timezone?: string;
 }
 
 export interface PickedFile {

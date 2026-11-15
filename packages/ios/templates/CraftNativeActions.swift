@@ -1610,6 +1610,11 @@ enum CraftNativeActions {
             "screen": ["width": screen.bounds.width, "height": screen.bounds.height, "scale": screen.scale],
             "battery": ["level": device.batteryLevel, "isCharging": device.batteryState == .charging || device.batteryState == .full],
             "locale": Locale.current.identifier,
+            // The phone's own languages, most preferred first, as BCP 47
+            // tags. `locale` cannot say: its language is the one of the
+            // app's localizations iOS matched, which for an app that
+            // declares only English is English on every phone.
+            "languages": Locale.preferredLanguages,
             "timezone": TimeZone.current.identifier,
             "isSimulator": isSimulator,
             "name": device.name,

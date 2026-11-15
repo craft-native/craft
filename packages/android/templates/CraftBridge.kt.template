@@ -2918,6 +2918,13 @@ class CraftBridge(
             put("screenHeight", metrics.heightPixels)
             put("density", metrics.density)
             put("platform", "android")
+            put("locale", java.util.Locale.getDefault().toLanguageTag())
+            // The phone's own languages, most preferred first, as BCP 47 tags.
+            put("languages", org.json.JSONArray().apply {
+                val preferred = android.os.LocaleList.getDefault()
+                for (index in 0 until preferred.size()) put(preferred.get(index).toLanguageTag())
+            })
+            put("timezone", java.util.TimeZone.getDefault().id)
             put("appVersion", try {
                 activity.packageManager.getPackageInfo(activity.packageName, 0).versionName
             } catch (e: Exception) { "unknown" })

@@ -24,7 +24,16 @@ console.log(info.appVersion)    // '1.0.0'
 console.log(info.buildNumber)   // '1'
 console.log(info.deviceId)      // Unique device identifier
 console.log(info.isEmulator)    // true if running in simulator/emulator
+console.log(info.languages)     // ['de-DE', 'en-GB']: the phone's languages, most preferred first
+console.log(info.locale)        // 'en_DE': the locale the app runs in
+console.log(info.timezone)      // 'Europe/Berlin'
 ```
+
+`languages` is what an app chooses its language from before anyone has signed
+in: the phone's preferred languages as BCP 47 tags, in the owner's order. Take
+the first one the app supports. `locale` cannot say: on iOS its language is
+the one of the app's own localizations the system matched, so an app that
+declares only English reads `en_…` on a German phone, with the phone's region.
 
 **Returns:** `Promise<DeviceInfo>`
 
@@ -195,6 +204,12 @@ interface DeviceInfo {
   buildNumber: string
   deviceId: string
   isEmulator: boolean
+  /** The phone's preferred languages, most preferred first, as BCP 47 tags. */
+  languages?: readonly string[]
+  /** The locale the app runs in: its region and formats. */
+  locale?: string
+  /** The phone's time zone, as an IANA name. */
+  timezone?: string
 }
 
 interface DeviceCapabilities {

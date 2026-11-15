@@ -5579,6 +5579,26 @@ final class NativeRenderUnitTests: XCTestCase {
         }
     }
 
+    /// Before anyone signs in an app has only the phone to ask for a
+    /// language, and `locale` cannot say: its language is the one of the
+    /// app's localizations iOS matched, English for an app that declares
+    /// only English, on a German phone too.
+    func testDeviceInfoListsThePhonesPreferredLanguages() throws {
+        guard case .success(let value)? = CraftNativeActions.perform(action: "getDeviceInfo", body: [:], config: CraftConfig()) else {
+            return XCTFail("getDeviceInfo is the shared router's")
+        }
+        let info = try XCTUnwrap(value as? [String: Any])
+        let languages = try XCTUnwrap(info["languages"] as? [String])
+        XCTAssertFalse(languages.isEmpty)
+        XCTAssertEqual(languages, Locale.preferredLanguages, "the phone's own list, in its order")
+        for tag in languages {
+            XCTAssertFalse(tag.contains("_"), "\(tag) is not a BCP 47 tag")
+            XCTAssertFalse((Locale(identifier: tag).languageCode ?? "").isEmpty, tag)
+        }
+        XCTAssertEqual(info["locale"] as? String, Locale.current.identifier)
+        XCTAssertEqual(info["timezone"] as? String, TimeZone.current.identifier)
+    }
+
     func testSwitchKeepsItsControlAndUserValueWhenTheScriptAcknowledgesATap() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

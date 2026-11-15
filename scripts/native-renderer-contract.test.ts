@@ -4635,6 +4635,21 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('On Android the bars around the screen go behind a blocking `Modal`')
   })
 
+  it('lists the phone\'s preferred languages in device info on both hosts', () => {
+    // Before sign-in an app has only the phone to ask, and iOS's locale
+    // names the app's own localization, English on a German phone (#551).
+    const actions = readFileSync(join(root, 'packages/ios/templates/CraftNativeActions.swift'), 'utf8')
+    const bridge = readFileSync(join(root, 'packages/android/templates/CraftBridge.kt.template'), 'utf8')
+    expect(actions).toContain('"languages": Locale.preferredLanguages,')
+    expect(android).toContain('.put("languages", JSONArray().apply {')
+    expect(android).toContain('for (index in 0 until preferred.size()) put(preferred.get(index).toLanguageTag())')
+    expect(android).toContain('.put("locale", Locale.getDefault().toLanguageTag())')
+    expect(bridge).toContain('put("languages", org.json.JSONArray().apply {')
+    expect(craftTypes).toContain('languages?: readonly string[];')
+    expect(iosNativeUnitTests).toContain('func testDeviceInfoListsThePhonesPreferredLanguages(')
+    expect(androidNavigationTest).toContain('fun deviceInfoListsThePhonesPreferredLanguages()')
+  })
+
   it('opens a path as a cover with its own stack, over the tabs, on both hosts', () => {
     // navigation.open could only push: Messages could not come up over
     // whatever screen was showing (#526).

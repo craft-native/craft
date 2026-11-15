@@ -1325,6 +1325,33 @@ class NativeNavigationTest {
     }
 
     /**
+     * #551: before anyone signs in an app has only the phone to ask for a
+     * language. Device info said nothing of it here (no locale, languages
+     * or time zone at all).
+     */
+    @Test
+    fun deviceInfoListsThePhonesPreferredLanguages() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var info: JSONObject
+            scenario.onActivity { activity ->
+                info = activity.performImmediateCapability("Device", "getInfo", JSONArray()).data as JSONObject
+            }
+            val preferred = android.os.LocaleList.getDefault()
+            val languages = info.getJSONArray("languages")
+            assertTrue("the phone has at least one language", languages.length() > 0)
+            assertEquals("the phone's own list, in its order",
+                (0 until preferred.size()).map { preferred.get(it).toLanguageTag() },
+                (0 until languages.length()).map { languages.getString(it) })
+            assertFalse("BCP 47 tags, not Java locale names", languages.getString(0).contains("_"))
+            assertEquals(java.util.Locale.getDefault().toLanguageTag(), info.getString("locale"))
+            assertEquals(java.util.TimeZone.getDefault().id, info.getString("timezone"))
+        } finally {
+            scenario.close()
+        }
+    }
+
+    /**
      * #526: a path opened as a cover comes up over the bars, the tab row and
      * the floating actions, with bars and a stack of its own, and closes
      * back to the screen underneath as it was left. Until then a path could

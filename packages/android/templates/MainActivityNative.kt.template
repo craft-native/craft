@@ -9197,6 +9197,15 @@ class MainActivity : AppCompatActivity() {
                 .put("manufacturer", Build.MANUFACTURER)
                 .put("deviceId", android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID))
                 .put("isTablet", resources.configuration.smallestScreenWidthDp >= 600)
+                .put("locale", Locale.getDefault().toLanguageTag())
+                // The phone's own languages, most preferred first, as BCP 47
+                // tags: what an app chooses its language from before anyone
+                // has signed in.
+                .put("languages", JSONArray().apply {
+                    val preferred = android.os.LocaleList.getDefault()
+                    for (index in 0 until preferred.size()) put(preferred.get(index).toLanguageTag())
+                })
+                .put("timezone", java.util.TimeZone.getDefault().id)
                 .put("screen", JSONObject()
                     .put("width", resources.displayMetrics.widthPixels / resources.displayMetrics.density)
                     .put("height", resources.displayMetrics.heightPixels / resources.displayMetrics.density)
