@@ -1642,8 +1642,10 @@ internal class CraftNativeChrome(
         largeTitleView.setBackgroundColor(background)
         titleView.setTextColor(navigationTitleColor ?: text)
         largeTitleView.setTextColor(navigationTitleColor ?: text)
-        backButton.imageTintList = ColorStateList.valueOf(accent)
-        // A screen's own back symbol is drawn in the accent, not tinted by it.
+        // The accent, unless the screen's backButton says `variant: 'neutral'`
+        // or names a colour, as a header button may.
+        backButton.imageTintList = ColorStateList.valueOf(backButtonSpec?.let { navButtonTint(it, dark) } ?: accent)
+        // A screen's own back symbol is drawn in that colour, not tinted by it.
         applyBackButton()
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
         val grouped = accessoryGroup.parent === body

@@ -8582,6 +8582,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // the button under a finger.
             let same = spec?["symbol"] as? String == backButtonSpec?["symbol"] as? String
                 && spec?["accessibilityLabel"] as? String == backButtonSpec?["accessibilityLabel"] as? String
+                && spec?["variant"] as? String == backButtonSpec?["variant"] as? String
+                && spec?["color"] as? String == backButtonSpec?["color"] as? String
                 && (spec == nil) == (backButtonSpec == nil)
             backButtonSpec = spec
             if !same { backButtonItem = nil }
@@ -8718,6 +8720,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             item.accessibilityIdentifier = "nav-back"
             item.accessibilityLabel = (spec["accessibilityLabel"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? (symbol.hasPrefix("xmark") ? "Close" : "Back")
+            // As a header button's: the bar's tint unless it says otherwise.
+            if spec["variant"] as? String == "neutral" { item.tintColor = .label }
+            if let tint = (spec["color"] as? String).flatMap({ UIColor(hex: $0) }) { item.tintColor = tint }
             backButtonItem = item
         }
         let back = isRoot ? nil : backButtonItem

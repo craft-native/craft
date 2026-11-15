@@ -2671,7 +2671,14 @@ export interface CraftNavigationOptions {
    * the chevron. `accessibilityLabel` defaults to "Close" for an `xmark` and
    * to "Back" otherwise.
    */
-  backButton?: { symbol: string; accessibilityLabel?: string } | null;
+  backButton?: {
+    symbol: string;
+    accessibilityLabel?: string;
+    /** `'neutral'` draws it in the label colour instead of the bar's tint, as on a header button. */
+    variant?: 'neutral';
+    /** A hex colour for the symbol; wins over `variant`. */
+    color?: string;
+  } | null;
   /**
    * **iOS only.** Whether a back-swipe may leave this screen at all, the
    * screen edge's included. A screen that steps through its own pages with a

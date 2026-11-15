@@ -3189,7 +3189,7 @@ describe('native renderer component contract', () => {
     expect(iosLayoutUnitTests).toContain('func testAScreenCanDrawItsBackAsACloseButton() throws {')
     expect(androidNavigationTest).toContain('fun aScreenCanDrawItsBackAsACloseButton()')
     expect(readFileSync(join(root, 'packages/typescript/types/craft.d.ts'), 'utf8'))
-      .toContain('backButton?: { symbol: string; accessibilityLabel?: string } | null;')
+      .toContain('backButton?: {\n    symbol: string;\n    accessibilityLabel?: string;')
     expect(guide).toContain("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })")
   })
 
@@ -4633,6 +4633,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (!modal.transparent) dimmed = true')
     expect(androidNavigationTest).toContain('fun aBlockingModalPutsTheBarsAndTheFloatingActionsBehindIt()')
     expect(guide).toContain('On Android the bars around the screen go behind a blocking `Modal`')
+  })
+
+  it('lets a backButton take a colour or the neutral variant on both hosts', () => {
+    // The cross was the bar's tint beside neutral header buttons (#545).
+    expect(ios).toContain('&& spec?["variant"] as? String == backButtonSpec?["variant"] as? String')
+    expect(ios).toContain('&& spec?["color"] as? String == backButtonSpec?["color"] as? String')
+    expect(androidChrome).toContain('backButton.imageTintList = ColorStateList.valueOf(backButtonSpec?.let { navButtonTint(it, dark) } ?: accent)')
+    expect(craftTypes).toContain("    variant?: 'neutral';")
+    expect(guide).toContain("`variant: 'neutral'` draws it in the label")
   })
 
   it('lists the phone\'s preferred languages in device info on both hosts', () => {

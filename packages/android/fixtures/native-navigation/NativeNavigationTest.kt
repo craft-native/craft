@@ -1184,6 +1184,21 @@ class NativeNavigationTest {
                 chrome.apply(options(spec("xmark")), 1, "Inbox")
                 assertEquals("Close", back.contentDescription)
 
+                // Its colour is the bars' accent unless it says otherwise, as a
+                // header button's is (#545): neutral, and a colour wins.
+                val accent = back.imageTintList!!.defaultColor
+                val accented = picture()
+                chrome.apply(options(spec("xmark").put("variant", "neutral")), 1, "Inbox")
+                val neutral = back.imageTintList!!.defaultColor
+                assertTrue("neutral is not the accent", neutral != accent)
+                assertTrue("neutral is black or white, by the bar", Color.red(neutral) == Color.green(neutral) || neutral == Color.parseColor("#1C1C1E"))
+                assertFalse("and the symbol is drawn in it", picture().sameAs(accented))
+                chrome.apply(options(spec("xmark").put("variant", "neutral").put("color", "#ff0000")), 1, "Inbox")
+                assertEquals(Color.parseColor("#ff0000"), back.imageTintList!!.defaultColor)
+                chrome.apply(options(spec("xmark")), 1, "Inbox")
+                assertEquals(accent, back.imageTintList!!.defaultColor)
+                assertTrue("back in the accent", picture().sameAs(accented))
+
                 // The first screen of a stack has no back button to draw.
                 chrome.apply(options(spec("xmark")), 0, "Inbox")
                 assertEquals(View.GONE, back.visibility)

@@ -1260,6 +1260,8 @@ restores the chevron. `symbol` is an SF Symbol name; Android draws the app's
 own icon for it, or its close mark for an `xmark`, and a symbol a host has
 nothing for leaves the chevron, so a screen is never left with no way back.
 `accessibilityLabel` defaults to "Close" for an `xmark` and "Back" otherwise.
+It is drawn in the bar's tint; `variant: 'neutral'` draws it in the label
+colour and `color` in a hex colour of its own, as on a header button.
 
 Both native hosts also accept `backgroundColor` in
 `craft.navigation.setOptions`. It paints the screen behind its native content;

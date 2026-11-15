@@ -1289,6 +1289,21 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(leading(pushed), ["nav-back"])
         XCTAssertTrue(pushed.navigationItem.hidesBackButton)
 
+        // Its colour is the bar's tint unless it says otherwise, as a header
+        // button's is (#545): neutral is the label colour, and a colour wins.
+        XCTAssertNil(pushed.navigationItem.leftBarButtonItems?.first?.tintColor)
+        let tinted = pushed.navigationItem.leftBarButtonItems?.first
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close', variant: 'neutral' } })")
+        XCTAssertFalse(pushed.navigationItem.leftBarButtonItems?.first === tinted, "another colour is another item")
+        XCTAssertEqual(pushed.navigationItem.leftBarButtonItems?.first?.tintColor, .label)
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close', variant: 'neutral', color: '#ff0000' } })")
+        XCTAssertEqual(pushed.navigationItem.leftBarButtonItems?.first?.tintColor, UIColor(hex: "#ff0000"))
+        let red = pushed.navigationItem.leftBarButtonItems?.first
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close', variant: 'neutral', color: '#ff0000' } })")
+        XCTAssertTrue(pushed.navigationItem.leftBarButtonItems?.first === red, "the same colour keeps the item")
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })")
+        XCTAssertNil(pushed.navigationItem.leftBarButtonItems?.first?.tintColor)
+
         // A symbol UIKit does not have leaves the chevron, and null brings it back.
         pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'craft.no.such.symbol' } })")
         XCTAssertFalse(pushed.navigationItem.hidesBackButton, "a screen is never left with no way back")
