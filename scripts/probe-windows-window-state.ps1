@@ -156,6 +156,18 @@ Remove-Item $logErr -Force -ErrorAction SilentlyContinue
 Get-Process craft -ErrorAction SilentlyContinue | Stop-Process -Force | Out-Null
 Start-Sleep -Milliseconds 300
 
+# This probe writes to the clipboard and then clears it. On someone's desktop
+# that throws away whatever they had copied, so the text is saved first and put
+# back afterwards, on the failure path too.
+$savedClipboard = $null
+$hadClipboard = $false
+try {
+    $savedClipboard = Get-Clipboard -Raw -ErrorAction Stop
+    $hadClipboard = $true
+} catch {
+    Write-Host 'note: the clipboard could not be read, so it cannot be restored' -ForegroundColor Yellow
+}
+
 # Reads the real layered-window state, so an opacity that was only remembered by
 # the bridge cannot pass.
 if (-not ('CraftProbeLayered' -as [type])) {
@@ -301,6 +313,13 @@ if ($layeredAtFull -notmatch '^layered=false') { $failures += "the window stayed
 if ((Get-Value 'LONGTITLE') -ne 'after-long-title') {
     $failures += "the app did not survive an oversized title: '$(Get-Value 'LONGTITLE')"
 }
+# Put the caller's clipboard back before reporting, whichever way this ends.
+if ($hadClipboard) {
+    if ($savedClipboard) { Set-Clipboard -Value $savedClipboard -ErrorAction SilentlyContinue }
+    else { Set-Clipboard -Value '' -ErrorAction SilentlyContinue }
+    Write-Host "clipboard restored: $($savedClipboard.Length) chars" -ForegroundColor DarkGray
+}
+
 if ($failures.Count -gt 0) {
     Write-Host 'FAIL' -ForegroundColor Red
     foreach ($f in $failures) { Write-Host "  $f" -ForegroundColor Red }
