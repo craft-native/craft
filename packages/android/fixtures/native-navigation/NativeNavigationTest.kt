@@ -1325,6 +1325,144 @@ class NativeNavigationTest {
     }
 
     /**
+     * #526: a path opened as a cover comes up over the bars, the tab row and
+     * the floating actions, with bars and a stack of its own, and closes
+     * back to the screen underneath as it was left. Until then a path could
+     * only be pushed onto the visible tab.
+     */
+    @Test
+    fun aPathOpenedAsACoverGetsItsOwnStackOverTheBars() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        fun <T> onMain(read: () -> T): T {
+            var value: T? = null
+            scenario.onActivity { value = read() }
+            @Suppress("UNCHECKED_CAST")
+            return value as T
+        }
+        fun field(name: String): Any? = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(activity)
+        fun member(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
+        fun open(path: String, presentation: String? = null) {
+            scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("navigateOpen", String::class.java, Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType, JSONObject::class.java, String::class.java)
+                    .apply { isAccessible = true }.invoke(activity, path, false, false, JSONObject(), presentation)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        fun stack(): List<*> = onMain { (field("screens") as List<*>).toList() }
+        fun tabStack(index: Int): List<*> = onMain { ((field("tabStacks") as List<*>)[index] as List<*>).toList() }
+        fun coverPath(): String? = onMain { field("cover")?.let { member(it, "path") as String } }
+        fun visiblePath(): String? = onMain { field("visibleScreen")?.let { member(it, "path") as String? } }
+        fun bars(): List<CraftNativeChrome> = onMain {
+            val found = mutableListOf<CraftNativeChrome>()
+            fun collect(view: View) {
+                if (view is CraftNativeChrome) found.add(view)
+                else if (view is ViewGroup) for (index in 0 until view.childCount) collect(view.getChildAt(index))
+            }
+            collect(activity.window.decorView)
+            found
+        }
+        fun await(message: String, ready: () -> Boolean) {
+            repeat(60) {
+                if (ready()) return
+                SystemClock.sleep(100)
+            }
+            throw AssertionError("$message; cover ${coverPath()}, visible ${visiblePath()}, stack ${stack().size}, bars ${bars().size}")
+        }
+        fun backLabel(chrome: CraftNativeChrome): String? = onMain {
+            var label: String? = null
+            fun visit(view: View) {
+                if (view is ImageView && view.isShown && (view.contentDescription == "Close" || view.contentDescription == "Back")) label = view.contentDescription.toString()
+                else if (view is ViewGroup) for (index in 0 until view.childCount) visit(view.getChildAt(index))
+            }
+            visit(chrome)
+            label
+        }
+        fun systemBack() {
+            scenario.onActivity { activity.onBackPressedDispatcher.onBackPressed() }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            val base = bars().single()
+            val under = visiblePath()
+            assertEquals(1, tabStack(0).size)
+
+            open("/capabilities", "cover")
+            await("the path comes up as a cover") { coverPath() == "/capabilities" && visiblePath() == "/capabilities" && bars().size == 2 }
+            val cover = bars().last()
+            assertTrue("the cover's bars are drawn above the app's", onMain { (cover.parent as ViewGroup).indexOfChild(cover) > (base.parent as ViewGroup).indexOfChild(base) })
+            assertEquals("its own stack", 1, stack().size)
+            assertEquals("nothing was pushed in the tab", 1, tabStack(0).size)
+            await("its first screen has a close button where Back would be") { backLabel(cover) == "Close" }
+
+            // Asked for again while it is up: the same cover, not a second one.
+            open("/capabilities", "cover")
+            assertEquals(2, bars().size)
+            assertEquals(1, stack().size)
+
+            // A path opened from here pushes inside the cover, and Back there is Back.
+            open("/linked-details")
+            await("a path opened from the cover pushes inside it") { stack().size == 2 && visiblePath() == "/linked-details" }
+            assertEquals(1, tabStack(0).size)
+            await("a pushed screen has the usual Back") { backLabel(cover) == "Back" }
+            systemBack()
+            await("Back inside the cover pops inside it") { stack().size == 1 && visiblePath() == "/capabilities" && coverPath() != null }
+
+            // Back at its first screen closes it; underneath is as it was left.
+            systemBack()
+            await("Back at the cover's first screen closes it") { coverPath() == null && bars().size == 1 && visiblePath() == under }
+            assertSame(base, bars().single())
+            assertEquals(1, tabStack(0).size)
+
+            // The close button does the same.
+            open("/capabilities", "cover")
+            await("the cover is up again") { coverPath() == "/capabilities" && bars().size == 2 && backLabel(bars().last()) == "Close" }
+            onMain {
+                fun close(view: View): Boolean {
+                    if (view is ImageView && view.isShown && view.contentDescription == "Close") return view.performClick()
+                    if (view is ViewGroup) for (index in 0 until view.childCount) if (close(view.getChildAt(index))) return true
+                    return false
+                }
+                assertTrue("the close button takes a tap", close(bars().last()))
+            }
+            await("the close button closes the cover") { coverPath() == null && bars().size == 1 && visiblePath() == under }
+
+            // A tab is under the cover: opening one closes it and shows the tab.
+            open("/capabilities", "cover")
+            await("the cover is up a third time") { coverPath() == "/capabilities" && bars().size == 2 }
+            open("/summary")
+            await("opening a tab closes the cover and shows the tab") { coverPath() == null && bars().size == 1 && visiblePath() == "/summary" }
+            open("/")
+            await("back on the first tab") { visiblePath() == under }
+
+            // The floating actions can ask for it.
+            onMain {
+                base.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject(
+                    """{"path":"/capabilities","title":"Messages","symbol":"message","presentation":"cover"}"""
+                )), 0, "Home")
+            }
+            val accessory = onMain {
+                var found: View? = null
+                fun visit(view: View) {
+                    if (view.isShown && view.contentDescription == "Messages") found = view
+                    else if (view is ViewGroup) for (index in 0 until view.childCount) visit(view.getChildAt(index))
+                }
+                visit(base)
+                found
+            }
+            assertTrue("the accessory is drawn", accessory != null)
+            onMain { accessory!!.performClick() }
+            await("the accessory's path comes up as a cover") { coverPath() == "/capabilities" && bars().size == 2 }
+            assertEquals(1, tabStack(0).size)
+        } finally {
+            scenario.close()
+        }
+    }
+
+    /**
      * #541: a Modal here is a view inside the screen, between the bars, and
      * its scrim covered only the screen. Around an open blocking sheet the
      * tab row and the bar stayed bright and live (a tab could be tapped or

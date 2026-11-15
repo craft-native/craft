@@ -5236,6 +5236,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stores: CraftNativeStores
     private lateinit var services: CraftNativeServices
     private var chrome: CraftNativeChrome? = null
+    /**
+     * A screen opened over everything (`presentation: "cover"`): bars and a
+     * stack of its own, drawn above the app's bars, tab row and floating
+     * actions. While it is up `chrome` and `screens` are the cover's, so a
+     * path opened from it pushes inside it and Back pops inside it; what was
+     * under it is kept here and put back when it closes.
+     */
+    private class Cover(
+        val bars: CraftNativeChrome,
+        val screens: MutableList<Screen>,
+        val path: String,
+        val underBars: CraftNativeChrome?,
+        val underScreens: MutableList<Screen>,
+    )
+    private var cover: Cover? = null
     private val tabStacks = mutableListOf<MutableList<Screen>>()
     private var currentTab = 0
     private var visibleScreen: Screen? = null
@@ -5495,6 +5510,7 @@ class MainActivity : AppCompatActivity() {
         bars.layoutParams = FrameLayout.LayoutParams(-1, -1)
         bars.onBack = { onBackPressedDispatcherCompat() }
         bars.onAccessory = { path -> navigateOpen(path) }
+        bars.onOpen = { path, presentation -> navigateOpen(path, presentation = presentation) }
         bars.onButton = { id -> visibleScreen?.takeIf { it.active }?.let { send(it, "NAV_BUTTON", JSONObject().put("id", id)) } }
         bars.onTab = { index ->
             interruptTabSwipe()
@@ -5534,6 +5550,8 @@ class MainActivity : AppCompatActivity() {
     /** A tab chosen: its stack shows, its root screen opened the first time. */
     private fun selectTab(index: Int) {
         if (index !in tabStacks.indices) return
+        // The tabs are under a cover: it closes first.
+        closeCover(animated = false)
         interruptTabSwipe()
         currentTab = index
         screens = tabStacks[index]
@@ -5689,13 +5707,18 @@ class MainActivity : AppCompatActivity() {
      * page on the app's site in the in-app browser. Another site's address
      * opens in the browser too.
      */
-    private fun navigateOpen(target: String, fromLink: Boolean = false, replace: Boolean = false, props: JSONObject = JSONObject()) {
+    private fun navigateOpen(target: String, fromLink: Boolean = false, replace: Boolean = false, props: JSONObject = JSONObject(), presentation: String? = null) {
         val path = routes.appPath(target, urlSchemes)
         if (path == null) {
             openExternal(target)
             return
         }
         val match = routes.match(path)
+        // A tab is under a cover: the cover closes to show it.
+        if (cover != null && routes.tabFor(path) != null) {
+            closeCover(animated = !fromLink) { navigateOpen(target, fromLink, replace, props) }
+            return
+        }
         if (replace && match != null && screens.isNotEmpty()) {
             val stack = screens
             val removed = stack.removeAt(stack.lastIndex)
@@ -5719,10 +5742,18 @@ class MainActivity : AppCompatActivity() {
             routes.siteURL(path)?.let(::openExternal)
             return
         }
-        // A link from outside opens under the tab that owns its path.
-        if (fromLink) routes.tabOwning(path)?.let { owner ->
+        // A link from outside opens under the tab that owns its path, unless
+        // a cover is up: it opens there.
+        if (fromLink && cover == null) routes.tabOwning(path)?.let { owner ->
             val index = routes.tabs.indexOf(owner)
             if (index != currentTab) selectTab(index)
+        }
+        // Over everything, in a stack of its own. With a cover already up
+        // the path opens inside it, as any other does: one cover at a time,
+        // and the same path asked for again is the screen already there.
+        if (presentation == "cover" && cover == null) {
+            openCover(match, props)
+            return
         }
         // Already in this stack (perhaps under others): back to it, with the params it was opened with now.
         val existing = screens.lastOrNull { it.path == match.path }
@@ -5739,6 +5770,75 @@ class MainActivity : AppCompatActivity() {
             return
         }
         openScreen(match.screen, match.params, props = props)?.path = match.path
+    }
+
+    /** A cover's bars: no tabs, and a close button on its first screen. */
+    private fun coverBars(): CraftNativeChrome {
+        val bodyFont = craftNativeChromeTypeface(routes.fontFamily, bundledFonts)
+        val bars = CraftNativeChrome(this, emptyList(), routes.tabBarAppearance,
+            CraftNativeChromeFonts(bodyFont, craftNativeChromeTypeface(routes.headingFontFamily, bundledFonts) ?: bodyFont),
+            routes.tintColor)
+        bars.closesAtRoot = true
+        bars.layoutParams = FrameLayout.LayoutParams(-1, -1)
+        // Over the app's own bars and screen: nothing shows or is touched through it.
+        bars.setBackgroundColor(ContextCompat.getColor(this, R.color.background))
+        bars.isClickable = true
+        bars.onBack = { onBackPressedDispatcherCompat() }
+        bars.onButton = { id -> visibleScreen?.takeIf { it.active }?.let { send(it, "NAV_BUTTON", JSONObject().put("id", id)) } }
+        bars.onOpen = { path, presentation -> navigateOpen(path, presentation = presentation) }
+        bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }
+        return bars
+    }
+
+    /**
+     * `presentation: "cover"`: the screen for a path slides up over the bars,
+     * the tab row and the floating actions, first in a stack of its own.
+     * Paths opened from it push inside it. Back from its first screen, by
+     * its close button, the system's Back or `navigation.back()`, closes it,
+     * and the screen underneath is as it was left.
+     */
+    private fun openCover(match: CraftNativeRouteMatch, props: JSONObject) {
+        interruptTabSwipe()
+        val bars = coverBars()
+        val opened = Cover(bars, mutableListOf(), match.path, chrome, screens)
+        cover = opened
+        chrome = bars
+        screens = opened.screens
+        root.addView(bars)
+        val screen = openScreen(match.screen, match.params, props = props)
+        if (screen == null) {
+            closeCover(animated = false)
+            return
+        }
+        screen.path = match.path
+        if (android.animation.ValueAnimator.areAnimatorsEnabled() && root.height > 0) {
+            bars.translationY = root.height.toFloat()
+            bars.animate().translationY(0f).setDuration(280L).start()
+        }
+    }
+
+    /** Closes the cover, if one is up; `done` once its screens have gone. */
+    private fun closeCover(animated: Boolean = true, done: () -> Unit = {}) {
+        val closing = cover ?: return done()
+        cover = null
+        val bars = closing.bars
+        chrome = closing.underBars
+        screens = closing.underScreens
+        val removed = closing.screens.toList().asReversed()
+        closing.screens.clear()
+        val target = screens.lastOrNull()
+        // The screen underneath has the window again, as the cover leaves.
+        if (target != null) show(target)
+        val finish = {
+            (bars.parent as? ViewGroup)?.removeView(bars)
+            closeScreens(removed) { done() }
+        }
+        bars.animate().cancel()
+        if (animated && android.animation.ValueAnimator.areAnimatorsEnabled() && bars.height > 0) {
+            bars.animate().translationY(bars.height.toFloat()).setDuration(240L).withEndAction { finish() }.start()
+        } else {
+            finish()
+        }
     }
 
     /** A page the app does not draw, in a Custom Tab over the app. */
@@ -6134,7 +6234,8 @@ class MainActivity : AppCompatActivity() {
     private fun applyChrome(screen: Screen) {
         val bars = chrome ?: return
         val depth = screens.indexOf(screen).coerceAtLeast(0)
-        val fallback = if (depth == 0) routes.tabs.getOrNull(currentTab)?.title else null
+        // A cover's first screen is not a tab's: it has no tab's title.
+        val fallback = if (depth == 0 && cover == null) routes.tabs.getOrNull(currentTab)?.title else null
         bars.apply(screen.options, depth, fallback, screen.path)
     }
 
@@ -6242,7 +6343,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Every live isolate: each tab's stack and the app script. */
     private fun allScreens(): List<Screen> = buildList {
-        if (tabStacks.isEmpty()) addAll(screens) else tabStacks.forEach(::addAll)
+        if (tabStacks.isEmpty()) {
+            addAll(screens)
+            cover?.let { addAll(it.underScreens) }
+        } else {
+            tabStacks.forEach(::addAll)
+            cover?.let { addAll(it.screens) }
+        }
         appScreen?.let(::add)
     }
 
@@ -6413,7 +6520,8 @@ class MainActivity : AppCompatActivity() {
                     .put("version", CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION))
             }
             "NAVIGATE_OPEN" -> payload.optString("path").takeIf { it.isNotBlank() }?.let {
-                navigateOpen(it, props = payload.optJSONObject("props") ?: JSONObject())
+                navigateOpen(it, props = payload.optJSONObject("props") ?: JSONObject(),
+                    presentation = payload.optString("presentation").takeIf { it == "cover" })
             }
             "NAVIGATION_SET_OPTIONS" -> {
                 // The app script has no navigation bar of its own. Screen
@@ -9373,6 +9481,11 @@ class MainActivity : AppCompatActivity() {
         interruptTabSwipe()
         // A previous back is still draining its screen's teardown messages.
         if (visibleScreen == null) return
+        // Back from a cover's first screen closes the cover.
+        if (cover != null && screens.size <= 1) {
+            closeCover()
+            return
+        }
         if (screens.size > 1) {
             val stack = screens
             val removed = stack.removeAt(stack.lastIndex)

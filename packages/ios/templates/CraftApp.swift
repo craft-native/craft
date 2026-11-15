@@ -821,6 +821,9 @@ final class CraftChrome: ObservableObject {
         var iconOnly = false
         /// A shared material capsule; nil keeps separate floating buttons.
         var accessoryLayout: String? = nil
+        /// How a tab accessory or one of its companions opens its path:
+        /// "cover" for over everything, in a stack of its own.
+        var presentation: String? = nil
         var companions: [Tab] = []
         /// A floating action that is on: a mode it switched (tracking in
         /// Maps), drawn in the tint whatever screen is showing.
@@ -993,12 +996,14 @@ final class CraftChrome: ObservableObject {
                 accessibilityLabel: item["accessibilityLabel"] as? String,
                 iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal"].contains(item["layout"] as? String ?? ""),
                 accessoryLayout: (item["layout"] as? String).flatMap { ["vertical", "horizontal"].contains($0) ? $0 : nil },
+                presentation: item["presentation"] as? String == "cover" ? "cover" : nil,
                 companions: ((item["companions"] as? [[String: Any]]) ?? []).prefix(2).compactMap { action in
                     guard let companionPath = action["path"] as? String,
                           companionPath.hasPrefix("/"), !companionPath.hasPrefix("//"), companionPath != path,
                           let companionTitle = action["title"] as? String else { return nil }
                     return Tab(id: companionPath, title: companionTitle, symbol: action["symbol"] as? String ?? "circle",
                         accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true,
+                        presentation: action["presentation"] as? String == "cover" ? "cover" : nil,
                         active: action["selected"] as? Bool ?? false,
                         menu: ((action["menu"] as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
                             guard let destination = choice["path"] as? String,
@@ -1346,7 +1351,7 @@ private struct CraftTabBarContent: View {
                     ForEach(primary.companions + [primary]) { accessory in
                         Group {
                             if accessory.menu.isEmpty {
-                                Button { CraftHybrid.shared.open(accessory.id) } label: { accessoryLabel(accessory) }
+                                Button { CraftHybrid.shared.open(accessory.id, presentation: accessory.presentation) } label: { accessoryLabel(accessory) }
                             } else {
                                 Menu {
                                     ForEach(accessory.menu) { choice in

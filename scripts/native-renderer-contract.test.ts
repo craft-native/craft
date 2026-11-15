@@ -3176,10 +3176,10 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('let isRoot = navigationController?.viewControllers.first === self')
     expect(ios).toContain('let item = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(backButtonTapped))')
     expect(ios).toContain('navigationItem.hidesBackButton = back != nil')
-    expect(ios).toContain('if backButtonSpec != nil { applyLeadingBarItems() }')
+    expect(ios).toContain('if backButtonSpec != nil || navigationController is CraftNativeCoverNavigationController { applyLeadingBarItems() }')
     // The shell decides the back-swipe itself, so hiding the chevron does
     // not take the swipe with it.
-    expect(iosHybrid).toContain('guard let nav = visibleStack, isPopRecognizer(gestureRecognizer),')
+    expect(iosHybrid).toContain('guard let nav = frontStack, isPopRecognizer(gestureRecognizer),')
     expect(androidChrome).toContain('backButtonSpec = options.optJSONObject("backButton")')
     expect(androidChrome).toContain('?: if (symbol.startsWith("xmark")) {')
     expect(androidChrome).toContain('androidx.appcompat.R.drawable.abc_ic_clear_material')
@@ -4484,11 +4484,11 @@ describe('native renderer component contract', () => {
   it('keeps navigation.open props separate from route params on both native hosts', () => {
     expect(ios).toContain('private(set) var routeProps: [String: Any]')
     expect(ios).toContain('__stxNativeProps')
-    expect(ios).toContain('nativeScreen(self, open: path, props: payload["props"] as? [String: Any] ?? [:])')
+    expect(ios).toContain('nativeScreen(self, open: path, props: payload["props"] as? [String: Any] ?? [:],')
     expect(iosHybrid).toContain('routeProps: props')
     expect(android).toContain('val props: JSONObject')
     expect(android).toContain('globalThis.__stxNativeProps = ${props};')
-    expect(android).toContain('navigateOpen(it, props = payload.optJSONObject("props") ?: JSONObject())')
+    expect(android).toContain('navigateOpen(it, props = payload.optJSONObject("props") ?: JSONObject(),')
     expect(android).toContain('.put("props", props)')
     expect(guide).toContain('craft.navigation.open(path, props?)')
     expect(guide).toContain('craft.route.props')
@@ -4635,6 +4635,43 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('On Android the bars around the screen go behind a blocking `Modal`')
   })
 
+  it('opens a path as a cover with its own stack, over the tabs, on both hosts', () => {
+    // navigation.open could only push: Messages could not come up over
+    // whatever screen was showing (#526).
+    const app = readFileSync(join(root, 'packages/ios/templates/CraftApp.swift'), 'utf8')
+    expect(iosHybrid).toContain('final class CraftNativeCoverNavigationController: CraftNativeNavigationController {')
+    expect(iosHybrid).toContain('nav.modalPresentationStyle = .fullScreen')
+    expect(iosHybrid).toContain('if presentation == "cover", coverStack == nil, !replace {')
+    // Paths opened while it is up go into it, and Back at its first screen closes it.
+    expect(iosHybrid).toContain('private var frontStack: UINavigationController? { coverStack ?? visibleStack }')
+    expect(iosHybrid).toContain('guard viewControllers.count <= 1 else { return super.popViewController(animated: animated) }')
+    expect(iosHybrid).toContain('nav.onCloseAtRoot = { [weak self] in self?.dismissCover(animated: true) }')
+    // Its first screen keeps its bar, for the close button.
+    expect(iosHybrid).toContain('&& !asksForBar && !coverRoot)')
+    expect(ios).toContain('let chosen = backButtonSpec ?? (coverRoot ? ["symbol": "xmark"] : nil)')
+    expect(ios).toContain('presentation: payload["presentation"] as? String)')
+    // The floating actions can ask for it.
+    expect(app).toContain('presentation: item["presentation"] as? String == "cover" ? "cover" : nil,')
+    expect(iosHybrid).toContain('hybrid.open(accessoryModel.id, presentation: accessoryModel.presentation)')
+    // Android: bars and a stack of its own, above the app's.
+    expect(android).toContain('private var cover: Cover? = null')
+    expect(android).toContain('if (presentation == "cover" && cover == null) {')
+    expect(android).toContain('if (cover != null && screens.size <= 1) {')
+    expect(android).toContain('if (cover != null && routes.tabFor(path) != null) {')
+    expect(android).toContain('presentation = payload.optString("presentation").takeIf { it == "cover" })')
+    expect(androidChrome).toContain('internal var closesAtRoot = false')
+    expect(androidChrome).toContain('backButton.visibility = if (depth > 0 || closesAtRoot) View.VISIBLE else View.GONE')
+    expect(androidChrome).toContain('onOpen?.invoke(path, presentation) ?: onAccessory?.invoke(path)')
+    expect(craftTypes).toContain("presentation?: 'cover';")
+    for (const name of [
+      'testAPathOpenedAsACoverGetsItsOwnStackOverTheTabs',
+      'testACoverClosesFromItsButtonAndGivesWayToATab',
+      'testATabAccessoryCanOpenItsPathAsACover',
+    ]) expect(iosNavigationUnitTests).toContain(`func ${name}(`)
+    expect(androidNavigationTest).toContain('fun aPathOpenedAsACoverGetsItsOwnStackOverTheBars()')
+    expect(guide).toContain("Add `presentation: 'cover'` to the accessory")
+  })
+
   it('exercises the pushed-screen tab accessory on both maintained hosts', () => {
     expect(navigationDetails).toContain("path: '/capabilities'")
     expect(navigationDetails).toContain("accessibilityLabel: 'Open capabilities'")
@@ -4644,7 +4681,7 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('Open capabilities')
     expect(ios).toContain('CraftChrome.shared.releaseTabAccessory(ownedBy: self)')
     expect(ios).toContain('CraftChrome.shared.clearUnclaimedTabAccessory()')
-    expect(androidShell).toContain('accessorySpec?.optString("path")?.let { onAccessory?.invoke(it) }')
+    expect(androidShell).toContain('accessory.setOnClickListener { openFromActions(accessorySpec) }')
     expect(guide).toContain('`tabAccessory` adds one destination button beside the tab pill')
     expect(iosReadme).toContain('`tabAccessory` destination beside the tab pill')
     expect(androidReadme).toContain('right buttons with badges, `tabAccessory`, `tabBarHidden`')

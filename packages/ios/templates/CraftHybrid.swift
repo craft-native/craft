@@ -321,8 +321,18 @@ protocol CraftHybridScreenEvents: AnyObject {
     func nativeScreen(_ screen: CraftNativeScreenController, didFail message: String)
     /// `craft.navigation.open(path, props)`.
     func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any])
+    /// The same with how it is presented: "cover" for over everything, in a
+    /// stack of its own, or nil. A listener that does not present covers
+    /// opens the path the plain way.
+    func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?)
     /// `craft.navigation.replace(path)`: finish the current flow atomically.
     func nativeScreen(_ screen: CraftNativeScreenController, replace path: String)
+}
+
+extension CraftHybridScreenEvents {
+    func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?) {
+        nativeScreen(screen, open: path, props: props)
+    }
 }
 
 // MARK: - The shell
@@ -551,11 +561,11 @@ final class CraftHybrid: NSObject {
     /// A path or a web address opened by the app script or a single-stack
     /// screen: the shell opens it (holding it until the shell exists); an app
     /// with no shell opens a web address in the in-app browser.
-    func open(_ path: String, props: [String: Any] = [:]) {
+    func open(_ path: String, props: [String: Any] = [:], presentation: String? = nil) {
         if let controller {
-            controller.open(path, props: props)
+            controller.open(path, props: props, presentation: presentation)
         } else if isEnabled {
-            untilShell.append { $0.open(path, props: props) }
+            untilShell.append { $0.open(path, props: props, presentation: presentation) }
         } else {
             openOutside(path)
         }
@@ -1117,6 +1127,10 @@ extension CraftHybrid: CraftHybridScreenEvents {
         open(path, props: props)
     }
 
+    func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?) {
+        open(path, props: props, presentation: presentation)
+    }
+
     func nativeScreen(_ screen: CraftNativeScreenController, replace path: String) {
         controller?.showNative(path: path, replace: true)
     }
@@ -1215,13 +1229,30 @@ final class CraftHybridWebSlot: UIViewController {
 
 /// A native stack lets the top screen consume Back for its presented modal
 /// before UIKit removes the screen from the navigation stack.
-final class CraftNativeNavigationController: UINavigationController {
+class CraftNativeNavigationController: UINavigationController {
     override func popViewController(animated: Bool) -> UIViewController? {
         if let screen = topViewController as? CraftNativeScreenController,
            screen.handleBackForModal() {
             return nil
         }
         return super.popViewController(animated: animated)
+    }
+}
+
+/// A stack presented over everything (`presentation: "cover"`): the tab bar
+/// and the floating actions are under it, and it has a stack of its own.
+/// Back from its first screen, by `navigation.back()` or its close button,
+/// closes the cover rather than doing nothing.
+final class CraftNativeCoverNavigationController: CraftNativeNavigationController {
+    var onCloseAtRoot: (() -> Void)?
+    /// The path its first screen draws.
+    var rootPath = ""
+
+    override func popViewController(animated: Bool) -> UIViewController? {
+        guard viewControllers.count <= 1 else { return super.popViewController(animated: animated) }
+        if let screen = topViewController as? CraftNativeScreenController, screen.handleBackForModal() { return nil }
+        onCloseAtRoot?()
+        return nil
     }
 }
 
@@ -1488,7 +1519,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 button.accessibilityLabel = action.accessibilityLabel ?? action.title
                 button.accessibilityValue = action.badge
                 if action.menu.isEmpty {
-                    button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id) }, for: .touchUpInside)
+                    button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id, presentation: action.presentation) }, for: .touchUpInside)
                 } else {
                     button.menu = UIMenu(children: action.menu.map { choice in
                         UIAction(title: choice.title, image: UIImage(systemName: choice.symbol)) { [weak self] _ in
@@ -1659,7 +1690,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     static let accessoryGroupStep: CGFloat = 55
 
     @objc private func openTabAccessory() {
-        if let accessoryModel { hybrid.open(accessoryModel.id) }
+        if let accessoryModel { hybrid.open(accessoryModel.id, presentation: accessoryModel.presentation) }
     }
 
     override func viewDidLayoutSubviews() {
@@ -2157,10 +2188,16 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
 
     private var visibleStack: UINavigationController? { stacks[currentTab] }
 
+    /// A cover presented over the tabs, while one is up.
+    private(set) var coverStack: CraftNativeCoverNavigationController?
+    /// The stack a path is opened in: the cover while one is up, else the
+    /// visible tab's.
+    private var frontStack: UINavigationController? { coverStack ?? visibleStack }
+
     /// A swipe preview can be visible without owning navigation or focus.
     /// UIKit appearance callbacks must follow the committed native stack.
     func isFocusedScreen(_ screen: CraftNativeScreenController) -> Bool {
-        visibleStack?.topViewController === screen
+        frontStack?.topViewController === screen
     }
 
     var webIsVisible: Bool {
@@ -2372,17 +2409,19 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     /// an app with no web view, a path no screen draws opens in the in-app
     /// browser on the app's site. A web address on the app's site is its
     /// path; one anywhere else opens in the in-app browser.
-    func open(_ raw: String, props: [String: Any] = [:]) {
+    func open(_ raw: String, props: [String: Any] = [:], presentation: String? = nil) {
         if let url = URL(string: raw), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             guard CraftHybridRoutes.isSite(url, site: hybrid.siteURL) else {
                 hybrid.openOutside(raw)
                 return
             }
-            open(CraftHybridRoutes.appPath(of: url), props: props)
+            open(CraftHybridRoutes.appPath(of: url), props: props, presentation: presentation)
             return
         }
         guard let path = CraftHybridRoutes.normalize(raw) else { return }
         if let tab = hybrid.tabIds.first(where: { CraftHybridRoutes.normalize($0) == path }) {
+            // A tab is under a cover: the cover closes to show it.
+            dismissCover(animated: true)
             if hybrid.routes.match(raw) != nil, URLComponents(string: raw)?.query != nil || !props.isEmpty {
                 // A checkout/auth return targets the retained tab with new
                 // parameters. Selecting alone would discard that handoff.
@@ -2393,10 +2432,12 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             return
         }
         if hybrid.routes.match(raw) != nil {
-            showNative(path: raw, replace: false, props: props)
+            showNative(path: raw, replace: false, props: props, presentation: presentation)
             return
         }
         if hybrid.hasWeb {
+            // The page is drawn in a tab's stack, under any cover.
+            dismissCover(animated: true)
             pushWeb(raw)
         } else {
             hybrid.openOutside(raw)
@@ -2413,11 +2454,12 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
 
     /// The native screen for `raw`: the one already in the stack (popping to
     /// it), a tab's root, or a new one pushed.
-    func showNative(path raw: String, replace: Bool, fromLink: Bool = false, props: [String: Any] = [:]) {
+    func showNative(path raw: String, replace: Bool, fromLink: Bool = false, props: [String: Any] = [:], presentation: String? = nil) {
         guard let match = hybrid.routes.match(raw) else { return }
         interruptTabSwipe(restoringSelection: true)
         let tabs = hybrid.tabIds
         if let tab = tabs.first(where: { CraftHybridRoutes.normalize($0) == match.path }) {
+            dismissCover(animated: !fromLink)
             // Finish the flow in its original tab before selecting another.
             if replace, let current = visibleStack, current.viewControllers.count > 1 {
                 current.setViewControllers(Array(current.viewControllers.dropLast()), animated: false)
@@ -2432,10 +2474,17 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             (stacks[tab]?.viewControllers.first as? CraftNativeScreenController)?.receiveRouteParams(params(for: raw, match), props: props)
             return
         }
-        if fromLink, let owner = CraftHybridRoutes.tab(owning: match.path, among: tabs), owner != currentTab {
+        if fromLink, coverStack == nil, let owner = CraftHybridRoutes.tab(owning: match.path, among: tabs), owner != currentTab {
             selectTabAsIfTapped(owner)
         }
-        guard let nav = visibleStack ?? stacks.values.first else { return }
+        // Over everything, in a stack of its own. With a cover already up
+        // the path opens inside it, as any other does: one cover at a time,
+        // and the same path asked for again is the screen already there.
+        if presentation == "cover", coverStack == nil, !replace {
+            presentCover(path: raw, match: match, props: props)
+            return
+        }
+        guard let nav = frontStack ?? stacks.values.first else { return }
         if let existing = nav.viewControllers.last(where: { nativePaths[ObjectIdentifier($0)] == match.path }) {
             if existing !== nav.topViewController { nav.popToViewController(existing, animated: true) }
             // Opened again, perhaps with another query (`?person=8`): the
@@ -2460,10 +2509,71 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         native.whenFirstRendered(within: 0.3) { [weak self, weak nav] in
             guard let self, self.pendingPush == match.path else { return }
             self.pendingPush = nil
-            // Not into a tab the person has left meanwhile.
-            guard let nav, nav === self.visibleStack else { return }
+            // Not into a tab the person has left meanwhile, or under a cover
+            // that came up or went away.
+            guard let nav, nav === self.frontStack else { return }
             show()
         }
+    }
+
+    /// `presentation: "cover"`: the screen for `raw` slides up over the tab
+    /// bar and the floating actions, first in a stack of its own. Paths
+    /// opened from it push inside it; Back from its first screen, or its
+    /// close button, closes it and the screen underneath is as it was left.
+    private func presentCover(path raw: String, match: CraftHybridRoutes.Match, props: [String: Any]) {
+        guard pendingPush != match.path else { return }
+        let screen = entry(for: raw, isTabRoot: false, depth: nil, props: props)
+        let nav = CraftNativeCoverNavigationController(rootViewController: screen)
+        nav.rootPath = match.path
+        nav.delegate = self
+        nav.view.backgroundColor = config.resolvedBackgroundColor
+        nav.modalPresentationStyle = .fullScreen
+        nav.onCloseAtRoot = { [weak self] in self?.dismissCover(animated: true) }
+        for recognizer in popRecognizers(of: nav) { recognizer.delegate = self }
+        let show = { [weak self] in
+            guard let self, self.coverStack == nil, self.presentedViewController == nil else {
+                self?.nativePaths.removeValue(forKey: ObjectIdentifier(screen))
+                return
+            }
+            self.coverStack = nav
+            self.shownStacks[ObjectIdentifier(nav)] = nav.viewControllers
+            // Presented full screen, the stack underneath leaves the window
+            // without UIKit telling its screen: the shell does.
+            (self.visibleStack?.topViewController as? CraftNativeScreenController)?.screenVisibilityChanged(false)
+            self.present(nav, animated: true)
+        }
+        guard let native = screen as? CraftNativeScreenController, CraftNativeScriptThread.isBackground else { show(); return }
+        pendingPush = match.path
+        native.whenFirstRendered(within: 0.3) { [weak self] in
+            guard let self, self.pendingPush == match.path else { return }
+            self.pendingPush = nil
+            show()
+        }
+    }
+
+    /// Closes the cover, if one is up. Its screens go with it; the screen
+    /// underneath has the window again.
+    func dismissCover(animated: Bool) {
+        guard let nav = coverStack else { return }
+        coverStack = nil
+        for gone in nav.viewControllers { nativePaths.removeValue(forKey: ObjectIdentifier(gone)) }
+        shownStacks.removeValue(forKey: ObjectIdentifier(nav))
+        let under = visibleStack?.topViewController
+        // After the cover's screens have said goodbye to the shell's chrome
+        // (the tab bar, the accessory), the screen underneath says what it
+        // wants again: once as the cover starts to leave, and once it has.
+        let restore = { [weak self, weak under] in
+            guard let self, self.coverStack == nil, let under, under === self.visibleStack?.topViewController else { return }
+            CraftChrome.shared.visiblePath = self.nativePaths[ObjectIdentifier(under)]
+            (under as? CraftNativeScreenController)?.screenVisibilityChanged(true)
+        }
+        nav.dismiss(animated: animated) {
+            // Its screens were still in its stack when they disappeared, so
+            // none of them took itself down: the shell does.
+            for gone in nav.viewControllers { (gone as? CraftNativeScreenController)?.stackClosed() }
+            restore()
+        }
+        restore()
     }
 
     /// The web view, pushed: the page goes to `path` first, without its own
@@ -2645,8 +2755,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         // own Back and Skip) stays bare, pushed or not.
         let native = viewController as? CraftNativeScreenController
         let asksForBar = native?.wantsNavigationBar ?? false
+        // A cover's first screen keeps its bar: its close button is there.
+        let coverRoot = navigationController is CraftNativeCoverNavigationController
         let bare = viewController is CraftHybridWebSlot || native?.navigationBarHidden == true
-            || (navigationController.viewControllers.first === viewController && !asksForBar)
+            || (navigationController.viewControllers.first === viewController && !asksForBar && !coverRoot)
         navigationController.setNavigationBarHidden(bare, animated: animated)
     }
 
@@ -2701,7 +2813,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     }
 
     private func isPopRecognizer(_ recognizer: UIGestureRecognizer) -> Bool {
-        guard let nav = visibleStack else { return false }
+        guard let nav = frontStack else { return false }
         return popRecognizers(of: nav).contains { $0 === recognizer }
     }
 
@@ -2766,7 +2878,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                !native.tabSwipeEnabled || !native.contentSwipeBack { return false }
             return !horizontalScrollAt(gestureRecognizer.location(in: view), in: top.view)
         }
-        guard let nav = visibleStack, isPopRecognizer(gestureRecognizer),
+        guard let nav = frontStack, isPopRecognizer(gestureRecognizer),
               nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
         if let native = nav.topViewController as? CraftNativeScreenController {
             // `swipeBack: false`: the screen's own Back is the only way back.
@@ -2844,6 +2956,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
 
     func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any]) {
         open(path, props: props)
+    }
+
+    func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?) {
+        open(path, props: props, presentation: presentation)
     }
 
     func nativeScreen(_ screen: CraftNativeScreenController, replace path: String) {

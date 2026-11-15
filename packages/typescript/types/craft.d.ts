@@ -2592,6 +2592,13 @@ export interface CraftTabAccessory {
   iconOnly?: boolean;
   /** Up to two further destinations drawn beside it, icon-only. */
   companions?: readonly CraftTabAccessoryCompanion[];
+  /**
+   * `'cover'`: a tap opens `path` over everything (the tab bar and these
+   * actions included), sliding up, first in a navigation stack of its own
+   * with a close button. Paths opened from it push inside it; Back from its
+   * first screen closes it. Omitted, the path is pushed as before.
+   */
+  presentation?: 'cover';
 }
 
 export interface CraftTabAccessoryCompanion {
@@ -2599,6 +2606,8 @@ export interface CraftTabAccessoryCompanion {
   title: string;
   symbol?: string;
   accessibilityLabel?: string;
+  /** As on the accessory: `'cover'` opens `path` over everything. */
+  presentation?: 'cover';
   /** Up to twelve destinations offered on a long press. */
   menu?: readonly { path: string; title: string; symbol?: string }[];
 }

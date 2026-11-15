@@ -7164,7 +7164,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// could not be drawn, and of `craft.navigation.open(path)`.
     weak var hybridEvents: CraftHybridScreenEvents?
     private var hybridRendered = false
-    private var runtimeDisposed = false
+    private(set) var runtimeDisposed = false
     private let storageLifetime = CraftNativeStorageLifetime()
     /// The app script (`nativeApp`, CraftHybrid.swift): a bundle route with
     /// no screen, loaded once and never shown, that runs for the app's life.
@@ -7266,8 +7266,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             navigationController?.setNavigationBarHidden(false, animated: animated)
         }
         // Options can arrive before the screen is in a stack: whether it has
-        // a screen to go back to is known now.
-        if backButtonSpec != nil { applyLeadingBarItems() }
+        // a screen to go back to is known now. A cover's first screen draws
+        // its close button whether or not it asked for a symbol.
+        if backButtonSpec != nil || navigationController is CraftNativeCoverNavigationController { applyLeadingBarItems() }
         applyNavigationBarAppearance()
         // Each screen says whether it wants the tab bar, so one that hid it
         // never leaves it hidden for the next. Only the screen on screen:
@@ -7361,6 +7362,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else {
             screenVisibilityChanged(false)
         }
+    }
+
+    /// Its stack was closed with the screen still in it (a cover going
+    /// away): gone for good, though `viewDidDisappear` found it in a stack.
+    func stackClosed() {
+        disposeRuntime()
     }
 
     private func restoreShellChrome() {
@@ -8697,9 +8704,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// leaves the chevron. The back-swipe is the shell's to allow, and is
     /// not affected.
     private func applyLeadingBarItems() {
-        // Known to be the first screen of its stack: nothing to go back to.
-        let isRoot = navigationController?.viewControllers.first === self
-        if !isRoot, backButtonItem == nil, let spec = backButtonSpec,
+        // Known to be the first screen of its stack: nothing to go back to,
+        // unless that stack is a cover, whose first screen closes it.
+        let closesCover = navigationController is CraftNativeCoverNavigationController
+        let isRoot = navigationController?.viewControllers.first === self && !closesCover
+        let coverRoot = closesCover && navigationController?.viewControllers.first === self
+        // A cover's first screen has no chevron to replace: it gets a cross,
+        // or the symbol the screen asked for.
+        let chosen = backButtonSpec ?? (coverRoot ? ["symbol": "xmark"] : nil)
+        if !isRoot, backButtonItem == nil, let spec = chosen,
            let symbol = spec["symbol"] as? String, let image = UIImage(systemName: symbol) {
             let item = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(backButtonTapped))
             item.accessibilityIdentifier = "nav-back"
@@ -9452,9 +9465,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             beginAnimatedChange(payload)
         case "NAVIGATE_OPEN":
             // A path rather than a screen: the hybrid shell opens it, natively
-            // or in the web view.
+            // or in the web view. `presentation: "cover"` asks for it over
+            // everything, in a stack of its own.
             guard let path = payload["path"] as? String, !path.isEmpty else { return }
-            hybridEvents?.nativeScreen(self, open: path, props: payload["props"] as? [String: Any] ?? [:])
+            hybridEvents?.nativeScreen(self, open: path, props: payload["props"] as? [String: Any] ?? [:],
+                                       presentation: payload["presentation"] as? String)
         case "NAVIGATE_BACK":
             if !isAppScript, navigationController?.topViewController === self {
                 navigationController?.popViewController(animated: true)

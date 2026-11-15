@@ -41,6 +41,10 @@ class Navigation {
     fun show(screen: Screen) { shown = screen }
     fun send(screen: Screen, type: String, payload: JSONObject) { received = payload }
     fun openScreen(name: String, params: JSONObject, props: JSONObject = JSONObject()): Screen = Screen(name, params = params, props = props).also { screens.add(it) }
+    // No cover is up in these flows: navigateOpen only asks whether one is.
+    val cover: Any? = null
+    fun closeCover(animated: Boolean = true, done: () -> Unit = {}) { done() }
+    fun openCover(match: Match, props: JSONObject) { error("This fixture opens no cover") }
     fun replace(path: String, props: JSONObject = JSONObject()) = navigateOpen(path, replace = true, props = props)
     fun complete() { pending.toList().also { pending.clear() }.forEach { it() } }
 ${method}

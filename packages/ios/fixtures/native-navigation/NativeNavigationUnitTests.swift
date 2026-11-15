@@ -1226,6 +1226,116 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertTrue(CraftChrome.shared.tabBarVisible)
     }
 
+    // #526: a path opened as a cover comes up over the tab bar and the
+    // floating actions, in a stack of its own, and closes back to the screen
+    // underneath as it was left. Until then `navigation.open` could only push.
+
+    private func cover() -> CraftNativeCoverNavigationController? { shell.coverStack }
+
+    private func awaitCover(_ description: String) async throws -> CraftNativeCoverNavigationController {
+        await displayWait(description) { [self] in
+            guard let cover = shell.coverStack else { return false }
+            return shell.presentedViewController === cover && cover.transitionCoordinator == nil && !cover.isBeingPresented
+                && cover.viewIfLoaded?.window != nil
+        }
+        return try XCTUnwrap(shell.coverStack)
+    }
+
+    private func awaitNoCover(_ description: String) async {
+        await displayWait(description) { [self] in shell.coverStack == nil && shell.presentedViewController == nil }
+    }
+
+    func testAPathOpenedAsACoverGetsItsOwnStackOverTheTabs() async throws {
+        defer { shell.dismissCover(animated: false) }
+        let home = try XCTUnwrap(stack("/"))
+        let under = try XCTUnwrap(home.topViewController)
+        shell.open("/linked-details", presentation: "cover")
+        let cover = try await awaitCover("the inbox comes up as a cover")
+        XCTAssertEqual(cover.modalPresentationStyle, .fullScreen, "over the tab bar and the floating actions")
+        XCTAssertEqual(cover.viewControllers.count, 1)
+        XCTAssertEqual(home.viewControllers.count, 1, "nothing was pushed in the tab")
+        XCTAssertTrue(home.topViewController === under)
+        let inbox = try XCTUnwrap(cover.topViewController as? CraftNativeScreenController)
+        XCTAssertTrue(shell.isFocusedScreen(inbox))
+
+        // Its first screen has a bar, and a close button where Back would be.
+        await displayWait("the cover's first screen keeps its bar") { !cover.isNavigationBarHidden }
+        let close = try XCTUnwrap(inbox.navigationItem.leftBarButtonItems?.first)
+        XCTAssertEqual(close.accessibilityIdentifier, "nav-back")
+        XCTAssertEqual(close.accessibilityLabel, "Close")
+
+        // Asked for again while it is up: the same cover, not a second one.
+        shell.open("/linked-details", presentation: "cover")
+        await renderFrames()
+        XCTAssertTrue(shell.coverStack === cover)
+        XCTAssertEqual(cover.viewControllers.count, 1)
+
+        // A path opened from here pushes inside the cover, with or without
+        // the option, and Back there is the usual one.
+        shell.open("/capabilities")
+        await displayWait("a path opened from the cover pushes inside it") {
+            cover.transitionCoordinator == nil && cover.viewControllers.count == 2
+        }
+        XCTAssertEqual(home.viewControllers.count, 1)
+        let conversation = try XCTUnwrap(cover.topViewController as? CraftNativeScreenController)
+        XCTAssertNotEqual(conversation.navigationItem.leftBarButtonItems?.first?.accessibilityLabel, "Close")
+        conversation.evaluateScript("craft.navigation.back()")
+        await displayWait("Back inside the cover pops inside it") {
+            cover.transitionCoordinator == nil && cover.viewControllers.count == 1
+        }
+        XCTAssertTrue(shell.coverStack === cover)
+
+        // Back at its first screen closes it; underneath is as it was left.
+        inbox.evaluateScript("craft.navigation.back()")
+        await awaitNoCover("Back at the cover's first screen closes it")
+        await displayWait("the cover's screens are taken down with it") { inbox.runtimeDisposed }
+        XCTAssertEqual(home.viewControllers.count, 1)
+        XCTAssertTrue(home.topViewController === under)
+        XCTAssertTrue(shell.isFocusedScreen(try XCTUnwrap(under as? CraftNativeScreenController)))
+    }
+
+    func testACoverClosesFromItsButtonAndGivesWayToATab() async throws {
+        defer { shell.dismissCover(animated: false) }
+        let home = try XCTUnwrap(stack("/"))
+        shell.open("/linked-details", presentation: "cover")
+        var cover = try await awaitCover("the cover is up")
+        let inbox = try XCTUnwrap(cover.topViewController as? CraftNativeScreenController)
+        await displayWait("the close button is drawn") { inbox.navigationItem.leftBarButtonItems?.first != nil }
+        let close = try XCTUnwrap(inbox.navigationItem.leftBarButtonItems?.first)
+        XCTAssertTrue(UIApplication.shared.sendAction(try XCTUnwrap(close.action), to: close.target, from: nil, for: nil))
+        await awaitNoCover("the close button closes the cover")
+        XCTAssertEqual(home.viewControllers.count, 1)
+
+        // The screen's own symbol in place of the cross.
+        shell.open("/linked-details", presentation: "cover")
+        cover = try await awaitCover("the cover is up again")
+        let again = try XCTUnwrap(cover.topViewController as? CraftNativeScreenController)
+        again.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'chevron.down', accessibilityLabel: 'Hide messages' } })")
+        await displayWait("the screen's own close symbol is used") {
+            again.navigationItem.leftBarButtonItems?.first?.accessibilityLabel == "Hide messages"
+        }
+
+        // A tab is under the cover: opening one closes it and shows the tab.
+        shell.open("/third")
+        await awaitNoCover("opening a tab closes the cover")
+        await displayWait("the tab is shown") { CraftChrome.shared.selected == "/third" }
+    }
+
+    func testATabAccessoryCanOpenItsPathAsACover() async throws {
+        defer { shell.dismissCover(animated: false) }
+        let home = try XCTUnwrap(stack("/"))
+        let visible = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        visible.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',presentation:'cover',companions:[{path:'/linked-details',title:'Add',symbol:'plus',presentation:'cover'},{path:'/details',title:'Plain',symbol:'circle',presentation:'sheet'}]}})")
+        await displayWait("the accessory asks for a cover") { CraftChrome.shared.tabAccessory?.presentation == "cover" }
+        let accessory = try XCTUnwrap(CraftChrome.shared.tabAccessory)
+        XCTAssertEqual(accessory.companions.map(\.presentation), ["cover", nil], "only a cover is a presentation")
+        // What a tap on the accessory does.
+        CraftHybrid.shared.open(accessory.id, presentation: accessory.presentation)
+        let cover = try await awaitCover("the accessory's path comes up as a cover")
+        XCTAssertEqual(cover.rootPath, "/capabilities")
+        XCTAssertEqual(home.viewControllers.count, 1)
+    }
+
     func testPreparedTabOptionsCannotReplaceVisibleScreenChrome() async throws {
         await displayWait("the Third tab is prepared") { [self] in stack("/third") != nil }
         let home = try XCTUnwrap(stack("/"))

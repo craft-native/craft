@@ -1077,6 +1077,24 @@ internal class CraftNativeChrome(
     var onButton: ((String) -> Unit)? = null
     var onTab: ((Int) -> Unit)? = null
     var onAccessory: ((String) -> Unit)? = null
+    /**
+     * A tap on the accessory or one of its companions, with how its spec
+     * asked for the path to be presented: "cover" or null. When nobody
+     * listens here the tap goes to `onAccessory`, as before.
+     */
+    var onOpen: ((String, String?) -> Unit)? = null
+    /**
+     * These are a cover's bars: its first screen has a close button where
+     * Back would be, since Back there closes the cover.
+     */
+    internal var closesAtRoot = false
+    private var shownDepth = 0
+
+    private fun openFromActions(spec: JSONObject?) {
+        val path = spec?.optString("path")?.takeIf { it.isNotBlank() } ?: return
+        val presentation = spec.optString("presentation").takeIf { it == "cover" }
+        onOpen?.invoke(path, presentation) ?: onAccessory?.invoke(path)
+    }
     var onTabSwipeStart: ((Float, Float, Float) -> Boolean)? = null
     var onTabSwipeMove: ((Float) -> Unit)? = null
     var onTabSwipeEnd: ((Float, Boolean) -> Unit)? = null
@@ -1175,7 +1193,7 @@ internal class CraftNativeChrome(
         accessoryBadge.setPadding(dp(4), 0, dp(4), 0)
         accessoryBadge.background = GradientDrawable().apply { setColor(Color.RED); cornerRadius = dp(9).toFloat() }
         accessory.addView(accessoryBadge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(18), Gravity.TOP or Gravity.END))
-        accessory.setOnClickListener { accessorySpec?.optString("path")?.let { onAccessory?.invoke(it) } }
+        accessory.setOnClickListener { openFromActions(accessorySpec) }
         accessory.visibility = View.GONE
         accessoryGroup.addView(accessory, LayoutParams(dp(64), dp(64)).apply { marginStart = dp(8) })
         tabRow.addView(accessoryGroup, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1253,7 +1271,8 @@ internal class CraftNativeChrome(
         val large = options.optBoolean("largeTitle", false) && depth == 0
         val title = options.optString("title").takeIf { options.has("title") } ?: fallbackTitle.orEmpty()
         bar.visibility = if (hidden) View.GONE else View.VISIBLE
-        backButton.visibility = if (depth > 0) View.VISIBLE else View.GONE
+        shownDepth = depth
+        backButton.visibility = if (depth > 0 || closesAtRoot) View.VISIBLE else View.GONE
         backButtonSpec = options.optJSONObject("backButton")
         applyBackButton()
         bar.setPadding(if (depth > 0) dp(4) else dp(4), 0, dp(8), 0)
@@ -1318,7 +1337,7 @@ internal class CraftNativeChrome(
                         val destination = choice.optString("path")
                         if (!destination.startsWith("/") || destination.startsWith("//") || choice.optString("title").isBlank()) null else choice
                     }
-                    if (destinations.isEmpty()) onAccessory?.invoke(path)
+                    if (destinations.isEmpty()) openFromActions(item)
                     else android.widget.PopupMenu(context, action).apply {
                         destinations.forEachIndexed { index, choice -> menu.add(0, index, index, choice.optString("title")) }
                         setOnMenuItemClickListener { selected ->
@@ -1588,7 +1607,9 @@ internal class CraftNativeChrome(
      * icon for leaves the arrow, and its "Back".
      */
     private fun applyBackButton() {
-        val symbol = backButtonSpec?.optString("symbol").orEmpty()
+        // A cover's first screen has no chevron to replace: a cross, or the
+        // symbol the screen asked for.
+        val symbol = backButtonSpec?.optString("symbol").orEmpty().ifBlank { if (closesAtRoot && shownDepth == 0) "xmark" else "" }
         val label = backButtonSpec?.optString("accessibilityLabel").orEmpty()
         val tint = backButton.imageTintList?.defaultColor ?: Color.BLACK
         // The activity passes cumulative options for every live patch: the

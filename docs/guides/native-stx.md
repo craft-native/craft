@@ -1129,6 +1129,32 @@ craft.navigation.setOptions({
 craft.navigation.setOptions({ tabAccessory: null })
 ```
 
+Add `presentation: 'cover'` to the accessory, or to one of its `companions`,
+and a tap opens its path as a cover instead of pushing it: the screen slides
+up over everything, the tab bar and the floating actions included, as the
+first screen of a navigation stack of its own.
+
+```ts
+craft.navigation.setOptions({
+  tabAccessory: { path: '/messages', title: 'Messages', symbol: 'message', presentation: 'cover' },
+})
+```
+
+- Its first screen has a close button where Back would be (a cross; the
+  screen's own `backButton` symbol if it sets one). The button, the system's
+  Back and `craft.navigation.back()` there all close the cover, and the screen
+  underneath is as it was left.
+- A path opened from inside the cover pushes inside it, with the usual Back.
+- One cover at a time: the same path asked for again is the cover already
+  up, and any other path opens inside it.
+- Opening a tab closes the cover and shows the tab.
+- A path opened without the option (a notification, a link) is pushed as
+  before, onto the cover if one is up.
+
+The same key travels with `NAVIGATE_OPEN` (`{ path, props, presentation }`),
+so a script bridge that forwards it can ask for a cover from
+`craft.navigation.open`.
+
 On the iOS native/hybrid route shell, add `iconOnly: true` for a 48-point
 circular trailing action with an overlaid badge. Its title and badge remain
 available to VoiceOver. This compact presentation bypasses `UITabAccessory`,
