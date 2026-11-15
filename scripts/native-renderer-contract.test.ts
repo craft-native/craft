@@ -805,6 +805,27 @@ describe('native renderer component contract', () => {
     expect(androidFlatListTest).toContain('nonScrollingListMeasuresItsFullContentHeight')
   })
 
+  it('lets a DatePicker write its dates in a locale it is given, on both hosts', () => {
+    // Nothing could tell the picker the app's language: a German account
+    // on an English phone read "Nov 16, 2026" (#546).
+    const datePickerProps = componentTypes.match(/export interface DatePickerProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(datePickerProps).toContain('locale?: string')
+    expect(ios).toContain('(picker as? CraftNativeDatePickerView)?.localeTag = localeTag?.isEmpty == false ? localeTag : nil')
+    expect(ios).toContain('let chosen = Locale(identifier: localeTag)')
+    // The week's first day and the calendar go with the language.
+    expect(ios).toContain('counted.locale = chosen')
+    // Android's widget takes its language when it is made, and its header
+    // from the default locale until it is told of a configuration.
+    expect(android).toContain('private class CraftNativeLocalizedDatePicker(context: Context, private val locale: Locale?) : DatePicker(context) {')
+    expect(android).toContain('super.onConfigurationChanged(locale?.let { Configuration(newConfig).apply { setLocale(it) } } ?: newConfig)')
+    expect(android).toContain('if (pickerMode != requestedMode || pickerLocale != requestedLocale) {')
+    expect(android).toContain('picker.dispatchConfigurationChanged(localized)')
+    expect(android).toContain('return Locale.forLanguageTag(tag).takeIf { it.language.isNotEmpty() }')
+    expect(iosNativeUnitTests).toContain('func testADatePickerWritesItsDatesInTheLocaleItIsGiven(')
+    expect(androidNavigationTest).toContain('fun aDatePickerWritesItsDatesInTheLocaleItIsGiven()')
+    expect(guide).toContain('`locale` is a BCP 47 tag such as `de-DE`')
+  })
+
   it('keeps DatePicker presentation platform-neutral', () => {
     const datePickerProps = componentTypes.match(/export interface DatePickerProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(datePickerProps).toContain("mode?: 'date' | 'time' | 'datetime' | 'datetime-local' | 'countdown'")

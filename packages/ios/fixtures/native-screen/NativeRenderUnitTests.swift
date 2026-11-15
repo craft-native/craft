@@ -5528,6 +5528,57 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(CraftNativeScreenController.countdownDuration("1:x:3"))
     }
 
+    /// Nothing could tell a DatePicker the app's language, so it wrote its
+    /// dates in the device's: "Mar 16, 2026" on a German account's screen.
+    func testADatePickerWritesItsDatesInTheLocaleItIsGiven() throws {
+        let window = try hostWindow()
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func document(_ locale: Any?) -> [String: Any] {
+            var props: [String: Any] = ["key": "day", "value": "2026-03-16"]
+            if let locale { props["locale"] = locale }
+            return self.document([
+                ["type": "DatePicker", "props": props, "events": ["onValueChange": "picked"]],
+                ["type": "DatePicker", "props": ["key": "device", "value": "2026-03-16"]],
+            ])
+        }
+        func texts(_ view: UIView) -> [String] {
+            ((view as? UILabel)?.text.map { [$0] } ?? []) + view.subviews.flatMap { texts($0) }
+        }
+        func written(_ picker: UIDatePicker) -> String {
+            controller.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return texts(picker).joined(separator: " | ")
+        }
+        controller.render(document("de-DE"))
+        let day = try XCTUnwrap(find(UIDatePicker.self, key: "day", below: controller.view))
+        let device = try XCTUnwrap(find(UIDatePicker.self, key: "device", below: controller.view))
+        XCTAssertEqual(day.locale?.identifier, "de-DE")
+        XCTAssertEqual(day.calendar.firstWeekday, 2, "a German week begins on Monday")
+        XCTAssertEqual(day.calendar.locale?.identifier, "de-DE")
+        XCTAssertEqual(CraftNativeScreenController.datePickerEvent(day.date, mode: .date)["value"] as? String, "2026-03-16", "the day picked is the same day")
+        let german = written(day)
+        XCTAssertFalse(german.contains("Mar 16"), german)
+        XCTAssertTrue(german.contains("16.03.2026") || german.contains("16. M\u{E4}r"), german)
+
+        // Another language, the same picker.
+        controller.render(document("fr-FR"))
+        XCTAssertTrue(find(UIDatePicker.self, key: "day", below: controller.view) === day)
+        XCTAssertEqual(day.locale?.identifier, "fr-FR")
+        XCTAssertTrue(written(day).contains("16/03/2026") || written(day).contains("16 mars"), written(day))
+
+        // Taken away, or not a tag at all: the device's again.
+        for absent in [nil, "  ", 7] as [Any?] {
+            controller.render(document("de-DE"))
+            controller.render(document(absent))
+            XCTAssertEqual(day.locale?.identifier, device.locale?.identifier)
+            XCTAssertEqual(day.calendar.firstWeekday, device.calendar.firstWeekday)
+            XCTAssertEqual(written(day), written(device))
+        }
+    }
+
     func testSwitchKeepsItsControlAndUserValueWhenTheScriptAcknowledgesATap() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

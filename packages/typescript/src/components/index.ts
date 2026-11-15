@@ -1050,6 +1050,12 @@ export interface DatePickerProps extends BaseProps {
   minimumDate?: string | number
   maximumDate?: string | number
   minuteInterval?: number
+  /**
+   * The language the picker writes its dates in, as a BCP 47 tag such as
+   * `de-DE`, when the app's is not the device's: month and weekday names,
+   * the order of a date, the day a week begins on. Omitted, the device's.
+   */
+  locale?: string
   onValueChange?: (event: DatePickerChange) => void
   onChange?: (event: DatePickerChange) => void
   disabled?: boolean

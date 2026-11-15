@@ -6900,6 +6900,29 @@ private final class CraftNativeDatePickerView: UIDatePicker {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
 
+    /// The language the picker writes its dates in, as a BCP 47 tag, when
+    /// the app's is not the device's. UIKit's own default is the device's:
+    /// a German account on an English phone read "Nov 16, 2026".
+    ///
+    /// The calendar goes with it: which day a week begins on and which
+    /// calendar the years are counted in belong to the language too. The
+    /// time zone stays the device's, so the instant picked does not move.
+    var localeTag: String? {
+        didSet {
+            guard localeTag != oldValue else { return }
+            guard let localeTag else {
+                locale = nil
+                calendar = nil
+                return
+            }
+            let chosen = Locale(identifier: localeTag)
+            var counted = chosen.calendar
+            counted.locale = chosen
+            counted.timeZone = timeZone ?? .current
+            locale = chosen
+            calendar = counted
+        }
+    }
 }
 
 private final class CraftNativeSwitch: UISwitch {
@@ -10253,6 +10276,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             picker.tintColor = color(props["color"]) ?? color(style["color"])
             picker.isEnabled = props["disabled"] as? Bool != true
+            let localeTag = (props["locale"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            (picker as? CraftNativeDatePickerView)?.localeTag = localeTag?.isEmpty == false ? localeTag : nil
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: picker)
         case "Modal":
             let modal = result as! CraftNativeModalView

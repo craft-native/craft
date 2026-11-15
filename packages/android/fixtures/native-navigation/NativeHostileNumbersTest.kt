@@ -50,7 +50,7 @@ class NativeHostileNumbersTest {
             "grabberVisible", "hidden", "hidesWhenStopped", "horizontal", "href", "id", "image", "imageShape", "imageSize",
             "imageshape", "imagesize", "indeterminate", "initialRegion", "inverted", "items", "key",
             "keyboardDismissMode", "keyboardShouldPersistTaps", "keyboardType", "keyboardVerticalOffset", "label",
-            "listRole", "loop", "mapType", "markers", "maxLength", "maximumDate", "maximumTrackTintColor",
+            "listRole", "locale", "loop", "mapType", "markers", "maxLength", "maximumDate", "maximumTrackTintColor",
             "maximumValue", "minimumDate", "minimumTrackTintColor", "minimumValue", "minuteInterval", "mode",
             "mostRecentEventCount", "multiline", "muted", "name", "nonModal", "numColumns", "numberOfLines",
             "objectFit", "objectPosition", "onEndReachedThreshold", "opacity", "pageIndex", "pagingEnabled", "passwordRules", "paused",

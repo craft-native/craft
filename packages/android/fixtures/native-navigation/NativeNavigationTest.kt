@@ -3175,6 +3175,81 @@ class NativeNavigationTest {
     }
 
     /**
+     * Nothing could tell a DatePicker the app's language, so it wrote its
+     * dates in the device's: "Mon, Mar 16" on a German account's screen.
+     * `locale` is a BCP 47 tag. The widget takes its language when it is
+     * made (the grid from its context, the header from the default locale
+     * until a configuration change), so the test reads what is written, and
+     * checks that the device's own configuration arriving later does not put
+     * the header back.
+     */
+    @Test
+    fun aDatePickerWritesItsDatesInTheLocaleItIsGiven() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        lateinit var screen: Any
+        fun render(props: String) {
+            scenario.onActivity {
+                val document = JSONObject("""{"id":"root","type":"View","style":{"width":360,"height":1200},"children":[
+                    {"id":"day","type":"DatePicker","props":{"testID":"day","value":"2026-03-16"$props}},
+                    {"id":"device","type":"DatePicker","props":{"testID":"device","value":"2026-03-16"}}]}""")
+                MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java)
+                    .apply { isAccessible = true }.invoke(activity, screen, document)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        fun texts(view: View): List<String> = when (view) {
+            is TextView -> listOf(view.text.toString())
+            is ViewGroup -> (0 until view.childCount).flatMap { texts(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        fun written(id: String): String {
+            val root = awaitView(activity, id)
+            var out = ""
+            scenario.onActivity { out = texts(root).joinToString(" | ") }
+            return out
+        }
+        fun picker(id: String): DatePicker = requireNotNull(findType(awaitView(activity, id), DatePicker::class.java)) { "$id has no DatePicker" }
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            scenario.onActivity {
+                screen = requireNotNull((MainActivity::class.java.getDeclaredField("screens")
+                    .apply { isAccessible = true }.get(activity) as List<*>).last())
+            }
+            render(""","locale":"de-DE"""")
+            val device = written("device")
+            assertTrue("the emulator writes English dates: $device", device.contains("Mar"))
+            val german = written("day")
+            assertTrue("a German picker names March in German: $german", german.contains("M\u00e4r"))
+            assertFalse("and not in the device's language: $german", german.contains("Mar "))
+            assertEquals(java.util.Calendar.MONDAY, picker("day").firstDayOfWeek)
+            assertEquals("the day shown is the same day", listOf(2026, 2, 16), picker("day").let { listOf(it.year, it.month, it.dayOfMonth) })
+
+            // The device's configuration arriving again (a turn of the
+            // screen, dark mode) must not put the header back.
+            val germanPicker = picker("day")
+            scenario.onActivity { germanPicker.dispatchConfigurationChanged(activity.resources.configuration) }
+            assertTrue(written("day").contains("M\u00e4r"))
+
+            // Another language is another widget, showing the same day.
+            render(""","locale":"fr-FR"""")
+            val french = written("day")
+            assertTrue("a French picker names March in French: $french", french.contains("mars"))
+            assertEquals(listOf(2026, 2, 16), picker("day").let { listOf(it.year, it.month, it.dayOfMonth) })
+
+            // Taken away, or not a tag: the device's again.
+            for (absent in listOf("", ""","locale":"  """", ""","locale":7""")) {
+                render(""","locale":"de-DE"""")
+                render(absent)
+                assertEquals("after $absent", device, written("day"))
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    /**
      * A view that can be pressed shows the touch (#538).
      *
      * A press handler alone used to get a click listener and nothing else: a

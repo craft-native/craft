@@ -4036,6 +4036,29 @@ private class CraftNativeActivityIndicator(context: Context) :
 }
 
 /** Android counterpart to iOS's UIDatePicker-backed native DatePicker. */
+/**
+ * A DatePicker that writes its dates in `locale` rather than the device's.
+ *
+ * The platform widget takes its language from two places: the calendar grid
+ * from its context's configuration, the header ("Mon, Mar 16") from
+ * Locale.getDefault() until a configuration change tells it otherwise. So it
+ * is built in a context of the locale, told the locale once, and told it
+ * again whenever the device's configuration changes, or a turn of the
+ * screen would put the header back into the device's language.
+ */
+private class CraftNativeLocalizedDatePicker(context: Context, private val locale: Locale?) : DatePicker(context) {
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(locale?.let { Configuration(newConfig).apply { setLocale(it) } } ?: newConfig)
+    }
+}
+
+/** The locale a BCP 47 tag names, or null when it names none. */
+internal fun craftNativePickerLocale(value: Any?): Locale? {
+    val tag = (value as? String)?.trim().orEmpty()
+    if (tag.isEmpty()) return null
+    return Locale.forLanguageTag(tag).takeIf { it.language.isNotEmpty() }
+}
+
 private class CraftNativeDatePickerView(context: Context) : FrameLayout(context) {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
@@ -4044,6 +4067,7 @@ private class CraftNativeDatePickerView(context: Context) : FrameLayout(context)
     private val maxCountdownSeconds = 23 * 3600 + 59 * 60 + 59
 
     private var pickerMode: PickerMode? = null
+    private var pickerLocale: Locale? = null
     private var datePicker: DatePicker? = null
     private var timePicker: TimePicker? = null
     private var defaultDateBounds: Pair<Long, Long>? = null
@@ -4063,8 +4087,13 @@ private class CraftNativeDatePickerView(context: Context) : FrameLayout(context)
             "countdown" -> PickerMode.COUNTDOWN
             else -> PickerMode.DATE
         }
-        if (pickerMode != requestedMode) {
+        // The app's language, when it is not the device's. The widgets take
+        // theirs when they are made, so another language is another widget.
+        val requestedLocale = craftNativePickerLocale(props.opt("locale"))
+        if (pickerMode != requestedMode || pickerLocale != requestedLocale) {
+            val kept = if (pickerMode == requestedMode && pickerMode != PickerMode.COUNTDOWN && (datePicker != null || timePicker != null)) currentDate() else null
             pickerMode = requestedMode
+            pickerLocale = requestedLocale
             datePicker = null
             timePicker = null
             removeAllViews()
@@ -4072,8 +4101,14 @@ private class CraftNativeDatePickerView(context: Context) : FrameLayout(context)
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
             }
+            val localized = requestedLocale?.let { Configuration(context.resources.configuration).apply { setLocale(it) } }
+            val pickerContext = localized?.let { android.view.ContextThemeWrapper(context, 0).apply { applyOverrideConfiguration(it) } } ?: context
             if (requestedMode == PickerMode.DATE || requestedMode == PickerMode.DATE_TIME) {
-                datePicker = DatePicker(context).also { picker ->
+                datePicker = CraftNativeLocalizedDatePicker(pickerContext, requestedLocale).also { picker ->
+                    if (localized != null && requestedLocale != null) {
+                        picker.dispatchConfigurationChanged(localized)
+                        picker.firstDayOfWeek = Calendar.getInstance(requestedLocale).firstDayOfWeek
+                    }
                     defaultDateBounds = picker.minDate to picker.maxDate
                     val today = Calendar.getInstance()
                     picker.init(today.get(Calendar.YEAR), today.get(Calendar.MONTH), today.get(Calendar.DAY_OF_MONTH)) { _, _, _, _ -> changed() }
@@ -4084,7 +4119,7 @@ private class CraftNativeDatePickerView(context: Context) : FrameLayout(context)
                 }
             }
             if (requestedMode != PickerMode.DATE) {
-                timePicker = TimePicker(context).also { picker ->
+                timePicker = TimePicker(pickerContext).also { picker ->
                     picker.setIs24HourView(true)
                     picker.setOnTimeChangedListener { _, _, _ -> changed() }
                     content.addView(picker, LinearLayout.LayoutParams(
@@ -4094,6 +4129,10 @@ private class CraftNativeDatePickerView(context: Context) : FrameLayout(context)
                 }
             }
             addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            // The same picker in another language keeps what it showed,
+            // when the screen does not say what that is.
+            suppressChanges = true
+            kept?.let { applyDate(it) }
         }
 
         suppressChanges = true

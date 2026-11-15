@@ -375,6 +375,10 @@ Countdown values are durations: numeric values are seconds and text values use
 `HH:mm` or `HH:mm:ss`; their event value is always `HH:mm:ss`, `iso` is an
 ISO-8601 duration such as `PT5400S`, and `timestamp` is the duration in
 milliseconds. Native countdown controls clamp values to `23:59:59`.
+`locale` is a BCP 47 tag such as `de-DE` for an app whose language is not the
+device's: the picker writes month and weekday names, the order of a date and
+the day a week begins on in that language on both hosts. Without it the
+picker follows the device. The value and the event are unchanged by it.
 `Modal` is parent-scoped: `visible` controls a native layer around its
 children, `transparent` removes the dimming scrim, and hidden modals do not
 participate in layout or touch handling. `animationType` accepts `none`,
