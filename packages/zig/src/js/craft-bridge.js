@@ -72,7 +72,13 @@
   // evaluation is different: JSON null is a real answer (including for
   // JavaScript undefined), and must reach the caller unchanged.
   function _orEmpty(action, payload) {
-    if (action === 'executeJavaScript' && payload === null) return null
+    // `null` is a real answer for these two, not a missing one. The typed SDK
+    // declares `getFocused(): Promise<Window | null>` and reads null as "none of
+    // our windows is focused"; normalising it to `{}` handed it a truthy empty
+    // object, so `getFocused()` returned a window handle that did not exist.
+    // `executeJavaScript` is here for the same reason: an evaluated null must
+    // stay null.
+    if ((action === 'executeJavaScript' || action === 'getFocused') && payload === null) return null
     return payload === undefined || payload === null ? {} : payload
   }
 

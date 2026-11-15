@@ -129,6 +129,11 @@ POSIX-only assumption had to move so that both platforms could share it.
   nowhere to surface: the call reported success and the window never changed.
   `bridge_window.zig` reads `value` first and the descriptive key as a legacy
   fallback; the Windows path now does the same through one helper.
+- **`window.getFocused` returned an object that did not exist.** The native side
+  answers `null` when none of our windows is focused, which is the documented
+  `Promise<Window | null>`; the facade's `_orEmpty` normalised every null payload
+  to `{}`, so the typed SDK received a truthy window handle for a window that was
+  not there. `executeJavaScript` already had the exemption this one needed.
 - **Seven clipboard actions had no route.** `hasText`, `hasHTML`, `hasImage`,
   `clear`, `writeHTML` and `readHTML` were implemented in `bridge_clipboard.zig`
   for Windows and never reached: `handleDesktopText` dispatched only the two text
@@ -285,11 +290,6 @@ and was validated the same way: with the filter bypassed it reports
   Windows the emitters for macOS-only channels never register, so a page sees
   `unknown` rather than a per-platform answer. Namespaces are filtered; channels
   are not yet.
-- **`window.getFocused` answers `{}`.** Every other read returns a usable shape
-  (`getTitle` a string, `getSize` an object, `getState` a full state object), and
-  the native side builds a plain JSON string for this one. `getState().isFocused`
-  carries the same fact today, so this is a shape bug rather than a missing
-  capability.
 - **These window actions have no Windows arm at all**, and answer
   PLATFORM_NOT_SUPPORTED: `setMovable`, `isMovable`, `setOpacity`, `getOpacity`,
   `setHasShadow`, `setAspectRatio`, `startDrag`, `setBackgroundColor`,

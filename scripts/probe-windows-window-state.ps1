@@ -65,9 +65,31 @@ $html = @'
       await craft.window.setTitle('state-probe-title'); await settle();
       out.push('TITLE=' + (await read('getTitle')));
 
-      // `getFocused` answers `{}` today, which is recorded in FORK.md as a gap
-      // rather than asserted here; `getState` carries the same fact and more.
-      out.push('FOCUSED=' + JSON.stringify(await read('getFocused')));
+      // `getFocused` answers null when none of our windows is focused, and the
+      // typed SDK turns that into `null` rather than a handle. Sampling while
+      // minimised and again after the runner activates the window covers both
+      // branches; normalising null to {} would show up as "obj" here.
+      //
+      // The window restores itself before asking the runner to activate it:
+      // AppActivate cannot raise a minimised window, and SW_SHOW does not
+      // restore one either (that is what SW_RESTORE is for).
+      const seen = [];
+      async function sample(times) {
+        for (let i = 0; i < times; i++) {
+          const v = await read('getFocused');
+          const tag = v === null ? 'null' : (typeof v === 'string' ? v : 'obj');
+          if (seen[seen.length - 1] !== tag) seen.push(tag);
+          await new Promise(function (r) { setTimeout(r, 280); });
+        }
+      }
+      await craft.window.minimize(); await settle();
+      await sample(2);
+      await craft.window._call('restore', {}, 'main');
+      await settle();
+      out.push('RESTORED'); show();
+      await sample(8);
+      out.push('FOCUSSEQ=' + seen.join('>'));
+
       const state = await read('getState');
       out.push('STATE=' + [state.isVisible, state.isFocused, state.isAlwaysOnTop, state.bounds.width].join(','));
     } catch (e) { err('WIN', e); }
@@ -106,12 +128,18 @@ $proc = Start-Process -FilePath $CraftExe `
 
 $title = ''
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$activated = $false
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 150
     $live = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
     if (-not $live) { break }
     if ($live.MainWindowTitle) { $title = $live.MainWindowTitle }
     if ($title -like '*ALLDONE*') { break }
+    # The focused half of the sample needs the window in front; do it once.
+    if (-not $activated -and $title -like '*RESTORED*') {
+        $activated = $true
+        (New-Object -ComObject WScript.Shell).AppActivate($proc.Id) | Out-Null
+    }
 }
 Get-Process craft -ErrorAction SilentlyContinue | Stop-Process -Force
 
@@ -160,6 +188,14 @@ if ((Get-Value 'RESIZABLE') -ne 'true/false/true') { $failures += "resizable did
 if ((Get-Value 'TITLE') -ne 'state-probe-title') { $failures += "getTitle read '$(Get-Value 'TITLE')'" }
 $state = Get-Value 'STATE'
 if ($state -notmatch '^(true|false),(true|false),(true|false),([1-9]\d*)$') { $failures += "getState did not answer a usable shape: '$state'" }
+
+$seq = Get-Value 'FOCUSSEQ'
+if (-not $seq) { $failures += 'getFocused was never sampled' }
+else {
+    if ($seq -notmatch 'null') { $failures += "getFocused never answered null while minimised: '$seq'" }
+    if ($seq -notmatch 'main') { $failures += "getFocused never answered the window name once activated: '$seq'" }
+    if ($seq -match 'obj') { $failures += "getFocused answered a non-string, non-null value: '$seq'" }
+}
 if ((Get-Value 'CLIP') -ne 'same') { $failures += "clipboard round trip: '$(Get-Value 'CLIP')'" }
 if ((Get-Value 'HASTEXT') -ne 'true') { $failures += "clipboard hasText: '$(Get-Value 'HASTEXT')'" }if ((Get-Value 'HTML') -ne 'same') { $failures += "clipboard html round trip: '$(Get-Value 'HTML')" }
 if ((Get-Value 'HASHTML') -ne 'true') { $failures += "clipboard hasHTML: '$(Get-Value 'HASHTML')" }
