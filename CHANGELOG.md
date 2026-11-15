@@ -1,5 +1,32 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.504...v0.0.505)
+
+## 🚀 Features
+
+- show a press under the finger for anything that can be pressed ([624785d](https://github.com/craft-native/craft/commit/624785d)) _(by glennmichael123)_ ([#538](https://github.com/craft-native/craft/issues/538))
+- **macos**: fetch honours credentials: 'omit' ([394cb84](https://github.com/craft-native/craft/commit/394cb84)) _(by Chris)_
+- **macos**: in-app updater for the AppKit host (craft.updater) ([454eb53](https://github.com/craft-native/craft/commit/454eb53)) _(by Chris)_
+- **macos**: fold a markdown heading's marks off the caret line ([002743e](https://github.com/craft-native/craft/commit/002743e)) _(by Chris)_
+- **macos**: sidebar label weight, selection and content insets ([5d9d786](https://github.com/craft-native/craft/commit/5d9d786)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios**: make a labelled view that holds controls a named group ([e1fd748](https://github.com/craft-native/craft/commit/e1fd748)) _(by glennmichael123)_ ([#536](https://github.com/craft-native/craft/issues/536))
+- **ios**: pad a placeholder once, scale a Picker's default font once, name a presented sheet ([ee7ad7c](https://github.com/craft-native/craft/commit/ee7ad7c)) _(by glennmichael123)_ ([#540](https://github.com/craft-native/craft/issues/540), [#537](https://github.com/craft-native/craft/issues/537), [#535](https://github.com/craft-native/craft/issues/535))
+- **ios**: keep the back button's item when setOptions names the same one again ([2fcfe68](https://github.com/craft-native/craft/commit/2fcfe68)) _(by glennmichael123)_ ([#527](https://github.com/craft-native/craft/issues/527))
+- **ios**: do not bring the tab bar back on the way to a screen that hides it ([3b47bd1](https://github.com/craft-native/craft/commit/3b47bd1)) _(by glennmichael123)_ ([#530](https://github.com/craft-native/craft/issues/530))
+- **macos**: a selected sidebar row keeps its label and icon colours ([a8ef1fd](https://github.com/craft-native/craft/commit/a8ef1fd)) _(by Chris)_
+
+## 🧪 Tests
+
+- **macos**: give the updater test's cleanup hook a spawn budget ([da867bf](https://github.com/craft-native/craft/commit/da867bf)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.503...v0.0.504)
 
 ## 🐛 Bug Fixes
