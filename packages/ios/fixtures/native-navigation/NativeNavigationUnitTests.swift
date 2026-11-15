@@ -1336,6 +1336,100 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(home.viewControllers.count, 1)
     }
 
+    /// #547: a Modal that is not a sheet is drawn inside its screen, between
+    /// the bars. Around a blocking one the tab bar and the navigation bar
+    /// stayed bright and live, a tab could be swiped to, the back-swipe
+    /// answered, and the floating actions were drawn over it.
+    func testABlockingModalPutsTheBarsAndTheFloatingActionsBehindIt() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        shell.open("/linked-details")
+        await displayWait("a screen is pushed, with a bar and Back") {
+            home.transitionCoordinator == nil && home.viewControllers.count == 2 && !home.isNavigationBarHidden
+        }
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'bubble.left',layout:'vertical',companions:[{path:'/add',title:'Add',symbol:'plus'}]}})")
+        await displayWait("the floating actions are up") { CraftChrome.shared.floatingActions != nil }
+        let window = try XCTUnwrap(shell.view.window)
+        func document(_ visible: Bool, _ extra: [String: Any] = [:]) -> [String: Any] {
+            var props: [String: Any] = ["key": "dialog", "visible": visible, "animationType": "none"]
+            props.merge(extra) { _, new in new }
+            return ["id": "root", "type": "View", "style": ["flex": 1], "children": [
+                ["id": "rows", "type": "View", "style": ["height": 2000]],
+                ["id": "dialog", "type": "Modal", "props": props, "children": [
+                    ["id": "dialog-text", "type": "Text", "props": ["testID": "dialog-text"], "children": ["Delete this workout?"]],
+                ]],
+            ]]
+        }
+        /// What a tap at `point` (in the window) lands on.
+        func hit(_ point: CGPoint) -> UIView? { window.hitTest(point, with: nil) }
+        func isBar(_ view: UIView?) -> Bool {
+            var candidate = view
+            while let current = candidate {
+                if current === shell.tabBar || current === home.navigationBar { return true }
+                candidate = current.superview
+            }
+            return false
+        }
+        let tabPoint = shell.tabBar.convert(CGPoint(x: shell.tabBar.bounds.midX, y: shell.tabBar.bounds.midY), to: window)
+        let barPoint = home.navigationBar.convert(CGPoint(x: 30, y: home.navigationBar.bounds.midY), to: window)
+        let material = { () -> UIVisualEffectView? in
+            self.shell.view.subviews.compactMap { $0 as? UIVisualEffectView }.first { !$0.isHidden && $0.superview === self.shell.view }
+        }
+
+        // No Modal: the bars take their taps.
+        screen.render(document(false))
+        await renderFrames()
+        XCTAssertFalse(shell.blockedByModal)
+        XCTAssertTrue(isBar(hit(tabPoint)), "the tab bar takes a tap")
+        XCTAssertTrue(isBar(hit(barPoint)), "Back takes a tap")
+        let actions = try XCTUnwrap(material())
+        XCTAssertEqual(actions.alpha, 1)
+
+        // A blocking Modal: the bars are behind it.
+        screen.render(document(true))
+        await displayWait("the shell puts its bars behind the Modal") { [self] in shell.blockedByModal }
+        await renderFrames()
+        XCTAssertTrue(shell.dimmedByModal)
+        XCTAssertFalse(isBar(hit(tabPoint)), "a tab behind the Modal takes nothing")
+        XCTAssertFalse(isBar(hit(barPoint)), "nor does Back")
+        XCTAssertTrue(shell.tabBar.accessibilityElementsHidden)
+        XCTAssertTrue(home.navigationBar.accessibilityElementsHidden)
+        XCTAssertEqual(actions.alpha, 0, "the actions are not drawn over the Modal")
+        XCTAssertNotNil(CraftChrome.shared.floatingActions, "and still hold their place, so the screen behind does not move")
+        // Dimmed once: the shell dims the bars, the Modal's own scrim the rest.
+        let shellScrims = shell.view.subviews.filter { !$0.isHidden && $0.backgroundColor == UIColor.black.withAlphaComponent(0.32) }
+        XCTAssertEqual(shellScrims.count, 2)
+        let above = try XCTUnwrap(shellScrims.min { $0.frame.minY < $1.frame.minY })
+        let below = try XCTUnwrap(shellScrims.max { $0.frame.minY < $1.frame.minY })
+        XCTAssertEqual(above.frame.maxY, home.navigationBar.convert(home.navigationBar.bounds, to: shell.view).maxY, accuracy: 0.5)
+        XCTAssertEqual(below.frame.maxY, shell.view.bounds.maxY, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(below.frame.minY, shell.tabBar.frame.minY + 0.5)
+        // No swipe leaves the screen: not to a tab, not Back.
+        for recognizer in [home.interactivePopGestureRecognizer].compactMap({ $0 }) {
+            XCTAssertFalse(shell.gestureRecognizerShouldBegin(recognizer), "no back-swipe behind a blocking Modal")
+        }
+
+        // A transparent Modal blocks without dimming; a non-modal one does neither.
+        screen.render(document(true, ["transparent": true]))
+        await displayWait("a transparent Modal blocks without dimming") { [self] in shell.blockedByModal && !shell.dimmedByModal }
+        XCTAssertFalse(isBar(hit(tabPoint)))
+        screen.render(document(true, ["nonModal": true]))
+        await displayWait("a non-modal popup leaves the bars alone") { [self] in !shell.blockedByModal }
+        XCTAssertTrue(isBar(hit(tabPoint)))
+
+        // Closed: everything is back.
+        screen.render(document(true))
+        await displayWait("blocked again") { [self] in shell.blockedByModal }
+        screen.render(document(false))
+        await displayWait("the bars come back when it closes") { [self] in !shell.blockedByModal }
+        await renderFrames()
+        XCTAssertTrue(isBar(hit(tabPoint)))
+        XCTAssertTrue(isBar(hit(barPoint)))
+        XCTAssertFalse(shell.tabBar.accessibilityElementsHidden)
+        XCTAssertFalse(home.navigationBar.accessibilityElementsHidden)
+        XCTAssertEqual(actions.alpha, 1)
+    }
+
     func testPreparedTabOptionsCannotReplaceVisibleScreenChrome() async throws {
         await displayWait("the Third tab is prepared") { [self] in stack("/third") != nil }
         let home = try XCTUnwrap(stack("/"))

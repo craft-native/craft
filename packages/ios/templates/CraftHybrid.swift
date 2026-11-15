@@ -327,12 +327,15 @@ protocol CraftHybridScreenEvents: AnyObject {
     func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?)
     /// `craft.navigation.replace(path)`: finish the current flow atomically.
     func nativeScreen(_ screen: CraftNativeScreenController, replace path: String)
+    /// A Modal on the screen came up, went away, or stopped or started blocking.
+    func nativeScreenModalChanged(_ screen: CraftNativeScreenController)
 }
 
 extension CraftHybridScreenEvents {
     func nativeScreen(_ screen: CraftNativeScreenController, open path: String, props: [String: Any], presentation: String?) {
         nativeScreen(screen, open: path, props: props)
     }
+    func nativeScreenModalChanged(_ screen: CraftNativeScreenController) {}
 }
 
 // MARK: - The shell
@@ -1693,11 +1696,98 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         if let accessoryModel { hybrid.open(accessoryModel.id, presentation: accessoryModel.presentation) }
     }
 
+    // MARK: A blocking Modal on the screen shown
+
+    /// A Modal is drawn inside its screen, between the bars, and its scrim
+    /// covered only the screen. Around a blocking one the tab bar and the
+    /// navigation bar stayed bright and live (a tab could be tapped or
+    /// swiped to, Back answered) and the floating actions were drawn over
+    /// it (#547). While one is up the bars are behind it with the screen.
+    private(set) var blockedByModal = false
+    private(set) var dimmedByModal = false
+    private let modalScrimAbove = UIView()
+    private let modalScrimBelow = UIView()
+
+    func nativeScreenModalChanged(_ screen: CraftNativeScreenController) {
+        guard frontStack?.topViewController === screen || visibleStack?.topViewController === screen else { return }
+        updateModalBlock()
+    }
+
+    /// From the screen now shown: after a Modal changes, a tab is shown, a
+    /// push or pop lands, or a cover comes or goes.
+    func updateModalBlock() {
+        // A cover is over everything already; its own Modals cover its own screen.
+        let screen = coverStack == nil ? visibleStack?.topViewController as? CraftNativeScreenController : nil
+        let modal = screen?.blockingInlineModal
+        let blocked = modal != nil
+        let dimmed = modal?.dimmed ?? false
+        let changed = blocked != blockedByModal || dimmed != dimmedByModal
+        blockedByModal = blocked
+        dimmedByModal = dimmed
+        for scrim in [modalScrimAbove, modalScrimBelow] {
+            if scrim.superview !== view { view.addSubview(scrim) }
+            // Clear for a transparent Modal: the bars still take no touch.
+            scrim.backgroundColor = dimmed ? UIColor.black.withAlphaComponent(0.32) : .clear
+            scrim.isHidden = !blocked
+            scrim.isUserInteractionEnabled = true
+            scrim.isAccessibilityElement = false
+        }
+        tabBar.accessibilityElementsHidden = blocked
+        for nav in stacks.values { nav.navigationBar.accessibilityElementsHidden = blocked && nav === visibleStack }
+        if !blocked { for nav in stacks.values { nav.navigationBar.accessibilityElementsHidden = false } }
+        layoutModalScrims()
+        if changed {
+            for nav in stacks.values {
+                for case let other as CraftNativeScreenController in nav.viewControllers where other !== screen {
+                    other.setModalScrimInsets(.zero)
+                }
+            }
+        }
+    }
+
+    /// The strips the shell dims: from the top to the bottom of the
+    /// navigation bar, and from the top of the tab bar (and the system's
+    /// accessory above it) to the bottom. The Modal's scrim does the rest.
+    private func layoutModalScrims() {
+        let actions: [UIView] = [accessoryGlass, accessoryButton, accessoryBadge] + companionButtons + companionGlasses
+        // Hidden, not removed: the screen behind keeps the room it has and
+        // does not move under the scrim.
+        for action in actions {
+            action.alpha = blockedByModal ? 0 : 1
+            action.accessibilityElementsHidden = blockedByModal
+        }
+        guard blockedByModal else {
+            (visibleStack?.topViewController as? CraftNativeScreenController)?.setModalScrimInsets(.zero)
+            return
+        }
+        var above: CGFloat = 0
+        if let nav = visibleStack, !nav.isNavigationBarHidden, nav.navigationBar.window != nil {
+            above = max(0, nav.navigationBar.convert(nav.navigationBar.bounds, to: view).maxY)
+        }
+        var below = view.bounds.maxY
+        if !tabBar.isHidden, tabBar.window != nil { below = min(below, tabBar.frame.minY) }
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *), let accessory = bottomAccessory, accessory.contentView.window != nil {
+            below = min(below, accessory.contentView.convert(accessory.contentView.bounds, to: view).minY)
+        }
+#endif
+        modalScrimAbove.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: above)
+        modalScrimBelow.frame = CGRect(x: 0, y: below, width: view.bounds.width, height: max(0, view.bounds.maxY - below))
+        view.bringSubviewToFront(modalScrimAbove)
+        view.bringSubviewToFront(modalScrimBelow)
+        if let screen = visibleStack?.topViewController as? CraftNativeScreenController, screen.isViewLoaded {
+            let top = view.convert(CGPoint(x: 0, y: above), to: screen.view).y
+            let bottom = screen.view.bounds.maxY - view.convert(CGPoint(x: 0, y: below), to: screen.view).y
+            screen.setModalScrimInsets(UIEdgeInsets(top: max(0, top), left: 0, bottom: max(0, bottom), right: 0))
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard hybrid.controller === self else { return }
         // Once the actions are where this pass puts them.
         defer { CraftChrome.shared.floatingActionsMoved(to: floatingActionsFrame(), in: view) }
+        defer { layoutModalScrims() }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *), accessoryModel?.iconOnly != true {
             // UIKit already supplies the native safe area. This measurement is
@@ -2292,6 +2382,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         } else if !(nav.topViewController is CraftHybridWebSlot) {
             parkWeb()
         }
+        updateModalBlock()
     }
 
     /// Prepare the other tabs' first screens after the first frame, nearest
@@ -2540,6 +2631,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             // Presented full screen, the stack underneath leaves the window
             // without UIKit telling its screen: the shell does.
             (self.visibleStack?.topViewController as? CraftNativeScreenController)?.screenVisibilityChanged(false)
+            self.updateModalBlock()
             self.present(nav, animated: true)
         }
         guard let native = screen as? CraftNativeScreenController, CraftNativeScriptThread.isBackground else { show(); return }
@@ -2566,6 +2658,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             guard let self, self.coverStack == nil, let under, under === self.visibleStack?.topViewController else { return }
             CraftChrome.shared.visiblePath = self.nativePaths[ObjectIdentifier(under)]
             (under as? CraftNativeScreenController)?.screenVisibilityChanged(true)
+            self.updateModalBlock()
         }
         nav.dismiss(animated: animated) {
             // Its screens were still in its stack when they disappeared, so
@@ -2794,6 +2887,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         // Also restore selection after a cancelled interactive pop.
         CraftChrome.shared.visiblePath = nativePaths[ObjectIdentifier(viewController)]
         if let slot = viewController as? CraftHybridWebSlot { adoptWeb(into: slot) } else { parkWeb() }
+        updateModalBlock()
     }
 
     // MARK: UIGestureRecognizerDelegate
@@ -2853,6 +2947,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Behind a blocking Modal nothing leaves the screen: no tab swipe, no back-swipe.
+        if blockedByModal { return false }
         if tabSwipeRecognizers.contains(where: { $0 === gestureRecognizer }) {
             // System tab-bar tracking owns touches on the bar and accessory;
             // Craft's content swipe must not steal their drag/hold gestures.

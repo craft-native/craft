@@ -4814,7 +4814,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        blocker.frame = bounds
+        blocker.frame = bounds.inset(by: scrimInsets)
         guard sheetController == nil else { return }
         // The scrim covers the whole screen; what the modal holds stays
         // clear of the bars and the home indicator it is drawn over.
@@ -4825,6 +4825,20 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     /// whole screen, what the modal holds stays clear of the bars.
     var contentInsets: UIEdgeInsets = .zero {
         didSet { if contentInsets != oldValue { setNeedsLayout() } }
+    }
+
+    /// The parts of the screen the shell dims itself while this is up (its
+    /// navigation bar above, its tab bar below): the scrim stops there, so
+    /// nothing is dimmed twice. Zero when the shell dims nothing.
+    var scrimInsets: UIEdgeInsets = .zero {
+        didSet { if scrimInsets != oldValue { setNeedsLayout() } }
+    }
+
+    /// Up, blocking, and drawn in the screen rather than presented as a
+    /// sheet (UIKit's sheet already covers everything).
+    var blocksScreenInline: Bool {
+        blocksBackground && renderedVisible && sheetController == nil
+            && !(presentationStyle == "pageSheet" || presentationStyle == "formSheet")
     }
 }
 
@@ -7163,6 +7177,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// app's native screens: told of the first frame, of a first frame that
     /// could not be drawn, and of `craft.navigation.open(path)`.
     weak var hybridEvents: CraftHybridScreenEvents?
+    /// Whether each Modal blocked when the shell was last told about it.
+    private var modalBlockedShell: [ObjectIdentifier: String] = [:]
     private var hybridRendered = false
     private(set) var runtimeDisposed = false
     private let storageLifetime = CraftNativeStorageLifetime()
@@ -7628,6 +7644,23 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     /// A non-modal popup above a blocking modal must not leak its outside tap
     /// to the modal's scrim and dismiss the wrong layer.
+    /// A blocking Modal drawn in this screen, while one is up: whether its
+    /// scrim dims. The shell puts its bars behind it with the screen.
+    var blockingInlineModal: (dimmed: Bool, Void)? {
+        guard isViewLoaded else { return nil }
+        let modals = view.subviews.compactMap { $0 as? CraftNativeModalView }.filter(\.blocksScreenInline)
+        guard !modals.isEmpty else { return nil }
+        return (modals.contains { !$0.transparent }, ())
+    }
+
+    /// The shell dims these strips itself: the screen's Modals stop there.
+    func setModalScrimInsets(_ insets: UIEdgeInsets) {
+        guard isViewLoaded else { return }
+        for modal in view.subviews.compactMap({ $0 as? CraftNativeModalView }) {
+            modal.scrimInsets = modal.blocksScreenInline ? insets : .zero
+        }
+    }
+
     fileprivate func hasBlockingModalBelow(_ modal: CraftNativeModalView) -> Bool {
         guard let index = view.subviews.firstIndex(where: { $0 === modal }) else { return false }
         return view.subviews[..<index].contains { candidate in
@@ -10332,6 +10365,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             if visible, wasVisible != true { positionModals() }
             modal.setVisible(visible, opacity: styleNumber(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)
+            // The shell's bars go behind a blocking Modal with the screen.
+            // Read after the render: visibility, blocking and the scrim's
+            // colour can change in any order within it.
+            DispatchQueue.main.async { [weak self, weak modal] in
+                guard let self, let modal else { return }
+                let state = "\(modal.blocksScreenInline):\(modal.transparent)"
+                guard self.modalBlockedShell[ObjectIdentifier(modal)] != state else { return }
+                self.modalBlockedShell[ObjectIdentifier(modal)] = state
+                self.hybridEvents?.nativeScreenModalChanged(self)
+            }
             if !visible, wasVisible == true {
                 let restore = modalFocusRestore.removeValue(forKey: modalID)
                 DispatchQueue.main.async { [weak self, weak restore] in

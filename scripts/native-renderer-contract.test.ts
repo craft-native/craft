@@ -4632,7 +4632,21 @@ describe('native renderer component contract', () => {
     expect(android).toContain('private fun syncChromeModalBlock() {')
     expect(android).toContain('if (!modal.transparent) dimmed = true')
     expect(androidNavigationTest).toContain('fun aBlockingModalPutsTheBarsAndTheFloatingActionsBehindIt()')
-    expect(guide).toContain('On Android the bars around the screen go behind a blocking `Modal`')
+    expect(guide).toContain('The bars around the screen go behind a blocking `Modal` as well, on both')
+  })
+
+  it('puts the iOS bars and floating actions behind a blocking Modal drawn in its screen', () => {
+    // A Modal that is not a sheet is drawn inside its screen: the bars
+    // stayed bright and live around it, the actions drawn over it (#547).
+    expect(iosHybrid).toContain('func nativeScreenModalChanged(_ screen: CraftNativeScreenController) {')
+    expect(iosHybrid).toContain('private func layoutModalScrims() {')
+    expect(iosHybrid).toContain('if blockedByModal { return false }')
+    expect(iosHybrid).toContain('tabBar.accessibilityElementsHidden = blocked')
+    expect(iosHybrid).toContain('action.alpha = blockedByModal ? 0 : 1')
+    // Dimmed once: the Modal's own scrim stops where the shell's starts.
+    expect(ios).toContain('blocker.frame = bounds.inset(by: scrimInsets)')
+    expect(ios).toContain('func setModalScrimInsets(_ insets: UIEdgeInsets) {')
+    expect(iosNavigationUnitTests).toContain('func testABlockingModalPutsTheBarsAndTheFloatingActionsBehindIt(')
   })
 
   it('lets a backButton take a colour or the neutral variant on both hosts', () => {
