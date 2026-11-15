@@ -655,6 +655,10 @@ final class CraftMacNetwork: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: url)
         request.httpMethod = (options["method"] as? String ?? "GET").uppercased()
         for (key, value) in options["headers"] as? [String: String] ?? [:] { request.setValue(value, forHTTPHeaderField: key) }
+        // fetch's `credentials: 'omit'`: the session's cookie store is neither sent with this request nor given
+        // what the response sets, and a Cookie header the screen wrote itself goes out as written. For a
+        // bearer-token client, whose windows otherwise share one store and send each other's cookies.
+        if options["credentials"] as? String == "omit" { request.httpShouldHandleCookies = false }
         if let body = options["body"] as? String { request.httpBody = Data(body.utf8) }
         return request
     }

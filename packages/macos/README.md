@@ -100,6 +100,13 @@ under a name that never overwrites). Links to other apps' schemes (`mailto:`,
 inputs use native sheets on the tab's window. A window that closes closes the
 tabs it owns.
 
+## Cookies
+
+Native windows share one in-memory cookie store, which every `fetch` sends and fills, as a browser
+does. `fetch(url, { credentials: 'omit' })` leaves it out of that request: no stored cookie is sent, the
+response's cookies are not kept, and a `Cookie` header the screen sets goes out as written. Use it for
+an API reached with a bearer token.
+
 ## In-app updates: `craft.updater`
 
 An app people download (Developer ID, notarized) can update itself. Build the
