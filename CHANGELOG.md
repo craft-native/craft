@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.503...v0.0.504)
+
+## 🐛 Bug Fixes
+
+- **ios**: keep an empty SafeAreaView above the leading scroll view empty ([e8e745c](https://github.com/craft-native/craft/commit/e8e745c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.502...v0.0.503)
 
 ## 🐛 Bug Fixes
