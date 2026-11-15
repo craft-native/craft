@@ -101,6 +101,7 @@ POSIX-only assumption had to move so that both platforms could share it.
 | `tray` | `setTitle`, `setTooltip`, `getState`, `setMenu`, click events |
 | `shortcuts` | `register`, `unregister`, `unregisterAll`, `enable`, `disable`, `isRegistered`, `list` |
 | `timers` | `sleep`, `cancel`, `cancelAll` -- `SetTimer` on the owning window, with `SetThreadExecutionState` held while a deadline is pending |
+| `window` | geometry reads, `setSize`/`setPosition`/`setBounds`, `center`, always-on-top, resizable, fullscreen, `getState`, `getFocused`, `setOpacity`/`getOpacity`, `loadURL`/`loadHTML`, `executeJavaScript` |
 | `menu` | `setApplicationMenu`, `onAction` |
 
 ### Defects fixed while wiring them up
@@ -122,6 +123,12 @@ POSIX-only assumption had to move so that both platforms could share it.
   now.
 - **`shell.exec` existed in Zig but had no facade.** `bridge_shell.zig` already
   implemented it; `craft-bridge.js` simply never exposed it.
+- **A long window title crashed the process.** `utf8ToUtf16Z` wrote through
+  `std.unicode.utf8ToUtf16Le` and checked the resulting length afterwards, but
+  that function indexes `dest` as it encodes: a title that did not fit trapped on
+  an out-of-bounds index inside the standard library and the app was gone. It
+  measures with `calcUtf16LeLen` first now. Every string through that helper is
+  page-controlled -- titles, URLs, evaluated scripts.
 - **`window.setAlwaysOnTop`, `setResizable` and `setFullscreen` did nothing.** The
   facade sends `{"value":…}`; the Windows dispatcher parsed `alwaysOnTop`,
   `resizable` and `fullscreen`. `parseBool` treats a missing key as
@@ -187,7 +194,7 @@ Three scripts repeat measurements and exit non-zero when one stops holding:
 | `scripts/probe-windows-capabilities.ps1` | the rendered manifest: what is claimed and what is demoted |
 | `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
 | `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
-| `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState and the clipboard |
+| `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity and the clipboard |
 
 The rest of the table above was measured by hand.
 
@@ -291,10 +298,11 @@ and was validated the same way: with the filter bypassed it reports
   `unknown` rather than a per-platform answer. Namespaces are filtered; channels
   are not yet.
 - **These window actions have no Windows arm at all**, and answer
-  PLATFORM_NOT_SUPPORTED: `setMovable`, `isMovable`, `setOpacity`, `getOpacity`,
-  `setHasShadow`, `setAspectRatio`, `startDrag`, `setBackgroundColor`,
-  `setVibrancy`, `setWebSidebarCollapsed`. Most are macOS-only concepts;
-  `setOpacity` and `setBackgroundColor` are not, and would be worth doing.
+  PLATFORM_NOT_SUPPORTED: `setMovable`, `isMovable`, `setHasShadow`,
+  `setAspectRatio`, `startDrag`, `setBackgroundColor`, `setVibrancy`,
+  `setWebSidebarCollapsed`. These are macOS-only concepts except
+  `setBackgroundColor`, which would need per-window `WM_ERASEBKGND` handling
+  rather than the class-wide brush that changes every window at once.
 
 ## Test baseline
 

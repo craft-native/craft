@@ -28,8 +28,18 @@ $html = @'
 <title>window state probe</title>
 <script>
   const out = ['READY'];
-  function show() { try { craft.window.setTitle(out.join(' ')); } catch (e) {} }
-  function err(where, e) { out.push(where + 'ERR:' + (e && e.name || e)); show(); }
+  // The window title is page-controlled text that has to squeeze through a
+  // fixed native buffer, and a probe with a dozen fields does not fit. Results
+  // go to a file; the title carries only the four markers the runner watches.
+  const RESULT = '__RESULT_PATH__';
+  let phase = 'READY';
+  function show() { try { craft.window.setTitle(phase); } catch (e) {} }
+  function mark(s) { out.push(s); }
+  function err(where, e) {
+    const name = (e && e.name) || 'Unknown';
+    const message = (e && e.message) || (e && JSON.stringify(e)) || String(e);
+    out.push(where + 'ERR:' + name + ':' + message);
+  }
   async function settle() { await new Promise(function (r) { setTimeout(r, 250); }); }
 
   (async function () {
@@ -86,12 +96,22 @@ $html = @'
       await sample(2);
       await craft.window._call('restore', {}, 'main');
       await settle();
-      out.push('RESTORED'); show();
+      phase = 'RESTORED'; show();
       await sample(8);
       out.push('FOCUSSEQ=' + seen.join('>'));
 
       const state = await read('getState');
       out.push('STATE=' + [state.isVisible, state.isFocused, state.isAlwaysOnTop, state.bounds.width].join(','));
+
+      // Opacity is checked twice: once through the bridge, and once from the OS
+      // side by the runner while the value is held at 0.5. A bridge that stored
+      // the number and echoed it back would pass the first and fail the second.
+      await craft.window.setOpacity(0.5); await settle();
+      out.push('OPACITY05=' + (await read('getOpacity')));
+      phase = 'OPACITY05'; show();
+      await new Promise(function (r) { setTimeout(r, 1400); });
+      await craft.window.setOpacity(1); await settle();
+      out.push('OPACITY10=' + (await read('getOpacity')));
     } catch (e) { err('WIN', e); }
 
     try {
@@ -112,15 +132,47 @@ $html = @'
     } catch (e) { err('CLIP', e); }
 
     out.push('ALLDONE');
-    show();
+    await craft.fs.writeFile(RESULT, out.join('\n'));
+    await settle();
+    phase = 'ALLDONE'; show();
   })();
 </script>
 '@
+$resultPath = Join-Path $env:TEMP 'craft-window-state-result.txt'
+Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+# The HTML is a single-quoted here-string, so the path is substituted here rather
+# than interpolated, and its backslashes are escaped for the JS string literal.
+$html = $html.Replace('__RESULT_PATH__', $resultPath.Replace('\', '\\'))
 Set-Content -Path $htmlPath -Value $html -Encoding ASCII
 Remove-Item $logErr -Force -ErrorAction SilentlyContinue
 
 Get-Process craft -ErrorAction SilentlyContinue | Stop-Process -Force | Out-Null
 Start-Sleep -Milliseconds 300
+
+# Reads the real layered-window state, so an opacity that was only remembered by
+# the bridge cannot pass.
+if (-not ('CraftProbeLayered' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class CraftProbeLayered {
+    [DllImport("user32.dll")] static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
+    [DllImport("user32.dll")] static extern bool GetLayeredWindowAttributes(IntPtr hWnd, out uint key, out byte alpha, out uint flags);
+    const int GWL_EXSTYLE = -20;
+    const uint WS_EX_LAYERED = 0x00080000;
+    const uint LWA_ALPHA = 0x2;
+    public static string Describe(IntPtr hwnd) {
+        long style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE).ToInt64();
+        bool layered = (style & WS_EX_LAYERED) != 0;
+        if (!layered) return "layered=false";
+        uint key; byte alpha; uint flags;
+        if (!GetLayeredWindowAttributes(hwnd, out key, out alpha, out flags)) return "layered=true,alpha=? ";
+        if ((flags & LWA_ALPHA) == 0) return "layered=true,alpha=none";
+        return "layered=true,alpha=" + alpha;
+    }
+}
+'@
+}
 
 $proc = Start-Process -FilePath $CraftExe `
     -ArgumentList @('--html-file', $htmlPath, '-t', 'T0', '-w', '600', '--height', '400') `
@@ -129,6 +181,7 @@ $proc = Start-Process -FilePath $CraftExe `
 $title = ''
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $activated = $false
+$layeredAtHalf = ''
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 150
     $live = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
@@ -140,7 +193,17 @@ while ((Get-Date) -lt $deadline) {
         $activated = $true
         (New-Object -ComObject WScript.Shell).AppActivate($proc.Id) | Out-Null
     }
+    # Sample the OS state while the page is holding opacity at 0.5.
+    if (-not $layeredAtHalf -and $title -like '*OPACITY05*') {
+        $hwnd = (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue).MainWindowHandle
+        if ($hwnd -and $hwnd -ne [IntPtr]::Zero) { $layeredAtHalf = [CraftProbeLayered]::Describe($hwnd) }
+    }
 }
+$layeredAtFull = ''
+$finalHwnd = (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue).MainWindowHandle
+if ($finalHwnd -and $finalHwnd -ne [IntPtr]::Zero) { $layeredAtFull = [CraftProbeLayered]::Describe($finalHwnd) }
+Write-Output "os state at 0.5: $layeredAtHalf"
+Write-Output "os state at 1.0: $layeredAtFull"
 Get-Process craft -ErrorAction SilentlyContinue | Stop-Process -Force
 
 if (-not $title) {
@@ -149,16 +212,32 @@ if (-not $title) {
     exit 1
 }
 Write-Host "observed: $title"
+if (Test-Path $resultPath) {
+    Write-Host '--- results ---'
+    Get-Content $resultPath | ForEach-Object { Write-Host "  $_" }
+}
+
+# Results arrive in a file; the title only carried the markers the loop watched.
+$result = @{}
+if (Test-Path $resultPath) {
+    foreach ($line in (Get-Content $resultPath)) {
+        $at = $line.IndexOf('=')
+        if ($at -gt 0) { $result[$line.Substring(0, $at)] = $line.Substring($at + 1) }
+    }
+}
 
 $failures = @()
 if ($title -notlike '*ALLDONE*') { $failures += 'the page never finished; a read probably never answered' }
+if (-not (Test-Path $resultPath)) { $failures += 'the page never wrote its results' }
 foreach ($marker in 'WINERR', 'CLIPERR') {
     if ($title -like "*$marker*") { $failures += "saw $marker" }
 }
+foreach ($key in $result.Keys) {
+    if ($key -like '*ERR') { $failures += "saw $key=$($result[$key])" }
+}
 
 function Get-Value([string] $name) {
-    $m = [regex]::Match($title, [regex]::Escape($name) + '=([^\s]+)')
-    if ($m.Success) { return $m.Groups[1].Value }
+    if ($result.ContainsKey($name)) { return $result[$name] }
     return ''
 }
 
@@ -197,9 +276,19 @@ else {
     if ($seq -match 'obj') { $failures += "getFocused answered a non-string, non-null value: '$seq'" }
 }
 if ((Get-Value 'CLIP') -ne 'same') { $failures += "clipboard round trip: '$(Get-Value 'CLIP')'" }
-if ((Get-Value 'HASTEXT') -ne 'true') { $failures += "clipboard hasText: '$(Get-Value 'HASTEXT')'" }if ((Get-Value 'HTML') -ne 'same') { $failures += "clipboard html round trip: '$(Get-Value 'HTML')" }
+if ((Get-Value 'HASTEXT') -ne 'true') { $failures += "clipboard hasText: '$(Get-Value 'HASTEXT')" }
+if ((Get-Value 'HTML') -ne 'same') { $failures += "clipboard html round trip: '$(Get-Value 'HTML')" }
 if ((Get-Value 'HASHTML') -ne 'true') { $failures += "clipboard hasHTML: '$(Get-Value 'HASHTML')" }
 if ((Get-Value 'AFTERCLEAR') -ne 'false/false') { $failures += "clipboard clear left content behind: '$(Get-Value 'AFTERCLEAR')" }
+
+$o05 = Get-Value 'OPACITY05'
+if ($o05 -notmatch '^0\.5\d*$') { $failures += "setOpacity(0.5) read back as '$o05'" }
+$o10 = Get-Value 'OPACITY10'
+if ($o10 -notmatch '^1(\.0+)?$') { $failures += "setOpacity(1) read back as '$o10'" }
+# The OS side: half opacity must be a real layered window at roughly 128/255.
+if ($layeredAtHalf -notmatch 'alpha=12\d$') { $failures += "the window was not really layered at 0.5: '$layeredAtHalf'" }
+# And full opacity must have dropped WS_EX_LAYERED rather than leaving it on.
+if ($layeredAtFull -notmatch '^layered=false') { $failures += "the window stayed layered at opacity 1: '$layeredAtFull'" }
 if ($failures.Count -gt 0) {
     Write-Host 'FAIL' -ForegroundColor Red
     foreach ($f in $failures) { Write-Host "  $f" -ForegroundColor Red }

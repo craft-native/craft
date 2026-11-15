@@ -2989,9 +2989,15 @@ fn loadWebView2() ?CreateCoreWebView2EnvironmentWithOptionsFn {
 
 /// Convert a UTF-8 slice to a stack-allocated null-terminated UTF-16 buffer.
 fn utf8ToUtf16Z(comptime max_len: usize, input: []const u8) ![max_len]u16 {
+    // Measure before encoding. `utf8ToUtf16Le` walks `dest` as it writes, so a
+    // string that does not fit traps on an out-of-bounds index inside the
+    // standard library -- checking the returned length afterwards is too late,
+    // and the process is gone. Every string here comes from the page: a long
+    // window title took the app down before this measured first.
+    const needed = try std.unicode.calcUtf16LeLen(input);
+    if (needed >= max_len) return error.StringTooLong;
     var buf: [max_len]u16 = undefined;
-    const len = try std.unicode.utf8ToUtf16Le(&buf, input);
-    if (len >= max_len) return error.StringTooLong;
+    const len = try std.unicode.utf8ToUtf16Le(buf[0..needed], input);
     buf[len] = 0;
     return buf;
 }
@@ -3398,6 +3404,49 @@ fn setWindowAlwaysOnTop(hwnd: HWND, enabled: bool) !void {
         return error.NativeCallFailed;
 }
 
+extern "user32" fn SetLayeredWindowAttributes(hWnd: HWND, crKey: DWORD, bAlpha: u8, dwFlags: DWORD) callconv(.c) BOOL;
+extern "user32" fn GetLayeredWindowAttributes(hWnd: HWND, crKey: ?*DWORD, bAlpha: ?*u8, dwFlags: ?*DWORD) callconv(.c) BOOL;
+const LWA_ALPHA: DWORD = 0x00000002;
+
+/// The facade sends `{"value": …}`; `opacity` is the older spelling the shared
+/// bridge still accepts. Clamping matches `parseOpacity` in `bridge_window.zig`,
+/// and a non-finite value is refused rather than silently turned into 1.
+fn opacityArgument(data: ?[]const u8) !f64 {
+    const json = data orelse return 1.0;
+    const value = json_utils.getFloat(f64, json, "value") orelse
+        json_utils.getFloat(f64, json, "opacity") orelse
+        return error.InvalidParameter;
+    if (!std.math.isFinite(value)) return error.InvalidParameter;
+    return @max(0.0, @min(1.0, value));
+}
+
+/// A window that was never faded is not layered, and reports 1.0.
+fn windowOpacity(hwnd: HWND) f64 {
+    var alpha: u8 = 255;
+    var flags: DWORD = 0;
+    if (GetLayeredWindowAttributes(hwnd, null, &alpha, &flags) == 0) return 1.0;
+    if ((flags & LWA_ALPHA) == 0) return 1.0;
+    return @as(f64, @floatFromInt(alpha)) / 255.0;
+}
+
+fn setWindowOpacity(hwnd: HWND, opacity: f64) !void {
+    const alpha: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, opacity)) * 255.0));
+    const current: DWORD = windowExStyle(hwnd);
+    const layered = (current & WS_EX_LAYERED) != 0;
+    if (alpha >= 255) {
+        // Fully opaque: drop WS_EX_LAYERED instead of leaving a layered window
+        // that happens to be opaque. A layered window goes through a separate
+        // composition path; keeping it on for a window that has finished fading
+        // costs something and shows nothing.
+        if (layered)
+            _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, @bitCast(@as(usize, current & ~WS_EX_LAYERED)));
+        return;
+    }
+    if (!layered)
+        _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, @bitCast(@as(usize, current | WS_EX_LAYERED)));
+    if (SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) == 0) return error.NativeCallFailed;
+}
+
 fn setWindowStyle(hwnd: HWND, style: DWORD) void {
     _ = SetWindowLongPtrW(hwnd, GWL_STYLE, @bitCast(@as(usize, style)));
 }
@@ -3567,6 +3616,8 @@ fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
             .is_always_on_top = (windowExStyle(hwnd) & WS_EX_TOPMOST) != 0,
             .bounds = try windowGeometry(hwnd),
         });
+    } else if (std.mem.eql(u8, action, "getOpacity")) blk: {
+        break :blk try std.fmt.allocPrint(allocator, "{d:.3}", .{windowOpacity(hwnd)});
     } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(hwnd));
     defer allocator.free(json);
     bridge_error.sendResultToJS(allocator, action, json);
@@ -3604,7 +3655,8 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         return openNamedWindow(action, data);
     if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
         std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
-        std.mem.eql(u8, action, "getFocused") or std.mem.eql(u8, action, "getState"))
+        std.mem.eql(u8, action, "getFocused") or std.mem.eql(u8, action, "getState") or
+        std.mem.eql(u8, action, "getOpacity"))
         return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);
@@ -3676,6 +3728,8 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
         try setWindowAlwaysOnTop(hwnd, boolArgument(data, "alwaysOnTop"));
+    } else if (std.mem.eql(u8, action, "setOpacity")) {
+        try setWindowOpacity(hwnd, try opacityArgument(data));
     } else if (std.mem.eql(u8, action, "flashFrame")) {
         const flash = if (data) |json| json_utils.getBool(json, "flash") orelse true else true;
         const request = FLASHWINFO{
