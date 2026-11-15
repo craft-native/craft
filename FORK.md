@@ -298,13 +298,29 @@ and was validated the same way: with the filter bypassed it reports
 
 ## Test baseline
 
-`zig build test` currently reports 56 failures and 1 module that fails to
-compile (`test/log_test.zig` reaches `std.c.open`, whose Windows `O` type is
-`void` in Zig 0.17.0). 44 of the failures are inside the vendored `zig_js`, 9 in
-`ios_conformance_test`, the rest are CRLF fixtures and temporary directories.
+`zig build test` reports failures on every run, and they are not all the same set:
 
-None of them involve the Windows bridge, and the count is unchanged by the work
-above. Treat this number as the baseline: it should not grow.
+| Module | Count | What it is |
+| --- | --- | --- |
+| `injected_js_test` | 44 | the vendored `zig_js` interpreter hitting its own stack/nesting limit |
+| `ios_conformance_test` | 9 | the iOS spec against Zig's action tables |
+| `bridge_surface_test` | 1 | |
+| `bridge_fs_test` | 1 | |
+| `config_test` | 0 or 1 | **flaky**: `Config - saveToFile and loadFromFile` fails with `FileNotFound` creating a file under a temp path. It failed on two runs and passed on a third, with no change in between. |
+| `test/log_test.zig` | -- | does not compile: it reaches `std.c.open`, whose Windows `O` type is `void` in Zig 0.17.0 |
+
+So the number to hold is **55**: those first four plus the module that does not
+compile. A run that reports 56 has counted `config_test` as well, and that one is
+the environment rather than the change.
+
+**Do not compare the aggregate totals.** Three runs of the same command against
+the same commit reported 3459, 2565 and 398 total tests. Zig's build summary
+aggregates only the steps it happens to print, so those totals are not coverage
+and a difference between them means nothing. The failure set is the signal.
+
+This was measured rather than assumed: a worktree checked out at the pre-merge
+commit reported 55 failures while the merge result reported 56, and the single
+difference was `config_test`.
 
 ## Toolchain
 
