@@ -1106,6 +1106,13 @@ final class NativeLayoutUnitTests: XCTestCase {
         // go beside it rather than over it.
         pushed.evaluateScript("craft.navigation.setOptions({ title: 'Inbox' })")
         XCTAssertEqual(leading(pushed), ["nav-back", "nav-edit"])
+        // Asked for again with the same symbol and label, as an effect that
+        // runs again does: the same item, not a new one.
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close messages' } })")
+        XCTAssertTrue(pushed.navigationItem.leftBarButtonItems?.first === close)
+        pushed.evaluateScript("craft.navigation.setOptions({ backButton: { symbol: 'xmark', accessibilityLabel: 'Close' } })")
+        XCTAssertFalse(pushed.navigationItem.leftBarButtonItems?.first === close, "a new label is a new item")
+        XCTAssertEqual(pushed.navigationItem.leftBarButtonItems?.first?.accessibilityLabel, "Close")
         pushed.evaluateScript("craft.navigation.setOptions({ leftButtons: [] })")
         XCTAssertEqual(leading(pushed), ["nav-back"])
         XCTAssertTrue(pushed.navigationItem.hidesBackButton)

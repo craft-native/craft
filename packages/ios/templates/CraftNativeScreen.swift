@@ -8514,8 +8514,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         }
         if options.keys.contains("backButton") {
-            backButtonSpec = options["backButton"] as? [String: Any]
-            backButtonItem = nil
+            let spec = options["backButton"] as? [String: Any]
+            // The same symbol and label keep the item they have: a screen
+            // that names it in an effect that runs again must not replace
+            // the button under a finger.
+            let same = spec?["symbol"] as? String == backButtonSpec?["symbol"] as? String
+                && spec?["accessibilityLabel"] as? String == backButtonSpec?["accessibilityLabel"] as? String
+                && (spec == nil) == (backButtonSpec == nil)
+            backButtonSpec = spec
+            if !same { backButtonItem = nil }
         }
         if options.keys.contains("leftButtons") {
             let buttons = (options["leftButtons"] as? [[String: Any]]) ?? []
