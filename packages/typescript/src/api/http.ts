@@ -406,64 +406,93 @@ export class WebSocketClient {
   private maxReconnectAttempts: number
   private reconnectDelay: number
   private handlers: Map<string, Set<(data: unknown) => void>> = new Map()
-  private messageHandler: ((_event: MessageEvent) => void) | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(url: string, options: WebSocketOptions = {}) {
     this.url = url
-    this.maxReconnectAttempts = options.maxReconnectAttempts || 5
-    this.reconnectDelay = options.reconnectDelay || 1000
+    // `??`, not `||`: 0 retries and a 0 ms delay are real choices.
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5
+    this.reconnectDelay = options.reconnectDelay ?? 1000
   }
 
   /**
    * Connect to WebSocket server
    */
   connect(): Promise<void> {
+    this.cancelReconnect()
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.url)
+      const socket = new WebSocket(this.url)
+      this.ws = socket
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
         this.reconnectAttempts = 0
         resolve()
       }
 
-      this.ws.onerror = (_event) => {
+      socket.onerror = (_event) => {
         reject(new Error('WebSocket connection failed'))
       }
 
-      this.ws.onclose = () => {
+      // Only the current socket's close is retried; one disconnect() closed,
+      // or one a newer connect() replaced, is not.
+      socket.onclose = () => {
+        if (this.ws !== socket) return
+        this.ws = null
         this.attemptReconnect()
       }
 
-      this.messageHandler = (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data)
-          const type = data.type || 'message'
-          const handlers = this.handlers.get(type)
-          if (handlers) {
-            handlers.forEach(handler => handler(data.payload || data))
-          }
-        }
-catch {
-          // Handle non-JSON messages
-          const handlers = this.handlers.get('message')
-          if (handlers) {
-            handlers.forEach(handler => handler(event.data))
-          }
-        }
-      }
-
-      this.ws.onmessage = this.messageHandler
+      socket.onmessage = (event: MessageEvent) => this.dispatch(event.data)
     })
   }
 
   /**
-   * Disconnect from WebSocket server
+   * Hand a message to its handlers: `{ type, payload }` goes to `type`'s
+   * handlers as `payload` (falsy ones included), a typed message without a
+   * payload as the whole message, and anything else to `message` handlers.
+   */
+  private dispatch(raw: unknown): void {
+    let type = 'message'
+    let value: unknown = raw
+    if (typeof raw === 'string') {
+      try {
+        value = JSON.parse(raw)
+      }
+      catch {
+        value = raw
+      }
+    }
+    if (typeof value === 'object' && value !== null && raw !== value) {
+      const message = value as { type?: unknown, payload?: unknown }
+      if (typeof message.type === 'string' && message.type) type = message.type
+      if ('payload' in message) value = message.payload
+    }
+    for (const handler of this.handlers.get(type) ?? []) {
+      try {
+        handler(value)
+      }
+      catch (error) {
+        // One failing handler does not keep the message from the others.
+        console.error(`WebSocketClient: a "${type}" handler threw`, error)
+      }
+    }
+  }
+
+  /**
+   * Disconnect from WebSocket server. This close is not retried, and a pending
+   * retry is cancelled; a later connect() reconnects as configured.
    */
   disconnect(): void {
-    this.maxReconnectAttempts = 0 // Prevent reconnect on intentional disconnect
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
+    this.cancelReconnect()
+    this.reconnectAttempts = 0
+    const socket = this.ws
+    this.ws = null
+    socket?.close()
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
     }
   }
 
@@ -512,10 +541,10 @@ catch {
     this.reconnectAttempts++
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
 
-    setTimeout(() => {
-      this.connect().catch(() => {
-        // Reconnection failed, will try again
-      })
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      // A failed attempt closes, and its close schedules the next one.
+      this.connect().catch(() => {})
     }, delay)
   }
 
