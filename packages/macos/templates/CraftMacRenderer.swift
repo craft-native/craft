@@ -941,10 +941,14 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate, NSDrag
 final class CraftMacSidebarRow: NSTableRowView {
     /// How far the selection pill stands in from the sidebar's edges (`selectionInset`).
     var inset: CGFloat = 4
+    /// The pill is a quiet grey in both appearances, so what stands on it is drawn as on any other row.
+    /// AppKit otherwise reads a selected row as a dark, emphasized one and draws its label and icon white,
+    /// which on the light appearance's pale pill cannot be read.
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            NSColor.unemphasizedSelectedContentBackgroundColor.setFill()
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: inset, dy: 1), xRadius: 7, yRadius: 7).fill()
         }
     }
