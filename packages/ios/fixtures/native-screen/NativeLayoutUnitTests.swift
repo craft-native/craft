@@ -1707,6 +1707,55 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
     }
 
+    func testEmptySafeAreaHeaderAboveALeadingScrollTakesNoInset() async throws {
+        // A site header that draws nothing natively: a SafeAreaView whose only
+        // child is empty, above the screen's scroll view. The scroll view
+        // leads the screen and runs under the status bar. The header must not
+        // take the status bar's inset there: as tall as the status bar it is
+        // no longer empty, the scroll view no longer leads, and the screen
+        // flips between two layouts from one pass to the next.
+        func root(banner: Bool) -> [String: Any] {
+            box("root", style: ["flex": 1], [
+                ["id": "header", "type": "SafeAreaView", "props": ["testID": "header"], "style": ["top": 0, "zIndex": 50],
+                 "children": [box("banner-slot", banner ? [box("banner", style: ["height": 40])] : [])]],
+                ["id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
+                 "children": [box("rows", style: ["height": 1600])]],
+            ])
+        }
+        let (controller, _, window) = try await bottomLayoutScreen(root(banner: false), tabbed: false)
+        defer { window.isHidden = true }
+        let inset = controller.view.safeAreaInsets.top
+        XCTAssertGreaterThan(inset, 0)
+        for pass in 0..<6 {
+            XCTAssertEqual(try frame("header", in: controller).height, 0, accuracy: 0.5, "pass \(pass): an empty header takes no room")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, 0, accuracy: 0.5, "pass \(pass): the leading scroll view runs under the status bar")
+            controller.view.setNeedsLayout()
+            await settle(controller)
+        }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        XCTAssertEqual(scroll.adjustedContentInset.top, inset, accuracy: 0.5, "and insets its own content by the status bar")
+
+        // With a banner in it the header is the first thing on the screen:
+        // the root stays inside the safe area and nothing is inset twice.
+        controller.render(root(banner: true))
+        for pass in 0..<4 {
+            await settle(controller)
+            XCTAssertEqual(try frame("header", in: controller).minY, inset, accuracy: 0.5, "pass \(pass): the banner starts below the status bar")
+            XCTAssertEqual(try frame("header", in: controller).height, 40, accuracy: 0.5, "pass \(pass): and is only as tall as its banner")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, inset + 40, accuracy: 0.5, "pass \(pass)")
+            controller.view.setNeedsLayout()
+        }
+
+        // And empty again, the scroll view leads again.
+        controller.render(root(banner: false))
+        for pass in 0..<4 {
+            await settle(controller)
+            XCTAssertEqual(try frame("header", in: controller).height, 0, accuracy: 0.5, "pass \(pass)")
+            XCTAssertEqual(try frame("scroll", in: controller).minY, 0, accuracy: 0.5, "pass \(pass)")
+            controller.view.setNeedsLayout()
+        }
+    }
+
     func testTabbedFlatListExtendsItsViewportAndKeepsTheLastCellReachable() async throws {
         let rows = (0..<40).map { index in
             box("row-\(index)", style: ["height": 48], props: ["listRole": "item", "key": "row-\(index)"])

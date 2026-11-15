@@ -4232,6 +4232,14 @@ private class CraftNativeFlowView: UIStackView {
 private final class CraftNativeSafeAreaView: CraftNativeFlowView {
     private var edges: Set<String> = ["top", "right", "bottom", "left"]
 
+    /// The screen's leading scroll view owns the status bar's inset, and this
+    /// view sits empty above it (trackContentScrollView). It takes no top
+    /// inset then: taking it would make it as tall as the status bar, and the
+    /// scroll view would no longer be the first thing on the screen.
+    var yieldsTopInset = false {
+        didSet { if yieldsTopInset != oldValue { updateSafeAreaPadding() } }
+    }
+
     func setSafeAreaEdges(_ raw: Any?) {
         guard let values = raw as? [Any] else {
             edges = ["top", "right", "bottom", "left"]
@@ -4253,7 +4261,7 @@ private final class CraftNativeSafeAreaView: CraftNativeFlowView {
     private func updateSafeAreaPadding() {
         let insets = safeAreaInsets
         safeAreaPadding = UIEdgeInsets(
-            top: edges.contains("top") ? insets.top : 0,
+            top: edges.contains("top") && !yieldsTopInset ? insets.top : 0,
             left: edges.contains("left") ? insets.left : 0,
             bottom: edges.contains("bottom") ? insets.bottom : 0,
             right: edges.contains("right") ? insets.right : 0
@@ -8425,6 +8433,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return titleFromOptions || prefersLargeTitle == true || !(navigationItem.rightBarButtonItems ?? []).isEmpty
     }
     private weak var trackedScrollView: UIScrollView?
+    /// Empty SafeAreaViews above the leading scroll view, which owns their top inset.
+    private let yieldedSafeAreas = NSHashTable<CraftNativeSafeAreaView>.weakObjects()
 
     /// `craft.navigation.setOptions`: this screen's bar. Every key is
     /// optional and only the keys given change.
@@ -8839,17 +8849,39 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         /// The scroll view the screen starts with, when nothing sits above it:
         /// the root's first child, its first, and so on, none padded on top.
+        /// Empty siblings above it do not count. An empty SafeAreaView among
+        /// them is remembered: once the root runs under the status bar it
+        /// would take that inset and stop being empty, the scroll view would
+        /// stop leading, the root would return inside the safe area and the
+        /// view would be empty again. A screen with an empty header above its
+        /// scroll view flipped between the two layouts and stopped in either.
+        var emptySafeAreasAbove: [CraftNativeSafeAreaView] = []
         func leading(_ node: RenderedNode) -> RenderedNode? {
             if let scroll = node.view as? CraftNativeScrollView { return scroll.isVertical && scroll.isScrollEnabled ? node : nil }
             if let list = node.view as? CraftNativeFlatList {
                 return list.isScrollEnabled && (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal ? node : nil
             }
             guard paddingInsets(node.style).top == 0,
-                  let first = node.children.first(where: { $0.type != "Modal" && !$0.view.isHidden && $0.view.bounds.height > 0 }) else { return nil }
-            return leading(first)
+                  let index = node.children.firstIndex(where: { $0.type != "Modal" && !$0.view.isHidden && $0.view.bounds.height > 0 }) else { return nil }
+            for skipped in node.children[..<index] where skipped.type != "Modal" && !skipped.view.isHidden {
+                if let safeArea = skipped.view as? CraftNativeSafeAreaView { emptySafeAreasAbove.append(safeArea) }
+            }
+            return leading(node.children[index])
         }
         let scroll = find(renderedRoot)
         let leadingScroll = leading(renderedRoot)
+        // The leading scroll view owns the top inset; the empty SafeAreaViews
+        // it passed give theirs up, and get it back when it no longer leads
+        // (the header gained content, or the scroll view left the screen).
+        let yielding = leadingScroll == nil ? [] : emptySafeAreasAbove
+        for view in yieldedSafeAreas.allObjects where !yielding.contains(where: { $0 === view }) {
+            view.yieldsTopInset = false
+            yieldedSafeAreas.remove(view)
+        }
+        for view in yielding where !view.yieldsTopInset {
+            view.yieldsTopInset = true
+            yieldedSafeAreas.add(view)
+        }
         // The leading scroller may overflow beneath navigation chrome.
         // A bounded list inside a form must clip its rows to its viewport.
         if let leadingScroll, leadingScroll.style["overflow"] as? String != "hidden" {
