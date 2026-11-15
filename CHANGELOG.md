@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.502...v0.0.503)
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve font metrics when text leading is shorter ([b2fa217](https://github.com/craft-native/craft/commit/b2fa217)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.500...v0.0.502)
 
 ## 🚀 Features
