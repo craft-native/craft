@@ -471,6 +471,9 @@ test.skipIf(process.platform !== 'darwin')('installs a signed update over the ru
     // The real 1.0.1.
     await publish('good', '1.0.1')
     expect((await answer('check:good')).state).toBe('available')
+    // The check's own onChange events can reach the screen after its answer does;
+    // count from once they have, so they are not read as install steps.
+    await until('the check to reach the screen', () => screenLog()?.events.at(-1) === 'available')
     const before = screenLog()!.events.length
     const done = await answer('install:good')
     expect(done).toMatchObject({ state: 'installed', version: '1.0.1', currentVersion: '1.0.0' })
