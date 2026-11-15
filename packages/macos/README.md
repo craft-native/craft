@@ -171,8 +171,13 @@ A multi-line `TextInput` reports the caret and selection with `onSelectionChange
 (`{ start, end }`, UTF-16 offsets) and takes a `selection` prop to move it. With the
 `markdown` prop the text stays plain markdown, drawn as Notes would show it:
 headings, bold, italic, code, quotes, bullets and checklists with finished items struck
-through, restyled after every edit. `NativeSidebar` takes `rowHeight` and
-`labelFontSize` (24 and 15 give a Things-like source list). `shadow-*` classes draw a
+through, restyled after every edit. `NativeSidebar` takes `rowHeight`,
+`labelFontSize` and `labelFontWeight` (`regular`, `medium`, `semibold` or `bold`), and two
+insets measured from its own edges: `selectionInset`, how far the selection pill stands in
+(default 4), and `contentInset`, how far a row's icon and count stand inside the pill (default
+20). `rowHeight="24" labelFontSize="14" labelFontWeight="semibold" selectionInset="12"
+contentInset="7"` gives a Things-like source list. Section headers scroll with their rows, and
+an icon keeps its colour on the selected row. `shadow-*` classes draw a
 real layer shadow. With `--test-dir`, the driver's `key` action sends `return`, `tab`,
 `escape`, `up`, `down` or `backspace` to a text control as a command, so submit and
 accept-completion handlers can be exercised without a keyboard.
