@@ -192,7 +192,19 @@ not by inspection alone.
 
 ### Automated check
 
-Three scripts repeat measurements and exit non-zero when one stops holding:
+One entry point runs everything:
+
+```powershell
+.\scripts\probe-windows.ps1              # against the binary that is there
+.\scripts\probe-windows.ps1 -Build       # build first, then probe
+.\scripts\probe-windows.ps1 -Only timers # one probe
+```
+
+It exits 0 when every probe passed, 1 when one failed, and 2 when nothing could
+run -- a missing binary or an unknown probe name -- so a scheduled run cannot
+quietly report success against a stale build.
+
+The probes it runs:
 
 | Script | What it re-checks |
 | --- | --- |
