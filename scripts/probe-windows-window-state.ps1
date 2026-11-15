@@ -112,6 +112,13 @@ $html = @'
       await new Promise(function (r) { setTimeout(r, 1400); });
       await craft.window.setOpacity(1); await settle();
       out.push('OPACITY10=' + (await read('getOpacity')));
+
+      // Oversized page input must be refused, not fatal. A title longer than the
+      // native buffer used to trap inside the standard library and take the
+      // process with it, so the check is that the app still answers afterwards.
+      await craft.window.setTitle('x'.repeat(5000)); await settle();
+      await craft.window.setTitle('after-long-title'); await settle();
+      out.push('LONGTITLE=' + (await read('getTitle')));
     } catch (e) { err('WIN', e); }
 
     try {
@@ -289,6 +296,11 @@ if ($o10 -notmatch '^1(\.0+)?$') { $failures += "setOpacity(1) read back as '$o1
 if ($layeredAtHalf -notmatch 'alpha=12\d$') { $failures += "the window was not really layered at 0.5: '$layeredAtHalf'" }
 # And full opacity must have dropped WS_EX_LAYERED rather than leaving it on.
 if ($layeredAtFull -notmatch '^layered=false') { $failures += "the window stayed layered at opacity 1: '$layeredAtFull'" }
+
+# A 5000-character title must leave the app answering reads, not dead.
+if ((Get-Value 'LONGTITLE') -ne 'after-long-title') {
+    $failures += "the app did not survive an oversized title: '$(Get-Value 'LONGTITLE')"
+}
 if ($failures.Count -gt 0) {
     Write-Host 'FAIL' -ForegroundColor Red
     foreach ($f in $failures) { Write-Host "  $f" -ForegroundColor Red }

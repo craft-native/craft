@@ -129,6 +129,12 @@ POSIX-only assumption had to move so that both platforms could share it.
   an out-of-bounds index inside the standard library and the app was gone. It
   measures with `calcUtf16LeLen` first now. Every string through that helper is
   page-controlled -- titles, URLs, evaluated scripts.
+  The same write-then-check shape was audited everywhere else in this file and is
+  gone: the two remaining `utf8ToUtf16Le` calls size their buffer from the input
+  (a UTF-16 unit never costs more than the UTF-8 bytes that encode it), the spawn
+  and shortcut slot copies already refuse ids longer than their slot, and the one
+  fixed `[4096]u16` left was in an unreferenced `setClipboard` -- it allocates to
+  fit now rather than crashing for the next caller.
 - **`window.setAlwaysOnTop`, `setResizable` and `setFullscreen` did nothing.** The
   facade sends `{"value":…}`; the Windows dispatcher parsed `alwaysOnTop`,
   `resizable` and `fullscreen`. `parseBool` treats a missing key as
@@ -194,7 +200,7 @@ Three scripts repeat measurements and exit non-zero when one stops holding:
 | `scripts/probe-windows-capabilities.ps1` | the rendered manifest: what is claimed and what is demoted |
 | `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
 | `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
-| `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity and the clipboard |
+| `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity, an oversized title, and the clipboard |
 
 The rest of the table above was measured by hand.
 

@@ -4486,9 +4486,19 @@ const CF_UNICODETEXT: UINT = 13;
 const GMEM_MOVEABLE: UINT = 0x0002;
 
 pub fn setClipboard(text: []const u8) !void {
-    // Convert UTF-8 to UTF-16
-    var text_wide_buf: [4096]u16 = undefined;
-    const text_len = try std.unicode.utf8ToUtf16Le(&text_wide_buf, text);
+    // Measure first and allocate to fit. This used to encode into a fixed
+    // `[4096]u16` with `utf8ToUtf16Le`, which indexes its destination while it
+    // writes: any text longer than the buffer trapped instead of failing, so the
+    // limit was a crash rather than a limit.
+    //
+    // Nothing calls this today -- `bridge_clipboard.zig` owns the clipboard for
+    // this platform -- but leaving a trap on a `pub fn` invites the next caller
+    // to walk into it.
+    const needed = try std.unicode.calcUtf16LeLen(text);
+    const text_wide_buf = try std.heap.c_allocator.alloc(u16, needed + 1);
+    defer std.heap.c_allocator.free(text_wide_buf);
+    const text_len = try std.unicode.utf8ToUtf16Le(text_wide_buf[0..needed], text);
+    text_wide_buf[text_len] = 0;
 
     const byte_size = (text_len + 1) * 2; // +1 for null terminator, *2 for u16
 
