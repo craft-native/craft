@@ -895,7 +895,13 @@ fn windowsNotificationAppId(allocator: std.mem.Allocator) ![]u8 {
     const path = try std.fs.path.join(allocator, &.{ dir, "craft-notification-id.txt" });
     defer allocator.free(path);
     const io = io_context.get();
-    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return BridgeError.NativeCallFailed;
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch {
+        // This used to be a silent `return`: `show` is fire-and-forget, so an
+        // app without this file had a notification API that did nothing and
+        // said nothing. Name the file and where it goes.
+        log.warn("craft.notifications: {s} is missing, so a toast has no AppUserModelID and cannot be shown; write an application id there (for example 'Craft.YourApp')", .{path});
+        return BridgeError.NativeCallFailed;
+    };
     defer file.close(io);
     const stat = file.stat(io) catch return BridgeError.NativeCallFailed;
     if (stat.size == 0 or stat.size > 128) return BridgeError.NativeCallFailed;
@@ -908,7 +914,10 @@ fn windowsNotificationAppId(allocator: std.mem.Allocator) ![]u8 {
         read += n;
     }
     const app_id = std.mem.trim(u8, contents, "\r\n");
-    if (!validWindowsAppId(app_id)) return BridgeError.NativeCallFailed;
+    if (!validWindowsAppId(app_id)) {
+        log.warn("craft.notifications: {s} does not hold a usable application id", .{path});
+        return BridgeError.NativeCallFailed;
+    }
     return allocator.dupe(u8, app_id);
 }
 

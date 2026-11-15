@@ -213,6 +213,7 @@ The probes it runs:
 | `scripts/probe-windows-single-instance.ps1` | a second launch handing off its arguments and deep link |
 | `scripts/probe-windows-multiwindow.ps1` | a page opening a second window, and closing it leaving one |
 | `scripts/probe-windows-window-state.ps1` | geometry, always-on-top, resizable, title, getState, getFocused, opacity, an oversized title, and the clipboard |
+| `scripts/probe-windows-notification.ps1` | the toast path runs, and a title or body cannot become PowerShell |
 
 The rest of the table above was measured by hand.
 
@@ -289,6 +290,16 @@ and was validated the same way: with the filter bypassed it reports
 `haptics=declared` and exits non-zero.
 
 ### Known gaps
+
+- **A toast needs an application id that nothing documented or shipped.**
+  `notification.show` reads `craft-notification-id.txt` from beside the
+  executable and refuses without it -- and because `show` is a fire-and-forget
+  send, "refuses" meant "does nothing, silently". An app that never heard of that
+  file had a notification API that never fired. It logs a warning now, naming the
+  file and where it goes, and `probe-windows-notification.ps1` creates one for its
+  run. Providing a default id, or registering one through a Start-menu shortcut,
+  is still open: the id is what Windows groups and names the toast with, so
+  inventing one would be a product decision rather than a fix.
 
 - **`serial.onData` is implemented but not verified end to end.** The test
   machine has COM1 with no device attached and two Bluetooth ports that cannot be
