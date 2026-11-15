@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.505...v0.0.506)
+
+## 🚀 Features
+
+- open a path as a cover, over the tabs, in a stack of its own ([6eb24a8](https://github.com/craft-native/craft/commit/6eb24a8)) _(by glennmichael123)_ ([#526](https://github.com/craft-native/craft/issues/526))
+- let a DatePicker write its dates in a locale it is given ([13c7037](https://github.com/craft-native/craft/commit/13c7037)) _(by glennmichael123)_ ([#546](https://github.com/craft-native/craft/issues/546))
+
+## 🐛 Bug Fixes
+
+- **android**: put the bars and the floating actions behind a blocking Modal ([7804f32](https://github.com/craft-native/craft/commit/7804f32)) _(by glennmichael123)_ ([#541](https://github.com/craft-native/craft/issues/541), [#547](https://github.com/craft-native/craft/issues/547))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.504...v0.0.505)
 
 ## 🚀 Features
