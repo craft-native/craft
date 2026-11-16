@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { xcresultSummaryCommand, xcresultSummaryTimeoutMs } from '../packages/ios/scripts/metal-xctest-steps'
 import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../packages/ios/scripts/native-fixture-command'
 import { tempDirPrefix } from '../packages/typescript/src/temp-dir'
 import { resolveZig } from './zig'
@@ -25,9 +26,9 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal
 const proof: Record<string, unknown> = { purpose: 'native AppKit Metal displayed-pixel acceptance', startedAt: new Date().toISOString(), compiler: zig, evidence, commands: [] }
 let failure: unknown
 function save(): void { writeFileSync(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
-async function capture(args: string[], cleanup = false): Promise<string> {
-  const result = await commandScope.run(args, { cwd: workspace, timeoutMs: 30_000, signal: cleanup ? undefined : interruption.signal })
-  ;(proof.commands as unknown[]).push({ args, ...result })
+async function capture(args: string[], cleanup = false, timeoutMs = 30_000): Promise<string> {
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs, signal: cleanup ? undefined : interruption.signal })
+  ;(proof.commands as unknown[]).push({ args, timeoutMs, ...result })
   save()
   if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`Command failed (${result.code}): ${args[0]}: ${result.stderr}`)
   return result.stdout.trim()
@@ -150,7 +151,7 @@ schemes:
   await run('build-native-appkit-tests', [...common, 'build-for-testing'], nativeFixtureBuildTimeoutMs)
   const results = join(evidence, 'TestResults.xcresult')
   await run('verify-displayed-metal-frames', [...common, '-only-testing:MacMetalSurfaceUITests', '-resultBundlePath', results, 'test-without-building'], 300_000)
-  const summary = JSON.parse(await capture(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', results]))
+  const summary = JSON.parse(await capture(xcresultSummaryCommand(results), false, xcresultSummaryTimeoutMs))
   proof.xctest = summary
   if (summary.result !== 'Passed' || summary.totalTestCount !== 1 || summary.passedTests !== 1 || summary.failedTests !== 0 || summary.skippedTests !== 0)
     throw new Error('Native macOS Metal acceptance requires the actual display test to pass without skips')

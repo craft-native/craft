@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util'
 import { resolveZig } from '../../../scripts/zig'
 import { tempDirPrefix } from '../../typescript/src/temp-dir'
 import { NativeFixtureCommandScope, describeFixtureCommandFailure } from './native-fixture-command'
-import { metalXCTestSteps, verifyMetalXCTestSummaries } from './metal-xctest-steps'
+import { metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { runtime: { type: 'string' }, xcodegen: { type: 'string' }, output: { type: 'string' } } })
 if (process.platform !== 'darwin' || !values.runtime || !values.xcodegen || !isAbsolute(values.xcodegen))
@@ -152,7 +152,7 @@ schemes:
   for (const step of metalXCTestSteps(simulator, join(workspace, 'DerivedData'), results)) {
     await run(step.name, step.args, step.timeoutMs)
     if (step.resultBundle) {
-      const summary = JSON.parse(await capture(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', step.resultBundle]))
+      const summary = JSON.parse(await capture(xcresultSummaryCommand(step.resultBundle), { timeoutMs: xcresultSummaryTimeoutMs }))
       summaries.push(summary)
       proof.xctest = summaries
       save()

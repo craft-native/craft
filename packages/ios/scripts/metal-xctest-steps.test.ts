@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
-import { metalXCTestSteps, verifyMetalXCTestSummaries } from './metal-xctest-steps'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
 
 test('Metal compilation and each XCTest suite get independent deadlines and separate real result bundles', () => {
   const [build, unit, ui] = metalXCTestSteps('owned-simulator', '/owned/DerivedData', '/evidence/TestResults.xcresult')
@@ -26,5 +28,20 @@ test('release acceptance requires actual successful execution of both native sui
     [passed, { ...passed, skippedTests: 1 }], [passed, { ...passed, result: 'Failed', failedTests: 1 }],
     [passed, { ...passed, passedTests: 0 }]]) {
     expect(() => verifyMetalXCTestSummaries(summaries)).toThrow('both suites')
+  }
+})
+
+test('both Metal harnesses read a finished suite\'s summary with its own limit, not the 30 s metadata one (#556)', () => {
+  expect(xcresultSummaryCommand('/evidence/TestResults.xcresult')).toEqual(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', '/evidence/TestResults.xcresult'])
+  expect(xcresultSummaryTimeoutMs).toBeGreaterThanOrEqual(120_000)
+  const root = join(import.meta.dir, '../../..')
+  for (const [harness, call] of [
+    ['packages/ios/scripts/test-metal-surface.ts', 'capture(xcresultSummaryCommand(step.resultBundle), { timeoutMs: xcresultSummaryTimeoutMs })'],
+    ['scripts/test-metal-surface-macos.ts', 'capture(xcresultSummaryCommand(results), false, xcresultSummaryTimeoutMs)'],
+  ] as const) {
+    const source = readFileSync(join(root, harness), 'utf8')
+    expect(source).toContain(call)
+    // No summary read may bypass the shared command and its limit.
+    expect(source.match(/xcresulttool/g)).toBeNull()
   }
 })

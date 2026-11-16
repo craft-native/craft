@@ -21,3 +21,16 @@ export function verifyMetalXCTestSummaries(summaries: Record<string, unknown>[])
     || summary.passedTests !== summary.totalTestCount || summary.failedTests !== 0 || summary.skippedTests !== 0))
     throw new Error('Native Metal acceptance requires both suites to execute successfully without skips')
 }
+
+/**
+ * How long reading a result bundle's summary may take. It runs after the
+ * suite has finished, and a loaded hosted runner has taken longer than the
+ * 30 s metadata commands get, failing a leg whose tests had passed (#556).
+ * Every other native harness reads its summary with no limit at all.
+ */
+export const xcresultSummaryTimeoutMs = 120_000
+
+/** The command that reads a finished suite's summary as JSON. */
+export function xcresultSummaryCommand(resultBundle: string): string[] {
+  return ['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', resultBundle]
+}
