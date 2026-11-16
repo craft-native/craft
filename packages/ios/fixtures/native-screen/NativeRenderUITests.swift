@@ -82,12 +82,30 @@ final class NativeRenderUITests: XCTestCase {
         // an app that iOS suspends meanwhile blocked for nine seconds on CI:
         // the state was read once in the ten seconds allowed, 1.5 s after
         // Home, and never again (run 43236065505). The limit is unchanged.
+        //
+        // That state comes from testmanagerd, and it can lag. In run
+        // 43820852205, runningboardd failed to suspend the photos picker and
+        // then went silent for 20 s. SpringBoard had the app in the
+        // background 1.5 s after Home, but testmanagerd still said
+        // foreground (#555). SpringBoard's home screen is read through its
+        // own accessibility tree, so 3 s of it also counts. One sighting is
+        // not enough: it appears during Home's animation, before the app is
+        // in the background.
+        let homeScreen = XCUIApplication(bundleIdentifier: "com.apple.springboard").otherElements["Home screen icons"]
         let deadline = Date().addingTimeInterval(10)
+        var homeScreenSince: Date?
         while Date() < deadline {
             if app.state == .runningBackground || app.state == .runningBackgroundSuspended { return }
+            if !homeScreen.exists {
+                homeScreenSince = nil
+            } else if let since = homeScreenSince {
+                if Date().timeIntervalSince(since) >= 3 { return }
+            } else {
+                homeScreenSince = Date()
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        XCTFail("Home must background the app, including when iOS has already suspended it; its state is \(app.state.rawValue)")
+        XCTFail("Home must background the app, including when iOS has already suspended it; its state is \(app.state.rawValue), and the home screen is \(homeScreen.exists ? "showing" : "not showing")")
     }
 
     private func backgroundAfterObservingPicker(_ app: XCUIApplication) {
