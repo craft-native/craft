@@ -142,15 +142,26 @@ test.skipIf(process.platform !== 'darwin')('a watcher told the command returned 
   finally { removeTempDir(dir) }
 }, 60_000)
 
-test('the navigation script starts the watcher before the test command and tells it when the command returns', () => {
-  const script = readFileSync(join(import.meta.dir, '../scripts/test-native-navigation.ts'), 'utf8')
-  // The function, from its first line to the one that follows it.
-  const watch = script.slice(script.indexOf('function watchLaunchWait('), script.indexOf('function assertMutationBundle('))
-  expect(watch.length).toBeGreaterThan(200)
+test('the navigation and driver-text scripts start the watcher with their test command and stop it when it returns', () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, '../scripts', name), 'utf8')
+  const watch = read('launch-wait-start.ts')
+  expect(watch).toContain('export function watchLaunchWait(')
   expect(watch).toContain('\'launch-wait-watch.ts\'')
   expect(watch).toContain('watch.kill(\'SIGTERM\')')
   // Started with the command, not after it: a job at its limit never reaches a `finally`.
-  expect(script).toContain('      launchWatch = watchLaunchWait(liveLog, device.udid, resultBundle)\n      runXcodeTests([')
-  expect(script).toContain('    finally {\n      await launchWatch?.stop()')
-  expect(script).not.toContain('reportLaunchWait')
+  const navigation = read('test-native-navigation.ts')
+  expect(navigation).toContain('import { watchLaunchWait } from \'./launch-wait-start\'')
+  expect(navigation).toContain('      launchWatch = watchLaunchWait(liveLog, device.udid, resultBundle)\n      runXcodeTests([')
+  expect(navigation).toContain('    finally {\n      await launchWatch?.stop()')
+  expect(navigation).not.toContain('reportLaunchWait')
+  // The driver-text step timed out in a UI query with nothing to say whether
+  // the runner was overloaded (#542).
+  const driverText = read('test-driver-text.ts')
+  expect(driverText).toContain('const launchWatch = watchLaunchWait(process.env.CRAFT_DRIVER_TEXT_LIVE_LOG, simulator, result)\n  try {\n    run([\'xcodebuild\'')
+  expect(driverText).toContain('  finally {\n    await launchWatch?.stop()\n  }')
+  // And the workflow tees that script into the log the watcher reads.
+  const workflow = readFileSync(join(import.meta.dir, '../../../.github/workflows/mobile-e2e.yml'), 'utf8')
+  const step = workflow.slice(workflow.indexOf('- name: Test native driver text editing'), workflow.indexOf('- name: Test native multi-screen navigation'))
+  expect(step).toContain('CRAFT_DRIVER_TEXT_LIVE_LOG: ${{ github.workspace }}/artifacts/mobile-e2e/ios-native/driver-text.log')
+  expect(step).toContain('bun packages/ios/scripts/test-driver-text.ts 2>&1 | tee artifacts/mobile-e2e/ios-native/driver-text.log')
 })

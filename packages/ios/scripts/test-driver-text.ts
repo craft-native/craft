@@ -2,6 +2,7 @@ import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:
 import { join, resolve } from 'node:path'
 import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
 import { nativeTestResultBundle } from './native-test-result'
+import { watchLaunchWait } from './launch-wait-start'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const simulator = process.env.CRAFT_DRIVER_SIMULATOR
@@ -63,10 +64,19 @@ ${renderer.slice(solidStart, solidEnd)}`)
   // Each disabled control must trigger precisely the missing-flip assertion.
   appendFileSync(join(workspace, 'UITests/DriverTests.swift'), readFileSync(resolve(import.meta.dir, '../fixtures/driver-text/DriverAssertions.swift'), 'utf8'))
   run(['xcodegen', 'generate'])
-  run(['xcodebuild', '-project', 'DriverText.xcodeproj', '-scheme', 'DriverText', '-configuration', 'Debug',
-    '-destination', `id=${simulator}`, '-derivedDataPath', join(workspace, 'DerivedData'),
-    '-resultBundlePath', result, '-jobs', '2', '-parallel-testing-enabled', 'NO', '-collect-test-diagnostics', 'never',
-    'CODE_SIGNING_ALLOWED=NO', 'ONLY_ACTIVE_ARCH=YES', 'test'])
+  // When XCTest began, and the host's load if it was slow to, so a query that
+  // times out says whether the runner was overloaded (#542). The workflow
+  // tees this script's output to CRAFT_DRIVER_TEXT_LIVE_LOG.
+  const launchWatch = watchLaunchWait(process.env.CRAFT_DRIVER_TEXT_LIVE_LOG, simulator, result)
+  try {
+    run(['xcodebuild', '-project', 'DriverText.xcodeproj', '-scheme', 'DriverText', '-configuration', 'Debug',
+      '-destination', `id=${simulator}`, '-derivedDataPath', join(workspace, 'DerivedData'),
+      '-resultBundlePath', result, '-jobs', '2', '-parallel-testing-enabled', 'NO', '-collect-test-diagnostics', 'never',
+      'CODE_SIGNING_ALLOWED=NO', 'ONLY_ACTIVE_ARCH=YES', 'test'])
+  }
+  finally {
+    await launchWatch?.stop()
+  }
   const summary = Bun.spawnSync(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result])
   if (summary.exitCode !== 0) throw new Error(summary.stderr.toString())
   const counts = JSON.parse(summary.stdout.toString())
