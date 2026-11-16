@@ -55,7 +55,8 @@
       "default": "./dist/browser.js"
     },
     "./window": {
-      "types": "./types/craft.d.ts"
+      "types": "./types/craft.d.ts",
+      "default": "./types/window.js"
     },
     "./ios": {
       "browser": null,
@@ -103,6 +104,7 @@
   "files": [
     "dist",
     "types/craft.d.ts",
+    "types/window.js",
     "README.md",
     "LICENSE.md"
   ],

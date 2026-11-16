@@ -40,9 +40,15 @@ export const chosen = language ?? 'en'
 
 describe('craft-native/window', () => {
   it('is published: the export, its typesVersions entry and the files list agree', () => {
-    expect(manifest.exports['./window']).toEqual({ types: './types/craft.d.ts' })
+    expect(manifest.exports['./window']).toEqual({ types: './types/craft.d.ts', default: './types/window.js' })
     expect(manifest.typesVersions['*'].window).toEqual(['./types/craft.d.ts'])
     expect(publishedBy(manifest.files, './types/craft.d.ts')).toBe(true)
+    expect(publishedBy(manifest.files, './types/window.js')).toBe(true)
+  })
+
+  it('resolves at runtime too, so a side-effect import of it does not throw', async () => {
+    const module = await import(join(sdk, manifest.exports['./window'].default))
+    expect(Object.keys(module)).toEqual([])
   })
 
   for (const [name, options] of [
