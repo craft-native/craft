@@ -167,10 +167,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON((inputs.scope == 'ios-render' || inputs.scope == 'ios-checkpoints') && '["uikit"]' || inputs.scope == 'ios-navigation' && inputs.selectors != '' && '["navigation"]' || inputs.scope == 'ios-navigation' && '["navigation-unit","navigation-ui-core","navigation-ui-controls"]' || '["uikit","navigation-unit","navigation-ui-core","navigation-ui-controls"]') }}
+        suite: ${{ fromJSON((inputs.scope == 'ios-render' || inputs.scope == 'ios-checkpoints') && '["uikit"]' || inputs.scope == 'ios-navigation' && inputs.selectors != '' && '["navigation"]' || inputs.scope == 'ios-navigation' && '["navigation-unit","navigation-ui-core-1","navigation-ui-core-2","navigation-ui-controls-1","navigation-ui-controls-2"]' || '["uikit","navigation-unit","navigation-ui-core-1","navigation-ui-core-2","navigation-ui-controls-1","navigation-ui-controls-2"]') }}
     runs-on: macos-15
-    # Every navigation UI case belongs to exactly one required group. The large
-    # controls journey gets its own runner; core navigation, unit reconciliation
+    # Every navigation UI case belongs to exactly one required group. Core
+    # navigation and the controls journeys each run as two legs (#508): one leg
+    # of either reached this limit with its cases intact. Unit reconciliation
     # and UIKit retain separate results and the same bounded backstop.
     timeout-minutes: 45
     env:
@@ -237,7 +238,7 @@ jobs:
         env:
           STX_CLI: ${{ github.workspace }}/.stx-compiler/packages/stx/bin/cli.ts
           CRAFT_ONLY_TESTING: ${{ matrix.suite == 'navigation-unit' && 'NativeNavigationUnitTests' || inputs.selectors }}
-          CRAFT_NATIVE_NAVIGATION_GROUP: ${{ matrix.suite == 'navigation-ui-core' && 'core' || matrix.suite == 'navigation-ui-controls' && 'controls' || '' }}
+          CRAFT_NATIVE_NAVIGATION_GROUP: ${{ matrix.suite == 'navigation-ui-core-1' && 'core-1' || matrix.suite == 'navigation-ui-core-2' && 'core-2' || matrix.suite == 'navigation-ui-controls-1' && 'controls-1' || matrix.suite == 'navigation-ui-controls-2' && 'controls-2' || '' }}
           CRAFT_NATIVE_NAVIGATION_RESULT: ${{ github.workspace }}/artifacts/mobile-e2e/ios-native/navigation.xcresult
           CRAFT_NATIVE_NAVIGATION_LIVE_LOG: ${{ github.workspace }}/artifacts/mobile-e2e/ios-native/navigation.log
         run: |

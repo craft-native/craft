@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { requiredReleaseAssets } from './release-manifest'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
+import { nativeNavigationGroups } from '../packages/ios/scripts/native-navigation-groups'
 import { nativeTestResultBundle } from '../packages/ios/scripts/native-test-result'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -479,8 +480,11 @@ test('navigation shards retain both complete XCTest targets and focused selectio
     startsWith: (text: string, prefix: string) => text.startsWith(prefix), cancelled: () => false,
   }, { timeout: 100 })
   for (const scope of ['', 'all'])
-    expect(evaluate(expression, scope)).toEqual(['uikit', 'navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
-  expect(evaluate(expression, 'ios-navigation')).toEqual(['navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
+    expect(evaluate(expression, scope)).toEqual(['uikit', 'navigation-unit', 'navigation-ui-core-1', 'navigation-ui-core-2', 'navigation-ui-controls-1', 'navigation-ui-controls-2'])
+  expect(evaluate(expression, 'ios-navigation')).toEqual(['navigation-unit', 'navigation-ui-core-1', 'navigation-ui-core-2', 'navigation-ui-controls-1', 'navigation-ui-controls-2'])
+  // Every required UI group has a leg, and every leg a group (#508).
+  expect((evaluate(expression, 'all') as string[]).filter(suite => suite.startsWith('navigation-ui-')).map(suite => suite.slice('navigation-ui-'.length)))
+    .toEqual([...nativeNavigationGroups])
   expect(evaluate(expression, 'ios-render')).toEqual(['uikit'])
   expect(evaluate(expression, 'ios-checkpoints')).toEqual(['uikit'])
   const uikit = native.steps!.find(step => step.name === 'Test native UIKit reconciliation')!
@@ -488,13 +492,14 @@ test('navigation shards retain both complete XCTest targets and focused selectio
   const focused = 'NativeNavigationUITests/NativeNavigationUITests/testMultilineInputKeepsKeyboardFocusWhenTapped'
   expect(evaluate(expression, 'ios-navigation', focused)).toEqual(['navigation'])
   expect(evaluate(navigation!.env!.CRAFT_ONLY_TESTING, 'all', '', 'navigation-unit')).toBe('NativeNavigationUnitTests')
-  for (const [suite, group] of [['navigation-ui-core', 'core'], ['navigation-ui-controls', 'controls']]) {
+  for (const group of ['core-1', 'core-2', 'controls-1', 'controls-2']) {
+    const suite = `navigation-ui-${group}`
     expect(evaluate(navigation!.env!.CRAFT_ONLY_TESTING, 'all', '', suite)).toBe('')
     expect(evaluate(navigation!.env!.CRAFT_NATIVE_NAVIGATION_GROUP, 'all', '', suite)).toBe(group)
   }
   expect(evaluate(navigation!.env!.CRAFT_ONLY_TESTING, 'ios-navigation', focused, 'navigation')).toBe(focused)
   expect(evaluate(navigation!.env!.CRAFT_NATIVE_NAVIGATION_GROUP, 'ios-navigation', focused, 'navigation')).toBe('')
-  for (const suite of ['navigation-unit', 'navigation-ui-core', 'navigation-ui-controls', 'navigation'])
+  for (const suite of ['navigation-unit', 'navigation-ui-core-1', 'navigation-ui-core-2', 'navigation-ui-controls-1', 'navigation-ui-controls-2', 'navigation'])
     expect(evaluate(navigation!.if!, 'all', '', suite)).toBe(true)
   expect(evaluate(navigation!.if!, 'all', '', 'uikit')).toBe(false)
   expect(native.strategy?.['fail-fast']).toBe(false)
