@@ -29,6 +29,23 @@ export function androidMediaProbeSource(shell: string): string {
 }
 
 /** Real ENOSPC, cache cleanup, retry, coalescing and offline video decode on an isolated native probe. */
+/** How long each command the media-cache harness runs may take. */
+export const mediaCommandLimitMs = 180_000
+
+/**
+ * Why a harness command failed, saying whether the limit stopped it. hdiutil
+ * prints "create canceled" when it is signalled, so #549's run read like a disk
+ * image fault when the 180 s limit had cancelled it. The time it took is in
+ * every message, so the limit can be judged against a number.
+ */
+export function mediaCommandFailure(args: string[], status: number, elapsedMs: number, output: string, errors: string, limitMs = mediaCommandLimitMs): string {
+  const took = `${(elapsedMs / 1000).toFixed(1)} s`
+  const head = elapsedMs >= limitMs
+    ? `${args.slice(0, 2).join(' ')} was stopped at its ${limitMs / 1000} s limit (after ${took})`
+    : `${args[0]} failed (${status}) after ${took}`
+  return `${head}:\n${output}\n${errors}`
+}
+
 export async function verifyMobileMediaCache(options: MobileMediaCacheTestOptions): Promise<{ platform: string, requests: Record<string, number> }> {
   if (options.platform !== 'ios' && options.platform !== 'android') throw new Error('Choose ios or android')
   if (options.platform === 'android' && !/^emulator-\d+$/.test(options.device || '')) throw new Error('An explicit disposable Android emulator serial is required')
@@ -118,9 +135,14 @@ export async function verifyMobileMediaCache(options: MobileMediaCacheTestOption
   })
 
   async function run(args: string[], cwd = scratch, allowedFailure = false): Promise<string> {
-    const proc = Bun.spawn(args, { cwd, env: { ...process.env, ANDROID_HOME: process.env.ANDROID_HOME || join(homedir(), 'Library/Android/sdk') }, stdout: 'pipe', stderr: 'pipe', timeout: 180000 })
+    const started = performance.now()
+    const proc = Bun.spawn(args, { cwd, env: { ...process.env, ANDROID_HOME: process.env.ANDROID_HOME || join(homedir(), 'Library/Android/sdk') }, stdout: 'pipe', stderr: 'pipe', timeout: mediaCommandLimitMs })
     const [output, errors, status] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
-    if (status && !allowedFailure) throw new Error(`${args[0]} failed (${status}):\n${output}\n${errors}`)
+    const elapsedMs = performance.now() - started
+    // The disk image steps are the ones #549 lost to the limit; record what
+    // they take on a runner that passes.
+    if (args[0] === 'hdiutil') print(`${args[0]} ${args[1]} took ${(elapsedMs / 1000).toFixed(1)} s`)
+    if (status && !allowedFailure) throw new Error(mediaCommandFailure(args, status, elapsedMs, output, errors))
     return output + errors
   }
 
