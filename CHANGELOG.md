@@ -1,5 +1,47 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.506...v0.0.507)
+
+## 🚀 Features
+
+- publish the window.craft declarations as craft-native/window ([fa2a100](https://github.com/craft-native/craft/commit/fa2a100)) _(by glennmichael123)_ ([#554](https://github.com/craft-native/craft/issues/554))
+- let a screen's backButton take a colour or the neutral variant ([91882f6](https://github.com/craft-native/craft/commit/91882f6)) _(by glennmichael123)_ ([#545](https://github.com/craft-native/craft/issues/545))
+- list the phone's preferred languages in device info ([d004170](https://github.com/craft-native/craft/commit/d004170)) _(by glennmichael123)_ ([#551](https://github.com/craft-native/craft/issues/551))
+
+## 🐛 Bug Fixes
+
+- **release**: count a Zig upload whose reply was lost when the registry published it ([20d6842](https://github.com/craft-native/craft/commit/20d6842)) _(by glennmichael123)_ ([#524](https://github.com/craft-native/craft/issues/524), [#454](https://github.com/craft-native/craft/issues/454))
+- **testing**: type mediaCommandFailure's limit for isolated declarations ([85e8d5f](https://github.com/craft-native/craft/commit/85e8d5f)) _(by glennmichael123)_ ([#549](https://github.com/craft-native/craft/issues/549))
+- **ios**: wait for the tab bar before placing timed touches on a tab ([ff54792](https://github.com/craft-native/craft/commit/ff54792)) _(by glennmichael123)_ ([#548](https://github.com/craft-native/craft/issues/548))
+- **ci**: give the Metal leg's first CoreSimulator query a 300 s hang guard ([24dd466](https://github.com/craft-native/craft/commit/24dd466)) _(by glennmichael123)_ ([#509](https://github.com/craft-native/craft/issues/509), [#447](https://github.com/craft-native/craft/issues/447), [#556](https://github.com/craft-native/craft/issues/556))
+- **testing**: say when the media-cache limit stopped a command, and time hdiutil ([0ed7148](https://github.com/craft-native/craft/commit/0ed7148)) _(by glennmichael123)_ ([#549](https://github.com/craft-native/craft/issues/549))
+- **ci**: give the Metal harnesses' result summary read its own 120 s limit ([c33f2a7](https://github.com/craft-native/craft/commit/c33f2a7)) _(by glennmichael123)_ ([#556](https://github.com/craft-native/craft/issues/556))
+- give craft-native/window an empty module so it resolves at runtime ([35190dc](https://github.com/craft-native/craft/commit/35190dc)) _(by glennmichael123)_ ([#554](https://github.com/craft-native/craft/issues/554))
+- **ios**: give an app that can be light a light background when it names none ([9444252](https://github.com/craft-native/craft/commit/9444252)) _(by glennmichael123)_ ([#531](https://github.com/craft-native/craft/issues/531))
+- **ios**: answer languages from Zig's getDeviceInfo as the Swift spec does ([682a117](https://github.com/craft-native/craft/commit/682a117)) _(by glennmichael123)_ ([#551](https://github.com/craft-native/craft/issues/551))
+- hand WebSocketClient handlers falsy payloads and keep reconnecting after disconnect() ([11c9451](https://github.com/craft-native/craft/commit/11c9451)) _(by glennmichael123)_ ([#552](https://github.com/craft-native/craft/issues/552))
+- **ios**: put the bars and the floating actions behind a blocking Modal ([3ed0909](https://github.com/craft-native/craft/commit/3ed0909)) _(by glennmichael123)_ ([#547](https://github.com/craft-native/craft/issues/547), [#541](https://github.com/craft-native/craft/issues/541))
+
+## 🧪 Tests
+
+- **ios**: pin that a Button's title follows Dynamic Type as a Text does ([642ddd8](https://github.com/craft-native/craft/commit/642ddd8)) _(by glennmichael123)_ ([#558](https://github.com/craft-native/craft/issues/558))
+- **ios**: wait for the hybrid home page's first paint before the push ([2e0ebec](https://github.com/craft-native/craft/commit/2e0ebec)) _(by glennmichael123)_ ([#550](https://github.com/craft-native/craft/issues/550))
+- **android**: wait for the fixture's pid, not just its pid file ([0c44a27](https://github.com/craft-native/craft/commit/0c44a27)) _(by glennmichael123)_ ([#534](https://github.com/craft-native/craft/issues/534))
+- **ios**: let the autoFocus case wait 10 s for the main queue, not 2 ([17a3d37](https://github.com/craft-native/craft/commit/17a3d37)) _(by glennmichael123)_ ([#557](https://github.com/craft-native/craft/issues/557))
+- **ios**: accept SpringBoard's home screen when XCTest's app state lags ([b8392d1](https://github.com/craft-native/craft/commit/b8392d1)) _(by glennmichael123)_ ([#555](https://github.com/craft-native/craft/issues/555))
+- **ios**: leave a blocking modal by navigation.back(), not the bar it covers ([ad06a14](https://github.com/craft-native/craft/commit/ad06a14)) _(by glennmichael123)_ ([#547](https://github.com/craft-native/craft/issues/547))
+- **macos**: wait for the check's events before counting install steps ([86c0a93](https://github.com/craft-native/craft/commit/86c0a93)) _(by glennmichael123)_ ([#553](https://github.com/craft-native/craft/issues/553))
+
+## 🤖 Continuous Integration
+
+- **ios**: keep each app's launch window in the simulator log, with WebKit's processes ([77a2e2a](https://github.com/craft-native/craft/commit/77a2e2a)) _(by glennmichael123)_ ([#533](https://github.com/craft-native/craft/issues/533), [#450](https://github.com/craft-native/craft/issues/450))
+- **ios**: record when the driver-text step's XCTest began, and the host's load ([f698cd2](https://github.com/craft-native/craft/commit/f698cd2)) _(by glennmichael123)_ ([#542](https://github.com/craft-native/craft/issues/542))
+- run the iOS navigation UI cases as four legs, not two ([8cf37e3](https://github.com/craft-native/craft/commit/8cf37e3)) _(by glennmichael123)_ ([#508](https://github.com/craft-native/craft/issues/508))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.505...v0.0.506)
 
 ## 🚀 Features
