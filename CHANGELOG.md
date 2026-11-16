@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.507...v0.0.508)
+
+## 🐛 Bug Fixes
+
+- **ios**: target exact system choices and reject offscreen taps ([6c79377](https://github.com/craft-native/craft/commit/6c79377)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.506...v0.0.507)
 
 ## 🚀 Features
