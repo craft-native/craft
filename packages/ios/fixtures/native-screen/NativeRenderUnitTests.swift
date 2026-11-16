@@ -4864,6 +4864,46 @@ final class NativeRenderUnitTests: XCTestCase {
     /// `autoFocus` is for when the field arrives, and for when its author
     /// turns it on. It was applied on every render instead: put the keyboard
     /// away, let anything on the screen update, and it came back (#511).
+    /// A Button's title follows the reader's text size as a Text does, at
+    /// every size and back. Apple's accessibility audit has sometimes called
+    /// the title's text size "partially unsupported" (#558); this is what a
+    /// person gets, measured, so a change that stops the title growing fails.
+    func testButtonTitleFollowsDynamicTypeLikeText() throws {
+        guard #available(iOS 17.0, *) else { throw XCTSkip("Overriding the text size needs iOS 17") }
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.render(document([
+            ["type": "Button", "props": ["key": "more"], "children": ["More actions"]],
+            ["type": "Text", "props": ["key": "label"], "children": ["More actions"]],
+        ]))
+        func sizes(_ category: UIContentSizeCategory) throws -> (title: CGFloat, text: CGFloat, height: CGFloat) {
+            controller.traitOverrides.preferredContentSizeCategory = category
+            controller.view.setNeedsLayout()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            controller.view.layoutIfNeeded()
+            let button = try XCTUnwrap(find(UIButton.self, key: "more", below: controller.view))
+            let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+            let title = try XCTUnwrap(button.titleLabel?.font.pointSize)
+            return (title, label.font.pointSize, button.frame.height)
+        }
+        var previous: (title: CGFloat, text: CGFloat, height: CGFloat)?
+        for category in [UIContentSizeCategory.large, .extraExtraExtraLarge, .accessibilityLarge, .accessibilityExtraExtraExtraLarge] {
+            let measured = try sizes(category)
+            XCTAssertEqual(measured.title, measured.text, accuracy: 0.01, "At \(category.rawValue) the Button's title is not the size a Text is")
+            if let previous {
+                XCTAssertGreaterThan(measured.title, previous.title, "The Button's title did not grow at \(category.rawValue)")
+                XCTAssertGreaterThan(measured.height, previous.height, "The Button did not grow to hold its title at \(category.rawValue)")
+            }
+            previous = measured
+        }
+        let back = try sizes(.large)
+        XCTAssertEqual(back.title, try sizes(.large).text, accuracy: 0.01)
+        XCTAssertLessThan(back.title, previous!.title, "The Button's title did not shrink back with the text size")
+    }
+
     func testAutoFocusFocusesOnMountAndWhenTurnedOnButNotOnEveryRender() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
