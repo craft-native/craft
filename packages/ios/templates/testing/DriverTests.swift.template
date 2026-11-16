@@ -648,7 +648,11 @@ final class DriverTests: XCTestCase {
                         var point = rawPoint
                         if let name = point.removeValue(forKey: "tab") as? String {
                             if tabLocations[name] == nil {
-                                guard let button = tabButton(name), frame.width > 0, frame.height > 0 else {
+                                // Where the tab is, before any timed input is
+                                // scheduled: wait for the tab bar as `tab` and
+                                // `holdtab` do. Looking once failed a slow
+                                // runner whose bar was not up yet (#548).
+                                guard let button = poll(10, { tabButton(name) }), frame.width > 0, frame.height > 0 else {
                                     check(false, "Timed native input cannot find tab \(name)")
                                     return
                                 }
