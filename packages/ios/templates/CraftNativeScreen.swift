@@ -4550,9 +4550,29 @@ private final class CraftNativeSegmentedControl: UISegmentedControl {
 private final class CraftNativeSheetController: UIViewController {
     weak var screen: CraftNativeScreenController?
     weak var content: CraftNativeFlowView?
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        fitCompactHeight()
+    }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         content?.frame = view.bounds.inset(by: view.safeAreaInsets)
+    }
+
+    /// At compact height (a phone held sideways) the sheet is attached to the
+    /// bottom edge, and as wide as it is upright: the screen's short side.
+    /// Edge-attached at its default width it still spanned the whole screen,
+    /// so a dialog that closes on a tap outside it had nowhere outside to tap
+    /// (#561). Elsewhere it asks for no width, and UIKit sizes it as before
+    /// (an iPad's form sheet included).
+    private func fitCompactHeight() {
+        let compact = traitCollection.verticalSizeClass == .compact
+        let screen = view.window?.windowScene?.screen.bounds.size
+        let width = compact ? screen.map { min($0.width, $0.height) } ?? 0 : 0
+        if let sheet = sheetPresentationController, sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != compact {
+            sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = compact
+        }
+        if preferredContentSize.width != width { preferredContentSize = CGSize(width: width, height: 0) }
     }
 }
 
@@ -4594,6 +4614,13 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         let values = choices.isEmpty ? ["large"] : Array(Set(choices)).sorted { $0 == "medium" && $1 == "large" }
         sheet.detents = values.map { $0 == "medium" ? .medium() : .large() }
         sheet.prefersGrabberVisible = grabberVisible
+        // At compact height (a phone held sideways) UIKit presents a page
+        // sheet full screen unless it is edge-attached. A full-screen sheet
+        // has no dimmed space around it, so a dialog that closes on a tap
+        // outside it could not be closed at all on its side (#561). Attached
+        // to the bottom edge it stays the sheet it is upright, and the sheet
+        // controller keeps it to its upright width, with room beside it.
+        sheet.prefersEdgeAttachedInCompactHeight = true
         if let selectedDetent, values.contains(selectedDetent) {
             sheet.selectedDetentIdentifier = selectedDetent == "medium" ? .medium : .large
         }

@@ -6577,6 +6577,58 @@ final class NativePlatformControlTests: XCTestCase {
         XCTAssertNil(screen.presentedViewController)
     }
 
+    /// Sideways on a phone (compact height) UIKit presented a page sheet full
+    /// screen, so a dismissable dialog had no space around it to tap and,
+    /// without a close button of its own, could not be closed (#561). It
+    /// stays a sheet attached to the bottom edge, with dimmed space beside it.
+    func testAPageSheetStaysASheetAtCompactHeight() throws {
+        guard #available(iOS 16.0, *) else { throw XCTSkip("Turning the scene needs iOS 16") }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Compact height is a phone held sideways") }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        func turn(_ mask: UIInterfaceOrientationMask, until done: @escaping (UIWindowScene) -> Bool) {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+            let turned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in done(scene) }, object: nil)
+            wait(for: [turned], timeout: 10)
+        }
+        // The phone held sideways, as stx's overlays suite launches it.
+        turn(.landscapeRight) { $0.interfaceOrientation.isLandscape }
+        defer { turn(.portrait) { $0.interfaceOrientation.isPortrait } }
+        let window = UIWindow(windowScene: scene)
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        func document(_ visible: Bool) -> [String: Any] {
+            ["type": "Modal", "props": ["key": "sheet", "visible": visible, "animationType": "none", "presentationStyle": "pageSheet", "sheetDetents": ["medium", "large"]], "events": ["onRequestClose": "closed"], "children": [["type": "Text", "props": ["key": "sheet-text"], "children": ["Body"]]]]
+        }
+        screen.render(document(true))
+        let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController?.view.window != nil }, object: nil)
+        wait(for: [presented], timeout: 3)
+        let controller = try XCTUnwrap(screen.presentedViewController)
+        XCTAssertEqual(controller.traitCollection.verticalSizeClass, .compact, "the sheet is presented at compact height")
+        let sheet = try XCTUnwrap(controller.sheetPresentationController)
+        XCTAssertTrue(sheet.prefersEdgeAttachedInCompactHeight)
+        let narrow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            controller.view.window?.layoutIfNeeded()
+            return controller.view.convert(controller.view.bounds, to: window).width < window.bounds.width - 100
+        }, object: nil)
+        wait(for: [narrow], timeout: 3)
+        let frame = controller.view.convert(controller.view.bounds, to: window)
+        XCTAssertLessThan(frame.width, window.bounds.width - 100, "room beside the sheet to tap outside it, not a full-screen cover: \(frame) in \(window.bounds)")
+
+        // Upright again, it asks for no width of its own and UIKit sizes it.
+        turn(.portrait) { $0.interfaceOrientation.isPortrait }
+        let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            controller.view.window?.layoutIfNeeded()
+            return controller.traitCollection.verticalSizeClass == .regular && controller.preferredContentSize == .zero
+        }, object: nil)
+        wait(for: [upright], timeout: 5)
+        XCTAssertFalse(sheet.widthFollowsPreferredContentSizeWhenEdgeAttached)
+        screen.render(document(false))
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController == nil }, object: nil)
+        wait(for: [dismissed], timeout: 3)
+    }
+
     /// A Modal's accessibilityLabel stayed on the Modal's own view in the
     /// screen, which is hidden while UIKit presents the sheet. The sheet a
     /// reader lands in had no name and was no group, so VoiceOver entered
