@@ -112,9 +112,22 @@ export function logShowStart(at: Date): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
 }
 
+/**
+ * WebKit's own processes, for the window in which an app's page starts. The
+ * shim probe's page logged nothing for 174 s after the splash, then passed
+ * every case in 3 s (#533). The page runs in the web content process, which
+ * the launch decision's filter leaves out.
+ */
+const PAGE_LOG_PROCESSES = ['com.apple.WebKit.WebContent', 'com.apple.WebKit.Networking', 'com.apple.WebKit.GPU'] as const
+
 /** The predicate limiting a captured window to the launch decision. */
 export function launchLogPredicate(): string {
   return LAUNCH_LOG_PROCESSES.map(name => `process == "${name}"`).join(' OR ')
+}
+
+/** The launch decision's processes and the page's, for an app's own run. */
+export function pageLaunchLogPredicate(): string {
+  return [...LAUNCH_LOG_PROCESSES, ...PAGE_LOG_PROCESSES].map(name => `process == "${name}"`).join(' OR ')
 }
 
 /**
@@ -130,11 +143,11 @@ export function launchLogPredicate(): string {
  * Run here instead, seconds after the invocation ends and bounded by when it
  * began, the window still exists.
  */
-async function captureLaunchLog(udid: string, since: Date, outPath: string): Promise<void> {
+async function captureLaunchLog(udid: string, since: Date, outPath: string, predicate: string = launchLogPredicate()): Promise<void> {
   await command([
     'xcrun', 'simctl', 'spawn', udid, 'log', 'show',
     '--start', logShowStart(since),
-    '--predicate', launchLogPredicate(),
+    '--predicate', predicate,
     '--style', 'compact',
   ], { allowFailure: true, outPath })
 }
@@ -278,6 +291,8 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     .map(path => existsSync(path) ? readFileSync(path, 'utf8') : '')
     .join('')
 
+  // Taken before the launch, so the window kept below contains it (#533).
+  const launchStartedAt = new Date()
   await command([
     'xcrun', 'simctl', 'launch', '--terminate-running-process',
     `--stdout=${stdoutPath}`, `--stderr=${stderrPath}`,
@@ -297,6 +312,10 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
 
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
   writeFileSync(consolePath, readConsole())
+  // The system's account of the launch and the page's start, kept now while
+  // it exists. The job's diagnostics step reads the last minutes at
+  // teardown, and on a passing run covered neither app's launch (#533).
+  await captureLaunchLog(device.udid, launchStartedAt, join(evidence, 'launch-system.log'), pageLaunchLogPredicate())
 
   // Evidence before assertions, always: a leg that dies here is the one whose
   // screenshot is worth the most.

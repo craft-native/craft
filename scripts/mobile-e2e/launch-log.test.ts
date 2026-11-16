@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { launchLogPredicate, logShowStart } from './ios'
+import { launchLogPredicate, logShowStart, pageLaunchLogPredicate } from './ios'
 
 /**
  * The window that answers #450 is kept while it still exists.
@@ -65,4 +65,28 @@ test('the capture runs while the window still exists', () => {
   expect(useAt, 'the window must be captured after the invocation it covers').toBeGreaterThan(exitAt)
   expect(harness.indexOf("const tapping = Bun.spawn(uiTest('NotificationTapColdStartTests')"))
     .toBeGreaterThan(spawnAt)
+})
+
+test('each app run keeps its own launch window, with the page\'s web processes (#533)', () => {
+  // The shim probe's page logged nothing for 174 s after the splash. The
+  // job's teardown log covered neither app on a passing run, so nothing said
+  // what the web content process was doing.
+  const predicate = pageLaunchLogPredicate()
+  for (const process of ['SpringBoard', 'runningboardd', 'launchd_sim', 'com.apple.WebKit.WebContent', 'com.apple.WebKit.Networking', 'com.apple.WebKit.GPU'])
+    expect(predicate, `${process} must be kept`).toContain(`process == "${process}"`)
+  expect(predicate).toMatch(/^process == "[^"]+"( OR process == "[^"]+")+$/)
+  // The notification window keeps its narrower filter.
+  expect(launchLogPredicate()).not.toContain('WebKit')
+  // Started before the launch, captured after the run ends and before the
+  // assertions that could stop the leg.
+  const startedAt = harness.indexOf('const launchStartedAt = new Date()')
+  const launchAt = harness.indexOf("'xcrun', 'simctl', 'launch', '--terminate-running-process',")
+  const terminateAt = harness.indexOf("await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })")
+  const capturedAt = harness.indexOf("captureLaunchLog(device.udid, launchStartedAt, join(evidence, 'launch-system.log'), pageLaunchLogPredicate())")
+  const verdictAt = harness.indexOf("const verdict = evaluateRun('ios', consoleText, nonce)")
+  expect(startedAt).toBeGreaterThan(0)
+  expect(launchAt).toBeGreaterThan(startedAt)
+  expect(terminateAt).toBeGreaterThan(launchAt)
+  expect(capturedAt).toBeGreaterThan(terminateAt)
+  expect(verdictAt).toBeGreaterThan(capturedAt)
 })
