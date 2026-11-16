@@ -1559,6 +1559,27 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
       expect(actions).toContain(call)
   })
 
+  it('gives an app that can be in light appearance a light background when it names none (#531)', async () => {
+    // The default background is a near-black for the default dark app. An app
+    // that follows the phone (or pins light) and names no background got it
+    // in light appearance too, under UIKit's black label colour: the
+    // navigation title and every default Text were black on near-black.
+    const background = async (config: Record<string, unknown>) => {
+      const output = createTempDir('craft-ios-background-')
+      await init({ runtimeDir: null, name: 'Background', bundleId: 'com.example.background', output, config })
+      const generated = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+      return [generated.backgroundColor, generated.backgroundColorDark ?? null]
+    }
+    expect(await background({ renderer: 'native', appearance: 'system' })).toEqual(['#ffffff', '#0b1712'])
+    expect(await background({ appearance: 'light' })).toEqual(['#ffffff', null])
+    expect(await background({ darkMode: false })).toEqual(['#ffffff', null])
+    // A dark app keeps the dark default, and colours an app names are kept.
+    expect(await background({})).toEqual(['#0b1712', null])
+    expect(await background({ appearance: 'dark' })).toEqual(['#0b1712', null])
+    expect(await background({ appearance: 'system', backgroundColor: '#f8fafc' })).toEqual(['#f8fafc', null])
+    expect(await background({ appearance: 'system', backgroundColorDark: '#020617' })).toEqual(['#ffffff', '#020617'])
+  })
+
   it('keeps a default when a caller passes undefined, and the app reads a partial config over its defaults', async () => {
     const output = createTempDir('craft-ios-undefined-')
     await init({ runtimeDir: null, name: 'Partial', bundleId: 'com.example.partial', output, config: { darkMode: undefined, enableHaptics: true } })

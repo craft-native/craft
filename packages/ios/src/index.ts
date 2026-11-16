@@ -1728,6 +1728,16 @@ export async function init(options: InitOptions): Promise<void> {
     teamId: teamId || '',
     ...given,
   }
+  // The default background is a near-black, for the default dark app. An app
+  // that can be in light appearance and names no background gets white there,
+  // under UIKit's black label colour; one that follows the phone keeps the
+  // near-black for Dark Mode (#531).
+  const canBeLight = config.appearance === 'system' || config.appearance === 'light' || (config.appearance === undefined && !config.darkMode)
+  if (canBeLight && given.backgroundColor === undefined) {
+    config.backgroundColor = '#ffffff'
+    if (config.appearance === 'system' && given.backgroundColorDark === undefined)
+      config.backgroundColorDark = DEFAULT_CONFIG.backgroundColor
+  }
   validateHealthKitBackground(config)
   validateNotificationAttachments(config)
   if (config.renderer !== 'web' && config.renderer !== 'native') {
