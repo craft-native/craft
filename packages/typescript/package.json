@@ -54,6 +54,9 @@
       "import": "./dist/browser.js",
       "default": "./dist/browser.js"
     },
+    "./window": {
+      "types": "./types/craft.d.ts"
+    },
     "./ios": {
       "browser": null,
       "types": "./dist/ios/src/index.d.ts",
@@ -81,6 +84,9 @@
       "browser": [
         "./dist/browser.d.ts"
       ],
+      "window": [
+        "./types/craft.d.ts"
+      ],
       "ios": [
         "./dist/ios/src/index.d.ts"
       ],
@@ -96,6 +102,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "types/craft.d.ts",
     "README.md",
     "LICENSE.md"
   ],

@@ -957,6 +957,9 @@ jobs:
       - name: Test desktop bridge smoke coverage and the support table it backs
         run: bun test ./scripts/verify-desktop-bridge.test.ts ./scripts/platform-support.test.ts
 
+      - name: Test that apps can type window.craft from the published package
+        run: bun test ./scripts/window-types-package.test.ts
+
       - name: Test native Metal suite admission
         run: bun test ./packages/ios/scripts/metal-xctest-steps.test.ts
 

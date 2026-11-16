@@ -12,6 +12,7 @@ type PackageJson = {
   main?: string
   module?: string
   types?: string
+  typesVersions?: Record<string, Record<string, string[]>>
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -114,22 +115,44 @@ function assertDeclarationsCarryExtensions(packageDir: string): void {
   }
 }
 
+/**
+ * Whether npm publishes `target` under this `files` list. A target that exists
+ * here but is not listed resolves in the monorepo and is missing from the
+ * tarball: `types/craft.d.ts` was exactly that (#554).
+ */
+export function publishedBy(files: string[] | undefined, target: string): boolean {
+  if (!files)
+    return true
+  const path = target.replace(/^\.\//, '')
+  return files.some((entry) => {
+    const listed = entry.replace(/^\.\//, '').replace(/\/$/, '')
+    return path === listed || path.startsWith(`${listed}/`)
+  })
+}
+
 function verifyExportTargets(pkg: PackageJson, packageDir: string): void {
+  const target = (value: string): void => {
+    assertFile(join(packageDir, value))
+    if (!publishedBy(pkg.files, value))
+      fail(`${pkg.name} points at ${value}, which its "files" list does not publish`)
+  }
   const visit = (value: any): void => {
     if (typeof value === 'string' && value.startsWith('./'))
-      assertFile(join(packageDir, value))
+      target(value)
     else if (value && typeof value === 'object')
       Object.values(value).forEach(visit)
   }
 
   if (pkg.main)
-    assertFile(join(packageDir, pkg.main))
+    target(pkg.main)
   if (pkg.module)
-    assertFile(join(packageDir, pkg.module))
+    target(pkg.module)
   if (pkg.types)
-    assertFile(join(packageDir, pkg.types))
+    target(pkg.types)
   if (pkg.exports)
     Object.values(pkg.exports).forEach(visit)
+  for (const paths of Object.values(pkg.typesVersions ?? {}))
+    Object.values(paths).flat().filter(path => !path.includes('*')).forEach(visit)
 }
 
 function verifyBinTargets(pkg: PackageJson, packageDir: string): void {
@@ -149,14 +172,16 @@ function verifyPackage(relativePath: string): void {
   assertDeclarationsCarryExtensions(packageDir)
 }
 
-for (const packagePath of [
-  'packages/typescript',
-  'packages/create-craft',
-  'packages/ts-maps',
-]) {
-  verifyPackage(packagePath)
+if (import.meta.main) {
+  for (const packagePath of [
+    'packages/typescript',
+    'packages/create-craft',
+    'packages/ts-maps',
+  ]) {
+    verifyPackage(packagePath)
+  }
+
+  assertFile(join(root, 'bin/craft'))
+
+  console.log(`Verified package publish surfaces (${checks.length} checks).`)
 }
-
-assertFile(join(root, 'bin/craft'))
-
-console.log(`Verified package publish surfaces (${checks.length} checks).`)

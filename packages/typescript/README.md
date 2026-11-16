@@ -476,9 +476,25 @@ See [benchmarks](../../benchmarks) for detailed performance comparisons.
 - **Zero dependencies** - Pure Node.js APIs only
 - **Better DX** - Hot reload and dev tools built-in
 
+## Typing `window.craft`
+
+The mobile bridge a native host injects as `window.craft` is declared in
+`craft-native/window`. It is types only, so it is referenced rather than imported:
+
+```ts
+/// <reference types="craft-native/window" />
+
+const info = window.craft.getDeviceInfo()
+const language = info.languages?.[0] ?? 'en'
+```
+
+Or list it in `tsconfig.json` with `"types": ["craft-native/window"]`. It also
+exports the bridge's types, such as `DeviceInfo` and `CraftErrorCode`, for
+`import type { DeviceInfo } from 'craft-native/window'`.
+
 ## Native bridge error codes
 
-The mobile bridge declarations in `types/craft.d.ts` distinguish canonical
+The mobile bridge declarations in `craft-native/window` (`types/craft.d.ts`) distinguish canonical
 `NativeBridgeErrorCode` values from the broader compatible `CraftErrorCode` union.
 The native wire vocabulary comes from `packages/zig/src/bridge_error.zig`; SDK
 parity tests fail if the declaration drifts. It includes `INVALID_PARAMETER`,
