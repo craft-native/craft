@@ -32,7 +32,24 @@ final class HybridNavigationUITests: XCTestCase {
         // lag the painted page. Match the unit fixture's initial readiness
         // budget; the transition and destination deadlines below stay strict.
         XCTAssertTrue(open.waitForExistence(timeout: 120))
-        XCTAssertEqual(visiblePage(XCUIScreen.main.screenshot()), .home)
+        // The button in the accessibility tree does not mean the page has
+        // been painted: on a runner 209 s into testing, the tree came first
+        // and the one frame sampled was blank (#550). Wait for the home page's
+        // colour before the tap, bounded like the button. This is the case's
+        // precondition; the checks after the tap stay strict.
+        var screenshot = XCUIScreen.main.screenshot()
+        let painted = Date().addingTimeInterval(30)
+        while visiblePage(screenshot) != .home && Date() < painted {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            screenshot = XCUIScreen.main.screenshot()
+        }
+        if visiblePage(screenshot) != .home {
+            let attachment = XCTAttachment(screenshot: screenshot)
+            attachment.name = "Home page not painted before the push"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertEqual(visiblePage(screenshot), .home)
 
         open.tap()
         // XCTest can finish its tap after the router has already painted the

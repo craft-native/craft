@@ -4356,6 +4356,15 @@ describe('native renderer component contract', () => {
     expect(hybridNavigationScript).toContain("const devServerURL = server?.url.toString() ?? 'http://127.0.0.1:38000/'")
     expect(hybridNavigationScript).toContain("console.log('Hybrid navigation simulator tests passed')")
     expect(hybridNavigationTest).toContain('testShellWebPushKeepsTheOutgoingPageVisible')
+    // The precondition waits for the home page's first paint, bounded, and
+    // keeps the frame it saw if that never comes (#550). One sample after the
+    // button existed read a blank frame on a slow runner.
+    expect(hybridNavigationTest).toContain('while visiblePage(screenshot) != .home && Date() < painted {')
+    expect(hybridNavigationTest).toContain('let painted = Date().addingTimeInterval(30)')
+    expect(hybridNavigationTest).toContain('attachment.name = "Home page not painted before the push"')
+    expect(hybridNavigationTest).not.toContain('XCTAssertEqual(visiblePage(XCUIScreen.main.screenshot()), .home)')
+    // And the transition after the tap still fails on any blank frame.
+    expect(hybridNavigationTest).toContain('"the web page went blank during the hybrid push"')
     expect(hybridNavigationReadme).toContain('does not model a page-router web-to-web navigation')
     expect(hybridNavigationReadme).toContain('outgoing page during the UIKit transition')
     expect(mobileE2EWorkflow).toContain('Test hybrid web navigation transitions')
