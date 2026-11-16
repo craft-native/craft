@@ -132,6 +132,7 @@ globalThis.craft.navigation.setOptions({
     <Text testID="details-modal-request-status" :text="detailsModalStatus" />
     <Modal testID="details-modal" visible={detailsModalVisible} animationType="none" @request-close="detailsModalRequested($event)">
       <Text testID="details-modal-content">Details modal</Text>
+      <Button testID="details-modal-back" @click="goBack()">Back from the modal</Button>
     </Modal>
   </SafeAreaView>
 </template>

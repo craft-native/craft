@@ -1851,8 +1851,11 @@ final class NativeNavigationUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(app.otherElements["details-modal"].waitForExistence(timeout: 5))
 
-        let back = app.navigationBars.buttons.firstMatch
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "native details route did not expose a Back button")
+        // The navigation bar is behind the blocking modal, as it is behind a
+        // UIKit modal: its Back is neither drawn live nor exposed (#547).
+        XCTAssertFalse(app.navigationBars.buttons.firstMatch.waitForExistence(timeout: 1), "the navigation bar's Back stayed live behind a blocking modal")
+        let back = app.buttons["details-modal-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
         back.tap()
 
         XCTAssertTrue(waitForAbsence(app.otherElements["details-modal"]), "Back should dismiss the top modal first")
