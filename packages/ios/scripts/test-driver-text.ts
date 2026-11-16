@@ -49,6 +49,11 @@ try {
     ]),
   })
   copyFileSync(resolve(import.meta.dir, '../fixtures/driver-text/HostApp.swift'), join(workspace, 'Host/HostApp.swift'))
+  const project = join(workspace, 'project.yml')
+  writeFileSync(project, readFileSync(project, 'utf8').replace('      INFOPLIST_KEY_UILaunchScreen_Generation: YES', '      INFOPLIST_KEY_UILaunchScreen_Generation: YES\n      INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES\n      INFOPLIST_KEY_NSMicrophoneUsageDescription: Requests synthetic driver test permission without recording audio.'))
+  // Only this disposable fixture's permission is reset, so each run observes
+  // the real first-run choice rather than a grant retained from an earlier run.
+  run(['xcrun', 'simctl', 'privacy', simulator, 'reset', 'microphone', 'dev.craft.driver-text.host'])
   // Compile the shipped solid control and its pointer helper unchanged.
   const renderer = readFileSync(resolve(import.meta.dir, '../templates/CraftNativeScreen.swift'), 'utf8')
   const solidStart = renderer.indexOf('final class CraftNativeSolidSwitch: UIControl {')
@@ -81,7 +86,7 @@ ${renderer.slice(solidStart, solidEnd)}`)
   if (summary.exitCode !== 0) throw new Error(summary.stderr.toString())
   const counts = JSON.parse(summary.stdout.toString())
   // xcresult counts the negative test in expectedFailures, not passedTests.
-  if (counts.result !== 'Passed' || counts.totalTestCount !== 4 || counts.passedTests !== 2 || counts.expectedFailures !== 2 || counts.failedTests !== 0 || counts.skippedTests !== 0)
+  if (counts.result !== 'Passed' || counts.totalTestCount !== 6 || counts.passedTests !== 3 || counts.expectedFailures !== 3 || counts.failedTests !== 0 || counts.skippedTests !== 0)
     throw new Error(`Driver text acceptance failed: ${JSON.stringify(counts)}`)
   console.log('Native driver dismissed delayed dialogs without touching matching body controls, verified toggles, rejected unresponsive controls and refused focus, edited Unicode text, and observed delayed/native WebKit input focus.')
 }

@@ -1,6 +1,34 @@
 import XCTest
 
 extension DriverTests {
+    func testOffscreenTapFailsBeforeDeliveringAGesture() {
+        bundledJourney = true
+        app.launchArguments = ["offscreen-button"]
+        defer { app.terminate(); app.launchArguments = [] }
+        app.launch()
+        XCTAssertTrue(identified("offscreen-action").waitForExistence(timeout: 10))
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = true
+        options.issueMatcher = { $0.compactDescription.contains("tap target offscreen-action is visible") }
+        XCTExpectFailure("An offscreen control must not count as a delivered tap", options: options) {
+            run("tapid offscreen-action")
+        }
+        XCTAssertEqual(identified("offscreen-count").label, "Taps: 0")
+        run("scrollto Hidden action")
+        run("tapid offscreen-action")
+        run("labelid offscreen-count Taps: 1")
+    }
+
+    func testSystemTapPrefersExactPermissionChoice() {
+        bundledJourney = true
+        app.launchArguments = ["microphone-permission"]
+        defer { app.terminate(); app.launchArguments = [] }
+        app.launch()
+        run("tapid request-microphone")
+        run("systemtap Allow")
+        run("labelid microphone-permission-status Granted")
+    }
+
     func testOptionalDismissalNeverTapsMatchingBodyControls() {
         bundledJourney = true
         app.launchArguments = ["dismiss-prompt"]

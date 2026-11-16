@@ -120,6 +120,9 @@ final class DriverTests: XCTestCase {
 
     func check(_ ok: Bool, _ what: String) {
         note(ok ? "PASS \(what)" : "FAIL \(what)")
+        if !ok && app.state == .runningForeground {
+            post("/save?name=failed-assertion-tree.txt", Data(app.debugDescription.utf8))
+        }
         XCTAssertTrue(ok, what)
     }
 
@@ -353,8 +356,15 @@ final class DriverTests: XCTestCase {
     /// Waiting before the one gesture is not a second gesture, and for a
     /// control already at rest this costs one 0.1s read.
     @discardableResult
-    func press(_ element: XCUIElement) -> CGRect {
+    func press(_ element: XCUIElement, within viewport: CGRect? = nil) -> CGRect {
         let settled = settledFrame(element)
+        // A hierarchy entry can be below the screen. A coordinate fallback
+        // there sends no useful gesture, although XCTest reports a tap.
+        guard visibleScrollFrame(settled, in: viewport ?? app.frame) else {
+            lastTappedInput = nil
+            check(false, "tap target \(element.identifier) is visible")
+            return settled
+        }
         // Resolve this before activation: a menu item can disappear as soon
         // as its gesture completes (for example Select All).
         let input = [.textField, .secureTextField, .textView, .searchField].contains(element.elementType)
@@ -464,13 +474,17 @@ final class DriverTests: XCTestCase {
             check(element(containing: arg, in: springboard) == nil, "systemabsent \(arg)")
         case "systemtap":
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            // Permission choices overlap: "Don't Allow" contains "Allow".
+            // Resolve a real exact button before searching a containing card.
+            let exactButton = springboard.buttons.matching(NSPredicate(format: "label == %@ OR identifier == %@", arg, arg)).firstMatch
             // Widget text lives in a remote accessibility host. Its frame can
             // be visible while XCTest cannot resolve an activation point. Tap
             // the containing system button (the actual Live Activity card).
             let predicate = NSPredicate(format: "label CONTAINS[c] %@ OR identifier == %@", arg, arg)
             let card = springboard.buttons.containing(predicate).firstMatch
-            if card.exists && card.isHittable { press(card); note("systemtap \(arg): ok") }
-            else if let target = poll(10, { element(containing: arg, in: springboard) }) { press(target); note("systemtap \(arg): ok") }
+            if exactButton.exists && exactButton.isHittable { press(exactButton, within: springboard.frame); note("systemtap \(arg): ok") }
+            else if card.exists && card.isHittable { press(card, within: springboard.frame); note("systemtap \(arg): ok") }
+            else if let target = poll(10, { element(containing: arg, in: springboard) }) { press(target, within: springboard.frame); note("systemtap \(arg): ok") }
             else { XCTFail("System element not found"); note("FAIL systemtap \(arg): NOT FOUND") }
         case "systemtree":
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")

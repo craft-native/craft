@@ -1,13 +1,27 @@
 import UIKit
 import WebKit
+import AVFAudio
 
 @main
 final class DriverTextHost: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
+        configuration.delegateClass = DriverTextScene.self
+        return configuration
+    }
+}
+
+final class DriverTextScene: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        if ProcessInfo.processInfo.arguments.contains("dismiss-prompt") {
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: scene)
+        if ProcessInfo.processInfo.arguments.contains("offscreen-button") {
+            window.rootViewController = DriverOffscreenController()
+        } else if ProcessInfo.processInfo.arguments.contains("microphone-permission") {
+            window.rootViewController = DriverMicrophonePermissionController()
+        } else if ProcessInfo.processInfo.arguments.contains("dismiss-prompt") {
             window.rootViewController = DriverDismissController()
         } else if ProcessInfo.processInfo.arguments.contains("browser-focus") {
             window.rootViewController = DriverBrowserFocusController()
@@ -18,7 +32,78 @@ final class DriverTextHost: UIResponder, UIApplicationDelegate {
         }
         window.makeKeyAndVisible()
         self.window = window
-        return true
+    }
+}
+
+final class DriverOffscreenController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let scroll = UIScrollView()
+        let content = UIView()
+        let count = UILabel()
+        count.text = "Taps: 0"
+        count.accessibilityIdentifier = "offscreen-count"
+        let button = UIButton(type: .system)
+        button.setTitle("Hidden action", for: .normal)
+        button.accessibilityIdentifier = "offscreen-action"
+        var taps = 0
+        button.addAction(UIAction { [weak count] _ in
+            taps += 1
+            count?.text = "Taps: \(taps)"
+        }, for: .touchUpInside)
+        for item in [scroll, content, count, button] { item.translatesAutoresizingMaskIntoConstraints = false }
+        view.addSubview(scroll)
+        scroll.addSubview(content)
+        content.addSubview(count)
+        content.addSubview(button)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            content.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            content.heightAnchor.constraint(equalToConstant: 1500),
+            count.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            count.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            button.topAnchor.constraint(equalTo: content.topAnchor, constant: 1200),
+            button.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+    }
+}
+
+/// Requests permission only. The fixture never starts an audio session or recording.
+final class DriverMicrophonePermissionController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let status = UILabel()
+        status.accessibilityIdentifier = "microphone-permission-status"
+        status.text = "Not requested"
+        let button = UIButton(type: .system)
+        button.setTitle("Request microphone permission", for: .normal)
+        button.accessibilityIdentifier = "request-microphone"
+        button.addAction(UIAction { [weak status] _ in
+            AVAudioApplication.requestRecordPermission { granted in
+                DispatchQueue.main.async { status?.text = granted ? "Granted" : "Denied" }
+            }
+        }, for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [button, status])
+        stack.axis = .vertical
+        stack.spacing = 20
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
     }
 }
 
