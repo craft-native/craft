@@ -31,7 +31,8 @@ $probes = @(
     @{ Name = 'multiwindow';     Script = 'probe-windows-multiwindow.ps1';     Covers = 'a second window and its teardown' },
     @{ Name = 'notification';    Script = 'probe-windows-notification.ps1';    Covers = 'the toast runs, and a title is not PowerShell' },
     @{ Name = 'fs';              Script = 'probe-windows-fs.ps1';              Covers = 'write, append, copy, move, delete, rmdir, read back' },
-    @{ Name = 'fs-watch';        Script = 'probe-windows-fs-watch.ps1';        Covers = 'create, modify, rename, recursion, unwatch, a root that goes away' }
+    @{ Name = 'fs-watch';        Script = 'probe-windows-fs-watch.ps1';        Covers = 'create, modify, rename, recursion, unwatch, a root that goes away' },
+    @{ Name = 'dialog';          Script = 'probe-windows-dialog.ps1';          Covers = 'alert, confirm, save, folder pick -- a button is pressed for real' }
 )
 
 if ($Build) {

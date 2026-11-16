@@ -103,6 +103,7 @@ POSIX-only assumption had to move so that both platforms could share it.
 | `timers` | `sleep`, `cancel`, `cancelAll` -- `SetTimer` on the owning window, with `SetThreadExecutionState` held while a deadline is pending |
 | `window` | geometry reads, `setSize`/`setPosition`/`setBounds`, `center`, always-on-top, resizable, fullscreen, `getState`, `getFocused`, `setOpacity`/`getOpacity`, `loadURL`/`loadHTML`, `executeJavaScript` |
 | `menu` | `setApplicationMenu`, `onAction` |
+| `dialog` | `showAlert`, `showConfirm` through `TaskDialogIndirect`, and `openFile`/`openFiles`/`openFolder`/`saveFile` through the shell `IFileOpenDialog`/`IFileSaveDialog` reached by vtable slot |
 
 ### Defects fixed while wiring them up
 
@@ -220,6 +221,7 @@ not by inspection alone.
 | `shortcuts` | registered; `Ctrl+Alt+F9` fired while the window was unfocused |
 | `menu` | `WM_COMMAND` delivered `{"id":"probeItem"}`; the `Ctrl+Shift+9` accelerator matched |
 | `timers` | a 400ms deadline resolved in 394-409ms; aborting a 5000ms one rejected with `AbortError`; a 200ms and a 600ms deadline armed together landed at ~200ms and ~605ms; a later 150ms deadline reused the freed slot |
+| `dialog` | `showAlert` answered `{"buttonIndex":0}`; `showConfirm` answered `{"ok":true}` and `{"ok":false}` for the first and last button; `saveFile` with a `defaultName` returned `{"canceled":false,"filePath":"...\\picked-probe.txt"}`; a folder pick returned the folder it opened in; cancelling an open returned `{"canceled":true,"filePaths":[]}`. Picking a name by hand in `openFile` was **not** reachable: the shell dialog keeps the filename in its own state, so a path written into its edit box from another process leaves the OK button a no-op -- measured with `SetWindowTextW` on the edit and the `ComboBoxEx32` parent, `WM_COMMAND`/`BM_CLICK`/`WM_KEYDOWN`, and the `CBN_EDITCHANGE` notification. The pick itself is covered by `saveFile` and `openFolder`, which return through the same `slot_get_result` code; `openFiles`' array path (`slot_get_results`) is the one branch no probe reaches |
 
 ### Automated check
 
@@ -247,6 +249,7 @@ The probes it runs:
 | `scripts/probe-windows-notification.ps1` | the toast path runs, and a title or body cannot become PowerShell |
 | `scripts/probe-windows-fs.ps1` | write, append, copy, move, delete, recursive rmdir -- each read back |
 | `scripts/probe-windows-fs-watch.ps1` | a watch speaks about what changed and stays quiet about what it does not own, in both directions; a root that is deleted or renamed is reported once |
+| `scripts/probe-windows-dialog.ps1` | an alert, both answers to a confirm, a save dialog returning a path, a folder pick, and a cancelled open -- the probe presses each button itself |
 
 The rest of the table above was measured by hand.
 
@@ -258,7 +261,10 @@ probe fail. Bypassing the manifest filter makes the capability probe report
 delivered payload. Forcing `ReadDirectoryChangesW` to watch the subtree and
 disabling the single-file filter makes the watch probe report `NORECURSE=LEAK`
 and `SIBLING=2` -- the two assertions that say a watch stays quiet are the ones
-that would otherwise pass by never firing at all.
+that would otherwise pass by never firing at all. Sending the second button's id
+where the first was expected turns the dialog probe's `confirmYes` into
+`{"ok":false}`; note that its `alert` assertion is the weak one, since a dialog
+with a single button reports index 0 however it was closed.
 
 `probe-windows-notification.ps1` is the one probe that has failed and then passed
 with nothing changed: once inside a full suite run, twice on its own. It is the
