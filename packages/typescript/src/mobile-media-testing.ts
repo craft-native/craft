@@ -38,7 +38,7 @@ export const mediaCommandLimitMs = 180_000
  * image fault when the 180 s limit had cancelled it. The time it took is in
  * every message, so the limit can be judged against a number.
  */
-export function mediaCommandFailure(args: string[], status: number, elapsedMs: number, output: string, errors: string, limitMs = mediaCommandLimitMs): string {
+export function mediaCommandFailure(args: string[], status: number, elapsedMs: number, output: string, errors: string, limitMs: number = mediaCommandLimitMs): string {
   const took = `${(elapsedMs / 1000).toFixed(1)} s`
   const head = elapsedMs >= limitMs
     ? `${args.slice(0, 2).join(' ')} was stopped at its ${limitMs / 1000} s limit (after ${took})`
