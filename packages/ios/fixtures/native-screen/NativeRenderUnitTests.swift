@@ -4870,10 +4870,14 @@ final class NativeRenderUnitTests: XCTestCase {
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
+        // Waits only for the main queue to run a block, so it returns as soon
+        // as it does. A loaded CI simulator, busy with keyboard focus, once
+        // took longer than 2 s (#557). The focus assertions after each
+        // settle are the test; this limit is not.
         func settle() {
             let settled = expectation(description: "the main queue ran what was scheduled")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settled.fulfill() }
-            wait(for: [settled], timeout: 2)
+            wait(for: [settled], timeout: 10)
         }
         for multiline in [false, true] {
             let kind = multiline ? "multiline field" : "field"
