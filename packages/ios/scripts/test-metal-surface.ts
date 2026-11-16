@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util'
 import { resolveZig } from '../../../scripts/zig'
 import { tempDirPrefix } from '../../typescript/src/temp-dir'
 import { NativeFixtureCommandScope, describeFixtureCommandFailure } from './native-fixture-command'
-import { metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
+import { coreSimulatorFirstQueryTimeoutMs, metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { runtime: { type: 'string' }, xcodegen: { type: 'string' }, output: { type: 'string' } } })
 if (process.platform !== 'darwin' || !values.runtime || !values.xcodegen || !isAbsolute(values.xcodegen))
@@ -51,7 +51,7 @@ async function run(name: string, args: string[], timeoutMs: number): Promise<voi
 try {
   // The first CoreSimulator query may start its service and migrate metadata.
   // Later metadata commands retain their normal 30-second deadline.
-  const runtimes = JSON.parse(await capture(['xcrun', 'simctl', 'list', 'runtimes', '--json'], { timeoutMs: 120_000 })).runtimes as { identifier: string, isAvailable: boolean }[]
+  const runtimes = JSON.parse(await capture(['xcrun', 'simctl', 'list', 'runtimes', '--json'], { timeoutMs: coreSimulatorFirstQueryTimeoutMs })).runtimes as { identifier: string, isAvailable: boolean }[]
   if (!runtimes.some(runtime => runtime.identifier === values.runtime && runtime.isAvailable)) throw new Error('The requested iOS runtime must be installed and available')
   const sdk = await capture(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'])
   proof.xcode = await capture(['xcodebuild', '-version'])

@@ -34,3 +34,11 @@ export const xcresultSummaryTimeoutMs = 120_000
 export function xcresultSummaryCommand(resultBundle: string): string[] {
   return ['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', resultBundle]
 }
+
+/**
+ * The first CoreSimulator query on a runner may start its service. This limit
+ * only guards against a wedged simctl holding the job; it is not a budget
+ * (#447). Passing runs took 19, 36 and 95 s, and 120 s killed two attempts
+ * that may only have been slow (#509), so it sits well clear of those.
+ */
+export const coreSimulatorFirstQueryTimeoutMs = 300_000

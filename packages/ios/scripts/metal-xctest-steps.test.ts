@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
+import { coreSimulatorFirstQueryTimeoutMs, metalXCTestSteps, verifyMetalXCTestSummaries, xcresultSummaryCommand, xcresultSummaryTimeoutMs } from './metal-xctest-steps'
 
 test('Metal compilation and each XCTest suite get independent deadlines and separate real result bundles', () => {
   const [build, unit, ui] = metalXCTestSteps('owned-simulator', '/owned/DerivedData', '/evidence/TestResults.xcresult')
@@ -44,4 +44,10 @@ test('both Metal harnesses read a finished suite\'s summary with its own limit, 
     // No summary read may bypass the shared command and its limit.
     expect(source.match(/xcresulttool/g)).toBeNull()
   }
+})
+
+test('the first CoreSimulator query gets a hang guard clear of the 95 s a passing run took (#509)', () => {
+  expect(coreSimulatorFirstQueryTimeoutMs).toBeGreaterThanOrEqual(300_000)
+  const source = readFileSync(join(import.meta.dir, 'test-metal-surface.ts'), 'utf8')
+  expect(source).toContain("capture(['xcrun', 'simctl', 'list', 'runtimes', '--json'], { timeoutMs: coreSimulatorFirstQueryTimeoutMs })")
 })
