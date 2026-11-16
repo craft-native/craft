@@ -481,6 +481,25 @@ const waitForOwnedFile = async (path: string): Promise<void> => {
   expect(existsSync(path)).toBe(true)
 }
 
+/**
+ * A fixture's `echo $$ > file` creates the file before it writes the pid, so a
+ * file that exists can still be empty. Read then, the pid was `Number('')`, 0:
+ * a fake `process.kill` keyed on `-pid` never matched the real group, nothing
+ * was denied, and #534's case got the cancellation without the signalling
+ * error it expects. Wait for the pid itself.
+ */
+const waitForOwnedPid = async (path: string): Promise<number> => {
+  // Returns as soon as the pid is there. 2 s was not always enough for the
+  // fixture to start on a heavily loaded Mac.
+  const deadline = performance.now() + 5000
+  while (performance.now() < deadline) {
+    const pid = existsSync(path) ? Number(readFileSync(path, 'utf8').trim()) : 0
+    if (Number.isInteger(pid) && pid > 0) return pid
+    await Bun.sleep(10)
+  }
+  throw new Error(`${path} never held a pid`)
+}
+
 test('a pre-cancelled emulator request starts no SDK command or private registry', async () => {
   const { root, options } = fixture(true)
   const controller = new AbortController()
@@ -505,8 +524,7 @@ test('cancelling provisioning reaps its SDK process group before returning and p
   let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
   try {
     const starting = createAndroidEmulator({ ...options, signal: controller.signal }).then(value => { session = value; return value })
-    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
-    const pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    const pid = await waitForOwnedPid(join(options.sdkRoot, 'provision.pid'))
     controller.abort(new Error('Provisioning cancelled'))
     await expect(starting).rejects.toThrow('Provisioning cancelled')
     expect(() => process.kill(-pid, 0)).toThrow()
@@ -601,8 +619,7 @@ test('a failing cleanup still names the cancellation that caused it', async () =
   const controller = new AbortController()
   try {
     const outcome = createAndroidEmulator({ ...options, signal: controller.signal }).then(() => undefined, (error: unknown) => error)
-    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
-    pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    pid = await waitForOwnedPid(join(options.sdkRoot, 'provision.pid'))
     // Deny signalling so disposal fails while the cancellation is the cause.
     process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
       if (selected === -pid && signal !== 0) throw Object.assign(new Error('Fixture provisioning signal denied'), { code: 'EPERM' })
@@ -625,14 +642,15 @@ test('a failing cleanup still names the cancellation that caused it', async () =
 
 test('failed provisioning cancellation retains its registry and reports signaling errors through the setup promise', async () => {
   const { root, options } = fixture(true)
-  writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\necho $$ > "$ANDROID_HOME/provision.pid"\ntrap "" TERM INT\nwhile :; do sleep 1; done\n', { mode: 0o755 })
+  // The pid file exists, empty, for 0.3 s before the pid is in it: the gap a
+  // loaded runner once read in (#534), held open so every run crosses it.
+  writeFileSync(options.sdkmanager, '#!/bin/sh\nset -eu\n: > "$ANDROID_HOME/provision.pid"\nsleep 0.3\necho $$ > "$ANDROID_HOME/provision.pid"\ntrap "" TERM INT\nwhile :; do sleep 1; done\n', { mode: 0o755 })
   const originalKill = process.kill
   const controller = new AbortController()
   let pid = 0
   try {
     const outcome = createAndroidEmulator({ ...options, signal: controller.signal }).then(session => ({ session, error: undefined }), error => ({ session: undefined, error }))
-    await waitForOwnedFile(join(options.sdkRoot, 'provision.pid'))
-    pid = Number(readFileSync(join(options.sdkRoot, 'provision.pid'), 'utf8'))
+    pid = await waitForOwnedPid(join(options.sdkRoot, 'provision.pid'))
     process.kill = ((selected: number, signal?: NodeJS.Signals | number) => {
       if (selected === -pid && signal !== 0) throw Object.assign(new Error('Fixture provisioning signal denied'), { code: 'EPERM' })
       return originalKill(selected, signal)
