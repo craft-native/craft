@@ -138,6 +138,9 @@ fn describeDevice(buf: []u8) ![]const u8 {
     const tz_obj = objc.msgSendId(NSTimeZone, sel_localtz);
     const timezone = if (tz_obj != null) nsStringField(tz_obj, "name") catch "" else "";
 
+    var languages_buf: [1024]u8 = undefined;
+    const languages = preferredLanguagesJson(&languages_buf);
+
     var esc: [5][512]u8 = undefined;
 
     return std.fmt.bufPrint(
@@ -162,7 +165,8 @@ fn describeDevice(buf: []u8) ![]const u8 {
             "\"batteryLevel\":{d}," ++
             "\"batteryState\":\"{s}\"," ++
             "\"locale\":\"{s}\"," ++
-            "\"timezone\":\"{s}\"" ++
+            "\"timezone\":\"{s}\"," ++
+            "\"languages\":{s}" ++
             "}}",
         .{
             system_version,
@@ -186,8 +190,40 @@ fn describeDevice(buf: []u8) ![]const u8 {
             battery_state,
             try bridge_error.escapeJsonString(&esc[3], locale),
             try bridge_error.escapeJsonString(&esc[4], timezone),
+            languages,
         },
     );
+}
+
+/// `Locale.preferredLanguages` as the spec answers it: a JSON array of the
+/// phone's languages as BCP 47 tags, most preferred first. An unreadable
+/// list is `[]`, and a list too long for `out` keeps the tags that fit, so
+/// the reply is always valid JSON.
+fn preferredLanguagesJson(out: []u8) []const u8 {
+    const empty = "[]";
+    if (out.len < 2) return empty;
+    const NSLocale = objc.objc_getClass("NSLocale") orelse return empty;
+    const sel_preferred = objc.sel_registerName("preferredLanguages") orelse return empty;
+    const sel_at = objc.sel_registerName("objectAtIndex:") orelse return empty;
+    const list = objc.msgSendId(NSLocale, sel_preferred);
+    if (list == null) return empty;
+    const count = msgSendInteger(list, "count") catch return empty;
+
+    out[0] = '[';
+    var len: usize = 1;
+    var index: usize = 0;
+    while (index < @as(usize, @intCast(@max(count, 0)))) : (index += 1) {
+        const item = objc.msgSendId1(list, sel_at, index);
+        if (item == null) continue;
+        const utf8 = objc.getNSStringUTF8(item) orelse continue;
+        var esc: [128]u8 = undefined;
+        const tag = bridge_error.escapeJsonString(&esc, std.mem.span(utf8)) catch continue;
+        // One byte stays free for the closing bracket.
+        const piece = std.fmt.bufPrint(out[len .. out.len - 1], "{s}\"{s}\"", .{ if (len > 1) "," else "", tag }) catch break;
+        len += piece.len;
+    }
+    out[len] = ']';
+    return out[0 .. len + 1];
 }
 
 /// `UIDevice.BatteryState` as the spec spells it (`getBatteryState`,

@@ -1200,7 +1200,7 @@ test "getDeviceInfo answers every field the spec answers" {
     }
 
     // A shape change that silently matched nothing would otherwise pass.
-    try testing.expectEqual(@as(usize, 20), checked);
+    try testing.expectEqual(@as(usize, 21), checked);
 }
 
 fn sharedDeviceInfoBlock() ![]const u8 {
