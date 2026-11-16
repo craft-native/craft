@@ -567,12 +567,22 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      # Before the upload: a registry record published after this is this
+      # run's upload, not an earlier one.
+      - name: Record when this job started
+        id: started
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       # Zig publication reads build.zig.zon and packages its declared source
       # paths; it does not rebuild a platform binary. The complete GitHub
       # release is public before this registry version can become visible.
       # Use the publisher's transport diagnostics from the registry hashing
       # fix, while retaining the independently qualified installer below.
       - name: Publish Zig package
+        id: publish
+        # A failed upload is decided by the next step, which reads the
+        # registry: v0.0.500's reply was lost (curl 16) after the registry had
+        # taken the tarball and published it (#524).
+        continue-on-error: true
         uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
           version: '0.11.184'
@@ -580,6 +590,17 @@ jobs:
           publish: 'zig'
           package-dir: packages/zig
           token: ${{ secrets.PANTRY_TOKEN }}
+      - name: Set up Bun to read the registry after a failed upload
+        if: ${{ steps.publish.outcome == 'failure' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      # Only after a failed upload, and it uploads nothing. The job passes only
+      # if the registry shows this version, published after this job started,
+      # and cleared by its malware scan; otherwise it fails as before.
+      - name: Confirm a failed upload did not publish
+        if: ${{ steps.publish.outcome == 'failure' }}
+        run: bun scripts/pantry-zig-publish.ts confirm --version "$(jq -r .version package.json)" --since "${{ steps.started.outputs.at }}"
 
   notify-registry:
     name: notify registry and channel after publication

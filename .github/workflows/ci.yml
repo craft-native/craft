@@ -976,7 +976,7 @@ jobs:
         run: bun test ./scripts/release-manifest.test.ts
 
       - name: Test release SBOM verification
-        run: bun test ./scripts/verify-sbom.test.ts ./scripts/release-workflow.test.ts ./scripts/managed-java-home.test.ts ./scripts/pantry-availability.test.ts
+        run: bun test ./scripts/verify-sbom.test.ts ./scripts/release-workflow.test.ts ./scripts/managed-java-home.test.ts ./scripts/pantry-availability.test.ts ./scripts/pantry-zig-publish.test.ts
 
       - name: Test bounded-deadline test budgets
         run: bun test ./scripts/test-deadline-budgets.test.ts ./scripts/test-region-markers.test.ts

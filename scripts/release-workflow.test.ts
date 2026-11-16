@@ -17,7 +17,7 @@ type Job = {
   if?: string
   uses?: string
   with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string, version?: string }
-  steps?: { name?: string, if?: string, run?: string, uses?: string, 'working-directory'?: string, env?: Record<string, string>, with?: { 'version'?: string, 'bun-version'?: string, 'publish'?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
+  steps?: { name?: string, id?: string, if?: string, run?: string, uses?: string, 'continue-on-error'?: boolean, 'working-directory'?: string, env?: Record<string, string>, with?: { 'version'?: string, 'bun-version'?: string, 'publish'?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
   strategy?: { 'fail-fast'?: boolean, matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
@@ -860,6 +860,24 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(zigPublish?.with?.release).toBeUndefined()
   expect(Object.entries(release.jobs).flatMap(([name, job]) =>
     (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])
+  // A failed upload is decided by the registry's record, not by curl's exit
+  // (#524): the step may fail, and only the confirmation after it decides.
+  const names = registry.steps!.map(step => step.name)
+  const started = registry.steps!.find(step => step.name === 'Record when this job started')
+  const confirm = registry.steps!.find(step => step.name === 'Confirm a failed upload did not publish')
+  expect(names.indexOf('Record when this job started')).toBeLessThan(names.indexOf('Publish Zig package'))
+  expect(started?.id).toBe('started')
+  expect(zigPublish?.id).toBe('publish')
+  expect(zigPublish?.['continue-on-error']).toBe(true)
+  expect(names.indexOf('Confirm a failed upload did not publish')).toBeGreaterThan(names.indexOf('Publish Zig package'))
+  expect(confirm?.if).toBe("${{ steps.publish.outcome == 'failure' }}")
+  expect(confirm?.run).toBe('bun scripts/pantry-zig-publish.ts confirm --version "$(jq -r .version package.json)" --since "${{ steps.started.outputs.at }}"')
+  expect(registry.steps!.find(step => step.name === 'Set up Bun to read the registry after a failed upload')?.if).toBe("${{ steps.publish.outcome == 'failure' }}")
+  // No other step in the release may swallow a failure this way. The native
+  // availability receipt is evidence only, never a gate (#454).
+  const tolerated = Object.entries(release.jobs).flatMap(([name, job]) =>
+    (job.steps ?? []).filter(step => step['continue-on-error']).map(step => `${name}: ${step.name}`))
+  expect(tolerated.sort()).toEqual(['notify-registry: Record native Pantry availability', 'notify-registry: Retain the Pantry availability receipt', 'publish-pantry: Publish Zig package'])
   for (const [name, job] of Object.entries(release.jobs)) {
     if (name !== 'publish-release')
       expect(steps(job), `${name} must not publish the draft`).not.toContain('--draft=false')
