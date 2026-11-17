@@ -217,7 +217,13 @@ const dispatch_end = "func webView(";
 /// power-saver state of its CLLocationManager (the Zig recorder has no power
 /// modes at all, and a linked runtime does not advertise the capability). No
 /// existing Zig handler was removed.
-const max_not_yet_migrated: usize = 63;
+/// 64 when the spec gained biometricCredential (#564): store, read, check and
+/// delete a Keychain item that only Face ID or Touch ID can release. The item,
+/// its SecAccessControl and the LAContext that a read prompts through belong to
+/// `CraftBiometricVault` in CraftNativeActions.swift, which WebView-free native
+/// screens call as well, so one owner serves both. No existing Zig handler was
+/// removed.
+const max_not_yet_migrated: usize = 64;
 
 fn dispatcherRegion() []const u8 {
     // CraftApp.swift also contains chrome, console and bridge-relay handlers.
@@ -472,6 +478,12 @@ const deliberate_deferrals = [_]Deferral{
     // ActivityKit, and checked against the iphonesimulator SDK rather than
     // assumed.
     .{ .action = "scanQRCode", .reason = "VisionKit's DataScanner is Swift-only; the delegate takes a Swift enum with associated values" },
+
+    // One owner for the biometric Keychain item: `CraftBiometricVault` holds the
+    // service name, the `.biometryCurrentSet` access control and the queue a read
+    // waits on, and native screens reach the same vault without a WebView. A Zig
+    // copy would be a second writer of the same item with its own idea of the ACL.
+    .{ .action = "biometricCredential", .reason = "CraftBiometricVault owns the Keychain item and LAContext for both the page and native screens" },
 
     // UIImagePickerController delivers the movie URL through its Swift-owned
     // delegate. The shim now reads and encodes it correctly; Zig deliberately
