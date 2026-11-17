@@ -647,6 +647,20 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actionsSwift).toContain('guard !initialDeepLinkClaimed else { return nil }')
     expect(actionsSwift).toContain('case ("SecureStorage", _)')
     expect(actionsSwift).toContain('case ("Biometrics", "authenticate")')
+    // Credentials only a face or finger releases (#564): their own Keychain
+    // service, written behind the enrolled biometry, never cached.
+    expect(actionsSwift).toContain('case ("Biometrics", "storeCredential"), ("Biometrics", "getCredential"), ("Biometrics", "hasCredential"), ("Biometrics", "deleteCredential"):')
+    expect(actionsSwift).toContain('static let service = "dev.craft.native.biometric"')
+    expect(actionsSwift).toContain('kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, .biometryCurrentSet')
+    expect(actionsSwift).not.toContain('CraftKeychain.value(account: key, service: CraftBiometricVault')
+    // A web page reaches the same store, with the same codes, and its read
+    // waits on the person rather than the bridge's 30-second timeout.
+    const hybridApp = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftApp.swift'), 'utf8')
+    expect(hybridApp).toContain('case "biometricCredential":')
+    expect(hybridApp).toContain('biometricCredential: true,')
+    for (const method of ['storeCredential', 'getCredential', 'hasCredential', 'deleteCredential'])
+      expect(hybridApp).toContain(`${method}: function(`)
+    expect(hybridApp).toContain('self?.rejectCallback(callbackId, error: reason.message, code: reason.code)')
     expect(actionsSwift).toContain('import LocalAuthentication')
     expect(actionsSwift).toContain('case ("Passkeys", "create"), ("Passkeys", "get"):')
     expect(actionsSwift).toContain('webcredentials associated domain')

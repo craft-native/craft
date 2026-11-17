@@ -76,6 +76,51 @@ authentication and rejects with the native failure/cancellation error. There
 is no web fallback because silently replacing biometric authentication with a
 less secure mechanism would be unsafe.
 
+## Credentials only a face or finger can release
+
+`authenticate()` answers whether the person passed. It does not protect
+anything by itself: a token read afterwards with `secureStorage.get()` is
+readable by any code in the app, with or without that answer. For "Sign in
+with Face ID", keep the token where only the face or finger can release it.
+
+### `biometrics.storeCredential(key, value)`
+
+```typescript
+await biometrics.storeCredential('session', refreshToken)
+```
+
+Writes a Keychain item behind the faces or fingers enrolled right now, on
+this device only and only while it has a passcode. Writing does not prompt.
+Rejects with `BIOMETRICS_UNAVAILABLE` when nothing is enrolled or there is no
+passcode, so the app never keeps a token no one could open.
+
+### `biometrics.getCredential(key, reason?)`
+
+```typescript
+const token = await biometrics.getCredential('session', 'Sign in to HQ')
+```
+
+The system shows Face ID or Touch ID with `reason`, and the Keychain releases
+the value only if the person passes. Resolves to `null` when there is none,
+including a credential invalidated because another face or finger was
+enrolled. That is deliberate, and the app should ask for the password again.
+Rejects with `AUTHENTICATION_CANCELLED` or `AUTHENTICATION_FAILED`. The read
+waits on the person, so it is never timed out by the bridge.
+
+### `biometrics.hasCredential(key)`
+
+Whether a credential is kept under `key`, answered without any prompt. A
+sign-in screen uses it to decide whether to offer "Sign in with Face ID".
+
+### `biometrics.deleteCredential(key)`
+
+Forgets the credential without a prompt, for example when signing out.
+
+These credentials are kept apart from `secureStorage`: never cached in memory,
+never shared with a web page, and not removed by `secureStorage.clear()`.
+iOS only for now. On Android, `storeCredential` and `getCredential` reject
+with `UNSUPPORTED` and `hasCredential` resolves `false`.
+
 ## Capability and lifecycle behavior
 
 - The generated bridge rejects calls with `CAPABILITY_DISABLED` when
@@ -89,13 +134,30 @@ less secure mechanism would be unsafe.
 ## Example
 
 ```typescript
-import { biometrics, secureStorage } from 'craft-native'
+import { biometrics } from 'craft-native'
 
-export async function unlock() {
-  if (!await biometrics.isAvailable()) return false
-  if (!await biometrics.authenticate('Sign in to Wildloop')) return false
+const KEY = 'session'
 
-  const token = await secureStorage.get('auth_token')
-  return token !== null
+// After a password sign-in, offer Face ID for next time.
+export async function rememberWithFaceId(refreshToken: string) {
+  if (!await biometrics.isAvailable()) return
+  await biometrics.storeCredential(KEY, refreshToken)
+}
+
+// On the sign-in screen.
+export async function signInWithFaceId(): Promise<string | null> {
+  if (!await biometrics.hasCredential(KEY)) return null
+  try {
+    // null: the enrolled faces changed. Ask for the password again.
+    return await biometrics.getCredential(KEY, 'Sign in to HQ')
+  }
+  catch (error: any) {
+    if (error.code === 'AUTHENTICATION_CANCELLED') return null
+    throw error
+  }
+}
+
+export async function signOut() {
+  await biometrics.deleteCredential(KEY)
 }
 ```

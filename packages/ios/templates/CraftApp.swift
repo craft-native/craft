@@ -2897,6 +2897,12 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     rejectCallback(callbackId, error: "Biometric authentication is disabled", code: "CAPABILITY_DISABLED")
                 }
+            case "biometricCredential":
+                if config.enableBiometric {
+                    biometricCredential(body, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Biometric authentication is disabled", code: "CAPABILITY_DISABLED")
+                }
             case "registerPush":
                 if config.enablePushNotifications {
                     registerPushNotifications(callbackId: callbackId)
@@ -6024,6 +6030,8 @@ struct CraftWebView: UIViewRepresentable {
                 // HealthKit sheet used to fail the call while the sheet was
                 // still open; these wait for the answer instead.
                 var personFacing = {
+                    // getCredential waits on a face (#564).
+                    biometricCredential: true,
                     requestHealthAuthorization: true,
                     musicRequestAuthorization: true,
                     heartRateRequestAuthorization: true,
@@ -6120,7 +6128,12 @@ struct CraftWebView: UIViewRepresentable {
                 craft.biometrics = {
                     isAvailable: function() { return Promise.resolve(!!craft.capabilities.biometric); },
                     getBiometricType: function() { return Promise.resolve(craft.capabilities.biometric ? 'faceId' : null); },
-                    authenticate: function(reason) { return legacyAuthenticate(reason); }
+                    authenticate: function(reason) { return legacyAuthenticate(reason); },
+                    // A credential only a face or finger releases (#564).
+                    storeCredential: function(key, value) { return craft._invoke('biometricCredential', {method: 'storeCredential', key: key, value: value}).then(function() {}); },
+                    getCredential: function(key, reason) { return craft._invoke('biometricCredential', {method: 'getCredential', key: key, reason: reason || null}); },
+                    hasCredential: function(key) { return craft._invoke('biometricCredential', {method: 'hasCredential', key: key}); },
+                    deleteCredential: function(key) { return craft._invoke('biometricCredential', {method: 'deleteCredential', key: key}).then(function() {}); }
                 };
                 // The app's own SQLite database (Documents/craft.db), as on Android.
                 craft.db = {
@@ -6855,6 +6868,47 @@ struct CraftWebView: UIViewRepresentable {
             #else
             rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
             #endif
+        }
+
+        /// A credential only a face or finger releases (#564), from a web page;
+        /// the same store and codes as a native screen's `Biometrics` actions.
+        private func biometricCredential(_ body: [String: Any], callbackId: String?) {
+            let method = body["method"] as? String ?? ""
+            guard let key = (body["key"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else {
+                rejectCallback(callbackId, error: "A biometric credential needs a non-empty key", code: "INVALID_ARGUMENT")
+                return
+            }
+            let value = body["value"] as? String
+            let reason = (body["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Sign in"
+            CraftBiometricVault.queue.async { [weak self] in
+                let result: Result<Any, CraftBiometricVault.Failure>
+                switch method {
+                case "hasCredential": result = CraftBiometricVault.has(key: key).map { $0 as Any }
+                case "deleteCredential": result = CraftBiometricVault.delete(key: key).map { _ in NSNull() as Any }
+                #if CRAFT_PERMISSION_BIOMETRIC
+                case "storeCredential":
+                    guard let value else {
+                        DispatchQueue.main.async { self?.rejectCallback(callbackId, error: "storeCredential needs a string value", code: "INVALID_ARGUMENT") }
+                        return
+                    }
+                    result = CraftBiometricVault.store(key: key, value: value).map { _ in NSNull() as Any }
+                case "getCredential":
+                    let context = LAContext()
+                    context.localizedCancelTitle = "Cancel"
+                    context.localizedReason = reason
+                    result = CraftBiometricVault.read(key: key, context: context).map { $0.map { $0 as Any } ?? NSNull() }
+                #endif
+                default:
+                    DispatchQueue.main.async { self?.rejectCallback(callbackId, error: "Biometric credentials are not available in this app build", code: "CAPABILITY_DISABLED") }
+                    return
+                }
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let value): self?.resolveCallback(callbackId, result: value)
+                    case .failure(let reason): self?.rejectCallback(callbackId, error: reason.message, code: reason.code)
+                    }
+                }
+            }
         }
 
         // MARK: - Push Notifications

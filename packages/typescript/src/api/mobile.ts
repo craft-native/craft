@@ -740,6 +740,14 @@ catch {
  */
 export type BiometricType = 'faceId' | 'touchId' | 'fingerprint' | 'face' | 'iris' | 'none'
 
+/** The host's biometric credential store, or an `UNSUPPORTED` error naming why not. */
+function biometricCredentials(): Required<Pick<NonNullable<CraftMobileBridge['biometrics']>, 'storeCredential' | 'getCredential'>> {
+  const bridge = getCraftMobile()?.biometrics
+  if (typeof window === 'undefined' || !bridge?.storeCredential || !bridge.getCredential)
+    throw Object.assign(new Error('This host has no biometric credential store'), { code: 'UNSUPPORTED' })
+  return { storeCredential: bridge.storeCredential.bind(bridge), getCredential: bridge.getCredential.bind(bridge) }
+}
+
 /**
  * Biometric authentication API.
  *
@@ -797,7 +805,62 @@ export const biometrics = {
       return craft.biometrics.authenticate(reason)
     }
     throw new Error('Biometrics not available')
-  }
+  },
+
+  /**
+   * Keep a credential (a session token, a refresh token) that only the
+   * person's face or finger can release: "Sign in with Face ID".
+   *
+   * On iOS it is a Keychain item written behind the currently enrolled
+   * faces or fingers, on this device only. Writing does not prompt. Enrolling
+   * another face or finger invalidates it, and {@link getCredential} then
+   * resolves to `null`, so the app asks for the password again. It is kept
+   * apart from {@link secureStorage}: never cached, never shared with a web
+   * page, and not removed by `secureStorage.clear()`.
+   *
+   * Rejects with `BIOMETRICS_UNAVAILABLE` when no face or finger is enrolled
+   * or the device has no passcode, and with `UNSUPPORTED` where the platform
+   * has no such store yet (Android, for now).
+   */
+  async storeCredential(key: string, value: string): Promise<void> {
+    const credentials = biometricCredentials()
+    await credentials.storeCredential(key, value)
+  },
+
+  /**
+   * Ask for the credential: the system shows Face ID or Touch ID with
+   * `reason`, and the value is released only when the person passes.
+   *
+   * Resolves to `null` when there is none, including one invalidated by a
+   * change of the enrolled faces or fingers. Rejects with
+   * `AUTHENTICATION_CANCELLED` when the person cancels and
+   * `AUTHENTICATION_FAILED` when they do not match.
+   */
+  async getCredential(key: string, reason?: string): Promise<string | null> {
+    return biometricCredentials().getCredential(key, reason)
+  },
+
+  /**
+   * Whether a credential is kept under `key`, asked without any prompt: a
+   * sign-in screen offers "Sign in with Face ID" from this. `false` where
+   * the platform has no biometric store.
+   */
+  async hasCredential(key: string): Promise<boolean> {
+    const craft = getCraftMobile()
+    if (typeof window === 'undefined' || !craft?.biometrics?.hasCredential)
+      return false
+    return craft.biometrics.hasCredential(key)
+  },
+
+  /**
+   * Forget the credential, without a prompt (signing out).
+   */
+  async deleteCredential(key: string): Promise<void> {
+    const craft = getCraftMobile()
+    if (typeof window === 'undefined' || !craft?.biometrics?.deleteCredential)
+      return
+    await craft.biometrics.deleteCredential(key)
+  },
 }
 
 // ============================================================================
@@ -4029,6 +4092,11 @@ interface CraftMobileBridge {
     isAvailable(): Promise<boolean>
     getBiometricType(): Promise<BiometricType | null>
     authenticate(reason: string): Promise<boolean>
+    /** Hosts before #564 do not provide these. */
+    storeCredential?: (key: string, value: string) => Promise<void>
+    getCredential?: (key: string, reason?: string) => Promise<string | null>
+    hasCredential?: (key: string) => Promise<boolean>
+    deleteCredential?: (key: string) => Promise<void>
   }
   secureStorage?: {
     set(key: string, value: string): Promise<void>

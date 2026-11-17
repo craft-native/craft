@@ -241,6 +241,48 @@ describe('Mobile biometrics contract', () => {
     })
     expect(reasons).toEqual(['Unlock the vault'])
   })
+
+  it('keeps a credential through the host, asked for with a reason, and passes its refusals on (#564)', async () => {
+    const store = new Map<string, string>()
+    const calls: unknown[][] = []
+    await withWindow({
+      craft: {
+        biometrics: {
+          isAvailable: async () => true,
+          getBiometricType: async () => 'faceId',
+          authenticate: async () => true,
+          storeCredential: async (key: string, value: string) => { calls.push(['store', key]); store.set(key, value) },
+          getCredential: async (key: string, reason?: string) => {
+            calls.push(['get', key, reason])
+            if (reason === 'cancel')
+              throw Object.assign(new Error('Biometric authentication was cancelled'), { code: 'AUTHENTICATION_CANCELLED' })
+            return store.get(key) ?? null
+          },
+          hasCredential: async (key: string) => store.has(key),
+          deleteCredential: async (key: string) => { store.delete(key) },
+        },
+      },
+    }, async () => {
+      expect(await biometrics.hasCredential('session')).toBe(false)
+      await biometrics.storeCredential('session', 'token-1')
+      expect(await biometrics.hasCredential('session')).toBe(true)
+      expect(await biometrics.getCredential('session', 'Sign in to HQ')).toBe('token-1')
+      await expect(biometrics.getCredential('session', 'cancel')).rejects.toMatchObject({ code: 'AUTHENTICATION_CANCELLED' })
+      await biometrics.deleteCredential('session')
+      expect(await biometrics.getCredential('session')).toBeNull()
+    })
+    // A read sends only the key and the reason, never a value.
+    expect(calls).toEqual([['store', 'session'], ['get', 'session', 'Sign in to HQ'], ['get', 'session', 'cancel'], ['get', 'session', undefined]])
+  })
+
+  it('has no credential store on a host without one, and says so instead of pretending (#564)', async () => {
+    await withWindow({ craft: { biometrics: { isAvailable: async () => true, getBiometricType: async () => 'fingerprint', authenticate: async () => true } } }, async () => {
+      expect(await biometrics.hasCredential('session')).toBe(false)
+      await expect(biometrics.storeCredential('session', 'token')).rejects.toMatchObject({ code: 'UNSUPPORTED' })
+      await expect(biometrics.getCredential('session')).rejects.toMatchObject({ code: 'UNSUPPORTED' })
+      await biometrics.deleteCredential('session')
+    })
+  })
 })
 
 /** Run `body` with `window` set to `value`, restoring whatever was there. */

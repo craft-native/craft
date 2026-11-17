@@ -292,6 +292,13 @@ enum CraftNativeActions {
             }
             authenticate(requestToken: requestToken, args: args, completion: completion)
             return
+        case ("Biometrics", "storeCredential"), ("Biometrics", "getCredential"), ("Biometrics", "hasCredential"), ("Biometrics", "deleteCredential"):
+            guard config.enableBiometric else {
+                complete(requestToken, failure("CAPABILITY_DISABLED", "Biometric authentication is disabled"), completion)
+                return
+            }
+            credential(method: method, requestToken: requestToken, args: args, completion: completion)
+            return
         case ("Network", "getStatus"):
             CraftWebServices.perform(action: "getNetworkStatus", body: [:]) { complete(requestToken, $0, completion) }
             return
@@ -1273,6 +1280,60 @@ enum CraftNativeActions {
         #else
         complete(requestToken, failure("CAPABILITY_DISABLED", "Biometrics were not enabled when this app was built"), completion)
         #endif
+    }
+
+    /// A credential only a face or finger releases (#564), in its own
+    /// Keychain service: see CraftBiometricVault. A read is the person's to
+    /// answer, so the bridge never times it out, and a screen that goes away
+    /// takes its prompt with it (`cancel`).
+    private static func credential(
+        method: String,
+        requestToken: String,
+        args: [Any],
+        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+    ) {
+        guard let key = validKey(args.first) else {
+            complete(requestToken, failure("INVALID_ARGUMENT", "A biometric credential needs a non-empty key"), completion)
+            return
+        }
+        CraftBiometricVault.queue.async {
+            switch method {
+            case "hasCredential":
+                complete(requestToken, vaultResult(CraftBiometricVault.has(key: key)), completion)
+            case "deleteCredential":
+                complete(requestToken, vaultResult(CraftBiometricVault.delete(key: key)), completion)
+            #if CRAFT_PERMISSION_BIOMETRIC
+            case "storeCredential":
+                guard args.count == 2, let value = args[1] as? String else {
+                    complete(requestToken, failure("INVALID_ARGUMENT", "storeCredential needs a key and a string value"), completion)
+                    return
+                }
+                complete(requestToken, vaultResult(CraftBiometricVault.store(key: key, value: value)), completion)
+            case "getCredential":
+                let context = biometricContext()
+                context.localizedReason = (args.count > 1 ? args[1] as? String : nil).flatMap { $0.isEmpty ? nil : $0 } ?? "Sign in"
+                cancellationLock.lock()
+                let cancelled = cancelledRequests.contains(requestToken)
+                if !cancelled { biometricContexts[requestToken] = context }
+                cancellationLock.unlock()
+                guard !cancelled else { complete(requestToken, .success(NSNull()), completion); return }
+                let result = CraftBiometricVault.read(key: key, context: context)
+                cancellationLock.lock()
+                biometricContexts.removeValue(forKey: requestToken)
+                cancellationLock.unlock()
+                complete(requestToken, vaultResult(result.map { $0.map { $0 as Any } ?? NSNull() }), completion)
+            #endif
+            default:
+                complete(requestToken, failure("CAPABILITY_DISABLED", "Biometrics were not enabled when this app was built"), completion)
+            }
+        }
+    }
+
+    private static func vaultResult<T>(_ result: Result<T, CraftBiometricVault.Failure>) -> Result<Any, CraftNativeActionError> {
+        switch result {
+        case .success(let value): return .success(value)
+        case .failure(let reason): return failure(reason.code, reason.message)
+        }
     }
 
     /// A screen has gone. A transaction it began and never finished is rolled
@@ -2321,5 +2382,127 @@ final class CraftNativeBarometer {
     deinit { stream?.source.stop() }
     private func failure(_ code: String, _ message: String) -> Result<Any, CraftNativeActionError> {
         .failure(CraftNativeActionError(code: code, message: message))
+    }
+}
+
+/// Secrets only a face or a finger can release (#564): "Sign in with Face ID".
+///
+/// `secureStorage` keeps an app's session where any of its code can read it,
+/// cached in-process and, for shared keys, handed to the web page as well. A
+/// credential here is a Keychain item whose access control the Keychain
+/// itself enforces: it is written with `.biometryCurrentSet`, and only a read
+/// the person answers with Face ID or Touch ID returns it. It is never cached,
+/// never shared, and enrolling another face or finger invalidates it, so the
+/// app asks for the password again. Its own service keeps it apart from
+/// `secureStorage`'s items and from `clear`. Internal for XCTest.
+enum CraftBiometricVault {
+    static let service = "dev.craft.native.biometric"
+    /// Reads wait on a person; one at a time, never on the main thread.
+    static let queue = DispatchQueue(label: "dev.craft.native.biometric-vault")
+
+    enum Failure: Error, Equatable {
+        /// No face or finger is enrolled, or the device has no passcode.
+        case unavailable
+        case cancelled
+        case failed
+        /// The read was not allowed to ask, and the item needs a face.
+        case needsAuthentication
+        case storage(OSStatus)
+
+        /// What a page is told, the same through a native screen and a web page.
+        var code: String {
+            switch self {
+            case .unavailable: return "BIOMETRICS_UNAVAILABLE"
+            case .cancelled: return "AUTHENTICATION_CANCELLED"
+            case .failed, .needsAuthentication: return "AUTHENTICATION_FAILED"
+            case .storage: return "SECURE_STORAGE_ERROR"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .unavailable: return "No face or fingerprint is enrolled, or the device has no passcode"
+            case .cancelled: return "Biometric authentication was cancelled"
+            case .failed, .needsAuthentication: return "Biometric authentication failed"
+            case .storage(let status): return "The biometric credential could not be stored or read (\(status))"
+            }
+        }
+    }
+
+    private static func base(_ key: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: key]
+    }
+
+    #if CRAFT_PERMISSION_BIOMETRIC
+    static func store(key: String, value: String, context: LAContext = LAContext()) -> Result<Bool, Failure> {
+        // An item no one can ever open is worse than an error now.
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return .failure(.unavailable) }
+        var error: Unmanaged<CFError>?
+        guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, .biometryCurrentSet, &error) else {
+            return .failure(.unavailable)
+        }
+        let removed = SecItemDelete(base(key) as CFDictionary)
+        guard removed == errSecSuccess || removed == errSecItemNotFound else { return .failure(.storage(removed)) }
+        var query = base(key)
+        query[kSecValueData as String] = Data(value.utf8)
+        query[kSecAttrAccessControl as String] = access
+        let status = SecItemAdd(query as CFDictionary, nil)
+        switch status {
+        case errSecSuccess: return .success(true)
+        // No passcode, or biometry missing by the time it was written.
+        case errSecNotAvailable, errSecAuthFailed: return .failure(.unavailable)
+        default: return .failure(.storage(status))
+        }
+    }
+
+    /// The credential, released by the Keychain once the person has answered
+    /// `context`'s prompt; nil when there is none, including one invalidated
+    /// by a change of the enrolled faces or fingers. Blocks while the prompt
+    /// is up: call it on `queue`.
+    static func read(key: String, context: LAContext) -> Result<String?, Failure> {
+        var query = base(key)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationContext as String] = context
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { return .failure(.storage(status)) }
+            return .success(String(decoding: data, as: UTF8.self))
+        case errSecItemNotFound: return .success(nil)
+        case errSecUserCanceled: return .failure(.cancelled)
+        case errSecAuthFailed: return .failure(.failed)
+        case errSecInteractionNotAllowed: return .failure(.needsAuthentication)
+        default: return .failure(.storage(status))
+        }
+    }
+    #endif
+
+    /// Whether there is one, asked without any prompt: a sign-in screen
+    /// decides from this whether to offer Face ID.
+    static func has(key: String) -> Result<Bool, Failure> {
+        var query = base(key)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        #if CRAFT_PERMISSION_BIOMETRIC
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        #endif
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess, errSecInteractionNotAllowed: return .success(true)
+        case errSecItemNotFound: return .success(false)
+        default: return .failure(.storage(status))
+        }
+    }
+
+    static func delete(key: String) -> Result<Bool, Failure> {
+        let status = SecItemDelete(base(key) as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound ? .success(true) : .failure(.storage(status))
     }
 }

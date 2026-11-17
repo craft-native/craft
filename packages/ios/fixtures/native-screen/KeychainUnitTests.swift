@@ -1,4 +1,6 @@
 import XCTest
+import LocalAuthentication
+import notify
 @testable import NativeRender
 
 /// CraftKeychain: a Keychain read once, then from memory until something in
@@ -61,5 +63,94 @@ final class KeychainUnitTests: XCTestCase {
         XCTAssertEqual(CraftNativeActions.webSecureValue(forKey: key), "second")
         CraftHybridKeychain.set(key, value: nil)
         XCTAssertNil(CraftNativeActions.webSecureValue(forKey: key))
+    }
+}
+
+
+/// CraftBiometricVault (#564): a credential the Keychain releases only to a
+/// face or finger. The simulator's Face ID is driven the way its Features
+/// menu drives it, by Darwin notifications this process can post itself.
+final class BiometricVaultUnitTests: XCTestCase {
+    private let key = "biometric-vault-test"
+
+    private func simulatorFaceID(enrolled: Bool) {
+        var token: Int32 = 0
+        notify_register_check("com.apple.BiometricKit.enrollmentChanged", &token)
+        notify_set_state(token, enrolled ? 1 : 0)
+        notify_post("com.apple.BiometricKit.enrollmentChanged")
+        notify_cancel(token)
+        // BiometricKit reads the new state asynchronously.
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) == enrolled
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, "the simulator's Face ID enrollment did not become \(enrolled)")
+    }
+
+    /// What the simulator had before: other tests rely on its default, where
+    /// nothing is enrolled.
+    private var enrolledBefore = false
+
+    override func setUp() {
+        super.setUp()
+        enrolledBefore = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        _ = CraftBiometricVault.delete(key: key)
+    }
+
+    override func tearDown() {
+        _ = CraftBiometricVault.delete(key: key)
+        simulatorFaceID(enrolled: enrolledBefore)
+        super.tearDown()
+    }
+
+    func testACredentialIsReleasedOnlyThroughTheFaceAndCanBeDeleted() throws {
+        simulatorFaceID(enrolled: true)
+        XCTAssertEqual(CraftBiometricVault.has(key: key), .success(false))
+        XCTAssertEqual(CraftBiometricVault.store(key: key, value: "session-token-1"), .success(true))
+        // Known to be there without asking anyone.
+        XCTAssertEqual(CraftBiometricVault.has(key: key), .success(true))
+        // Written behind the currently enrolled faces, on this device only and
+        // only while it has a passcode. The simulator records this access
+        // control but has no Secure Enclave to enforce it: any read gets the
+        // value there, so that the Keychain refuses one without a face is
+        // something only a device shows (#564).
+        var attributes: AnyObject?
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: CraftBiometricVault.service, kSecAttrAccount as String: key, kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &attributes), errSecSuccess)
+        let stored = try XCTUnwrap((attributes as? [String: Any])?[kSecAttrAccessControl as String])
+        let expected = try XCTUnwrap(SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, .biometryCurrentSet, nil))
+        XCTAssertTrue(CFEqual(stored as CFTypeRef, expected), "stored \(stored), expected \(expected)")
+        XCTAssertEqual((attributes as? [String: Any])?[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly as String)
+        // Nor is it among the session's items.
+        let session: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.craft.native.secure", kSecAttrAccount as String: key]
+        XCTAssertEqual(SecItemCopyMatching(session as CFDictionary, nil), errSecItemNotFound)
+
+        // The read through a prompt. On a device it shows Face ID and returns
+        // once the face matches; the simulator answers it either way.
+        let context = LAContext()
+        context.localizedReason = "Sign in to the test"
+        var released: Result<String?, CraftBiometricVault.Failure>?
+        let read = expectation(description: "the read returns once the face matches")
+        CraftBiometricVault.queue.async {
+            released = CraftBiometricVault.read(key: self.key, context: context)
+            read.fulfill()
+        }
+        // The prompt has to be up before the simulator's face is shown to it.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { notify_post("com.apple.BiometricKit_Sim.pearl.match") }
+        wait(for: [read], timeout: 20)
+        XCTAssertEqual(released, .success("session-token-1"))
+
+        // Replaced, then deleted without any prompt.
+        XCTAssertEqual(CraftBiometricVault.store(key: key, value: "session-token-2"), .success(true))
+        XCTAssertEqual(CraftBiometricVault.delete(key: key), .success(true))
+        XCTAssertEqual(CraftBiometricVault.has(key: key), .success(false))
+        let silent = LAContext()
+        silent.interactionNotAllowed = true
+        XCTAssertEqual(CraftBiometricVault.read(key: key, context: silent), .success(nil))
+    }
+
+    func testWithNoFaceEnrolledNothingIsWrittenThatNoOneCouldOpen() {
+        simulatorFaceID(enrolled: false)
+        XCTAssertEqual(CraftBiometricVault.store(key: key, value: "session-token"), .failure(.unavailable))
+        XCTAssertEqual(CraftBiometricVault.has(key: key), .success(false))
     }
 }
