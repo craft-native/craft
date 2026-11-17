@@ -441,6 +441,129 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["pager-page-2"].exists)
     }
 
+    /// stx's forms suite, sideways with the keyboard up: each 55-point drag of
+    /// the root ScrollView carried the password field about 280 points and
+    /// back, never stopping in the strip above the keyboard (#562). Nothing
+    /// in the host scrolls it: an XCUITest drag released after a hold still
+    /// ends at the speed it was dragged (a synthesized hold sends no touches,
+    /// so UIKit's velocity is the last movement's), and the scroll view
+    /// coasts on it, upright as well. Dragged slowly, it stops where the
+    /// finger did: the host leaves the page where it was dragged to, with
+    /// the keyboard up and the phone on its side. (The drags start beside
+    /// the fields: a slow press on the focused one can become a caret drag.)
+    func testASlowDragAboveTheKeyboardLeavesTheFormWhereTheFingerStopped() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["open-form"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15), app.debugDescription)
+        open.tap()
+        let email = app.textFields["form-email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 10), app.debugDescription)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        // Upright again before the next test launches: one that starts while
+        // the simulator is still turning finds its controls off the screen.
+        addTeardownBlock {
+            XCUIDevice.shared.orientation = .portrait
+            let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)
+            _ = XCTWaiter.wait(for: [upright], timeout: 10)
+        }
+        let sideways = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)
+        wait(for: [sideways], timeout: 10)
+        email.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 10), "the keyboard came up")
+        Thread.sleep(forTimeInterval: 1)
+        let password = app.secureTextFields["form-password"]
+        XCTAssertTrue(password.exists, app.debugDescription)
+
+        // stx's GateSettings.reach: a drag inside the strip between the top of
+        // the screen and the keyboard, under half of it, held 0.3 s.
+        let frame = app.frame
+        let top = frame.minY + min(110, frame.height * 0.25)
+        let bottom = keyboard.frame.minY
+        let span = max(48, bottom - top)
+        let upper = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: top + span * 0.2))
+        let lower = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: top + span * 0.6))
+        let distance = span * 0.4
+        var trail = ["keyboard \(keyboard.frame), app \(frame), drag \(distance) pt, password at \(password.frame.minY)"]
+        // Up, then back down. A third slow drag from the same point did not
+        // scroll at all under XCUITest, though its pan was recognized; that
+        // is recorded on #562 rather than asserted here.
+        for step in 0..<2 {
+            let up = step % 2 == 0
+            let before = password.frame.minY
+            let (from, to) = up ? (lower, upper) : (upper, lower)
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: XCUIGestureVelocity(40), thenHoldForDuration: 0.3)
+            Thread.sleep(forTimeInterval: 1)
+            let after = password.frame.minY
+            trail.append("drag \(up ? "up" : "down"): password \(before) → \(after)")
+            let moved = up ? before - after : after - before
+            XCTAssertEqual(moved, distance, accuracy: 24, "a \(distance)-point slow drag moved the form \(moved) points: \(trail.joined(separator: "; "))")
+        }
+        let record = XCTAttachment(string: trail.joined(separator: "\n"))
+        record.name = "Slow drags above the keyboard"
+        record.lifetime = .keepAlways
+        add(record)
+    }
+
+    /// stx's forms suite, sideways: after the keyboard went away, the root
+    /// ScrollView stopped about 32 points short of its last line, which sat
+    /// below the scroll view's bottom edge however far it was dragged. The
+    /// end of a form can be scrolled into view once the keyboard is gone.
+    func testTheEndOfASidewaysFormCanBeReachedAfterTheKeyboardGoesAway() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["open-form"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15), app.debugDescription)
+        open.tap()
+        let email = app.textFields["form-email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 10), app.debugDescription)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        // Upright again before the next test launches: one that starts while
+        // the simulator is still turning finds its controls off the screen.
+        addTeardownBlock {
+            XCUIDevice.shared.orientation = .portrait
+            let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)
+            _ = XCTWaiter.wait(for: [upright], timeout: 10)
+        }
+        let sideways = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)
+        wait(for: [sideways], timeout: 10)
+        let scroll = app.scrollViews["form-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10), app.debugDescription)
+        email.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard came up")
+        email.typeText("ada@example.com")
+        let end = app.staticTexts["form-end"]
+        let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "End of the form: ada@example.com"), object: end)
+        wait(for: [typed], timeout: 10)
+        email.typeText("\n")
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.keyboards.firstMatch.exists }, object: nil)
+        wait(for: [gone], timeout: 10)
+        // Then a menu and a segment, as stx's form is filled in: the last line
+        // changes once more after the keyboard has gone.
+        let sport = app.buttons["form-sport"]
+        XCTAssertTrue(sport.waitForExistence(timeout: 10), app.debugDescription)
+        sport.tap()
+        let ride = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Ride", "form-sport")).firstMatch
+        XCTAssertTrue(ride.waitForExistence(timeout: 10), app.debugDescription)
+        ride.tap()
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "End of the form: ride"), object: end)], timeout: 10)
+        let month = app.buttons["This month"]
+        XCTAssertTrue(month.waitForExistence(timeout: 10), app.debugDescription)
+        month.tap()
+        // A fling past the end comes to rest at the scroll view's last offset.
+        for _ in 0..<4 { scroll.swipeUp(velocity: .fast) }
+        Thread.sleep(forTimeInterval: 2)
+        let record = XCTAttachment(string: "scroll \(scroll.frame), end \(end.frame), app \(app.frame)")
+        record.name = "The end of the form after the keyboard"
+        record.lifetime = .keepAlways
+        add(record)
+        XCTAssertLessThanOrEqual(end.frame.maxY, scroll.frame.maxY + 0.5, "the last line is below the scroll view at its last offset: end \(end.frame), scroll \(scroll.frame)")
+        XCTAssertTrue(end.isHittable, "the last line can be reached: end \(end.frame), scroll \(scroll.frame)")
+    }
+
     func testTypingAndButtonUpdatesDoNotDropTheKeyboard() throws {
         let app = XCUIApplication()
         app.launch()

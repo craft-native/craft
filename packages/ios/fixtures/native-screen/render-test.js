@@ -13,6 +13,8 @@
   let pagerMode = false
   let overflowMode = false
   let solidMode = false
+  let formMode = false
+  let formSport = ''
   let agreementMode = false
   let agreementSolid = false
   const agreementValues = { health: false, data: false }
@@ -171,6 +173,29 @@
     }
     if (checkpointMode) { renderCheckpoint(); return }
     if (pagerMode) { renderPager(); return }
+    if (formMode) {
+      // A form whose root is a ScrollView, as stx's forms screen is: a
+      // phone held sideways with the keyboard up leaves a strip of it (#562).
+      // The fields are narrow so a drag down the middle starts on the page,
+      // not on a field: a slow press on the focused field can become UIKit's
+      // caret drag instead of a scroll.
+      const field = (key, props = {}, events) => ({ id: key, type: 'TextInput', props: { key, testID: key, placeholder: key, ...props }, style: { width: 280, height: 48 }, ...(events ? { events } : {}) })
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: `render-${++nextMessage}`, type: 'RENDER',
+        payload: { document: { type: 'ScrollView', props: { key: 'form-scroll', testID: 'form-scroll' }, style: { flex: 1 }, children: [
+          { type: 'View', style: { padding: 16, gap: 12 }, children: [
+            field('form-name'),
+            field('form-email', { keyboardType: 'email-address', autoCapitalize: 'none' }, { onChange: 'changeFormEmail' }),
+            field('form-password', { secureTextEntry: true }),
+            { id: 'form-sport', type: 'Picker', props: { key: 'form-sport', testID: 'form-sport', value: formSport, items: [{ value: 'run', label: 'Run' }, { value: 'ride', label: 'Ride' }] }, style: { width: 280 }, events: { onChange: 'changeFormSport' } },
+            { id: 'form-period', type: 'SegmentedControl', props: { key: 'form-period', testID: 'form-period', value: 'week', items: [{ value: 'week', label: 'This week' }, { value: 'month', label: 'This month' }] }, style: { width: 280 } },
+            ...Array.from({ length: 8 }, (_, index) => field(`form-extra-${index}`)),
+            { id: 'form-end', type: 'Text', props: { key: 'form-end', testID: 'form-end' }, children: ['End of the form'] },
+          ] },
+        ] } },
+      }))
+      return
+    }
     if (solidMode) {
       globalThis.craftNativePostMessage(JSON.stringify({
         id: `render-${++nextMessage}`, type: 'RENDER',
@@ -245,6 +270,7 @@
             ] },
             { type: 'Button', props: { key: 'open-checkpoint' }, events: { onPress: 'openCheckpoint' }, children: ['Checkpoint recovery'] },
             { type: 'Button', props: { key: 'open-picker' }, events: { onPress: 'openPicker' }, children: ['Document picker lifecycle'] },
+            { type: 'Button', props: { key: 'open-form' }, events: { onPress: 'openForm' }, children: ['Scrolling form'] },
           ],
         },
       },
@@ -364,6 +390,7 @@
       mutate([{ op: 'updateNode', id: 'solid-switch', patch: { props: { ios_solid: false, disabled: false } } }])
     }
     if (message.payload.handlerName === 'openPager') { pagerMode = true; render(); return }
+    if (message.payload.handlerName === 'openForm') { formMode = true; render(); return }
     if (message.payload.handlerName === 'selectPage') {
       const page = message.payload.nativeEvent
       pageIndex = page.index
@@ -386,6 +413,17 @@
     if (message.payload.handlerName === 'changeNotes') {
       notes = message.payload.nativeEvent.text
       mutate([{ op: 'updateNode', id: 'notes', patch: { children: [`Notes: ${notes}`] } }])
+    }
+    if (message.payload.handlerName === 'changeFormSport') {
+      formSport = String(message.payload.nativeEvent.value ?? '')
+      mutate([
+        { op: 'updateNode', id: 'form-sport', patch: { props: { value: formSport } } },
+        { op: 'updateNode', id: 'form-end', patch: { children: [`End of the form: ${formSport}`] } },
+      ])
+    }
+    if (message.payload.handlerName === 'changeFormEmail') {
+      // The form's last line follows what is typed, as stx's summary does.
+      mutate([{ op: 'updateNode', id: 'form-end', patch: { children: [`End of the form: ${message.payload.nativeEvent.text}`] } }])
     }
     if (message.payload.handlerName === 'changeName') {
       name = message.payload.nativeEvent.text
