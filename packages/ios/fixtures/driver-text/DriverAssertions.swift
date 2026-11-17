@@ -19,7 +19,7 @@ extension DriverTests {
         run("labelid offscreen-count Taps: 1")
     }
 
-    func testSystemTapPrefersExactPermissionChoice() {
+    func testSystemTapWaitsForExactPermissionChoice() {
         bundledJourney = true
         app.launchArguments = ["microphone-permission"]
         defer { app.terminate(); app.launchArguments = [] }

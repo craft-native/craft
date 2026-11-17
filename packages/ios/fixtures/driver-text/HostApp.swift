@@ -89,8 +89,12 @@ final class DriverMicrophonePermissionController: UIViewController {
         button.setTitle("Request microphone permission", for: .normal)
         button.accessibilityIdentifier = "request-microphone"
         button.addAction(UIAction { [weak status] _ in
-            AVAudioApplication.requestRecordPermission { granted in
-                DispatchQueue.main.async { status?.text = granted ? "Granted" : "Denied" }
+            // Keep the choice absent during the driver's first lookup. The
+            // driver must resolve the exact choice when the alert arrives.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                AVAudioApplication.requestRecordPermission { granted in
+                    DispatchQueue.main.async { status?.text = granted ? "Granted" : "Denied" }
+                }
             }
         }, for: .touchUpInside)
         let stack = UIStackView(arrangedSubviews: [button, status])

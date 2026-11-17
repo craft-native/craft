@@ -268,8 +268,9 @@ driver. Export evidence with `xcrun xcresulttool export attachments --path
 <result.xcresult> --output-path <evidence>`. Omitting `script` restores the
 control-server protocol, required for the `net`, `delay` and `exec` hooks.
 Journeys stop at the first failed check so later actions cannot operate on the
-wrong screen. `systemtap` targets the system button around a Live Activity rather
-than its remotely hosted text. The [Live Activity layout fixture](./fixtures/live-activity)
+wrong screen. `systemtap` waits for an exact system button label or identifier.
+For a Live Activity, its exact text identifies the enclosing system button rather
+than tapping remotely hosted text. Partial labels never select a permission choice. The [Live Activity layout fixture](./fixtures/live-activity)
 exercises long names and timer alignment using the production widget.
 
 Use `universallink https://example.com/profile` to test an associated HTTPS

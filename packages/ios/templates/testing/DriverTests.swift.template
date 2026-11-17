@@ -474,18 +474,21 @@ final class DriverTests: XCTestCase {
             check(element(containing: arg, in: springboard) == nil, "systemabsent \(arg)")
         case "systemtap":
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            // Permission choices overlap: "Don't Allow" contains "Allow".
-            // Resolve a real exact button before searching a containing card.
-            let exactButton = springboard.buttons.matching(NSPredicate(format: "label == %@ OR identifier == %@", arg, arg)).firstMatch
-            // Widget text lives in a remote accessibility host. Its frame can
-            // be visible while XCTest cannot resolve an activation point. Tap
-            // the containing system button (the actual Live Activity card).
-            let predicate = NSPredicate(format: "label CONTAINS[c] %@ OR identifier == %@", arg, arg)
-            let card = springboard.buttons.containing(predicate).firstMatch
-            if exactButton.exists && exactButton.isHittable { press(exactButton, within: springboard.frame); note("systemtap \(arg): ok") }
-            else if card.exists && card.isHittable { press(card, within: springboard.frame); note("systemtap \(arg): ok") }
-            else if let target = poll(10, { element(containing: arg, in: springboard) }) { press(target, within: springboard.frame); note("systemtap \(arg): ok") }
-            else { XCTFail("System element not found"); note("FAIL systemtap \(arg): NOT FOUND") }
+            // Resolve the exact choice on every poll. An alert may not exist
+            // during the first lookup; a substring fallback could then choose
+            // "Don't Allow" for "Allow" while it is still appearing.
+            let predicate = NSPredicate(format: "label == %@ OR identifier == %@", arg, arg)
+            let target = poll(10) {
+                let button = springboard.buttons.matching(predicate).firstMatch
+                if button.exists && button.isHittable { return button }
+                // Live Activity text is remotely hosted. Its exact label can
+                // identify the enclosing system button even when XCTest cannot
+                // resolve an activation point for the text itself.
+                let card = springboard.buttons.containing(predicate).firstMatch
+                return card.exists && card.isHittable ? card : nil
+            }
+            if let target { press(target, within: springboard.frame); note("systemtap \(arg): ok") }
+            else { XCTFail("Exact system element not found"); note("FAIL systemtap \(arg): NOT FOUND") }
         case "systemtree":
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             post("/save?name=\(arg).txt", Data(springboard.debugDescription.utf8))
