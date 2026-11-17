@@ -481,8 +481,12 @@ test.skipIf(process.platform !== 'darwin')('installs a signed update over the ru
     expect(versionOnDisk()).toBe('1.0.1')
     expect(leftovers()).toEqual([])
     await sealed()
-    // Every step reached the screen, in order, through onChange.
-    const steps = screenLog()!.events.slice(before).filter((state, index, all) => state !== all[index - 1])
+    // Every step reached the screen, in order, through onChange. The updater
+    // also checks on a timer, and one can land between the count above and
+    // the install starting, so the install's steps are read from its first.
+    const after = screenLog()!.events.slice(before)
+    const steps = after.slice(after.indexOf('downloading')).filter((state, index, all) => state !== all[index - 1])
+    expect(after).toContain('downloading')
     expect(steps).toEqual(['downloading', 'installing', 'installed'])
     expect(screenLog()!.hostEvents).toBeGreaterThan(3)
     // Installed is where it stays: another check or install changes nothing.
