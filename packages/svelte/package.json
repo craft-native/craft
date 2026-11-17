@@ -28,8 +28,8 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm && tsc --emitDeclarationOnly",
-    "dev": "tsup src/index.ts --format cjs,esm --watch"
+    "build": "bun ../../scripts/build-bindings.ts && tsc --emitDeclarationOnly",
+    "dev": "bun --watch ../../scripts/build-bindings.ts"
   },
   "keywords": [
     "craft",
@@ -45,7 +45,6 @@
   },
   "devDependencies": {
     "svelte": "^5.55.7",
-    "tsup": "^8.0.0",
     "typescript": "7.1.0-dev.20261011.1"
   },
   "dependencies": {

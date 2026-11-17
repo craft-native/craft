@@ -30,28 +30,7 @@ export type RetainedAdvisory = {
   expires: string
 }
 
-/**
- * `esbuild` arrives under `tsup`, which builds `@craft-native/react` and is a
- * devDependency of that workspace. No published tarball contains esbuild, and
- * the advisory is a development-server file read on Windows — a machine and a
- * process that no consumer of a Craft package runs.
- *
- * Not fixed rather than fixed, deliberately: the only in-range remedy bun
- * offers is a *downgrade* to 0.27.2, which falls below the advisory window
- * instead of rising above it. Moving the build toolchain backwards to satisfy a
- * scanner is a worse position than this entry. A `tsup` release that resolves
- * esbuild >= 0.28.1 removes the finding properly, and buddy-bot will carry it.
- */
-const esbuildDevServer: RetainedAdvisory[] = [
-  {
-    id: 1120680,
-    package: 'esbuild',
-    ghsa: 'GHSA-g7r4-m6w7-qqqr',
-    reason: 'Dev-only under tsup, in no published tarball; the advisory needs a Windows dev server, and the only in-range fix is a downgrade to 0.27.2.',
-    reviewed: '2026-09-25',
-    expires: '2026-12-31',
-  },
-]
+// The Bun binding builder removed tsup and its vulnerable esbuild dependency.
 
 /*
  * The six Svelte renderer advisories that lived here are gone, not waived.
@@ -74,4 +53,4 @@ const esbuildDevServer: RetainedAdvisory[] = [
  * exposure was always their own Svelte rather than ours.
  */
 
-export const retainedAdvisories: RetainedAdvisory[] = [...esbuildDevServer]
+export const retainedAdvisories: RetainedAdvisory[] = []
