@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.509...v0.0.510)
+
+## 🐛 Bug Fixes
+
+- **ios**: wait for the script to answer a native refresh ([6f66b6c](https://github.com/craft-native/craft/commit/6f66b6c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.508...v0.0.509)
 
 ## 🐛 Bug Fixes
