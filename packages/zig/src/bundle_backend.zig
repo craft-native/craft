@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const io_context = @import("io_context.zig");
 const backend_lifecycle = @import("backend_lifecycle.zig");
+const security_scope = @import("security_scope.zig");
 
 const PollFd = extern struct { fd: c_int, events: i16, revents: i16 };
 extern "c" fn poll(fds: [*]PollFd, count: c_uint, timeout_ms: c_int) c_int;
@@ -43,9 +44,21 @@ pub const Host = struct {
         const io = io_context.get();
         const path = try std.fs.path.join(allocator, &.{ executable_directory, name });
         defer allocator.free(path);
+        // The live environment, not the snapshot taken at startup, plus the
+        // folders this process holds open for the backend to inherit.
+        var environment = try currentEnvironment(allocator);
+        defer environment.deinit();
+        const granted = try security_scope.joinedPaths(allocator);
+        defer allocator.free(granted);
+        if (granted.len > 0) {
+            try environment.put(security_scope.env_key, granted);
+        } else {
+            _ = environment.swapRemove(security_scope.env_key);
+        }
         var child = try std.process.spawn(io, .{
             .argv = &.{ path, "--serve", "--managed" },
             .cwd = .{ .path = executable_directory },
+            .environ_map = &environment,
             .stdin = .pipe,
             .stdout = .pipe,
             .stderr = .inherit,
@@ -82,6 +95,65 @@ pub const Host = struct {
         self.* = undefined;
     }
 };
+
+fn currentEnvironment(allocator: std.mem.Allocator) !std.process.Environ.Map {
+    var map = std.process.Environ.Map.init(allocator);
+    errdefer map.deinit();
+    var index: usize = 0;
+    while (std.c.environ[index]) |entry| : (index += 1) {
+        const pair = std.mem.span(entry);
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (eq == 0) continue;
+        try map.put(pair[0..eq], pair[eq + 1 ..]);
+    }
+    return map;
+}
+
+/// The one backend a bundled app runs, owned here so a bridge action can
+/// restart it. `start` and `stop` bracket the app's lifetime in `minimal.zig`.
+var managed: ?Host = null;
+var managed_allocator: std.mem.Allocator = undefined;
+var managed_directory: []u8 = &.{};
+var managed_name: []u8 = &.{};
+
+/// Start the app's backend after reopening the folders the person granted, so
+/// it inherits access to them. Returns its session URL, owned by this module.
+pub fn startManaged(allocator: std.mem.Allocator, executable_directory: []const u8, name: []const u8) ![]const u8 {
+    if (managed != null) return error.BackendAlreadyRunning;
+    security_scope.restore();
+    managed_allocator = allocator;
+    managed_directory = try allocator.dupe(u8, executable_directory);
+    errdefer allocator.free(managed_directory);
+    managed_name = try allocator.dupe(u8, name);
+    errdefer allocator.free(managed_name);
+    managed = try Host.start(allocator, managed_directory, managed_name);
+    return managed.?.url;
+}
+
+pub fn isManaged() bool {
+    return managed != null;
+}
+
+/// Replace the running backend with a fresh one. A sandbox extension reaches a
+/// child only when it is spawned, so this is how a folder granted while the
+/// app is open becomes visible to its backend. Returns the new session URL.
+pub fn restartManaged() ![]const u8 {
+    if (managed) |*host| {
+        host.stop();
+        managed = null;
+    } else return error.NoManagedBackend;
+    managed = try Host.start(managed_allocator, managed_directory, managed_name);
+    return managed.?.url;
+}
+
+pub fn stopManaged() void {
+    if (managed) |*host| host.stop();
+    managed = null;
+    if (managed_directory.len > 0) managed_allocator.free(managed_directory);
+    if (managed_name.len > 0) managed_allocator.free(managed_name);
+    managed_directory = &.{};
+    managed_name = &.{};
+}
 
 fn readSessionUrl(allocator: std.mem.Allocator, output: std.Io.File, timeout_ms: u32) ![]const u8 {
     const io = io_context.get();

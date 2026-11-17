@@ -227,7 +227,7 @@
       window.__craftBridgeById[id] = entry
 
       // Keychain access can wait for a system authentication decision too.
-      const interactive = t === 'keychain' || (t === 'dialog' && ['openFile', 'openFiles', 'openFolder', 'saveFile', 'showAlert', 'showConfirm', 'showPrompt'].indexOf(a) >= 0)
+      const interactive = t === 'keychain' || (t === 'dialog' && ['openFile', 'openFiles', 'openFolder', 'saveFile', 'showAlert', 'showConfirm', 'showPrompt', 'requestFolderAccess'].indexOf(a) >= 0)
       const timeout = interactive || timeoutMs === 0 ? 0 : (typeof window.__craftBridgeRequestTimeoutMs === 'number')
         ? window.__craftBridgeRequestTimeoutMs
         : (typeof timeoutMs === 'number' ? timeoutMs : DEFAULT_TIMEOUT_MS)
@@ -648,6 +648,12 @@
     // Convenience helpers that match Electron-ish semantics.
     showAlert:   function (msg, opts) { return _req('dialog', 'showAlert', _stringify(Object.assign({ message: String(msg) }, opts || {}))) },
     showConfirm: function (msg, opts) { return _req('dialog', 'showConfirm', _stringify(Object.assign({ message: String(msg) }, opts || {}))) },
+    // Lasting folder access for a sandboxed app: a security-scoped bookmark
+    // kept across launches. A managed backend is restarted to inherit it, and
+    // the reply carries its new session URL as `backendUrl`.
+    requestFolderAccess: function (opts) { return _req('dialog', 'requestFolderAccess', _stringify(opts || {})) },
+    grantedFolders: function () { return _req('dialog', 'grantedFolders') },
+    revokeFolderAccess: function (path) { return _req('dialog', 'revokeFolderAccess', _stringify({ path: String(path) })) },
   }
 
   // -------------------------------------------------------------------------

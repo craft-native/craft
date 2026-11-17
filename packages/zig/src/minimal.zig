@@ -115,14 +115,15 @@ pub fn main(init: std.process.Init) !void {
 
     // The native UI is the application process. Its backend inherits the
     // sandbox as a managed helper, with stdin as a parent-lifetime lease.
-    var backend: ?craft.bundle_backend.Host = null;
-    defer if (backend) |*host| host.stop();
+    // Folders the person granted are reopened first, so the backend inherits
+    // them; `craft.dialog.requestFolderAccess` restarts it after a new grant.
+    defer craft.bundle_backend.stopManaged();
     if (options.backend_executable) |name| {
         if (options.url != null or options.html != null) return error.ConflictingBackendDocument;
         const directory = cli.selfExeDir(allocator) orelse return error.MissingBundleDirectory;
         defer allocator.free(directory);
-        backend = try craft.bundle_backend.Host.start(allocator, directory, name);
-        options.url = try allocator.dupe(u8, backend.?.url);
+        const url = try craft.bundle_backend.startManaged(allocator, directory, name);
+        options.url = try allocator.dupe(u8, url);
     }
 
     // The protocol URL is application data, never the document URL. Install

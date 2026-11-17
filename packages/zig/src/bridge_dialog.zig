@@ -279,6 +279,12 @@ pub const DialogBridge = struct {
             try self.showConfirm(data);
         } else if (std.mem.eql(u8, action, "showColorPicker")) {
             try self.showColorPicker(data);
+        } else if (std.mem.eql(u8, action, "requestFolderAccess")) {
+            try self.requestFolderAccess(data);
+        } else if (std.mem.eql(u8, action, "grantedFolders")) {
+            try self.grantedFolders();
+        } else if (std.mem.eql(u8, action, "revokeFolderAccess")) {
+            try self.revokeFolderAccess(data);
         } else {
             return BridgeError.UnknownAction;
         }
@@ -539,6 +545,99 @@ pub const DialogBridge = struct {
                 self.allocator.free(json);
             }
         }
+    }
+
+    /// Ask for lasting access to a folder, for a sandboxed app.
+    ///
+    /// Shows a folder-only Open panel, keeps a security-scoped bookmark of the
+    /// choice (see `security_scope.zig`) and, when Craft runs a managed backend,
+    /// restarts it so the new process inherits the access. Resolves with
+    /// `{canceled, path?, paths, backendUrl?}`: `paths` is every folder held,
+    /// `backendUrl` the restarted backend's session URL. Outside the sandbox it
+    /// behaves the same; the bookmark is simply unnecessary there.
+    fn requestFolderAccess(self: *Self, data: ?[]const u8) !void {
+        const security_scope = @import("security_scope.zig");
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "requestFolderAccess", "{\"canceled\":true,\"paths\":[]}");
+            return;
+        }
+        const macos = @import("macos.zig");
+        security_scope.restore();
+
+        const panel = macos.msgSend0(macos.getClass("NSOpenPanel"), "openPanel");
+        _ = macos.msgSend1(panel, "setCanChooseFiles:", @as(c_long, 0));
+        _ = macos.msgSend1(panel, "setCanChooseDirectories:", @as(c_long, 1));
+        _ = macos.msgSend1(panel, "setAllowsMultipleSelection:", @as(c_long, 0));
+        var opts = parseDialogOptions(self.allocator, data);
+        defer freeDialogOptions(self.allocator, &opts);
+        applyPanelOptions(panel, opts);
+        if (opts.message.len > 0) _ = macos.msgSend1(panel, "setMessage:", macos.createNSString(opts.message));
+
+        const result = macos.msgSend0(panel, "runModal");
+        if (@as(c_long, @intCast(@intFromPtr(result))) != 1) {
+            const json = try security_scope.pathsJson(self.allocator, ",\"canceled\":true");
+            defer self.allocator.free(json);
+            bridge_error.sendResultToJS(self.allocator, "requestFolderAccess", json);
+            return;
+        }
+
+        const url = macos.msgSend1(macos.msgSend0(panel, "URLs"), "objectAtIndex:", @as(c_ulong, 0));
+        if (!security_scope.grant(url)) return BridgeError.NativeCallFailed;
+        const path_cstr = macos.msgSend0(macos.msgSend0(url, "path"), "UTF8String");
+        const path = std.mem.span(@as([*:0]const u8, @ptrCast(path_cstr)));
+
+        var extra: std.ArrayList(u8) = .empty;
+        defer extra.deinit(self.allocator);
+        try extra.appendSlice(self.allocator, ",\"canceled\":false,\"path\":");
+        try security_scope.appendJsonString(self.allocator, &extra, path);
+        try self.appendRestartedBackend(&extra);
+        const json = try security_scope.pathsJson(self.allocator, extra.items);
+        defer self.allocator.free(json);
+        bridge_error.sendResultToJS(self.allocator, "requestFolderAccess", json);
+    }
+
+    /// The folders this app holds lasting access to: `{paths}`.
+    fn grantedFolders(self: *Self) !void {
+        const security_scope = @import("security_scope.zig");
+        security_scope.restore();
+        const json = try security_scope.pathsJson(self.allocator, "");
+        defer self.allocator.free(json);
+        bridge_error.sendResultToJS(self.allocator, "grantedFolders", json);
+    }
+
+    /// Give up a folder: `{path}`. Restarts a managed backend so it loses the
+    /// access too. Resolves with `{revoked, paths, backendUrl?}`.
+    fn revokeFolderAccess(self: *Self, data: ?[]const u8) !void {
+        const security_scope = @import("security_scope.zig");
+        const raw = data orelse return BridgeError.MissingData;
+        const parsed = std.json.parseFromSlice(struct { path: []const u8 = "" }, self.allocator, raw, .{
+            .ignore_unknown_fields = true,
+        }) catch return BridgeError.InvalidJSON;
+        defer parsed.deinit();
+        if (parsed.value.path.len == 0) return BridgeError.MissingData;
+        const revoked = security_scope.revoke(parsed.value.path);
+
+        var extra: std.ArrayList(u8) = .empty;
+        defer extra.deinit(self.allocator);
+        try extra.appendSlice(self.allocator, if (revoked) ",\"revoked\":true" else ",\"revoked\":false");
+        if (revoked) try self.appendRestartedBackend(&extra);
+        const json = try security_scope.pathsJson(self.allocator, extra.items);
+        defer self.allocator.free(json);
+        bridge_error.sendResultToJS(self.allocator, "revokeFolderAccess", json);
+    }
+
+    fn appendRestartedBackend(self: *Self, extra: *std.ArrayList(u8)) !void {
+        const security_scope = @import("security_scope.zig");
+        const bundle_backend = @import("bundle_backend.zig");
+        if (!bundle_backend.isManaged()) return;
+        const backend_url = bundle_backend.restartManaged() catch |err| {
+            std.log.err("could not restart the backend after a folder grant: {s}", .{@errorName(err)});
+            try extra.appendSlice(self.allocator, ",\"backendError\":");
+            try security_scope.appendJsonString(self.allocator, extra, @errorName(err));
+            return;
+        };
+        try extra.appendSlice(self.allocator, ",\"backendUrl\":");
+        try security_scope.appendJsonString(self.allocator, extra, backend_url);
     }
 
     /// Open folder picker

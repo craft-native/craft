@@ -614,6 +614,23 @@ desired dimensions and tray/headless options. These settings are written into
 the native bundle configuration, so the Store host needs no application-level
 window setup code.
 
+#### Folder access for a sandboxed backend
+
+A sandboxed app sees its own container until the person chooses a folder in an
+Open panel. `craft.dialog.requestFolderAccess({ title, message, buttonLabel,
+defaultPath })` shows a folder-only panel, keeps a security-scoped bookmark of
+the choice in the app's defaults, and restarts the managed backend. A child
+inherits the sandbox extensions its parent holds when it is spawned, not ones
+the parent gains later, so the restart is what hands the access down. On every
+launch Craft resolves the saved bookmarks before it starts the backend.
+
+The backend reads the folders it can reach from `CRAFT_SECURITY_SCOPED_PATHS`,
+one absolute path per line. The call resolves with `{ canceled, path, paths,
+backendUrl }`, where `backendUrl` is the restarted backend's session URL; the
+page navigates there when the port changed. `craft.dialog.grantedFolders()`
+lists the held folders and `craft.dialog.revokeFolderAccess(path)` gives one
+up, restarting the backend again.
+
 Packaging fails if the public runtime is absent, identifies itself as a direct
 build, or contains known private API markers. App Store apps must also omit
 external self-updaters and use the Mac App Store for updates. Direct builds

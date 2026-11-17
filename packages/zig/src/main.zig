@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const bundle_backend = @import("bundle_backend.zig");
+pub const security_scope = @import("security_scope.zig");
 const builtin = @import("builtin");
 // Re-exported so callers in the `root` module (minimal.zig, demo.zig) can
 // reach Cocoa wrappers like `setApplicationIcon` without doing their own
