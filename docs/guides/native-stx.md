@@ -268,13 +268,16 @@ after it has lifted. A `Pressable` or `TouchableOpacity` dims to its
 `activeOpacity`, a `TouchableHighlight` shows its underlay, and any other view
 with `onPress` (a row that is a plain `View`, a pressable `Text`) is covered
 with the grey a system row turns: the label colour at 12%, in the view's own
-`borderRadius`, drawn over it so the row's text is not dimmed. On Android that
-is the platform's pressed ripple. Inside something that scrolls the feedback
-waits a moment, as a table row's does, so a list does not flash under a flick;
-a tap quicker than the wait is still shown, briefly. When a control or another
-pressable view inside it is under the finger, that one shows the touch and the
-outer view does not. `pressFeedback={false}` turns it off for a view, such as
-a backdrop, or one that draws its own pressed state from `onPressIn`.
+`borderRadius`, drawn over it so the row's text is not dimmed. An icon button
+(a view with no fill, border or text of its own, holding only icons or images)
+dims instead, by as much as a `TouchableOpacity`, the way a glyph button does
+on iOS. On Android a plain pressable view shows the platform's pressed ripple.
+Inside something that scrolls the feedback waits a moment, as a table row's
+does, so a list does not flash under a flick; a tap quicker than the wait is
+still shown, briefly. When a control or another pressable view inside it is
+under the finger, that one shows the touch and the outer view does not.
+`pressFeedback={false}` turns it off for a view, such as a backdrop, or one
+that draws its own pressed state from `onPressIn`.
 
 The shared `Pressable` contract intentionally omits platform-specific
 `hitSlop`, ripple, retention-offset, and long-press-delay options until both

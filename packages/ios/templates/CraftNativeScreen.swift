@@ -7220,6 +7220,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var pressFeedbackViews: Set<ObjectIdentifier> = []
     /// The grey a plain pressable view is covered with while it is touched.
     private var pressHighlights: [ObjectIdentifier: CALayer] = [:]
+    /// The alpha an icon button had before its press dimmed it (#566).
+    private var pressDimmedFrom: [ObjectIdentifier: CGFloat] = [:]
     /// Feedback that is waiting to see whether the touch is a scroll.
     private var pendingPressFeedback: [ObjectIdentifier: DispatchWorkItem] = [:]
     /// When each view's feedback went on, to keep a quick tap visible.
@@ -11364,6 +11366,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         pressFeedbackViews.remove(id)
         pressHighlights.removeValue(forKey: id)?.removeFromSuperlayer()
+        pressDimmedFrom.removeValue(forKey: id)
         pendingPressFeedback.removeValue(forKey: id)?.cancel()
         pressFeedbackShownAt.removeValue(forKey: id)
         imageSources.removeValue(forKey: id)
@@ -11622,6 +11625,21 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return
         }
         if let pressable = view as? CraftNativeFlowView, !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
+        // An icon button dims its glyph, as a UIButton does: the grey a row
+        // turns, over a view with no shape of its own, was a hard square
+        // behind the icon (#566). It dims as far as a TouchableOpacity, so an
+        // app that set one explicitly sees no change without it.
+        if on, pressDimmedFrom[id] == nil, isGlyphOnly(view) {
+            pressDimmedFrom[id] = view.alpha
+            let dimmed = view.alpha * 0.5
+            UIView.animate(withDuration: 0.1) { view.alpha = dimmed }
+            return
+        }
+        if !on, let alpha = pressDimmedFrom.removeValue(forKey: id) {
+            UIView.animate(withDuration: 0.1) { view.alpha = alpha }
+            return
+        }
+        if pressDimmedFrom[id] != nil { return }
         guard on else {
             pressHighlights[id]?.opacity = 0
             return
@@ -11644,6 +11662,25 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         highlight.backgroundColor = UIColor.label.withAlphaComponent(0.12).resolvedColor(with: view.traitCollection).cgColor
         CATransaction.commit()
         highlight.opacity = 1
+    }
+
+    /// A pressable drawn only by its glyphs: no fill or border of its own,
+    /// no text, and at least one icon or image. A row keeps its highlight,
+    /// filled or not, because dimmed text reads as disabled.
+    private func isGlyphOnly(_ view: UIView) -> Bool {
+        let fill = (view as? CraftNativeFlowView)?.pressBaseBackgroundColor ?? view.backgroundColor
+        guard (fill?.cgColor.alpha ?? 0) == 0, view.layer.borderWidth == 0 else { return false }
+        var glyphs = 0
+        func onlyGlyphs(in container: UIView) -> Bool {
+            for child in container.subviews where !child.isHidden && child.alpha > 0 {
+                if child is UILabel || child is UITextView || child is UITextField { return false }
+                if (child.backgroundColor?.cgColor.alpha ?? 0) > 0 || child.layer.borderWidth > 0 { return false }
+                if child is UIImageView { glyphs += 1; continue }
+                if !onlyGlyphs(in: child) { return false }
+            }
+            return true
+        }
+        return onlyGlyphs(in: view) && glyphs > 0
     }
 
     private func updateUnderlayHandlers(_ show: String?, _ hide: String?, for view: UIView) {

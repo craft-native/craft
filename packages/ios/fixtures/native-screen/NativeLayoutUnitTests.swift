@@ -1175,6 +1175,62 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(touchWatchers(on: try view("row")), 0)
     }
 
+    /// #566: a 44-point heart with no shape of its own showed the row's grey
+    /// as a hard square behind the icon. An icon button dims its glyph, as a
+    /// UIButton does, by as much as a TouchableOpacity; anything with text,
+    /// a fill or a border keeps the highlight.
+    func testAnIconButtonDimsItsGlyphInsteadOfShowingASquare() async throws {
+        func icon(_ key: String) -> [String: Any] {
+            ["id": key, "type": "Icon", "props": ["testID": key, "symbol": "heart"], "style": ["width": 24, "height": 24]]
+        }
+        func text(_ key: String) -> [String: Any] {
+            ["id": key, "type": "Text", "props": ["testID": key], "style": [:], "children": ["Saved"]]
+        }
+        let square: [String: Any] = ["width": 44, "height": 44, "alignItems": "center", "justifyContent": "center"]
+        let controller = screen(box("root", style: ["flex": 1], [
+            pressable("heart", style: square, [icon("heart-icon")]),
+            pressable("faded", style: square.merging(["opacity": 0.8]) { $1 }, [icon("faded-icon")]),
+            pressable("filled", style: square.merging(["backgroundColor": "#eeeeee", "borderRadius": 22]) { $1 }, [icon("filled-icon")]),
+            pressable("outlined", style: square.merging(["borderWidth": 1, "borderColor": "#cccccc"]) { $1 }, [icon("outlined-icon")]),
+            pressable("labelled", style: ["height": 44, "flexDirection": "row", "alignItems": "center"], [icon("labelled-icon"), text("labelled-text")]),
+            pressable("empty", style: square),
+        ]))
+        func view(_ key: String) throws -> UIView { try XCTUnwrap(find(key, below: controller.view), "no view \(key)") }
+        let middle = CGPoint(x: 10, y: 10)
+
+        let heart = try view("heart")
+        controller.pressFeedbackBegan(on: heart, at: middle)
+        XCTAssertEqual(heart.alpha, 0.5, accuracy: 0.001, "the glyph dims, as a TouchableOpacity's does")
+        XCTAssertFalse(isHighlighted(heart), "no square behind the icon")
+        controller.pressFeedbackEnded(on: heart, pressed: false)
+        XCTAssertEqual(heart.alpha, 1, accuracy: 0.001)
+        // A tap: still seen, then given back.
+        controller.pressFeedbackBegan(on: heart, at: middle)
+        controller.pressFeedbackEnded(on: heart, pressed: true)
+        XCTAssertEqual(heart.alpha, 0.5, accuracy: 0.001)
+        await pause(0.3)
+        XCTAssertEqual(heart.alpha, 1, accuracy: 0.001)
+
+        // Its own opacity is what it dims from and returns to.
+        let faded = try view("faded")
+        XCTAssertEqual(faded.alpha, 0.8, accuracy: 0.001)
+        controller.pressFeedbackBegan(on: faded, at: middle)
+        XCTAssertEqual(faded.alpha, 0.4, accuracy: 0.001)
+        controller.pressFeedbackEnded(on: faded, pressed: false)
+        XCTAssertEqual(faded.alpha, 0.8, accuracy: 0.001)
+
+        // A shape of its own, or words: the highlight, undimmed. An empty
+        // pressable has no glyph to dim either.
+        for key in ["filled", "outlined", "labelled", "empty"] {
+            let other = try view(key)
+            controller.pressFeedbackBegan(on: other, at: middle)
+            XCTAssertTrue(isHighlighted(other), key)
+            XCTAssertEqual(other.alpha, 1, accuracy: 0.001, key)
+            controller.pressFeedbackEnded(on: other, pressed: false)
+            XCTAssertFalse(isHighlighted(other), key)
+        }
+    }
+
     func testATouchInsideAScrollViewWaitsToSeeWhetherItIsAScroll() async throws {
         let controller = screen(box("root", style: ["flex": 1], [[
             "id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
