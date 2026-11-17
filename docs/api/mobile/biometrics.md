@@ -80,13 +80,33 @@ less secure mechanism would be unsafe.
 
 `authenticate()` answers whether the person passed. It does not protect
 anything by itself: a token read afterwards with `secureStorage.get()` is
-readable by any code in the app, with or without that answer. For "Sign in
-with Face ID", keep the token where only the face or finger can release it.
+readable by any code in the app, with or without that answer. To make a
+secret depend on the face or finger, keep it where only they can release it.
+
+### When it fits, and when a passkey does
+
+A Face ID credential guards something the app already holds, on this device.
+It fits when the app keeps a long-lived secret between launches and wants the
+person present before using it:
+
+- locking the app until Face ID when it opens, with the session token kept
+  behind Face ID instead of in `secureStorage`;
+- asking again before a sensitive action, such as showing an account number;
+- unlocking data the app encrypted locally.
+
+It cannot sign anyone in on its own. The value is only as good as the server's
+willingness to accept it, so a token the server revokes at sign-out is gone
+exactly when the credential would be needed, and keeping it past sign-out
+would hand back a token that no longer works. For "Sign in with Face ID"
+against your server, use [passkeys](../../guides/native-stx.md)
+(`enablePasskeys`, `craft.passkeys.get()`): the system sheet also asks for
+Face ID, the server verifies the result, and iCloud carries the passkey to
+the person's other devices.
 
 ### `biometrics.storeCredential(key, value)`
 
 ```typescript
-await biometrics.storeCredential('session', refreshToken)
+await biometrics.storeCredential('session', sessionToken)
 ```
 
 Writes a Keychain item behind the faces or fingers enrolled right now, on
@@ -97,7 +117,7 @@ passcode, so the app never keeps a token no one could open.
 ### `biometrics.getCredential(key, reason?)`
 
 ```typescript
-const token = await biometrics.getCredential('session', 'Sign in to HQ')
+const token = await biometrics.getCredential('session', 'Unlock your account')
 ```
 
 The system shows Face ID or Touch ID with `reason`, and the Keychain releases
@@ -109,8 +129,8 @@ waits on the person, so it is never timed out by the bridge.
 
 ### `biometrics.hasCredential(key)`
 
-Whether a credential is kept under `key`, answered without any prompt. A
-sign-in screen uses it to decide whether to offer "Sign in with Face ID".
+Whether a credential is kept under `key`, answered without any prompt. An
+app uses it on launch to decide whether to show its lock screen.
 
 ### `biometrics.deleteCredential(key)`
 
@@ -133,30 +153,32 @@ with `UNSUPPORTED` and `hasCredential` resolves `false`.
 
 ## Example
 
+The app locks until Face ID when it opens. The session token the server
+issued at sign-in lives behind Face ID instead of in `secureStorage`, and
+signing out removes it.
+
 ```typescript
 import { biometrics } from 'craft-native'
 
 const KEY = 'session'
 
-// After a password sign-in, offer Face ID for next time.
-export async function rememberWithFaceId(refreshToken: string) {
-  if (!await biometrics.isAvailable()) return
-  await biometrics.storeCredential(KEY, refreshToken)
+// After sign-in, keep the session behind Face ID when the device can.
+export async function keepSession(sessionToken: string): Promise<boolean> {
+  if (!await biometrics.isAvailable()) return false
+  await biometrics.storeCredential(KEY, sessionToken)
+  return true
 }
 
-// On the sign-in screen.
-export async function signInWithFaceId(): Promise<string | null> {
+// On launch. Resolves null when there is nothing to unlock, including
+// after the enrolled faces changed: show the sign-in screen. Rejects with
+// AUTHENTICATION_CANCELLED when Face ID was dismissed: stay on the lock
+// screen and offer it again.
+export async function unlockSession(): Promise<string | null> {
   if (!await biometrics.hasCredential(KEY)) return null
-  try {
-    // null: the enrolled faces changed. Ask for the password again.
-    return await biometrics.getCredential(KEY, 'Sign in to HQ')
-  }
-  catch (error: any) {
-    if (error.code === 'AUTHENTICATION_CANCELLED') return null
-    throw error
-  }
+  return biometrics.getCredential(KEY, 'Unlock your account')
 }
 
+// After the server has revoked the token.
 export async function signOut() {
   await biometrics.deleteCredential(KEY)
 }

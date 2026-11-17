@@ -808,8 +808,10 @@ export const biometrics = {
   },
 
   /**
-   * Keep a credential (a session token, a refresh token) that only the
-   * person's face or finger can release: "Sign in with Face ID".
+   * Keep a secret the app already holds (a session token, a key to local
+   * data) where only the person's face or finger can release it: an app
+   * that locks until Face ID, or asks again before a sensitive action. It
+   * does not sign anyone in to a server on its own; for that, use passkeys.
    *
    * On iOS it is a Keychain item written behind the currently enrolled
    * faces or fingers, on this device only. Writing does not prompt. Enrolling
@@ -841,9 +843,9 @@ export const biometrics = {
   },
 
   /**
-   * Whether a credential is kept under `key`, asked without any prompt: a
-   * sign-in screen offers "Sign in with Face ID" from this. `false` where
-   * the platform has no biometric store.
+   * Whether a credential is kept under `key`, asked without any prompt: an
+   * app decides on launch whether to show its lock screen from this.
+   * `false` where the platform has no biometric store.
    */
   async hasCredential(key: string): Promise<boolean> {
     const craft = getCraftMobile()
