@@ -438,17 +438,20 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     }
 
     private var refreshingProp = false
+    // A redraw can precede the script thread handling the native pull event.
+    private var awaitingRefreshAnswer = false
 
     /// `onRefresh` and `refreshing`, controlled as in React Native: a pull
     /// the screen does not answer with `refreshing` true ends at once.
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
         refreshHandler = handler
         refreshingProp = refreshing
+        if refreshing || handler == nil { awaitingRefreshAnswer = false }
         let control = handler == nil ? nil : nativeRefreshControl
         if refreshControl !== control { refreshControl = control }
-        if handler == nil || !refreshing {
+        if handler == nil || (!refreshing && !awaitingRefreshAnswer) {
             if nativeRefreshControl.isRefreshing { nativeRefreshControl.endRefreshing() }
-        } else if !nativeRefreshControl.isRefreshing {
+        } else if refreshing, !nativeRefreshControl.isRefreshing {
             nativeRefreshControl.beginRefreshing()
         }
     }
@@ -458,10 +461,13 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     }
 
     @objc private func refreshTriggered() {
+        awaitingRefreshAnswer = true
         refreshHandler?()
         // Once the script has answered the pull, on its own thread or not.
         CraftNativeScriptThread.afterScript { [weak self] in
-            guard let self, !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return }
+            guard let self else { return }
+            self.awaitingRefreshAnswer = false
+            guard !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return }
             self.nativeRefreshControl.endRefreshing()
         }
     }

@@ -3917,6 +3917,78 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNil(list.refreshControl)
     }
 
+    func testAnUnchangedRenderDoesNotEndAPullBeforeTheScriptCanAnswer() throws {
+        for type in ["ScrollView", "FlatList"] {
+            let controller = CraftNativeScreenController(config: CraftConfig())
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+            window.rootViewController = controller
+            window.isHidden = false
+            defer { window.isHidden = true; controller.viewDidDisappear(false) }
+            func screen(_ refreshing: Bool, _ label: String = "People") -> [String: Any] {
+                document([[
+                    "type": type, "props": ["key": "pull", "refreshing": refreshing, "accessibilityLabel": label],
+                    "events": ["onRefresh": "refresh-people"],
+                    "children": [["type": "Text", "children": ["People"]]],
+                ]])
+            }
+            controller.render(screen(false))
+            controller.view.layoutIfNeeded()
+            let scroll = try XCTUnwrap(find(UIScrollView.self, key: "pull", below: controller.view))
+            let control = try XCTUnwrap(scroll.refreshControl)
+            control.beginRefreshing()
+            XCTAssertTrue(control.isRefreshing)
+            control.sendActions(for: .valueChanged)
+            // A layout or another signal can render the original false value
+            // before the script thread handles the native refresh event.
+            controller.render(screen(false, "People updated"))
+            XCTAssertTrue(control.isRefreshing, "\(type) ended the pull before its event was answered")
+            XCTAssertTrue(scroll === find(UIScrollView.self, key: "pull", below: controller.view))
+            controller.render(screen(true))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            XCTAssertTrue(control.isRefreshing, "\(type) lost the script's controlled acknowledgement")
+            controller.render(screen(false))
+            XCTAssertFalse(control.isRefreshing, "\(type) did not stop after the controlled refresh completed")
+            // A synchronous handler can finish before the queued fallback.
+            control.beginRefreshing()
+            control.sendActions(for: .valueChanged)
+            controller.render(screen(true))
+            controller.render(screen(false))
+            XCTAssertFalse(control.isRefreshing, "\(type) ignored synchronous completion")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    func testAnUnansweredPullEndsAndRemovingItsHandlerClearsTheControl() throws {
+        for type in ["ScrollView", "FlatList"] {
+            let controller = CraftNativeScreenController(config: CraftConfig())
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+            window.rootViewController = controller
+            window.isHidden = false
+            defer { window.isHidden = true; controller.viewDidDisappear(false) }
+            func screen(_ handlesRefresh: Bool) -> [String: Any] {
+                document([[
+                    "type": type, "props": ["key": "pull", "refreshing": false],
+                    "events": handlesRefresh ? ["onRefresh": "refresh-people"] : [:],
+                    "children": [["type": "Text", "children": ["People"]]],
+                ]])
+            }
+            controller.render(screen(true))
+            controller.view.layoutIfNeeded()
+            let scroll = try XCTUnwrap(find(UIScrollView.self, key: "pull", below: controller.view))
+            let control = try XCTUnwrap(scroll.refreshControl)
+            control.beginRefreshing()
+            control.sendActions(for: .valueChanged)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            XCTAssertFalse(control.isRefreshing, "\(type) left an unanswered pull spinning")
+            control.beginRefreshing()
+            control.sendActions(for: .valueChanged)
+            controller.render(screen(false))
+            XCTAssertFalse(control.isRefreshing, "\(type) kept refreshing after removing its handler")
+            XCTAssertNil(scroll.refreshControl)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+
     func testImageBackgroundRetainsImageAccessibilityAcrossRoleMutations() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

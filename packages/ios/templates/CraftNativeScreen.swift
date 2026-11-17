@@ -5229,6 +5229,8 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     }
 
     private var refreshingProp = false
+    // A redraw can precede the script thread handling the native pull event.
+    private var awaitingRefreshAnswer = false
 
     /// `onRefresh` and `refreshing`: the system's pull to refresh, controlled
     /// as in React Native. The spinner shows while `refreshing` is true; a
@@ -5237,6 +5239,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
         refreshHandler = handler
         refreshingProp = refreshing
+        if refreshing || handler == nil { awaitingRefreshAnswer = false }
         if handler == nil {
             if pullToRefresh.isRefreshing { pullToRefresh.endRefreshing() }
             if refreshControl === pullToRefresh { refreshControl = nil }
@@ -5245,7 +5248,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         if refreshControl !== pullToRefresh { refreshControl = pullToRefresh }
         if refreshing, !pullToRefresh.isRefreshing {
             pullToRefresh.beginRefreshing()
-        } else if !refreshing, pullToRefresh.isRefreshing {
+        } else if !refreshing, !awaitingRefreshAnswer, pullToRefresh.isRefreshing {
             pullToRefresh.endRefreshing()
         }
     }
@@ -5269,11 +5272,14 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     var isRefreshingNow: Bool { pullToRefresh.isRefreshing }
 
     @objc private func refreshPulled() {
+        awaitingRefreshAnswer = true
         refreshHandler?()
         // Once the script has answered the pull (and its render has landed):
         // a script on its own thread answers a turn or two later.
         CraftNativeScriptThread.afterScript { [weak self] in
-            guard let self, !self.refreshingProp, self.pullToRefresh.isRefreshing else { return }
+            guard let self else { return }
+            self.awaitingRefreshAnswer = false
+            guard !self.refreshingProp, self.pullToRefresh.isRefreshing else { return }
             self.pullToRefresh.endRefreshing()
         }
     }
