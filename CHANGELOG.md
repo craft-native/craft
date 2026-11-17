@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.511...v0.0.512)
+
+## 🐛 Bug Fixes
+
+- **ios**: present a sheet opened sideways with room beside it ([55a24c0](https://github.com/craft-native/craft/commit/55a24c0)) _(by glennmichael123)_ ([#561](https://github.com/craft-native/craft/issues/561))
+
+## 📚 Documentation
+
+- **biometrics**: say what Face ID credentials are for, and when a passkey is ([fdd6a59](https://github.com/craft-native/craft/commit/fdd6a59)) _(by glennmichael123)_ ([#564](https://github.com/craft-native/craft/issues/564))
+
+## 🧪 Tests
+
+- **ios**: close nested sideways sheets with a tap beside them ([43d9198](https://github.com/craft-native/craft/commit/43d9198)) _(by glennmichael123)_ ([#561](https://github.com/craft-native/craft/issues/561))
+- **macos**: read the install's steps from its first download ([d5d2866](https://github.com/craft-native/craft/commit/d5d2866)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.510...v0.0.511)
 
 ## 🚀 Features
