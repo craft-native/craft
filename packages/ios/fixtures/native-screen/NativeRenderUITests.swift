@@ -441,6 +441,55 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["pager-page-2"].exists)
     }
 
+    /// stx's overlays suite, launched sideways: a dialog that closes on a tap
+    /// outside it, and a second one opened from inside it. Each page sheet
+    /// spanned the whole width, so the tap beside it landed on the sheet and
+    /// neither closed (#561). Each one is as wide as it is upright, with room
+    /// beside it, and a tap there closes the top one.
+    func testSidewaysNestedSheetsLeaveRoomToTapOutsideThem() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Compact height is a phone held sideways") }
+        // The fixture's menu runs past a sideways screen, so it is opened
+        // upright; both sheets are first presented with the phone sideways.
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let solid = app.buttons["open-solid"]
+        XCTAssertTrue(solid.waitForExistence(timeout: 15), app.debugDescription)
+        solid.tap()
+        let open = app.buttons["open-sheets"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10), app.debugDescription)
+        open.tap()
+        let status = app.staticTexts["sheet-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10), app.debugDescription)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock {
+            XCUIDevice.shared.orientation = .portrait
+            let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)
+            _ = XCTWaiter.wait(for: [upright], timeout: 10)
+        }
+        let sideways = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)
+        wait(for: [sideways], timeout: 10)
+        app.buttons["open-outer"].tap()
+        waitForLabel(status, "Outer open")
+        let outer = app.staticTexts["outer-content"]
+        XCTAssertTrue(outer.waitForExistence(timeout: 10), app.debugDescription)
+        // Upright width centred in a sideways screen starts a quarter of the
+        // way in; spanning the screen it starts at the safe-area margin.
+        let window = app.frame
+        XCTAssertGreaterThan(outer.frame.minX, window.width / 4, "the outer sheet leaves room beside it: \(outer.frame) in \(window)\n\(app.debugDescription)")
+        app.buttons["open-inner"].tap()
+        waitForLabel(status, "Both open")
+        let inner = app.staticTexts["inner-content"]
+        XCTAssertTrue(inner.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertGreaterThan(inner.frame.minX, window.width / 4, "the inner sheet leaves room beside it: \(inner.frame) in \(window)\n\(app.debugDescription)")
+        let beside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        beside.tap()
+        waitForLabel(status, "Outer open")
+        XCTAssertTrue(outer.waitForExistence(timeout: 5), "only the inner dialog closed")
+        beside.tap()
+        waitForLabel(status, "Closed")
+    }
+
     /// stx's forms suite, sideways with the keyboard up: each 55-point drag of
     /// the root ScrollView carried the password field about 280 points and
     /// back, never stopping in the strip above the keyboard (#562). Nothing

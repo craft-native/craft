@@ -14,6 +14,9 @@
   let overflowMode = false
   let solidMode = false
   let formMode = false
+  let sheetMode = false
+  let sheetOuter = false
+  let sheetInner = false
   let formSport = ''
   let agreementMode = false
   let agreementSolid = false
@@ -173,6 +176,26 @@
     }
     if (checkpointMode) { renderCheckpoint(); return }
     if (pagerMode) { renderPager(); return }
+    if (sheetMode) {
+      // stx's overlays fixture: a dialog that closes on a tap outside it,
+      // and a second one opened from inside it, both page sheets (#561).
+      const sheet = (key, visible, close, children) => ({ id: key, type: 'Modal', props: { key, visible, animationType: 'none', presentationStyle: 'pageSheet', sheetDetents: ['medium', 'large'] }, events: { onRequestClose: close }, children })
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: `render-${++nextMessage}`, type: 'RENDER',
+        payload: { document: { type: 'View', style: { flex: 1, padding: 16, gap: 12 }, children: [
+          { id: 'sheet-status', type: 'Text', props: { key: 'sheet-status', testID: 'sheet-status' }, children: [sheetInner ? 'Both open' : sheetOuter ? 'Outer open' : 'Closed'] },
+          { type: 'Button', props: { key: 'open-outer' }, events: { onPress: 'openOuter' }, children: ['Open outer'] },
+          sheet('outer-sheet', sheetOuter, 'closeOuter', [
+            { id: 'outer-content', type: 'Text', props: { key: 'outer-content', testID: 'outer-content' }, children: ['Outer content'] },
+            { type: 'Button', props: { key: 'open-inner' }, events: { onPress: 'openInner' }, children: ['Open inner'] },
+            sheet('inner-sheet', sheetInner, 'closeInner', [
+              { id: 'inner-content', type: 'Text', props: { key: 'inner-content', testID: 'inner-content' }, children: ['Inner content'] },
+            ]),
+          ]),
+        ] } },
+      }))
+      return
+    }
     if (formMode) {
       // A form whose root is a ScrollView, as stx's forms screen is: a
       // phone held sideways with the keyboard up leaves a strip of it (#562).
@@ -206,6 +229,9 @@
           ] },
           { type: 'Button', props: { key: 'disable-solid' }, events: { onPress: 'disableSolid' }, children: ['Disable switch'] },
           { type: 'Button', props: { key: 'restore-native' }, events: { onPress: 'restoreNative' }, children: ['Use UIKit switch'] },
+          // Off the home menu: one more control there and XCUITest read an empty tree
+          // once the keyboard was up (testMultilineTextInputTakesTyping).
+          { type: 'Button', props: { key: 'open-sheets' }, events: { onPress: 'openSheets' }, children: ['Nested sheets'] },
         ] } },
       }))
       return
@@ -391,6 +417,11 @@
     }
     if (message.payload.handlerName === 'openPager') { pagerMode = true; render(); return }
     if (message.payload.handlerName === 'openForm') { formMode = true; render(); return }
+    if (message.payload.handlerName === 'openSheets') { solidMode = false; sheetMode = true; render(); return }
+    if (message.payload.handlerName === 'openOuter') { sheetOuter = true; render(); return }
+    if (message.payload.handlerName === 'openInner') { sheetInner = true; render(); return }
+    if (message.payload.handlerName === 'closeInner') { sheetInner = false; render(); return }
+    if (message.payload.handlerName === 'closeOuter') { sheetOuter = false; sheetInner = false; render(); return }
     if (message.payload.handlerName === 'selectPage') {
       const page = message.payload.nativeEvent
       pageIndex = page.index
