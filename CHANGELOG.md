@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.508...v0.0.509)
+
+## 🐛 Bug Fixes
+
+- **ios**: wait for exact system choices throughout alert arrival ([df7f382](https://github.com/craft-native/craft/commit/df7f382)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.507...v0.0.508)
 
 ## 🐛 Bug Fixes
