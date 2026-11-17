@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.512...v0.0.513)
+
+## 🐛 Bug Fixes
+
+- **build**: replace vulnerable adapter bundler with Bun ([98905eb](https://github.com/craft-native/craft/commit/98905eb)) _(by Chris Breuer)_
+- **ios**: tap the inner control of a labelled switch row ([2980787](https://github.com/craft-native/craft/commit/2980787)) _(by Chris Breuer)_
+- **ios**: dim an icon button's glyph instead of greying a square ([cc4bd1c](https://github.com/craft-native/craft/commit/cc4bd1c)) _(by glennmichael123)_ ([#566](https://github.com/craft-native/craft/issues/566), [#538](https://github.com/craft-native/craft/issues/538))
+
+## 🧪 Tests
+
+- allow a clean advisory report without exceptions ([42a084f](https://github.com/craft-native/craft/commit/42a084f)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.511...v0.0.512)
 
 ## 🐛 Bug Fixes
