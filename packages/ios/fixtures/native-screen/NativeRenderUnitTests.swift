@@ -6577,11 +6577,15 @@ final class NativePlatformControlTests: XCTestCase {
         XCTAssertNil(screen.presentedViewController)
     }
 
-    /// Sideways on a phone (compact height) UIKit presented a page sheet full
-    /// screen, so a dismissable dialog had no space around it to tap and,
-    /// without a close button of its own, could not be closed (#561). It
-    /// stays a sheet attached to the bottom edge, with dimmed space beside it.
-    func testAPageSheetStaysASheetAtCompactHeight() throws {
+    /// Sideways on a phone (compact height) UIKit presents a page sheet full
+    /// screen, or edge-attached as wide as the safe area: on iOS 26 it
+    /// ignores `widthFollowsPreferredContentSizeWhenEdgeAttached`, even for a
+    /// bare view controller. Either way a dismissable dialog had no space
+    /// beside it to tap and could not be closed (#561). Presented sideways,
+    /// the sheet is the host's own: its upright width, centred, closed from
+    /// outside through the Modal's onRequestClose, and kept open when the
+    /// Modal cannot be closed.
+    func testASheetPresentedSidewaysLeavesRoomBesideIt() throws {
         guard #available(iOS 16.0, *) else { throw XCTSkip("Turning the scene needs iOS 16") }
         guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Compact height is a phone held sideways") }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -6598,33 +6602,52 @@ final class NativePlatformControlTests: XCTestCase {
         window.rootViewController = screen
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
-        func document(_ visible: Bool) -> [String: Any] {
-            ["type": "Modal", "props": ["key": "sheet", "visible": visible, "animationType": "none", "presentationStyle": "pageSheet", "sheetDetents": ["medium", "large"]], "events": ["onRequestClose": "closed"], "children": [["type": "Text", "props": ["key": "sheet-text"], "children": ["Body"]]]]
+        screen.evaluateScript("globalThis.__closed = []; globalThis.__stxNativeCallback = function(json) { const message = JSON.parse(json); if (message.type === 'EVENT') __closed.push(message.payload.handlerName + ':' + message.payload.nativeEvent.reason); };")
+        func document(_ visible: Bool, closable: Bool = true) -> [String: Any] {
+            var modal: [String: Any] = ["type": "Modal", "props": ["key": "sheet", "visible": visible, "animationType": "none", "presentationStyle": "pageSheet", "sheetDetents": ["medium", "large"]], "children": [["type": "Text", "props": ["key": "sheet-text"], "children": ["Body"]]]]
+            if closable { modal["events"] = ["onRequestClose": "closed"] }
+            return modal
         }
-        screen.render(document(true))
-        let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController?.view.window != nil }, object: nil)
-        wait(for: [presented], timeout: 3)
-        let controller = try XCTUnwrap(screen.presentedViewController)
-        XCTAssertEqual(controller.traitCollection.verticalSizeClass, .compact, "the sheet is presented at compact height")
-        let sheet = try XCTUnwrap(controller.sheetPresentationController)
-        XCTAssertTrue(sheet.prefersEdgeAttachedInCompactHeight)
-        let narrow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            controller.view.window?.layoutIfNeeded()
-            return controller.view.convert(controller.view.bounds, to: window).width < window.bounds.width - 100
-        }, object: nil)
-        wait(for: [narrow], timeout: 3)
-        let frame = controller.view.convert(controller.view.bounds, to: window)
-        XCTAssertLessThan(frame.width, window.bounds.width - 100, "room beside the sheet to tap outside it, not a full-screen cover: \(frame) in \(window.bounds)")
+        func present(closable: Bool) throws -> CraftCompactSheetPresentationController {
+            screen.render(document(true, closable: closable))
+            let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController?.view.window != nil }, object: nil)
+            wait(for: [presented], timeout: 3)
+            let controller = try XCTUnwrap(screen.presentedViewController)
+            return try XCTUnwrap(controller.presentationController as? CraftCompactSheetPresentationController, "presented sideways, the sheet is the host's: \(String(describing: controller.presentationController))")
+        }
 
-        // Upright again, it asks for no width of its own and UIKit sizes it.
+        let compact = try present(closable: true)
+        let controller = compact.presentedViewController
+        window.layoutIfNeeded()
+        let frame = controller.view.convert(controller.view.bounds, to: window)
+        let upright = min(window.bounds.width, window.bounds.height)
+        XCTAssertEqual(frame.width, upright, accuracy: 0.5, "as wide as it is upright: \(frame) in \(window.bounds)")
+        XCTAssertEqual(frame.midX, window.bounds.midX, accuracy: 0.5, "centred, with room on both sides")
+        XCTAssertEqual(frame.maxY, window.bounds.maxY, accuracy: 0.5, "attached to the bottom edge")
+        XCTAssertGreaterThan(window.bounds.width - frame.maxX, 100, "room beside it to tap")
+
+        // Upright again, it is the screen's width.
         turn(.portrait) { $0.interfaceOrientation.isPortrait }
-        let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            controller.view.window?.layoutIfNeeded()
-            return controller.traitCollection.verticalSizeClass == .regular && controller.preferredContentSize == .zero
+        let uprightFrame = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.layoutIfNeeded()
+            return abs(controller.view.convert(controller.view.bounds, to: window).width - window.bounds.width) < 0.5
         }, object: nil)
-        wait(for: [upright], timeout: 5)
-        XCTAssertFalse(sheet.widthFollowsPreferredContentSizeWhenEdgeAttached)
+        wait(for: [uprightFrame], timeout: 5)
+        turn(.landscapeRight) { $0.interfaceOrientation.isLandscape }
+
+        // A tap beside it asks the Modal to close, as UIKit's sheet does.
+        XCTAssertTrue(compact.dismissFromOutside())
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController == nil }, object: nil)
+        wait(for: [closed], timeout: 3)
+        XCTAssertEqual(screen.evaluateScript("__closed.join('|')")?.toString(), "closed:swipe")
         screen.render(document(false))
+
+        // A Modal with no onRequestClose cannot be closed from outside.
+        let held = try present(closable: false)
+        XCTAssertTrue(held.presentedViewController.isModalInPresentation)
+        XCTAssertFalse(held.dismissFromOutside())
+        XCTAssertNotNil(screen.presentedViewController)
+        screen.render(document(false, closable: false))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in screen.presentedViewController == nil }, object: nil)
         wait(for: [dismissed], timeout: 3)
     }

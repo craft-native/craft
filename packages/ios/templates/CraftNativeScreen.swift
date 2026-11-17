@@ -4550,29 +4550,151 @@ private final class CraftNativeSegmentedControl: UISegmentedControl {
 private final class CraftNativeSheetController: UIViewController {
     weak var screen: CraftNativeScreenController?
     weak var content: CraftNativeFlowView?
-    override func viewWillLayoutSubviews() {
-        super.viewWillLayoutSubviews()
-        fitCompactHeight()
-    }
+    /// Held here because a transitioning delegate is weak.
+    var compactTransitioning: CraftCompactSheetTransitioning?
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         content?.frame = view.bounds.inset(by: view.safeAreaInsets)
     }
 
-    /// At compact height (a phone held sideways) the sheet is attached to the
-    /// bottom edge, and as wide as it is upright: the screen's short side.
-    /// Edge-attached at its default width it still spanned the whole screen,
-    /// so a dialog that closes on a tap outside it had nowhere outside to tap
-    /// (#561). Elsewhere it asks for no width, and UIKit sizes it as before
-    /// (an iPad's form sheet included).
-    private func fitCompactHeight() {
-        let compact = traitCollection.verticalSizeClass == .compact
-        let screen = view.window?.windowScene?.screen.bounds.size
-        let width = compact ? screen.map { min($0.width, $0.height) } ?? 0 : 0
-        if let sheet = sheetPresentationController, sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != compact {
-            sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = compact
+    /// VoiceOver's escape gesture closes the sideways sheet as it closes
+    /// UIKit's own.
+    override func accessibilityPerformEscape() -> Bool {
+        guard let compact = presentationController as? CraftCompactSheetPresentationController else { return super.accessibilityPerformEscape() }
+        return compact.dismissFromOutside()
+    }
+}
+
+/// A page sheet on a phone held sideways (#561). UIKit attaches it to the
+/// bottom edge as wide as the safe area, ignoring
+/// `widthFollowsPreferredContentSizeWhenEdgeAttached` on iOS 26, so a dialog
+/// that closes on a tap outside it had nowhere outside to tap. Presented
+/// sideways, the sheet is instead the host's own: as wide as it is upright,
+/// centred over a dimmed screen, closed by a tap beside it, by dragging its
+/// top edge down, or by VoiceOver's escape. Every way out goes through the
+/// Modal's presentation delegate, as UIKit's sheet does.
+final class CraftCompactSheetTransitioning: NSObject, UIViewControllerTransitioningDelegate {
+    weak var delegate: UIAdaptivePresentationControllerDelegate?
+    let grabberVisible: Bool
+
+    init(delegate: UIAdaptivePresentationControllerDelegate?, grabberVisible: Bool) {
+        self.delegate = delegate
+        self.grabberVisible = grabberVisible
+    }
+
+    /// Whether a sheet presented now from `presenter` is presented sideways
+    /// on a phone, where UIKit's sheet leaves no room beside it.
+    static func applies(to presenter: UIViewController) -> Bool {
+        guard let scene = presenter.view.window?.windowScene else { return false }
+        return scene.traitCollection.userInterfaceIdiom == .phone && scene.traitCollection.verticalSizeClass == .compact
+    }
+
+    func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
+        let controller = CraftCompactSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        controller.delegate = delegate
+        controller.grabberVisible = grabberVisible
+        return controller
+    }
+}
+
+final class CraftCompactSheetPresentationController: UIPresentationController, UIGestureRecognizerDelegate {
+    var grabberVisible = true
+    private let dimming = UIView()
+    private let grabber = UIView()
+    private static let topGap: CGFloat = 8
+    private static let dragZone: CGFloat = 44
+
+    override var shouldRemovePresentersView: Bool { false }
+
+    /// As wide as the screen's short side, which is the sheet's upright
+    /// width, centred and attached to the bottom edge. Upright again it is
+    /// simply that width, the whole screen.
+    override var frameOfPresentedViewInContainerView: CGRect {
+        guard let container = containerView else { return .zero }
+        let bounds = container.bounds
+        let width = min(bounds.width, bounds.height)
+        let top = container.safeAreaInsets.top + Self.topGap
+        return CGRect(x: (bounds.width - width) / 2, y: top, width: width, height: bounds.height - top)
+    }
+
+    override func presentationTransitionWillBegin() {
+        super.presentationTransitionWillBegin()
+        guard let container = containerView else { return }
+        dimming.backgroundColor = UIColor.black.withAlphaComponent(0.32)
+        dimming.frame = container.bounds
+        dimming.alpha = 0
+        dimming.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedOutside)))
+        container.insertSubview(dimming, at: 0)
+        if let sheet = presentedView {
+            sheet.layer.cornerRadius = 24
+            sheet.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            sheet.clipsToBounds = true
+            grabber.backgroundColor = .tertiaryLabel
+            grabber.layer.cornerRadius = 2.5
+            grabber.isHidden = !grabberVisible
+            grabber.isUserInteractionEnabled = false
+            sheet.addSubview(grabber)
+            let drag = UIPanGestureRecognizer(target: self, action: #selector(dragged(_:)))
+            drag.delegate = self
+            sheet.addGestureRecognizer(drag)
         }
-        if preferredContentSize.width != width { preferredContentSize = CGSize(width: width, height: 0) }
+        presentedViewController.transitionCoordinator?.animate(alongsideTransition: { _ in self.dimming.alpha = 1 })
+    }
+
+    override func dismissalTransitionWillBegin() {
+        super.dismissalTransitionWillBegin()
+        presentedViewController.transitionCoordinator?.animate(alongsideTransition: { _ in self.dimming.alpha = 0 })
+    }
+
+    override func containerViewWillLayoutSubviews() {
+        super.containerViewWillLayoutSubviews()
+        guard let container = containerView else { return }
+        dimming.frame = container.bounds
+        presentedView?.frame = frameOfPresentedViewInContainerView
+        if let sheet = presentedView {
+            grabber.frame = CGRect(x: (sheet.bounds.width - 36) / 2, y: 5, width: 36, height: 5)
+            sheet.bringSubviewToFront(grabber)
+        }
+    }
+
+    @objc private func tappedOutside() { dismissFromOutside() }
+
+    /// Closes the sheet the way UIKit's own is closed from outside: not while
+    /// it is modal in presentation, and only if the delegate agrees.
+    @discardableResult
+    func dismissFromOutside() -> Bool {
+        guard !presentedViewController.isModalInPresentation,
+              delegate?.presentationControllerShouldDismiss?(self) ?? true else { return false }
+        delegate?.presentationControllerWillDismiss?(self)
+        presentedViewController.dismiss(animated: true) { [weak self] in
+            guard let self else { return }
+            self.delegate?.presentationControllerDidDismiss?(self)
+        }
+        return true
+    }
+
+    /// Only a drag that starts on the top edge, where the grabber is, so the
+    /// sheet's own scrolling content keeps every other drag.
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard let sheet = presentedView, let pan = gesture as? UIPanGestureRecognizer else { return false }
+        let velocity = pan.velocity(in: sheet)
+        return pan.location(in: sheet).y < Self.dragZone && velocity.y > abs(velocity.x)
+    }
+
+    @objc private func dragged(_ pan: UIPanGestureRecognizer) {
+        guard let sheet = presentedView else { return }
+        let down = max(0, pan.translation(in: sheet.superview).y)
+        switch pan.state {
+        case .changed:
+            sheet.transform = CGAffineTransform(translationX: 0, y: presentedViewController.isModalInPresentation ? down / 4 : down)
+        case .ended, .cancelled, .failed:
+            let far = down > sheet.bounds.height / 4 || pan.velocity(in: sheet.superview).y > 1000
+            if pan.state == .ended, far, dismissFromOutside() { return }
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) { sheet.transform = .identity }
+        default:
+            break
+        }
     }
 }
 
@@ -4614,12 +4736,10 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         let values = choices.isEmpty ? ["large"] : Array(Set(choices)).sorted { $0 == "medium" && $1 == "large" }
         sheet.detents = values.map { $0 == "medium" ? .medium() : .large() }
         sheet.prefersGrabberVisible = grabberVisible
-        // At compact height (a phone held sideways) UIKit presents a page
-        // sheet full screen unless it is edge-attached. A full-screen sheet
-        // has no dimmed space around it, so a dialog that closes on a tap
-        // outside it could not be closed at all on its side (#561). Attached
-        // to the bottom edge it stays the sheet it is upright, and the sheet
-        // controller keeps it to its upright width, with room beside it.
+        // A sheet presented upright and then turned sideways stays UIKit's.
+        // At compact height UIKit would make it full screen, with no dimmed
+        // space around it; edge-attached it at least stays a sheet (#561). A
+        // sheet presented sideways is the host's own, with room beside it.
         sheet.prefersEdgeAttachedInCompactHeight = true
         if let selectedDetent, values.contains(selectedDetent) {
             sheet.selectedDetentIdentifier = selectedDetent == "medium" ? .medium : .large
@@ -4655,7 +4775,14 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
                   let presenter = self.sheetPresenter, presenter.view.window != nil else { return }
             let controller = CraftNativeSheetController()
             controller.screen = presenter
-            controller.modalPresentationStyle = self.presentationStyle == "formSheet" ? .formSheet : .pageSheet
+            if CraftCompactSheetTransitioning.applies(to: presenter) {
+                let transitioning = CraftCompactSheetTransitioning(delegate: self, grabberVisible: self.grabberVisible)
+                controller.compactTransitioning = transitioning
+                controller.transitioningDelegate = transitioning
+                controller.modalPresentationStyle = .custom
+            } else {
+                controller.modalPresentationStyle = self.presentationStyle == "formSheet" ? .formSheet : .pageSheet
+            }
             controller.view.backgroundColor = .systemBackground
             self.contentStack.removeFromSuperview()
             controller.view.addSubview(self.contentStack)
