@@ -1,5 +1,27 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.510...v0.0.511)
+
+## 🚀 Features
+
+- **macos**: keep folder access for sandboxed apps and hand it to the backend ([0496f22](https://github.com/craft-native/craft/commit/0496f22)) _(by Chris)_
+- **ios**: credentials only Face ID or Touch ID can release ([94f9c6c](https://github.com/craft-native/craft/commit/94f9c6c)) _(by glennmichael123)_ ([#564](https://github.com/craft-native/craft/issues/564))
+
+## 🐛 Bug Fixes
+
+- **ios**: keep a page sheet a sheet, with room beside it, on a phone held sideways ([93bd553](https://github.com/craft-native/craft/commit/93bd553)) _(by glennmichael123)_ ([#561](https://github.com/craft-native/craft/issues/561))
+
+## 🧪 Tests
+
+- **ci**: take the Linux window list again after a BadWindow ([a9efbc2](https://github.com/craft-native/craft/commit/a9efbc2)) _(by glennmichael123)_
+- **zig**: count biometricCredential as a Swift-owned action ([4740c62](https://github.com/craft-native/craft/commit/4740c62)) _(by glennmichael123)_ ([#564](https://github.com/craft-native/craft/issues/564))
+- **ios**: drag and reach the end of a sideways form with the keyboard up ([063067d](https://github.com/craft-native/craft/commit/063067d)) _(by glennmichael123)_ ([#562](https://github.com/craft-native/craft/issues/562))
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.509...v0.0.510)
 
 ## 🐛 Bug Fixes
