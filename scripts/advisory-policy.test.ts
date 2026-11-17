@@ -95,7 +95,6 @@ test('an interrupted scanner cannot supply an apparently clean report', () => {
 }, 30_000)
 
 test('every retained advisory carries a reason, a review date and an expiry', () => {
-  expect(retainedAdvisories.length).toBeGreaterThan(0)
   for (const entry of retainedAdvisories) {
     expect(entry.ghsa).toMatch(/^GHSA-/)
     expect(entry.reason.length).toBeGreaterThan(30)
@@ -103,4 +102,10 @@ test('every retained advisory carries a reason, a review date and an expiry', ()
     expect(entry.expires).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(entry.expires > entry.reviewed).toBe(true)
   }
+})
+
+test('a dependency graph with no advisories needs no retained exceptions', () => {
+  expect(assertAdvisoryPolicy({}, [], '2026-11-17')).toEqual({
+    retained: [], unreviewed: [], expired: [], stale: [], blocking: [],
+  })
 })
