@@ -336,9 +336,29 @@ function x11(args: string[]): string {
   return execFileSync(args[0]!, args.slice(1), { encoding: 'utf8', timeout: 15_000 })
 }
 
-/** Managed top-level windows, as the window manager lists them. */
+/**
+ * Managed top-level windows, as the window manager lists them.
+ *
+ * A window that closes while wmctrl reads its properties (a native dialog
+ * going away, for one) makes wmctrl exit with an X `BadWindow`. That is a
+ * listing taken mid-change, so it is taken again. It is never answered with
+ * an empty list: "that dialog is gone" is itself a check, and a listing that
+ * failed must not pass it.
+ */
 function linuxWindows(): Array<{ id: string, title: string }> {
-  return x11(['wmctrl', '-l']).split(/\r?\n/).flatMap((line) => {
+  let listing = ''
+  for (let attempt = 1; ; attempt++) {
+    try {
+      listing = x11(['wmctrl', '-l'])
+      break
+    }
+    catch (error) {
+      const badWindow = /BadWindow/.test(`${(error as { stderr?: unknown }).stderr ?? ''}${String(error)}`)
+      if (!badWindow || attempt >= 5) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)
+    }
+  }
+  return listing.split(/\r?\n/).flatMap((line) => {
     const match = line.match(/^(0x[0-9a-f]+)\s+\S+\s+\S+\s?(.*)$/i)
     return match ? [{ id: match[1]!, title: match[2]! }] : []
   })
