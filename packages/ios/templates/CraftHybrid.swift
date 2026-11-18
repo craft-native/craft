@@ -354,8 +354,9 @@ final class CraftHybrid: NSObject {
     /// The app's site (`devServerURL`, http or https): where an all-native
     /// app opens a path no screen draws, in the in-app browser.
     private(set) var siteURL: URL?
-    /// The path the app opens on: its page's path.
-    private(set) var startPath = "/"
+    /// The path the app opens on: its page's path, or the gate's redirect.
+    /// Settable so a test can start a shell somewhere else.
+    var startPath = "/"
     /// Whether that path is a native screen, drawn before the page loads.
     private(set) var startsNative = false
     weak var controller: CraftHybridController?
@@ -2557,6 +2558,15 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             }
             if tab != currentTab {
                 selectTabAsIfTapped(tab)
+            }
+            // A stack that started on another screen (the sign-in a gate
+            // started on, a cold link's screen) has that screen at its root:
+            // popping to it left the person there, with no tab bar and no
+            // Back. The tab's own screen takes the stack over.
+            if let nav = stacks[tab], let root = nav.viewControllers.first, !(root is CraftHybridWebSlot),
+               nativePaths[ObjectIdentifier(root)] != match.path {
+                nav.setViewControllers([entry(for: raw, isTabRoot: true, depth: nil, props: props)], animated: false)
+                return
             }
             if let nav = stacks[tab], nav.viewControllers.count > 1 {
                 nav.popToRootViewController(animated: !fromLink)

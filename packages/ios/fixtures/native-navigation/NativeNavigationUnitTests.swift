@@ -853,6 +853,38 @@ final class NativeNavigationUnitTests: XCTestCase {
         }
     }
 
+    /// A gate that starts a signed-out launch on its sign-in screen built
+    /// the first tab's stack with sign-in at its root. Sign-in then going to
+    /// the tab (`navigate('/', { replace: true })`) popped to that root and
+    /// left the person on sign-in, with no tab bar and no Back.
+    func testGoingToATabWhoseStackStartedElsewhereShowsTheTabsOwnScreen() async throws {
+        let hybrid = CraftHybrid.shared
+        let start = hybrid.startPath
+        hybrid.startPath = "/linked-details"
+        defer { hybrid.startPath = start }
+        let signedOut = CraftHybridController(config: hybrid.config)
+        window.rootViewController = signedOut
+        shell = signedOut
+        signedOut.view.frame = window.bounds
+        signedOut.view.layoutIfNeeded()
+        await renderFrames()
+        let home = try XCTUnwrap(signedOut.children.compactMap { $0 as? UINavigationController }.first { !$0.view.isHidden })
+        XCTAssertEqual((home.viewControllers.first as? CraftNativeScreenController)?.routeParams["path"] as? String, "/linked-details", "started on the sign-in stand-in")
+
+        signedOut.showNative(path: "/", replace: true)
+        await renderFrames()
+        XCTAssertEqual(home.viewControllers.count, 1)
+        let root = try XCTUnwrap(home.viewControllers.first as? CraftNativeScreenController)
+        XCTAssertEqual(root.routeParams["path"] as? String, "/", "the tab's own screen, not the one it started on")
+        XCTAssertEqual(CraftChrome.shared.visiblePath, "/")
+        XCTAssertFalse(CraftChrome.shared.hiddenByScreen)
+
+        // From then on the tab is an ordinary one: its root is kept.
+        signedOut.showNative(path: "/", replace: false)
+        await renderFrames()
+        XCTAssertTrue(home.viewControllers.first === root)
+    }
+
     func testOpeningNativeTabsDeliversQueryAndPropsToRetainedRoots() async throws {
         _ = shell.tabTapped("/details", reselect: false)
         await renderFrames()
