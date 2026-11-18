@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.514...v0.0.515)
+
+## 🐛 Bug Fixes
+
+- **ios**: show a tab's own screen when its stack started elsewhere ([03f2f9a](https://github.com/craft-native/craft/commit/03f2f9a)) _(by glennmichael123)_ ([#571](https://github.com/craft-native/craft/issues/571))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.513...v0.0.514)
 
 ## 🐛 Bug Fixes
