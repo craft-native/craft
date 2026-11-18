@@ -1,5 +1,18 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.513...v0.0.514)
+
+## 🐛 Bug Fixes
+
+- **android**: preserve independent app launch-link claims ([717c727](https://github.com/craft-native/craft/commit/717c727)) _(by Chris Breuer)_
+- **ios**: isolate app and navigator launch-link claims ([6c5443a](https://github.com/craft-native/craft/commit/6c5443a)) _(by Chris Breuer)_
+- **ios**: dim a text link instead of greying a box ([f7b5610](https://github.com/craft-native/craft/commit/f7b5610)) _(by glennmichael123)_ ([#570](https://github.com/craft-native/craft/issues/570))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.512...v0.0.513)
 
 ## 🐛 Bug Fixes
