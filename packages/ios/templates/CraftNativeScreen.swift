@@ -11625,11 +11625,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return
         }
         if let pressable = view as? CraftNativeFlowView, !on { pressable.backgroundColor = pressable.pressBaseBackgroundColor }
-        // An icon button dims its glyph, as a UIButton does: the grey a row
-        // turns, over a view with no shape of its own, was a hard square
-        // behind the icon (#566). It dims as far as a TouchableOpacity, so an
+        // A view with no shape of its own (an icon button, a text link) dims
+        // its content, as a UIButton does: the grey a row turns was a hard
+        // box behind it (#566). It dims as far as a TouchableOpacity, so an
         // app that set one explicitly sees no change without it.
-        if on, pressDimmedFrom[id] == nil, isGlyphOnly(view) {
+        if on, pressDimmedFrom[id] == nil, isShapeless(view) {
             pressDimmedFrom[id] = view.alpha
             let dimmed = view.alpha * 0.5
             UIView.animate(withDuration: 0.1) { view.alpha = dimmed }
@@ -11664,23 +11664,27 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         highlight.opacity = 1
     }
 
-    /// A pressable drawn only by its glyphs: no fill or border of its own,
-    /// no text, and at least one icon or image. A row keeps its highlight,
-    /// filled or not, because dimmed text reads as disabled.
-    private func isGlyphOnly(_ view: UIView) -> Bool {
+    /// A pressable drawn only by its content: no fill or border of its own
+    /// or on anything inside it, and at least one icon, image or text to dim.
+    /// A row, card or button with a fill or border keeps its highlight; so
+    /// does an empty one, which has nothing to dim.
+    private func isShapeless(_ view: UIView) -> Bool {
         let fill = (view as? CraftNativeFlowView)?.pressBaseBackgroundColor ?? view.backgroundColor
         guard (fill?.cgColor.alpha ?? 0) == 0, view.layer.borderWidth == 0 else { return false }
-        var glyphs = 0
-        func onlyGlyphs(in container: UIView) -> Bool {
+        func isContent(_ view: UIView) -> Bool {
+            view is UILabel || view is UITextView || view is UITextField || view is UIImageView
+        }
+        if isContent(view) { return true }
+        var content = 0
+        func onlyContent(in container: UIView) -> Bool {
             for child in container.subviews where !child.isHidden && child.alpha > 0 {
-                if child is UILabel || child is UITextView || child is UITextField { return false }
                 if (child.backgroundColor?.cgColor.alpha ?? 0) > 0 || child.layer.borderWidth > 0 { return false }
-                if child is UIImageView { glyphs += 1; continue }
-                if !onlyGlyphs(in: child) { return false }
+                if isContent(child) { content += 1; continue }
+                if !onlyContent(in: child) { return false }
             }
             return true
         }
-        return onlyGlyphs(in: view) && glyphs > 0
+        return onlyContent(in: view) && content > 0
     }
 
     private func updateUnderlayHandlers(_ show: String?, _ hide: String?, for view: UIView) {

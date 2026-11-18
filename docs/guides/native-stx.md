@@ -266,12 +266,12 @@ same lifecycle on iOS and Android.
 Anything that can be pressed shows the touch while the finger is on it, not
 after it has lifted. A `Pressable` or `TouchableOpacity` dims to its
 `activeOpacity`, a `TouchableHighlight` shows its underlay, and any other view
-with `onPress` (a row that is a plain `View`, a pressable `Text`) is covered
-with the grey a system row turns: the label colour at 12%, in the view's own
-`borderRadius`, drawn over it so the row's text is not dimmed. An icon button
-(a view with no fill, border or text of its own, holding only icons or images)
-dims instead, by as much as a `TouchableOpacity`, the way a glyph button does
-on iOS. On Android a plain pressable view shows the platform's pressed ripple.
+with `onPress` that has a fill or a border (a row, a card, a filled button) is
+covered with the grey a system row turns: the label colour at 12%, in the
+view's own `borderRadius`, drawn over it so the row's text is not dimmed. One
+with no fill or border of its own or inside it (an icon button, a text link, a
+pressable `Text`) dims its content instead, by as much as a `TouchableOpacity`,
+the way a plain `UIButton` does on iOS. On Android a plain pressable view shows the platform's pressed ripple.
 Inside something that scrolls the feedback waits a moment, as a table row's
 does, so a list does not flash under a flick; a tap quicker than the wait is
 still shown, briefly. When a control or another pressable view inside it is

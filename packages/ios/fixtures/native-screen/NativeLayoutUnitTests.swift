@@ -1176,10 +1176,11 @@ final class NativeLayoutUnitTests: XCTestCase {
     }
 
     /// #566: a 44-point heart with no shape of its own showed the row's grey
-    /// as a hard square behind the icon. An icon button dims its glyph, as a
-    /// UIButton does, by as much as a TouchableOpacity; anything with text,
-    /// a fill or a border keeps the highlight.
-    func testAnIconButtonDimsItsGlyphInsteadOfShowingASquare() async throws {
+    /// as a hard square behind the icon, and a text link a grey box over the
+    /// page. Anything with no fill or border dims its content, as a UIButton
+    /// does, by as much as a TouchableOpacity; a fill or a border, its own or
+    /// inside it, keeps the highlight.
+    func testAPressableWithNoShapeDimsItsContentInsteadOfShowingABox() async throws {
         func icon(_ key: String) -> [String: Any] {
             ["id": key, "type": "Icon", "props": ["testID": key, "symbol": "heart"], "style": ["width": 24, "height": 24]]
         }
@@ -1193,6 +1194,9 @@ final class NativeLayoutUnitTests: XCTestCase {
             pressable("filled", style: square.merging(["backgroundColor": "#eeeeee", "borderRadius": 22]) { $1 }, [icon("filled-icon")]),
             pressable("outlined", style: square.merging(["borderWidth": 1, "borderColor": "#cccccc"]) { $1 }, [icon("outlined-icon")]),
             pressable("labelled", style: ["height": 44, "flexDirection": "row", "alignItems": "center"], [icon("labelled-icon"), text("labelled-text")]),
+            pressable("link", style: ["height": 44, "justifyContent": "center"], [text("link-text")]),
+            ["id": "words", "type": "Text", "props": ["testID": "words"], "style": [:], "events": ["onPress": "pressed"], "children": ["Retry"]],
+            pressable("card", style: ["height": 56], [box("card-face", style: ["flex": 1, "backgroundColor": "#eeeeee"], [text("card-text")])]),
             pressable("empty", style: square),
         ]))
         func view(_ key: String) throws -> UIView { try XCTUnwrap(find(key, below: controller.view), "no view \(key)") }
@@ -1219,9 +1223,20 @@ final class NativeLayoutUnitTests: XCTestCase {
         controller.pressFeedbackEnded(on: faded, pressed: false)
         XCTAssertEqual(faded.alpha, 0.8, accuracy: 0.001)
 
-        // A shape of its own, or words: the highlight, undimmed. An empty
-        // pressable has no glyph to dim either.
-        for key in ["filled", "outlined", "labelled", "empty"] {
+        // Words, with an icon or on their own, and pressable text itself:
+        // dimmed like the icon, no box over the page.
+        for key in ["labelled", "link", "words"] {
+            let other = try view(key)
+            controller.pressFeedbackBegan(on: other, at: middle)
+            XCTAssertEqual(other.alpha, 0.5, accuracy: 0.001, key)
+            XCTAssertFalse(isHighlighted(other), key)
+            controller.pressFeedbackEnded(on: other, pressed: false)
+            XCTAssertEqual(other.alpha, 1, accuracy: 0.001, key)
+        }
+
+        // A shape of its own or inside it: the highlight, undimmed. An empty
+        // pressable has nothing to dim either.
+        for key in ["filled", "outlined", "card", "empty"] {
             let other = try view(key)
             controller.pressFeedbackBegan(on: other, at: middle)
             XCTAssertTrue(isHighlighted(other), key)
