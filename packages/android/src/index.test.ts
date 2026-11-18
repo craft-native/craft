@@ -199,7 +199,7 @@ describe('Craft Android builder', () => {
       expect(chrome).toContain('options.optJSONArray("leftButtons")')
       expect(chrome).toContain('leadingButtons.addView(navButton(button))')
       expect(chrome).toContain('button.optString("variant") == "neutral"')
-      expect(nativeActivity).toContain('internal fun consumeInitialDeepLink(): Uri?')
+      expect(nativeActivity).toContain('internal fun consumeInitialDeepLink(isAppScript: Boolean): Uri?')
       expect(nativeActivity).toContain('outState.putBoolean("craft.initialDeepLinkClaimed", initialDeepLinkClaimed)')
       expect(nativeCapabilities).toContain('internal const val CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION = 1')
       expect(nativeCapabilities).toContain('"Storage" -> mainHandler.post {')
@@ -225,7 +225,8 @@ describe('Craft Android builder', () => {
       expect(nativeCapabilities).toContain('alarm.setAndAllowWhileIdle(')
       expect(nativeCapabilities).toContain('private fun jsonString(value: Any?): String?')
       expect(nativeCapabilities).toContain('emptyArray<String>(), "")')
-      expect(nativeCapabilities).toContain('activity?.let { host -> host.consumeInitialDeepLink()?.let(host::deepLinkData) }')
+      expect(nativeCapabilities).toContain('activity?.let { host -> host.consumeInitialDeepLink(isAppScript)?.let(host::deepLinkData) }')
+      expect(nativeActivity).toContain('isAppScript = screen.headless,')
       // A background refresh has no activity: the capabilities take a Context.
       expect(nativeCapabilities).toContain('private val activity: MainActivity? get() = context as? MainActivity')
       expect(notificationReceiver).toContain('internal class CraftNativeNotificationReceiver : BroadcastReceiver()')

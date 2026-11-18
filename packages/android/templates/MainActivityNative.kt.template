@@ -5281,6 +5281,7 @@ class MainActivity : AppCompatActivity() {
     private var deliveredInitialDeepLink = false
     private var initialDeepLink: Uri? = null
     private var initialDeepLinkClaimed = false
+    private var appInitialDeepLinkClaimed = false
     private var defaultTextColor = Color.WHITE
     private var windowSafeInsets = intArrayOf(0, 0, 0, 0)
     private var navigationButtonInsets = intArrayOf(0, 0, 0)
@@ -5321,6 +5322,7 @@ class MainActivity : AppCompatActivity() {
         })
         initialDeepLink = savedInstanceState?.getString("craft.initialDeepLink")?.let(Uri::parse) ?: intent?.data
         initialDeepLinkClaimed = savedInstanceState?.getBoolean("craft.initialDeepLinkClaimed", false) ?: false
+        appInitialDeepLinkClaimed = savedInstanceState?.getBoolean("craft.appInitialDeepLinkClaimed", false) ?: false
         deliveredInitialDeepLink = savedInstanceState?.getBoolean("craft.deliveredInitialDeepLink", false) ?: false
         if (savedInstanceState == null && !CraftNativeNotifications.receiveAction(this, intent)) {
             pendingNotificationTap = notificationTap(intent)
@@ -6357,6 +6359,7 @@ class MainActivity : AppCompatActivity() {
         if (::capabilities.isInitialized) capabilities.savePickerState(outState)
         outState.putString("craft.initialDeepLink", initialDeepLink?.toString())
         outState.putBoolean("craft.initialDeepLinkClaimed", initialDeepLinkClaimed)
+        outState.putBoolean("craft.appInitialDeepLinkClaimed", appInitialDeepLinkClaimed)
         outState.putBoolean("craft.deliveredInitialDeepLink", deliveredInitialDeepLink)
         super.onSaveInstanceState(outState)
     }
@@ -9052,6 +9055,7 @@ class MainActivity : AppCompatActivity() {
                     onUploadProgress = { progress -> capabilityHandler.post {
                         if (screen.active && screen.pendingCapabilities.contains(token)) send(screen, "NETWORK_UPLOAD_PROGRESS", progress)
                     } },
+                    isAppScript = screen.headless,
                 )
             }
         }
@@ -9371,7 +9375,12 @@ class MainActivity : AppCompatActivity() {
         if (::services.isInitialized) services.onRequestPermissionsResult(requestCode)
     }
 
-    internal fun consumeInitialDeepLink(): Uri? {
+    internal fun consumeInitialDeepLink(isAppScript: Boolean): Uri? = synchronized(this) {
+        if (isAppScript) {
+            if (appInitialDeepLinkClaimed) return null
+            appInitialDeepLinkClaimed = true
+            return initialDeepLink
+        }
         if (initialDeepLinkClaimed) return null
         initialDeepLinkClaimed = true
         return initialDeepLink

@@ -218,6 +218,7 @@ internal class CraftNativeCapabilities(
         args: JSONArray,
         completion: (CraftNativeCapabilityResult) -> Unit,
         onUploadProgress: ((JSONObject) -> Unit)?,
+        isAppScript: Boolean = false,
     ) {
         if (closed.get()) {
             mainHandler.post { completion(failure("HOST_CLOSED", "The native capability host is closed")) }
@@ -284,7 +285,7 @@ internal class CraftNativeCapabilities(
             }
             "Lifecycle" -> complete(requestToken, if (method == "getState") success(activity?.nativeAppState ?: "background")
                 else failure("UNKNOWN_ACTION", "Unsupported Lifecycle method"), completion)
-            "DeepLinks" -> complete(requestToken, deepLinks(method), completion)
+            "DeepLinks" -> complete(requestToken, deepLinks(method, isAppScript), completion)
             "Notifications" -> notifications(requestToken, method, args, completion)
             "Network" -> {
                 if (method == "getStatus") {
@@ -1499,10 +1500,10 @@ internal class CraftNativeCapabilities(
         if (it.moveToFirst()) it.getLong(0) else 0
     }
 
-    private fun deepLinks(method: String): CraftNativeCapabilityResult {
+    private fun deepLinks(method: String, isAppScript: Boolean): CraftNativeCapabilityResult {
         if (!config.optBoolean("enableDeepLinks")) return failure("CAPABILITY_DISABLED", "Deep links are disabled")
         if (method != "getInitialURL") return failure("UNKNOWN_ACTION", "Unsupported DeepLinks method")
-        return success(activity?.let { host -> host.consumeInitialDeepLink()?.let(host::deepLinkData) } ?: JSONObject.NULL)
+        return success(activity?.let { host -> host.consumeInitialDeepLink(isAppScript)?.let(host::deepLinkData) } ?: JSONObject.NULL)
     }
 
     private fun notifications(

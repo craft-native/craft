@@ -1990,12 +1990,15 @@ deadline. A timeout rejects with `TIMEOUT`, sends `API_CANCEL`, and native route
 teardown cancels any remaining work. Unsupported protocol versions reject with
 `UNSUPPORTED_VERSION`.
 
-`deepLinks.getInitialURL()` claims the launch URL once for the native app
-process. It can be called from any route, but later routes receive `null`; a
-URL delivered through `deepLinks.onLink` is marked `initial: true`. URLs received
+`deepLinks.getInitialURL()` claims the launch URL once for the headless app
+script and once for the visible navigator. These claims are independent, so
+an authentication check in the app script cannot consume the navigator's
+startup link, or vice versa. A visible route may claim it, but later visible
+routes receive `null`. A URL delivered through `deepLinks.onLink` is marked
+`initial: true`. URLs received
 through a resumed activity or scene are marked `initial: false` and remain
 available to subscribers even after the launch URL has been claimed. Android
-persists the launch claim across activity recreation, so rotation and process
+persists both launch claims across activity recreation, so rotation and process
 handoff do not replay a stale intent.
 
 The old flat notification methods (`scheduleNotification`,
