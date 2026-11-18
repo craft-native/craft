@@ -3,6 +3,72 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// Exercise the shipped capability dispatch in both real consumer orders.
+// UIKit lifecycle delivery remains covered by the native acceptance journey.
+test.skipIf(process.platform !== 'darwin')('the headless app and visible navigator each receive the cold link once', async () => {
+  const actions = readFileSync(join(import.meta.dir, '../templates/CraftNativeActions.swift'), 'utf8')
+  const begin = actions.indexOf('        case ("DeepLinks", "getInitialURL"):')
+  const end = actions.indexOf('        case ("Database", _):', begin)
+  expect(begin).toBeGreaterThan(0)
+  expect(end).toBeGreaterThan(begin)
+  const method = (name: string) => {
+    const start = actions.indexOf(`    ${name}`)
+    expect(start).toBeGreaterThan(0)
+    return actions.slice(start, actions.indexOf('\n    }', start) + '\n    }'.length)
+  }
+  const directory = mkdtempSync(join(tmpdir(), 'craft-launch-consumers-'))
+  try {
+    const source = join(directory, 'main.swift'), binary = join(directory, 'probe')
+    writeFileSync(source, `import Foundation
+struct ActionError: Error {}
+struct Config { let enableDeepLinks = true }
+class DeepLinkManager {
+    static let shared = DeepLinkManager()
+    func resolveInitialURL(_ completion: (URL?) -> Void) { completion(URL(string: "lastsoulultra:///m/coaching/last-soul-ultra/plans")) }
+}
+enum Actions {
+    static let cancellationLock = NSLock()
+    static var initialDeepLinkClaimed = false
+    static var appInitialDeepLinkClaimed = false
+    static func complete(_ token: String, _ result: Result<Any, ActionError>, _ callback: (Result<Any, ActionError>) -> Void) { callback(result) }
+    static func failure(_ code: String, _ message: String) -> Result<Any, ActionError> { .failure(ActionError()) }
+${method('private static func claimInitialDeepLink(')}
+${method('static func deepLinkData(')}
+    static func perform(isAppScript: Bool, completion: (Result<Any, ActionError>) -> Void) {
+        let config = Config(), requestToken = "fixture"
+        let sync: Result<Any, ActionError>?
+        switch ("DeepLinks", "getInitialURL") {
+${actions.slice(begin, end)}
+        default: sync = failure("UNKNOWN_ACTION", "Unsupported method")
+        }
+        if let sync { complete(requestToken, sync, completion) }
+    }
+}
+func request(app: Bool) -> String? {
+    var url: String?
+    Actions.perform(isAppScript: app) { result in
+        if case .success(let value) = result { url = (value as? [String: Any])?["url"] as? String }
+    }
+    return url
+}
+let firstIsApp = CommandLine.arguments[1] == "app-first"
+let answers = [request(app: firstIsApp), request(app: !firstIsApp), request(app: false), request(app: true)]
+print(String(data: try! JSONSerialization.data(withJSONObject: answers.map { $0 as Any? ?? NSNull() }), encoding: .utf8)!)
+`)
+    const compiler = Bun.spawnSync(['swiftc', source, '-o', binary], { stdout: 'pipe', stderr: 'pipe', timeout: 120_000 })
+    expect(compiler.exitCode, compiler.stderr.toString()).toBe(0)
+    for (const order of ['screen-first', 'app-first']) {
+      const result = Bun.spawnSync([binary, order], { stdout: 'pipe', stderr: 'pipe', timeout: 15_000 })
+      expect(result.exitCode, result.stderr.toString()).toBe(0)
+      expect(JSON.parse(result.stdout.toString()), order).toEqual([
+        'lastsoulultra:///m/coaching/last-soul-ultra/plans',
+        'lastsoulultra:///m/coaching/last-soul-ultra/plans', null, null,
+      ])
+    }
+  }
+  finally { rmSync(directory, { recursive: true, force: true }) }
+}, 150_000)
+
 test.skipIf(process.platform !== 'darwin')('the Swift launch state waits for intent and never promotes a warm link to the initial URL', async () => {
   const template = readFileSync(join(import.meta.dir, '../templates/CraftApp.swift'), 'utf8')
   const state = template.slice(template.indexOf('final class CraftInitialLinkState {'), template.indexOf('\nclass DeepLinkManager {'))

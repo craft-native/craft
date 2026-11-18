@@ -44,6 +44,7 @@ enum CraftNativeActions {
         return URLSession(configuration: configuration)
     }()
     private static var initialDeepLinkClaimed = false
+    private static var appInitialDeepLinkClaimed = false
     private static var database: OpaquePointer?
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -182,6 +183,7 @@ enum CraftNativeActions {
         method: String,
         args: [Any],
         config: CraftConfig,
+        isAppScript: Bool = false,
         onUploadProgress: (([String: Any]) -> Void)? = nil,
         completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
     ) {
@@ -387,7 +389,7 @@ enum CraftNativeActions {
         case ("DeepLinks", "getInitialURL"):
             if config.enableDeepLinks {
                 DeepLinkManager.shared.resolveInitialURL { url in
-                    complete(requestToken, .success(claimInitialDeepLink(url).map(deepLinkData) ?? NSNull()), completion)
+                    complete(requestToken, .success(claimInitialDeepLink(url, isAppScript: isAppScript).map(deepLinkData) ?? NSNull()), completion)
                 }
                 return
             } else {
@@ -1057,9 +1059,16 @@ enum CraftNativeActions {
         cancellationLock.unlock()
     }
 
-    private static func claimInitialDeepLink(_ url: URL?) -> URL? {
+    private static func claimInitialDeepLink(_ url: URL?, isAppScript: Bool) -> URL? {
         cancellationLock.lock()
         defer { cancellationLock.unlock() }
+        // The headless app needs the launch intent for authentication policy.
+        // It must not consume the visible navigator's independent handoff.
+        if isAppScript {
+            guard !appInitialDeepLinkClaimed else { return nil }
+            appInitialDeepLinkClaimed = true
+            return url
+        }
         guard !initialDeepLinkClaimed else { return nil }
         initialDeepLinkClaimed = true
         return url

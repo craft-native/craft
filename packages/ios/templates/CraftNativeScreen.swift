@@ -9746,6 +9746,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 method: method,
                 args: args,
                 config: config,
+                isAppScript: isAppScript,
                 onUploadProgress: { [weak self] progress in
                     DispatchQueue.main.async {
                         guard let self, self.pendingCapabilityRequests.contains(requestToken), !self.runtimeDisposed else { return }
