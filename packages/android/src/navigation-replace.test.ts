@@ -28,12 +28,17 @@ class Navigation {
     val routes = Routes()
     val urlSchemes = emptyList<String>()
     var currentTab = 0
+    var selectedCanonicalTab = false
     var screens = mutableListOf(Screen("Today", "/m"), Screen("Login", "/m/login"))
     val pending = mutableListOf<() -> Unit>()
     val disposed = mutableListOf<Screen>()
     var shown: Screen? = null
     var received: JSONObject? = null
-    fun selectTab(index: Int) { currentTab = index; screens = mutableListOf(Screen("Progress", "/m/progress")) }
+    fun selectTab(index: Int, canonical: Boolean = false) {
+        currentTab = index
+        selectedCanonicalTab = canonical
+        screens = mutableListOf(Screen("Progress", "/m/progress"))
+    }
     fun popToRoot() { while (screens.size > 1) screens.removeAt(screens.lastIndex) }
     fun openExternal(path: String) { error("This fixture does not target an external path") }
     fun closeScreen(screen: Screen, done: () -> Unit) { disposed.add(screen); pending.add(done) }
@@ -85,6 +90,7 @@ fun main() {
     check(crossTab.currentTab == 0 && originalStack.map { it.name } == listOf("Today"))
     crossTab.complete()
     check(crossTab.currentTab == 1 && originalStack.none { it.name == "Login" })
+    check(crossTab.selectedCanonicalTab) { "An explicit tab URL did not select the canonical tab root" }
     check(crossTab.received!!.values["props"] === props)
     println("PASS atomic replacement waits for teardown, reuses canonical screens, preserves parameters and respects a changed stack")
 }

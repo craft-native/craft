@@ -1,6 +1,6 @@
 /** Execute the shipped lookup and registration across keyed replacements and reparenting. */
 import { test } from 'bun:test'
-import { runKotlinFixture } from './testing'
+import { liftKotlinMember, runKotlinFixture } from './testing'
 
 test('retains authored keys and protocol identities without conflating sibling selectors', async () => {
   const template = await Bun.file(new URL('../templates/MainActivityNative.kt.template', import.meta.url)).text()
@@ -77,15 +77,22 @@ fun main() {
 
 test('preserves modal viewport promotion and ordering across targeted reconciliation', async () => {
   const template = await Bun.file(new URL('../templates/MainActivityNative.kt.template', import.meta.url)).text()
-  const promote = template.match(/    private fun promoteModalOverlays\(screen: Screen\) \{[\s\S]*?\n    \}/)?.[0]
-  const targeted = template.match(/    private fun applyTargetedUpdates\(screen: Screen, ids: List<String>\): Boolean \{[\s\S]*?\n    \}/)?.[0]
+  const promote = liftKotlinMember(template, 'promoteModalOverlays')
+  const targeted = liftKotlinMember(template, 'applyTargetedUpdates')
+  const presented = liftKotlinMember(template, 'presentedModalsFrontToBack')
   const accessibility = template.match(/private fun craftNativeModalAccessibility\([\s\S]*?\n\}/)?.[0]
-  if (!promote || !targeted || !accessibility) throw new Error('Native modal reconciliation implementation is missing')
+  if (!accessibility) throw new Error('Native modal accessibility implementation is missing')
   await runKotlinFixture(`
 import kotlin.math.min
 
 open class View {
-    companion object { const val IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS = 4 }
+    companion object {
+        const val VISIBLE = 0
+        const val GONE = 8
+        const val IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS = 4
+    }
+    var visibility = VISIBLE
+    var z = 0f
     var importantForAccessibility = 1
     var parent: ViewGroup? = null
     fun bringToFront() { val group = parent ?: return; group.children.remove(this); group.children.add(this) }
@@ -98,9 +105,11 @@ open class ViewGroup : View() {
     fun removeView(view: View) { children.remove(view); childStyles.remove(view); view.parent = null }
     fun setChildStyle(view: View, style: JSONObject, density: Float) { childStyles[view] = style }
     fun addView(view: View) { view.parent?.removeView(view); children.add(view); view.parent = this }
+${presented}
 }
 class CraftNativeModalView : ViewGroup() {
     var blocksBackground = true
+    var presentationOrder = 0L
     val content = ViewGroup().also(::addView)
     var viewportStyle = JSONObject("popup-frame")
     var declarationPath = ""
@@ -123,6 +132,7 @@ class Screen {
     val lastLayoutBounds = mutableMapOf<View, String>()
     val modalVisibility = mutableMapOf<View, Boolean>()
     val modalAccessibility = mutableMapOf<View, Int>()
+    var nextModalOrder = 0L
     val mutations = MutationDocument(mapOf("parent" to "root", "nested" to "parent", "standalone" to "root"))
     var layoutEvents = 0
 }
@@ -139,7 +149,7 @@ ${promote}
 ${targeted}
 fun main() {
     val screen = Screen()
-    val root = ViewGroup()
+    val root = ViewGroup().apply { z = 12f }
     val parent = CraftNativeModalView()
     val nested = CraftNativeModalView()
     val standalone = CraftNativeModalView()
@@ -165,6 +175,8 @@ fun main() {
         val children = screen.view.children
         check(children.indexOf(parent) < children.indexOf(nested)) { "The parent scrim covered its nested popup" }
         check(children.indexOf(nested) < children.indexOf(standalone)) { "Sibling overlay order changed" }
+        check(root.z < parent.z && parent.z < nested.z && nested.z < standalone.z) { "Visual order diverged from child order" }
+        check(screen.view.presentedModalsFrontToBack().toList() == listOf(standalone, nested, parent))
         check(root.importantForAccessibility == 4 && parent.importantForAccessibility == 4 && nested.importantForAccessibility == 4)
         check(standalone.importantForAccessibility == 1) { "The top modal must stay reachable by TalkBack" }
     }
@@ -181,7 +193,18 @@ fun main() {
     screen.protocolIds.clear()
     promoteModalOverlays(screen)
     verify()
-    println("PASS modal viewport, nested scrim ordering, sibling ordering, targeted updates and legacy renders")
+
+    // Release the first layer, then present it again without a host reparent.
+    parent.visibility = View.GONE
+    parent.presentationOrder = 0L
+    promoteModalOverlays(screen)
+    check(screen.view.presentedModalsFrontToBack().toList() == listOf(standalone, nested))
+    parent.visibility = View.VISIBLE
+    promoteModalOverlays(screen)
+    check(screen.view.presentedModalsFrontToBack().toList() == listOf(parent, standalone, nested))
+    check(parent.z > standalone.z && parent.importantForAccessibility == 1)
+    check(standalone.importantForAccessibility == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+    println("PASS modal viewport, nested and sibling order, targeted updates, legacy renders and reopen order")
 }
 `)
 }, 180_000)
