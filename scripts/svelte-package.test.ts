@@ -37,26 +37,25 @@ test('packed Svelte condition resolves outside the workspace', async () => {
 
 test('store declarations expose the public Readable contract', () => {
   const root = resolve(import.meta.dir, '..')
+  const sdkDir = join(root, 'packages/typescript')
   const temp = createTempDir('craft-svelte-types-')
-  const run = (args: string[], cwd = temp): void => {
-    const result = Bun.spawnSync([
-      process.execPath, join(root, 'packages/typescript/scripts/tsc.ts'), ...args,
-    ], { cwd, stdout: 'pipe', stderr: 'pipe' })
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain('error TS')
-    expect(result.exitCode).toBe(0)
+  const run = (args: string[], cwd = temp) => {
+    const result = Bun.spawnSync([process.execPath, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) throw new Error(`${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`)
   }
   try {
-    const packed = Bun.spawnSync([process.execPath, 'pm', 'pack', '--filename', join(temp, 'core.tgz')], {
-      cwd: join(root, 'packages/typescript'), stdout: 'pipe', stderr: 'pipe',
-    })
-    expect(packed.exitCode).toBe(0)
+    // Both the workspace Svelte build and the packed consumer resolve the
+    // SDK's public declaration entry point. Prepare it in this fixture so a
+    // clean run works even when Svelte is the first package suite to run.
+    run(['run', 'build'], sdkDir)
+    run(['pm', 'pack', '--filename', join(temp, 'core.tgz')], sdkDir)
     writeFileSync(join(temp, 'package.json'), JSON.stringify({
       private: true, type: 'module', dependencies: { 'craft-native': `file:${join(temp, 'core.tgz')}` }, devDependencies: { 'bun-types': '1.4.4' },
     }))
-    const installed = Bun.spawnSync([process.execPath, 'install'], { cwd: temp, stdout: 'pipe', stderr: 'pipe' })
-    expect(installed.exitCode).toBe(0)
+    run(['install'])
+    const tsc = join(sdkDir, 'scripts/tsc.ts')
     run([
-      '-p', join(root, 'packages/svelte/tsconfig.json'), '--emitDeclarationOnly',
+      tsc, '-p', join(root, 'packages/svelte/tsconfig.json'), '--emitDeclarationOnly',
       '--outDir', join(temp, 'declarations'),
     ])
     // Consumers only need Svelte's public store interface. Inferred subscribe
@@ -88,7 +87,7 @@ const wrong: Readable<string> = isReady
 void [ready, info, another, unsubscribe, wrong]
 `)
     run([
-      'consumer.mts', 'store-contract.d.ts', '--noEmit', '--strict',
+      tsc, 'consumer.mts', 'store-contract.d.ts', '--noEmit', '--strict',
       '--module', 'nodenext', '--moduleResolution', 'nodenext',
       '--target', 'esnext', '--ignoreConfig', '--types', 'bun-types',
     ])
