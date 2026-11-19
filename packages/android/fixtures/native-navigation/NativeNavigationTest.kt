@@ -37,15 +37,18 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.TimePicker
+import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -2856,8 +2859,7 @@ class NativeNavigationTest {
             assertEquals("visible modal opacity should update in place", 0.45f, modal.alpha, 0.01f)
             click(activity, "toggle-modal")
             awaitText(activity, "modal-status", "modal dismissed")
-            assertTrue("Closing the modal must restore the page to TalkBack",
-                awaitView(activity, "root").importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+            awaitView(activity, "root") { it.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
             click(activity, "toggle-modal")
             awaitText(activity, "modal-status", "modal shown")
             instrumentation.runOnMainSync { activity.onBackPressed() }
@@ -3891,6 +3893,172 @@ class NativeNavigationTest {
         } finally {
             activity.finishAndRemoveTask()
         }
+    }
+
+    @Test
+    fun backAndDismissalUseTheRenderedOverlayOrder() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var activity: MainActivity
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            val screen = requireNotNull(MainActivity::class.java.getDeclaredField("visibleScreen").apply { isAccessible = true }.get(activity))
+            val isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+            fun evaluate(javascript: String) = isolate.evaluateJavaScriptAsync(javascript).get(5, java.util.concurrent.TimeUnit.SECONDS)
+            evaluate("globalThis.modalEvents = []; globalThis.__stxNativeCallback = json => { const m = JSON.parse(json); if (m.type === 'EVENT' && /^(request|dismiss|complete)-(front|back)$/.test(m.payload.handlerName)) modalEvents.push(m.payload.handlerName); }; 'ready'")
+            val render = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }
+            fun draw(front: Boolean, passThrough: Boolean = false) {
+                scenario.onActivity {
+                    val document = JSONObject("""{"id":"root","type":"View","style":{"flex":1},"children":[
+                        {"id":"front","type":"Modal","props":{"testID":"front-modal","visible":$front,"animationType":"slide"},"events":{"onRequestClose":"request-front","onDismiss":"dismiss-front","onDismissComplete":"complete-front"}},
+                        {"id":"back","type":"Modal","props":{"testID":"back-modal","visible":true,"animationType":"none"},"events":{"onRequestClose":"request-back"}},
+                        {"id":"pass","type":"Modal","props":{"testID":"pass-modal","nonModal":true,"visible":$passThrough,"animationType":"none"},"style":{"position":"absolute","height":60,"width":60}}
+                    ]}""")
+                    render.invoke(activity, screen, document)
+                }
+            }
+            fun awaitEvents(expected: String) {
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                var events = evaluate("modalEvents.join('|')")
+                while (events != expected && SystemClock.uptimeMillis() < deadline) {
+                    SystemClock.sleep(30)
+                    events = evaluate("modalEvents.join('|')")
+                }
+                assertEquals(expected, events)
+            }
+            draw(false)
+            val back = awaitView(activity, "back-modal")
+            draw(true)
+            val front = awaitView(activity, "front-modal")
+            scenario.onActivity {
+                val viewport = front.parent as ViewGroup
+                assertTrue(viewport.indexOfChild(front) > viewport.indexOfChild(back))
+                assertTrue(front.z > back.z)
+                assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, back.importantForAccessibility)
+                activity.onBackPressedDispatcher.onBackPressed()
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            awaitEvents("request-front")
+            draw(false)
+            awaitEvents("request-front|dismiss-front|complete-front")
+            scenario.onActivity {
+                assertEquals(View.GONE, front.visibility)
+                assertTrue(back.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+            }
+            draw(false, passThrough = true)
+            awaitView(activity, "pass-modal")
+            scenario.onActivity { activity.onBackPressedDispatcher.onBackPressed() }
+            awaitEvents("request-front|dismiss-front|complete-front|request-back")
+        } finally { scenario.close() }
+    }
+
+    @Test
+    fun aNonTabStartIsTheFirstScreenAndExplicitTabNavigationReplacesIt() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var activity: MainActivity
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            val type = MainActivity::class.java
+            val routes = type.getDeclaredField("routes").apply { isAccessible = true }.get(activity) as CraftNativeRoutes
+            val tabStacks = type.getDeclaredField("tabStacks").apply { isAccessible = true }
+            val select = type.getDeclaredMethod("selectTab", Int::class.javaPrimitiveType, CraftNativeRouteMatch::class.java, Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }
+            val path = type.getDeclaredField("visibleScreen").apply { isAccessible = true }
+            lateinit var start: Any
+            scenario.onActivity {
+                select.invoke(activity, 1, requireNotNull(routes.match("/identity")), false)
+                start = requireNotNull(path.get(activity))
+                assertEquals("/identity", start.javaClass.getDeclaredField("path").apply { isAccessible = true }.get(start))
+                assertEquals(listOf(start), (tabStacks.get(activity) as List<*>)[1])
+                type.getDeclaredMethod("navigateOpen", String::class.java, Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType, JSONObject::class.java, String::class.java)
+                    .apply { isAccessible = true }.invoke(activity, "/details", false, false, JSONObject(), null)
+            }
+            awaitView(activity, "details-title")
+            scenario.onActivity {
+                val tabRoot = requireNotNull(path.get(activity))
+                assertNotSame(start, tabRoot)
+                assertEquals(listOf(tabRoot), (tabStacks.get(activity) as List<*>)[1])
+                select.invoke(activity, 2, requireNotNull(routes.match("/identity")), false)
+            }
+            awaitView(activity, "identity-title")
+            scenario.onActivity {
+                val chrome = requireNotNull(findType(activity.window.decorView, CraftNativeChrome::class.java))
+                requireNotNull(chrome.onTab).invoke(2)
+            }
+            awaitView(activity, "summary-title")
+        } finally { scenario.close() }
+    }
+
+    @Test
+    fun materialSheetKeepsItsDetentOnCancellationAndRequestsOneSwipeClose() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(NativeViewTestActivity::class.java)
+        try {
+            lateinit var modal: CraftNativeModalView
+            lateinit var panel: android.widget.FrameLayout
+            lateinit var behavior: BottomSheetBehavior<android.widget.FrameLayout>
+            val requests = java.util.concurrent.LinkedBlockingQueue<String>()
+            scenario.onActivity { activity ->
+                modal = CraftNativeModalView(activity)
+                modal.onRequestClose = { requests.add(it) }
+                modal.configureSheet(setOf("medium", "large"), "medium", grabber = true, dismissible = true)
+                modal.setVisible(true, 1f, "none")
+                activity.setContentView(modal)
+                val layout = requireNotNull(findType(modal, CoordinatorLayout::class.java))
+                panel = layout.getChildAt(0) as android.widget.FrameLayout
+                behavior = BottomSheetBehavior.from(panel)
+            }
+            fun waitForState(expected: Int) {
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                var settled = false
+                while (!settled && SystemClock.uptimeMillis() < deadline) {
+                    scenario.onActivity { settled = behavior.state == expected && panel.height > 0 }
+                    if (!settled) SystemClock.sleep(20)
+                }
+                assertTrue("Material sheet did not reach state $expected", settled)
+            }
+            fun drag(end: Int) {
+                scenario.onActivity {
+                    val x = panel.width / 2f
+                    val startY = panel.top + 10f
+                    val distance = (modal.height - startY) * 0.8f
+                    val begin = SystemClock.uptimeMillis()
+                    for (step in 0..6) {
+                        val action = when (step) {
+                            0 -> MotionEvent.ACTION_DOWN
+                            6 -> end
+                            else -> MotionEvent.ACTION_MOVE
+                        }
+                        val event = MotionEvent.obtain(begin, begin + step * 16, action, x, startY + step * distance / 6, 0)
+                        try { modal.dispatchTouchEvent(event) } finally { event.recycle() }
+                    }
+                }
+            }
+            waitForState(BottomSheetBehavior.STATE_HALF_EXPANDED)
+            scenario.onActivity {
+                assertEquals(View.VISIBLE, panel.getChildAt(1).visibility)
+                assertTrue(modal.content.height < panel.height)
+            }
+            drag(MotionEvent.ACTION_CANCEL)
+            waitForState(BottomSheetBehavior.STATE_HALF_EXPANDED)
+            assertTrue("cancelling a drag must not ask the owner to close", requests.isEmpty())
+            drag(MotionEvent.ACTION_UP)
+            waitForState(BottomSheetBehavior.STATE_HIDDEN)
+            assertEquals("swipe", requests.poll(1, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(requests.isEmpty())
+            scenario.onActivity {
+                modal.setVisible(false, 1f, "none")
+                assertEquals(View.GONE, modal.visibility)
+                modal.configureSheet(setOf("large"), "large", grabber = false, dismissible = true)
+                modal.setVisible(true, 1f, "none")
+            }
+            waitForState(BottomSheetBehavior.STATE_EXPANDED)
+            scenario.onActivity {
+                assertEquals(View.GONE, panel.getChildAt(1).visibility)
+                assertEquals(panel.height, modal.content.height)
+            }
+        } finally { scenario.close() }
     }
 
     @Test

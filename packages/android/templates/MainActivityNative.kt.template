@@ -98,6 +98,7 @@ import android.widget.VideoView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.core.content.ContextCompat
 import androidx.core.view.AccessibilityDelegateCompat
@@ -112,6 +113,7 @@ import androidx.javascriptengine.Message
 import androidx.javascriptengine.MessagePort
 import androidx.javascriptengine.MessagePortClient
 import com.craft.runtime.CraftNative
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 {{NATIVE_MAP_IMPORTS}}
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1637,18 +1639,20 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val x = event.x.roundToInt()
             val y = event.y.roundToInt()
-            dismissibleModalTouch = (childCount - 1 downTo 0).asSequence()
-                .map { getChildAt(it) }
-                .filterIsInstance<CraftNativeModalView>()
-                .firstOrNull { child ->
-                    CraftNativePointers.ownsTouch(child) && child.dismissOnOutsideTap && child.visibility == View.VISIBLE && child.alpha > 0.01f
-                        && (x < child.left || x >= child.right || y < child.top || y >= child.bottom)
+            dismissibleModalTouch = null
+            shieldedModalTouch = false
+            for (child in presentedModalsFrontToBack()) {
+                if (!CraftNativePointers.ownsTouch(child)) continue
+                val inside = x >= child.x && x < child.x + child.width && y >= child.y && y < child.y + child.height
+                if (inside || child.blocksBackground) break
+                if (child.dismissOnOutsideTap) {
+                    dismissibleModalTouch = child
+                    break
                 }
-            shieldedModalTouch = (childCount - 1 downTo 0).any { index ->
-                val child = getChildAt(index)
-                child is CraftNativeModalView && CraftNativePointers.ownsTouch(child) && !child.blocksBackground && child.visibility == View.VISIBLE
-                    && (x < child.left || x >= child.right || y < child.top || y >= child.bottom)
-                    && child.hasBlockingModalBelow()
+                if (child.hasBlockingModalBelow()) {
+                    shieldedModalTouch = true
+                    break
+                }
             }
         }
         dismissibleModalTouch?.let { modal ->
@@ -1667,6 +1671,10 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         dispatchOverflow(event)?.let { return it }
         return super.dispatchTouchEvent(event)
     }
+
+    fun presentedModalsFrontToBack() = (childCount - 1 downTo 0).asSequence()
+        .mapNotNull { getChildAt(it) as? CraftNativeModalView }
+        .filter { it.visibility == View.VISIBLE }
 
     override fun setPadding(left: Int, top: Int, right: Int, bottom: Int) {
         if (!applyingPadding) authoredPadding = intArrayOf(left, top, right, bottom)
@@ -2746,7 +2754,6 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 }
             }
             for (entry in layout.absolute) {
-                if (entry.view is CraftNativeModalView && entry.view.visibility == View.VISIBLE) entry.view.bringToFront()
                 val (childWidth, childHeight) = absoluteSize(entry, contentWidth, contentHeight)
                 val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - childWidth } ?: 0))
                 val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - childHeight } ?: 0))
@@ -2931,7 +2938,6 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             if (sharedCross == null) crossOffset += lineCross + crossBetween
         }
         for (entry in absolute) {
-            if (entry.view is CraftNativeModalView && entry.view.visibility == View.VISIBLE) entry.view.bringToFront()
             val (widthValue, heightValue) = absoluteSize(entry, contentWidth, contentHeight)
             val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - widthValue } ?: 0))
             val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - heightValue } ?: 0))
@@ -3855,7 +3861,112 @@ private fun craftNativeAnnounce(args: JSONArray, announce: (String) -> Unit): Cr
     return CraftNativeCapabilityResult(data = true)
 }
 
-private class CraftNativeModalView(context: Context) : FrameLayout(context) {
+private class CraftNativeSheetLayout(
+    context: Context,
+    private val body: View,
+    onDraggedClosed: () -> Unit,
+) : CoordinatorLayout(context) {
+    private val panel = FrameLayout(context)
+    private val behavior = BottomSheetBehavior<FrameLayout>()
+    private val grip = View(context)
+    private var medium = true
+    private var large = true
+    private var selected: String? = null
+    private var compact = true
+    private var lastDetent = BottomSheetBehavior.STATE_EXPANDED
+    private var cancelingDrag = false
+
+    val isHidden: Boolean get() = behavior.state == BottomSheetBehavior.STATE_HIDDEN
+
+    init {
+        // The screen's remaining space is the sheet's own viewport. Material
+        // owns gesture arbitration with the nested scroller and settles to a
+        // detent only once the user's drag finishes.
+        behavior.isFitToContents = false
+        behavior.halfExpandedRatio = 0.5f
+        behavior.skipCollapsed = true
+        val placement = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        placement.behavior = behavior
+        addView(panel, placement)
+        panel.addView(body, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        grip.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        val color = android.util.TypedValue()
+        context.theme.resolveAttribute(android.R.attr.textColorSecondary, color, true)
+        val gripColor = if (color.resourceId != 0) {
+            ContextCompat.getColorStateList(context, color.resourceId)?.defaultColor ?: Color.GRAY
+        } else if (color.data != 0) color.data else Color.GRAY
+        grip.background = GradientDrawable().apply { setColor(gripColor); cornerRadius = dp(2).toFloat() }
+        panel.addView(grip, FrameLayout.LayoutParams(dp(32), dp(4), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(6) })
+        behavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
+            override fun onSlide(bottomSheet: View, slideOffset: Float) = Unit
+
+            override fun onStateChanged(bottomSheet: View, newState: Int) {
+                when (newState) {
+                    BottomSheetBehavior.STATE_HIDDEN -> if (!cancelingDrag) onDraggedClosed()
+                    BottomSheetBehavior.STATE_HALF_EXPANDED, BottomSheetBehavior.STATE_COLLAPSED -> {
+                        if (!cancelingDrag) lastDetent = newState
+                        compact = medium
+                        requestLayout()
+                    }
+                    BottomSheetBehavior.STATE_EXPANDED -> {
+                        if (!cancelingDrag) lastDetent = newState
+                        compact = !large
+                        requestLayout()
+                    }
+                }
+            }
+        })
+    }
+
+    fun configure(detents: Set<String>, selection: String?, grabber: Boolean, dismissible: Boolean) {
+        val supportsMedium = "medium" in detents
+        val supportsLarge = "large" in detents
+        val changed = medium != supportsMedium || large != supportsLarge || selected != selection
+        medium = supportsMedium
+        large = supportsLarge
+        selected = selection
+        behavior.isDraggable = dismissible || (medium && large)
+        if (behavior.isHideable != dismissible) behavior.isHideable = dismissible
+        val gripVisibility = if (grabber) View.VISIBLE else View.GONE
+        if (grip.visibility != gripVisibility) grip.visibility = gripVisibility
+        if (changed) resetDetent()
+    }
+
+    fun resetDetent() {
+        compact = medium && (!large || selected != "large")
+        lastDetent = if (compact && large) BottomSheetBehavior.STATE_HALF_EXPANDED else BottomSheetBehavior.STATE_EXPANDED
+        behavior.state = lastDetent
+        requestLayout()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_CANCEL) return super.dispatchTouchEvent(event)
+        cancelingDrag = true
+        val handled = super.dispatchTouchEvent(event)
+        if (behavior.state != lastDetent) behavior.state = lastDetent
+        cancelingDrag = false
+        return handled
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val viewportHeight = MeasureSpec.getSize(heightMeasureSpec)
+        val panelHeight = (viewportHeight * if (large) 0.92f else 0.5f).roundToInt()
+        panel.layoutParams.height = panelHeight
+        val expandedOffset = viewportHeight - panelHeight
+        if (behavior.expandedOffset != expandedOffset) behavior.expandedOffset = expandedOffset
+        val peek = if (medium) (viewportHeight * 0.5f).roundToInt() else panelHeight
+        if (behavior.peekHeight != peek) behavior.peekHeight = peek
+        (body.layoutParams as FrameLayout.LayoutParams).apply {
+            topMargin = if (grip.visibility == View.VISIBLE) dp(16) else 0
+            height = max(0, (if (compact) peek else panelHeight) - topMargin)
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    private fun dp(value: Int) = (resources.displayMetrics.density * value).roundToInt()
+}
+
+internal class CraftNativeModalView(context: Context) : FrameLayout(context) {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
@@ -3866,19 +3977,32 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     }
     private var renderedVisible = false
     private var animationGeneration = 0
-    var focusToRestore: View? = null
+    private var closeRequested = false
+    var presentationOrder = 0L
+    var focusToRestore: Pair<View, String?>? = null
     var onRequestClose: ((String) -> Unit)? = null
+    var onDismissComplete: (() -> Unit)? = null
     var viewportStyle = JSONObject()
     var declarationPath = ""
-    var sheetFraction: Float? = null
+    private var sheet: CraftNativeSheetLayout? = null
 
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val fraction = sheetFraction
-        val params = content.layoutParams as LayoutParams
-        params.height = if (fraction == null) LayoutParams.MATCH_PARENT else (View.MeasureSpec.getSize(heightMeasureSpec) * fraction).toInt()
-        params.gravity = Gravity.BOTTOM
-        content.layoutParams = params
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    fun configureSheet(detents: Set<String>?, selected: String?, grabber: Boolean, dismissible: Boolean) {
+        if (detents == null) {
+            val layer = sheet ?: return
+            (content.parent as? ViewGroup)?.removeView(content)
+            removeView(layer)
+            sheet = null
+            addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            return
+        }
+        val layer = sheet ?: run {
+            removeView(content)
+            CraftNativeSheetLayout(context, content) { requestClose("swipe") }.also {
+                sheet = it
+                addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            }
+        }
+        layer.configure(detents, selected, grabber, dismissible)
     }
 
     var transparent: Boolean = false
@@ -3900,6 +4024,8 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     var dismissOnOutsideTap: Boolean = false
 
     init {
+        visibility = View.GONE
+        alpha = 0f
         isClickable = true
         blocker.isClickable = true
         blocker.setOnTouchListener { _, event ->
@@ -3913,58 +4039,68 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     }
 
     fun requestClose(reason: String = "backdrop") {
-        if (!blocksBackground && !dismissOnOutsideTap) return
+        if (!renderedVisible || closeRequested || (!blocksBackground && !dismissOnOutsideTap && reason != "back")) return
         val handler = onRequestClose ?: return
-        isClickable = false
-        blocker.isEnabled = false
+        closeRequested = true
         handler(reason)
+    }
+
+    private fun completeDismissal(generation: Int) {
+        if (animationGeneration != generation || renderedVisible) return
+        visibility = View.GONE
+        presentationOrder = 0L
+        (sheet ?: content).translationY = 0f
+        alpha = 0f
+        ContextCompat.getMainExecutor(context).execute {
+            if (animationGeneration == generation && !renderedVisible && parent != null) onDismissComplete?.invoke()
+        }
     }
 
     fun setVisible(visible: Boolean, opacity: Float, animationType: String?) {
         if (visible) {
+            closeRequested = false
             isClickable = blocksBackground
             blocker.isEnabled = blocksBackground
         }
-        if (renderedVisible == visible && visibility == if (visible) View.VISIBLE else View.GONE) {
+        if (renderedVisible == visible) {
             if (visible && alpha != opacity) alpha = opacity
             return
         }
-        val wasVisible = renderedVisible && visibility == View.VISIBLE
         renderedVisible = visible
         animationGeneration += 1
         val generation = animationGeneration
-        animate().cancel()
+        val animation = if (android.animation.ValueAnimator.areAnimatorsEnabled()) animationType else "none"
+        val layer = sheet ?: content
+        animate().withEndAction(null).cancel()
+        layer.animate().cancel()
         if (!visible) {
-            if (animationType == "slide" && wasVisible) {
+            if (animation == "slide" && visibility == View.VISIBLE && sheet?.isHidden != true) {
                 val distance = max(height, (parent as? View)?.height ?: resources.displayMetrics.heightPixels).toFloat()
-                animate().translationY(distance).alpha(0f).setDuration(240L).withEndAction {
-                    if (animationGeneration != generation) return@withEndAction
-                    visibility = View.GONE
-                    translationY = 0f
-                    alpha = 0f
+                layer.animate().translationY(distance).setDuration(240L).start()
+                animate().alpha(0f).setDuration(240L).withEndAction {
+                    completeDismissal(generation)
                 }.start()
             } else {
-                alpha = 0f
-                translationY = 0f
-                visibility = View.GONE
+                completeDismissal(generation)
             }
             return
         }
         visibility = View.VISIBLE
-        if (animationType == "none") {
-            translationY = 0f
+        sheet?.resetDetent()
+        if (animation == "none") {
+            layer.translationY = 0f
             alpha = opacity
-        } else if (animationType == "slide") {
+        } else if (animation == "slide") {
             alpha = opacity
-            translationY = max(height, (parent as? View)?.height ?: resources.displayMetrics.heightPixels).toFloat()
+            layer.translationY = max(height, (parent as? View)?.height ?: resources.displayMetrics.heightPixels).toFloat()
             post {
                 if (animationGeneration != generation || visibility != View.VISIBLE) return@post
                 val distance = max(height, (parent as? View)?.height ?: resources.displayMetrics.heightPixels).toFloat()
-                translationY = distance
-                animate().translationY(0f).setDuration(240L).start()
+                layer.translationY = distance
+                layer.animate().translationY(0f).setDuration(240L).start()
             }
         } else {
-            translationY = 0f
+            layer.translationY = 0f
             alpha = 0f
             animate().alpha(opacity).setDuration(180L).start()
         }
@@ -3972,15 +4108,21 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
 
     fun resetForTeardown() {
         animationGeneration += 1
-        animate().cancel()
+        renderedVisible = false
+        closeRequested = false
+        presentationOrder = 0L
+        animate().withEndAction(null).cancel()
+        (sheet ?: content).animate().cancel()
         visibility = View.GONE
-        translationY = 0f
+        (sheet ?: content).translationY = 0f
         alpha = 0f
         isClickable = true
         blocksBackground = true
         dismissOnOutsideTap = false
         blocker.isEnabled = true
         onRequestClose = null
+        onDismissComplete = null
+        focusToRestore = null
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -4002,7 +4144,7 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
         val index = group.indexOfChild(this)
         return index > 0 && (0 until index).any { siblingIndex ->
             val sibling = group.getChildAt(siblingIndex)
-            sibling is CraftNativeModalView && CraftNativePointers.ownsTouch(sibling) && sibling.blocksBackground && sibling.visibility == View.VISIBLE && sibling.alpha > 0.01f
+            sibling is CraftNativeModalView && CraftNativePointers.ownsTouch(sibling) && sibling.blocksBackground && sibling.visibility == View.VISIBLE
         }
     }
 }
@@ -5146,7 +5288,7 @@ class MainActivity : AppCompatActivity() {
         val pressBaseBackgrounds = mutableMapOf<View, Drawable?>()
         val modalVisibility = mutableMapOf<View, Boolean>()
         val modalAccessibility = mutableMapOf<View, Int>()
-        val modalCloseHandlers = mutableMapOf<View, String>()
+        var nextModalOrder = 0L
         val layoutHandlers = mutableMapOf<View, String>()
         val layoutListeners = mutableMapOf<View, View.OnLayoutChangeListener>()
         val lastLayoutBounds = mutableMapOf<View, LayoutBounds>()
@@ -5463,9 +5605,14 @@ class MainActivity : AppCompatActivity() {
         // while links are still queued for replay. Same gap, both hosts, and
         // better as its own change than as a silent asymmetry here.
         val start = if (launch != null) launch else gatedStartPath(routes.initialPath)
-        selectTab(routes.tabFor(start)?.let { routes.tabs.indexOf(it) } ?: 0)
-        if (launch != null && routes.tabFor(launch) == null) navigateOpen(launch, fromLink = true)
-        else if (routes.tabs.isEmpty() && screens.isEmpty()) navigateOpen(start)
+        val tab = routes.tabFor(start)
+        val match = routes.match(start)
+        if (launch == null || tab != null || (routes.tabs.isEmpty() && match != null)) {
+            selectTab(tab?.let(routes.tabs::indexOf) ?: 0, initial = match)
+        } else {
+            selectTab(0)
+            navigateOpen(launch, fromLink = true)
+        }
     }
 
     /**
@@ -5517,7 +5664,8 @@ class MainActivity : AppCompatActivity() {
         bars.onTab = { index ->
             interruptTabSwipe()
             haptic()
-            if (index == currentTab) popToRoot() else selectTab(index)
+            if (index == currentTab && !startsOutsideTab(index)) popToRoot()
+            else selectTab(index, canonical = true)
         }
         bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }
         bars.onTabSwipeStart = { dx, x, y -> beginTabSwipe(dx, x, y) }
@@ -5550,7 +5698,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** A tab chosen: its stack shows, its root screen opened the first time. */
-    private fun selectTab(index: Int) {
+    private fun selectTab(index: Int, initial: CraftNativeRouteMatch? = null, canonical: Boolean = false) {
         if (index !in tabStacks.indices) return
         // The tabs are under a cover: it closes first.
         closeCover(animated = false)
@@ -5558,16 +5706,28 @@ class MainActivity : AppCompatActivity() {
         currentTab = index
         screens = tabStacks[index]
         chrome?.selectTab(index)
-        ensureTabRoot(index)?.let(::show)
+        // The initial screen may be sign-in or another non-tab route. Once
+        // the app explicitly opens this tab, replace that temporary root.
+        val displaced = if (canonical && startsOutsideTab(index)) {
+            screens.asReversed().toList().also { screens.clear() }
+        } else emptyList()
+        ensureTabRoot(index, initial)?.let(::show)
+        closeScreens(displaced) {}
+    }
+
+    private fun startsOutsideTab(index: Int): Boolean {
+        val tab = routes.tabs.getOrNull(index) ?: return false
+        val root = tabStacks.getOrNull(index)?.firstOrNull() ?: return false
+        return root.path != tab.id
     }
 
     /** Mount a tab's root without stealing focus, for an interactive swipe. */
-    private fun ensureTabRoot(index: Int): Screen? {
+    private fun ensureTabRoot(index: Int, initial: CraftNativeRouteMatch? = null): Screen? {
         if (index !in tabStacks.indices) return null
         tabStacks[index].lastOrNull()?.let { return it }
         val previous = screens
         screens = tabStacks[index]
-        val match = routes.tabs.getOrNull(index)?.let { routes.match(it.id) }
+        val match = initial ?: routes.tabs.getOrNull(index)?.let { routes.match(it.id) }
         val screen = if (match != null) openScreen(match.screen, match.params, showImmediately = false) else openScreen(null, showImmediately = false)
         screen?.path = match?.path
         screens = previous
@@ -5732,7 +5892,7 @@ class MainActivity : AppCompatActivity() {
         }
         val tab = routes.tabFor(path)
         if (tab != null) {
-            selectTab(routes.tabs.indexOf(tab))
+            selectTab(routes.tabs.indexOf(tab), canonical = true)
             popToRoot()
             val root = screens.firstOrNull()
             if (root != null && match != null && (match.params.length() > 0 || props.length() > 0)) {
@@ -6763,9 +6923,8 @@ class MainActivity : AppCompatActivity() {
             if (view is ViewGroup) for (index in 0 until view.childCount) collect(view.getChildAt(index))
         }
         collect(screen.view)
-        // A previous targeted update may already have promoted siblings in a
-        // different order. Use declaration paths, with numeric child indices,
-        // so a nested popup stays above its parent after every update.
+        // When several layers open in the same update, order parents first
+        // and siblings in declaration order. Later openings go on top.
         overlays.sortWith(Comparator { first, second ->
             val firstPath = first.declarationPath.split('.')
             val secondPath = second.declarationPath.split('.')
@@ -6779,17 +6938,31 @@ class MainActivity : AppCompatActivity() {
             }
             firstPath.size.compareTo(secondPath.size)
         })
-        overlays.forEach { modal ->
+        for (modal in overlays) {
+            if (modal.visibility == View.VISIBLE && modal.presentationOrder == 0L) {
+                modal.presentationOrder = ++screen.nextModalOrder
+            }
+        }
+        val ordered = overlays.sortedBy { it.presentationOrder }
+        for (modal in ordered) {
             if (modal.parent !== screen.view) {
                 (modal.parent as? ViewGroup)?.removeView(modal)
                 screen.view.addView(modal)
                 // Removing a view clears its old parent's flex style.
                 screen.view.setChildStyle(modal, modal.viewportStyle, resources.displayMetrics.density)
             }
-            modal.bringToFront()
+        }
+        val firstModalIndex = screen.view.childCount - ordered.size
+        if (ordered.indices.any { screen.view.getChildAt(firstModalIndex + it) !== ordered[it] }) {
+            ordered.forEach { it.bringToFront() }
+        }
+        val siblingZ = (0 until firstModalIndex).maxOfOrNull { screen.view.getChildAt(it).z } ?: 0f
+        ordered.forEachIndexed { index, modal ->
+            val z = siblingZ + index + 1f
+            if (modal.z != z) modal.z = z
         }
         craftNativeModalAccessibility(screen.view, screen.modalAccessibility) {
-            it is CraftNativeModalView && it.blocksBackground && screen.modalVisibility[it] == true
+            it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE
         }
     }
 
@@ -6799,15 +6972,8 @@ class MainActivity : AppCompatActivity() {
      * update of that screen, and when another screen is shown in its place.
      */
     private fun syncChromeModalBlock() {
-        var blocked = false
-        var dimmed = false
-        visibleScreen?.modalVisibility?.forEach { (view, visible) ->
-            val modal = view as? CraftNativeModalView ?: return@forEach
-            if (!visible || !modal.blocksBackground) return@forEach
-            blocked = true
-            if (!modal.transparent) dimmed = true
-        }
-        chrome?.setBlockedByModal(blocked, dimmed)
+        val blocking = visibleScreen?.view?.presentedModalsFrontToBack()?.filter { it.blocksBackground }
+        chrome?.setBlockedByModal(blocking?.any() == true, blocking?.any { !it.transparent } == true)
     }
 
     private fun updateStatusBarProps(screen: Screen, props: JSONObject) {
@@ -7261,12 +7427,15 @@ class MainActivity : AppCompatActivity() {
                 // the screen viewport rather than the old clipped parent.
                 val sheetStyle = craftNativeOptionalString(props.opt("presentationStyle"))
                 val detents = props.optJSONArray("sheetDetents")
-                val firstDetent = detents?.optString(0)?.takeIf { it == "medium" || it == "large" } ?: "medium"
-                val selectedDetent = craftNativeOptionalString(props.opt("selectedDetent")) ?: firstDetent
-                val fraction = if (blocksBackground && sheetStyle in setOf("pageSheet", "formSheet")) {
-                    if (selectedDetent == "large") 0.92f else 0.5f
+                val selectedDetent = craftNativeOptionalString(props.opt("selectedDetent"))
+                val requestClose = craftNativeOptionalString(events.opt("onRequestClose")).orEmpty()
+                val sheetDetents = if (blocksBackground && (sheetStyle == "pageSheet" || sheetStyle == "formSheet")) {
+                    if (detents == null) setOf("medium", "large") else {
+                        (0 until detents.length()).map { detents.optString(it) }.filter { it == "medium" || it == "large" }.toSet()
+                            .ifEmpty { setOf("large") }
+                    }
                 } else null
-                if (sheetFraction != fraction) { sheetFraction = fraction; requestLayout() }
+                configureSheet(sheetDetents, selectedDetent, craftNativeBoolean(props.opt("grabberVisible"), true), requestClose.isNotBlank())
                 viewportStyle = style
                 declarationPath = path
                 screen.view.setChildStyle(this, style, resources.displayMetrics.density)
@@ -7285,21 +7454,30 @@ class MainActivity : AppCompatActivity() {
                 val wasVisible = screen.modalVisibility[this]
                 screen.modalVisibility[this] = visible
                 if (visible && wasVisible != true && focusBeforeContent != null && focusBeforeContent !is CraftNativeModalView) {
-                    focusToRestore = focusBeforeContent
+                    focusToRestore = focusBeforeContent to screen.protocolIds[focusBeforeContent]
                 }
-                val requestClose = craftNativeOptionalString(events.opt("onRequestClose")).orEmpty()
-                if (requestClose.isNotBlank()) screen.modalCloseHandlers[this] = requestClose else screen.modalCloseHandlers.remove(this)
                 onRequestClose = if (requestClose.isNotBlank()) {
                     { reason -> send(screen, "EVENT", JSONObject().put("handlerName", requestClose).put("nativeEvent", JSONObject().put("reason", reason))) }
                 } else {
                     null
                 }
-                setVisible(visible, craftNativeFiniteFloat(style, "opacity", 1f), craftNativeOptionalString(props.opt("animationType")))
-                if (!visible && wasVisible == true) {
-                    val restore = focusToRestore
+                val dismissed = craftNativeOptionalString(events.opt("onDismissComplete"))
+                onDismissComplete = {
+                    val target = focusToRestore
                     focusToRestore = null
-                    restore?.post {
-                        if (restore.isAttachedToWindow) restore.requestFocus()
+                    if (screen.active) {
+                        if (visibleScreen === screen) {
+                            promoteModalOverlays(screen)
+                            syncChromeModalBlock()
+                            target?.let { (restore, identity) ->
+                                if (restore.isAttachedToWindow && restore.isShown && screen.protocolIds[restore] == identity && screen.view.findFocus() == null) {
+                                    restore.requestFocus()
+                                }
+                            }
+                        }
+                        if (!dismissed.isNullOrBlank()) {
+                            send(screen, "EVENT", JSONObject().put("handlerName", dismissed).put("nativeEvent", JSONObject()))
+                        }
                     }
                 }
                 if (wasVisible != visible && (visible || wasVisible == true)) {
@@ -7319,6 +7497,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                setVisible(visible, craftNativeFiniteFloat(style, "opacity", 1f), craftNativeOptionalString(props.opt("animationType")))
             }
             "TouchableOpacity", "TouchableHighlight", "Pressable" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
@@ -8137,7 +8316,7 @@ class MainActivity : AppCompatActivity() {
     private fun addJustificationSpacers(layout: CraftNativeFlexLayout, value: String) { }
 
     private fun applyViewStyle(view: View, style: JSONObject) {
-        view.alpha = craftNativeFiniteFloat(style, "opacity", 1f)
+        if (view !is CraftNativeModalView) view.alpha = craftNativeFiniteFloat(style, "opacity", 1f)
         // A Text's padding (`px-4` on a line of text) is where its text
         // starts, as on iOS; containers and fields lay out their own.
         if (view is TextView && view !is EditText && view !is CraftNativeIconView) {
@@ -9773,7 +9952,6 @@ class MainActivity : AppCompatActivity() {
         screen.pressUnderlayColors.keys.removeAll(released)
         screen.pressBaseBackgrounds.keys.removeAll(released)
         screen.modalVisibility.keys.removeAll(released)
-        screen.modalCloseHandlers.keys.removeAll(released)
     }
 
     private fun closeScreens(screens: List<Screen>, done: () -> Unit) {
@@ -9853,10 +10031,14 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() = handleNativeBack()
 
     private fun handleNativeBack() {
-        val screen = screens.lastOrNull() ?: return back()
-        val modal = screen.modalVisibility.entries.lastOrNull { (view, visible) -> visible && view.visibility == View.VISIBLE }
+        if (ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true) {
+            WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.ime())
+            return
+        }
+        val screen = visibleScreen ?: return back()
+        val modal = screen.view.presentedModalsFrontToBack().firstOrNull { it.blocksBackground || it.onRequestClose != null }
         if (modal != null) {
-            (modal.key as? CraftNativeModalView)?.requestClose(reason = "back")
+            modal.requestClose(reason = "back")
             return
         }
         back()
