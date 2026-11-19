@@ -1,5 +1,32 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.515...v0.0.516)
+
+## 🐛 Bug Fixes
+
+- **android**: coordinate native sheets, overlay dismissal, and tab entry ([c30fee2](https://github.com/craft-native/craft/commit/c30fee2)) _(by Chris Breuer)_ ([#571](https://github.com/craft-native/craft/issues/571), [#575](https://github.com/craft-native/craft/issues/575), [#576](https://github.com/craft-native/craft/issues/576), [#577](https://github.com/craft-native/craft/issues/577))
+- **ios**: complete modal dismissal after UIKit releases the layer ([2a4f068](https://github.com/craft-native/craft/commit/2a4f068)) _(by Chris Breuer)_
+- **ios**: handle deferred password prompts in the native test driver ([1759203](https://github.com/craft-native/craft/commit/1759203)) _(by Chris Breuer)_
+- **ios**: leave a switch's colours alone when a render does not change them ([7b95b70](https://github.com/craft-native/craft/commit/7b95b70)) _(by glennmichael123)_ ([#574](https://github.com/craft-native/craft/issues/574))
+- **ios**: a drag from an unfocused text field scrolls instead of focusing it ([e5b163e](https://github.com/craft-native/craft/commit/e5b163e)) _(by glennmichael123)_ ([#573](https://github.com/craft-native/craft/issues/573), [#562](https://github.com/craft-native/craft/issues/562))
+- **ios**: never leave a sheet up empty ([480eb06](https://github.com/craft-native/craft/commit/480eb06)) _(by glennmichael123)_ ([#572](https://github.com/craft-native/craft/issues/572))
+
+## 🧪 Tests
+
+- **native**: verify modal release and overlay ordering ([afdc804](https://github.com/craft-native/craft/commit/afdc804)) _(by Chris Breuer)_
+- **ios**: hold the large content viewer longer than a slow recorder's bracket ([24c07aa](https://github.com/craft-native/craft/commit/24c07aa)) _(by glennmichael123)_ ([#563](https://github.com/craft-native/craft/issues/563))
+- **ios**: page the pager with drags past half its width ([bfe8eec](https://github.com/craft-native/craft/commit/bfe8eec)) _(by glennmichael123)_ ([#559](https://github.com/craft-native/craft/issues/559))
+- **ios**: log what is still animating when a refresh never goes idle ([abcc495](https://github.com/craft-native/craft/commit/abcc495)) _(by glennmichael123)_ ([#522](https://github.com/craft-native/craft/issues/522))
+
+## 🤖 Continuous Integration
+
+- stop Spotlight indexing on the macOS simulator runners ([977b9ed](https://github.com/craft-native/craft/commit/977b9ed)) _(by glennmichael123)_ ([#560](https://github.com/craft-native/craft/issues/560))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.514...v0.0.515)
 
 ## 🐛 Bug Fixes
