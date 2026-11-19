@@ -4747,6 +4747,20 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         sheet.delegate = self
     }
 
+    /// Dismisses the sheet once UIKit will: a dismiss sent while it is
+    /// still being presented (a row tapped as it rises) is ignored, and the
+    /// sheet stayed up after the Modal had closed.
+    private func dismissSheet(_ controller: CraftNativeSheetController, animated: Bool, completion: @escaping () -> Void) {
+        if controller.isBeingPresented, let coordinator = controller.transitionCoordinator {
+            coordinator.animate(alongsideTransition: nil) { [weak controller] _ in
+                guard let controller else { return completion() }
+                controller.dismiss(animated: animated, completion: completion)
+            }
+            return
+        }
+        controller.dismiss(animated: animated, completion: completion)
+    }
+
     private func restoreSheetContent(_ controller: CraftNativeSheetController) {
         guard sheetController === controller else { return }
         contentStack.removeFromSuperview()
@@ -4761,7 +4775,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         guard visible else {
             guard let controller = sheetController else { return }
             controller.view.endEditing(true)
-            controller.dismiss(animated: animated) { [weak self, weak controller] in
+            dismissSheet(controller, animated: animated) { [weak self, weak controller] in
                 guard let self, let controller else { return }
                 self.restoreSheetContent(controller)
                 if self.renderedVisible { self.setSheetVisible(true, animated: animated) }
@@ -4902,9 +4916,19 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         renderedVisible = false
         accessibilityViewIsModal = false
         sheetPresenter = nil
+        // The content stays in a sheet that is still up until it has gone:
+        // taken out at once, the sheet the Modal left behind was an empty
+        // card (HQ's choice sheet). A sheet already going puts it back when
+        // it is gone; one never presented gives it back now.
         if let controller = sheetController {
-            controller.dismiss(animated: false)
-            restoreSheetContent(controller)
+            if controller.presentingViewController == nil {
+                restoreSheetContent(controller)
+            } else if !controller.isBeingDismissed {
+                dismissSheet(controller, animated: false) { [weak self, weak controller] in
+                    guard let self, let controller else { return }
+                    self.restoreSheetContent(controller)
+                }
+            }
         }
         craftScreenController?.forgetFocusedInput(in: self)
         endEditing(true)

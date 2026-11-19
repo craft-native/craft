@@ -6652,6 +6652,104 @@ final class NativePlatformControlTests: XCTestCase {
         wait(for: [dismissed], timeout: 3)
     }
 
+    /// HQ's choice sheet showed up empty: a medium page sheet with its
+    /// grabber and no rows (Craft 0.0.514). The sheet is opened, a row is
+    /// picked (visible goes false with the rows kept for 500 ms, then the
+    /// Modal leaves the tree), and it is opened again. Each time it is up,
+    /// every row is on screen in it.
+    func testAChoiceSheetShowsItsRowsEachTimeItOpens() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let choices = ["Male", "Female", "Non-binary", "Prefer not to say"]
+        func document(sheet visible: Bool?) -> [String: Any] {
+            var children: [[String: Any]] = [["type": "Text", "props": ["key": "behind"], "children": ["Me"]]]
+            if let visible {
+                children.append(["type": "Modal", "props": ["key": "choice", "visible": visible, "presentationStyle": "pageSheet", "sheetDetents": ["medium", "large"]],
+                                 "events": ["onRequestClose": "closed"],
+                                 "children": choices.enumerated().map { index, label in
+                                     ["type": "TouchableOpacity", "props": ["key": "row-\(index)", "testID": "row-\(index)"], "style": ["padding": 16],
+                                      "events": ["onPress": "picked"], "children": [["type": "Text", "props": ["key": "label-\(index)"], "children": [label]]]]
+                                 }])
+            }
+            return ["type": "View", "props": ["key": "root"], "style": ["flex": 1], "children": children]
+        }
+        func waitFor(_ description: String, timeout: TimeInterval = 5, _ done: @escaping () -> Bool) {
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in done() }, object: nil)
+            expectation.expectationDescription = description
+            wait(for: [expectation], timeout: timeout)
+        }
+        func row(_ index: Int, in root: UIView) -> UIView? {
+            if root.accessibilityIdentifier == "row-\(index)" { return root }
+            for child in root.subviews { if let found = row(index, in: child) { return found } }
+            return nil
+        }
+        /// Every row is in the sheet's view, laid out, inside its bounds and
+        /// not hidden by anything above it.
+        func assertRowsShown(_ moment: String, file: StaticString = #filePath, line: UInt = #line) throws {
+            let sheet = try XCTUnwrap(screen.presentedViewController, "\(moment): no sheet", file: file, line: line)
+            sheet.view.layoutIfNeeded()
+            for index in choices.indices {
+                let view = try XCTUnwrap(row(index, in: sheet.view), "\(moment): row \(index) is not in the sheet", file: file, line: line)
+                let frame = view.convert(view.bounds, to: sheet.view)
+                XCTAssertGreaterThan(frame.height, 20, "\(moment): row \(index) has no height (\(frame))", file: file, line: line)
+                XCTAssertTrue(sheet.view.bounds.contains(frame), "\(moment): row \(index) at \(frame) is outside the sheet \(sheet.view.bounds)", file: file, line: line)
+                var ancestor: UIView? = view
+                while let current = ancestor, current !== sheet.view {
+                    XCTAssertFalse(current.isHidden, "\(moment): \(type(of: current)) above row \(index) is hidden", file: file, line: line)
+                    XCTAssertGreaterThan(current.alpha, 0.01, "\(moment): \(type(of: current)) above row \(index) is transparent", file: file, line: line)
+                    ancestor = current.superview
+                }
+            }
+        }
+
+        screen.render(document(sheet: nil))
+        for round in 1...2 {
+            screen.render(document(sheet: true))
+            waitFor("sheet \(round) presented") { screen.presentedViewController?.view.window != nil && screen.presentedViewController?.isBeingPresented == false }
+            try assertRowsShown("open \(round)")
+
+            // A row picked: hidden, rows kept while it slides down.
+            screen.render(document(sheet: false))
+            try assertRowsShown("closing \(round)")
+            waitFor("sheet \(round) dismissed") { screen.presentedViewController == nil }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            screen.render(document(sheet: nil))
+        }
+
+        /// Turns of the main run loop until `done`, a few milliseconds
+        /// apart: a predicate expectation looks only about once a second,
+        /// long after a sheet has finished opening.
+        func spin(until done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(3)
+            while !done(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        }
+
+        // Picked before the sheet had finished opening, where UIKit ignores
+        // a dismiss: the sheet still goes, and the Modal leaving the tree
+        // 500 ms later never strips the rows from a sheet that is up.
+        screen.render(document(sheet: true))
+        spin { screen.presentedViewController?.isBeingPresented == true }
+        XCTAssertEqual(screen.presentedViewController?.isBeingPresented, true, "caught while it opens")
+        screen.render(document(sheet: false))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        screen.render(document(sheet: nil))
+        if screen.presentedViewController != nil { try assertRowsShown("left the tree while still up") }
+        waitFor("the sheet picked while it opened is gone") { screen.presentedViewController == nil }
+
+        // The Modal taken out of the tree as it slides down (no 500 ms
+        // wait): the sheet keeps its rows until it has gone.
+        screen.render(document(sheet: true))
+        waitFor("sheet presented again") { screen.presentedViewController?.view.window != nil && screen.presentedViewController?.isBeingPresented == false }
+        screen.render(document(sheet: false))
+        screen.render(document(sheet: nil))
+        if screen.presentedViewController != nil { try assertRowsShown("removed as it slid down") }
+        waitFor("the removed sheet is gone") { screen.presentedViewController == nil }
+    }
+
     /// A Modal's accessibilityLabel stayed on the Modal's own view in the
     /// screen, which is hidden while UIKit presents the sheet. The sheet a
     /// reader lands in had no name and was no group, so VoiceOver entered
