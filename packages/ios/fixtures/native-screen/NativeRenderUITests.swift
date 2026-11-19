@@ -427,7 +427,15 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertTrue(pager.exists)
         XCTAssertTrue(app.staticTexts["pager-page-0"].isHittable)
         XCTAssertFalse(app.staticTexts["pager-page-1"].exists, "Off-screen page should not enter the accessibility tree")
-        pager.swipeLeft()
+        // A drag across most of the page, not swipeLeft/Right: on a loaded
+        // runner a synthesized swipe arrived too short or slow to page, and
+        // the pager rightly settled back (#559). Past half its width it pages
+        // whatever the speed.
+        func page(_ toward: CGFloat) {
+            let from = pager.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + 0.35 * toward, dy: 0.5))
+            from.press(forDuration: 0.05, thenDragTo: pager.coordinate(withNormalizedOffset: CGVector(dx: 0.5 - 0.35 * toward, dy: 0.5)), withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        page(1)
         waitForLabel(status, "Page 2 of 3")
         XCTAssertTrue(app.staticTexts["pager-page-1"].isHittable)
         XCTAssertFalse(app.staticTexts["pager-page-0"].exists)
@@ -435,7 +443,7 @@ final class NativeRenderUITests: XCTestCase {
         waitForLabel(status, "Page 3 of 3")
         XCTAssertTrue(app.staticTexts["pager-page-2"].isHittable)
         XCTAssertFalse(app.staticTexts["pager-page-1"].exists)
-        pager.swipeRight()
+        page(-1)
         waitForLabel(status, "Page 2 of 3")
         XCTAssertTrue(app.staticTexts["pager-page-1"].isHittable)
         XCTAssertFalse(app.staticTexts["pager-page-2"].exists)

@@ -6464,6 +6464,48 @@ final class NativePlatformControlTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset.x, scroll.bounds.width * 2, accuracy: 0.5)
     }
 
+    /// #559: after a controlled `pageIndex` moved the pager to its last
+    /// page, a finger swipe back did not move it. A drag that begins while
+    /// the controlled move is still animating, and ends a page back, is the
+    /// page the pager settles on and reports, and nothing moves it back.
+    func testAFingerDragDuringAControlledMoveIsThePageThePagerKeeps() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        screen.evaluateScript("globalThis.pages = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'page-selected') pages.push(m.payload.nativeEvent); };")
+        screen.render(pagerDocument(index: 1, count: 3))
+        screen.view.layoutIfNeeded()
+        let scroll = try XCTUnwrap(find(UIScrollView.self, below: screen.view))
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 1, count: 3)
+
+        // The last page asked for; the finger lands while UIKit animates there.
+        screen.render(pagerDocument(index: 2, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        let deadline = Date().addingTimeInterval(3)
+        while scroll.contentOffset.x <= scroll.bounds.width + 1, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        XCTAssertGreaterThan(scroll.contentOffset.x, scroll.bounds.width + 1, "caught during the controlled move")
+        screen.scrollViewWillBeginDragging(scroll)
+        scroll.setContentOffset(CGPoint(x: scroll.bounds.width, y: 0), animated: false)
+        screen.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        waitForPager(screen, index: 1, count: 3)
+
+        // Settled: a render that still says page 2 (the script has not heard
+        // yet) and a layout pass leave the page the finger chose.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        screen.render(pagerDocument(index: 2, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(scroll.contentOffset.x, scroll.bounds.width, accuracy: 0.5, "the pager went back to the controlled page")
+        XCTAssertEqual(screen.evaluateScript("pages[pages.length - 1].index")?.toInt32(), 1)
+    }
+
     func testCSSGenericFontFallbacksProduceNativeFamiliesAndPreserveTraits() throws {
         let screen = CraftNativeScreenController(config: CraftConfig())
         screen.loadViewIfNeeded()
