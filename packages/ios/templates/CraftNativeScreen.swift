@@ -4667,7 +4667,7 @@ final class CraftCompactSheetPresentationController: UIPresentationController, U
         guard !presentedViewController.isModalInPresentation,
               delegate?.presentationControllerShouldDismiss?(self) ?? true else { return false }
         delegate?.presentationControllerWillDismiss?(self)
-        presentedViewController.dismiss(animated: true) { [weak self] in
+        presentedViewController.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
             guard let self else { return }
             self.delegate?.presentationControllerDidDismiss?(self)
         }
@@ -4704,7 +4704,10 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     private let backdropTap = UITapGestureRecognizer()
     private var renderedVisible = false
     private var animationGeneration = 0
+    private var sheetDismissalInFlight = false
+    private var closeRequested = false
     var onRequestClose: ((String) -> Void)?
+    var onDismissComplete: (() -> Void)?
     weak var sheetPresenter: CraftNativeScreenController?
     var presentationStyle = "overFullScreen"
     var sheetDetents: [String] = ["medium", "large"]
@@ -4769,16 +4772,34 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
         setNeedsLayout()
     }
 
-    private func setSheetVisible(_ visible: Bool, animated: Bool) {
-        renderedVisible = visible
+    private func completeDismissal(_ generation: Int) {
+        accessibilityViewIsModal = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.animationGeneration == generation, !self.renderedVisible,
+                  self.superview != nil else { return }
+            self.onDismissComplete?()
+        }
+    }
+
+    private func setSheetVisible(_ visible: Bool, changed: Bool, animated: Bool) {
         isHidden = true // UIKit owns the scrim, safe area, grabber and pan.
         guard visible else {
-            guard let controller = sheetController else { return }
+            guard let controller = sheetController else {
+                if changed { completeDismissal(animationGeneration) }
+                return
+            }
+            guard !sheetDismissalInFlight else { return }
+            sheetDismissalInFlight = true
             controller.view.endEditing(true)
             dismissSheet(controller, animated: animated) { [weak self, weak controller] in
-                guard let self, let controller else { return }
+                guard let self, let controller, self.sheetController === controller else { return }
+                self.sheetDismissalInFlight = false
                 self.restoreSheetContent(controller)
-                if self.renderedVisible { self.setSheetVisible(true, animated: animated) }
+                if self.renderedVisible {
+                    self.setSheetVisible(true, changed: false, animated: animated)
+                } else {
+                    self.completeDismissal(self.animationGeneration)
+                }
             }
             return
         }
@@ -4810,11 +4831,14 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     }
 
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-        guard let controller = presentationController.presentedViewController as? CraftNativeSheetController else { return }
+        guard let controller = presentationController.presentedViewController as? CraftNativeSheetController,
+              sheetController === controller else { return }
         restoreSheetContent(controller)
+        sheetDismissalInFlight = false
         renderedVisible = false
-        accessibilityViewIsModal = false
+        animationGeneration += 1
         onRequestClose?("swipe")
+        completeDismissal(animationGeneration)
     }
 
     var transparent = false {
@@ -4827,7 +4851,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     var blocksBackground = true {
         didSet {
             blocker.isUserInteractionEnabled = blocksBackground
-            accessibilityViewIsModal = blocksBackground && renderedVisible
+            accessibilityViewIsModal = blocksBackground && !isHidden
         }
     }
     /// An opt-in non-modal dismissal policy. The default popup remains
@@ -4837,6 +4861,8 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        isHidden = true
+        alpha = 0
         isUserInteractionEnabled = true
         blocker.isUserInteractionEnabled = true
         blocker.backgroundColor = UIColor.black.withAlphaComponent(0.32)
@@ -4856,25 +4882,29 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     /// press bookkeeping once turned that off for a view with no handler of
     /// its own, and a shown modal let every tap through to the screen behind.
     func setVisible(_ visible: Bool, opacity: CGFloat, animationType: String?) {
-        accessibilityViewIsModal = blocksBackground && visible
+        let changed = renderedVisible != visible
+        renderedVisible = visible
+        if changed { animationGeneration += 1 }
+        if visible {
+            closeRequested = false
+            accessibilityViewIsModal = blocksBackground
+            isUserInteractionEnabled = true
+        }
+        let animation = UIAccessibility.isReduceMotionEnabled ? "none" : animationType
         if blocksBackground && (presentationStyle == "pageSheet" || presentationStyle == "formSheet") {
-            setSheetVisible(visible, animated: animationType != "none")
+            setSheetVisible(visible, changed: changed, animated: animation != "none")
             return
         }
-        if visible { isUserInteractionEnabled = true }
-        if renderedVisible == visible && isHidden == !visible {
+        guard changed else {
             if visible, alpha != opacity { alpha = opacity }
             return
         }
-        let wasVisible = renderedVisible && !isHidden
-        renderedVisible = visible
-        animationGeneration += 1
         let generation = animationGeneration
         layer.removeAllAnimations()
         guard visible else {
             craftScreenController?.forgetFocusedInput(in: self)
             endEditing(true)
-            if animationType == "slide" && wasVisible {
+            if animation == "slide" && !isHidden {
                 let distance = max(bounds.height, superview?.bounds.height ?? UIScreen.main.bounds.height)
                 UIView.animate(withDuration: 0.24, animations: {
                     self.transform = CGAffineTransform(translationX: 0, y: distance)
@@ -4883,19 +4913,21 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
                     guard self.animationGeneration == generation else { return }
                     self.isHidden = true
                     self.transform = .identity
+                    self.completeDismissal(generation)
                 })
             } else {
                 isHidden = true
                 transform = .identity
                 alpha = 0
+                completeDismissal(generation)
             }
             return
         }
         isHidden = false
-        if animationType == "none" {
+        if animation == "none" {
             transform = .identity
             alpha = opacity
-        } else if animationType == "slide" {
+        } else if animation == "slide" {
             let distance = max(bounds.height, superview?.bounds.height ?? UIScreen.main.bounds.height)
             transform = CGAffineTransform(translationX: 0, y: distance)
             alpha = opacity
@@ -4914,6 +4946,9 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
 
     func resetForTeardown() {
         renderedVisible = false
+        onDismissComplete = nil
+        sheetDismissalInFlight = false
+        closeRequested = false
         accessibilityViewIsModal = false
         sheetPresenter = nil
         // The content stays in a sheet that is still up until it has gone:
@@ -4944,9 +4979,9 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     }
 
     func requestClose(reason: String = "backdrop") {
-        guard blocksBackground || dismissOnOutsideTap else { return }
-        guard let onRequestClose else { return }
-        isUserInteractionEnabled = false
+        guard renderedVisible, !closeRequested, blocksBackground || dismissOnOutsideTap,
+              let onRequestClose else { return }
+        closeRequested = true
         onRequestClose(reason)
     }
 
@@ -5015,7 +5050,7 @@ private final class CraftNativeModalView: UIView, UIGestureRecognizerDelegate, U
     /// Up, blocking, and drawn in the screen rather than presented as a
     /// sheet (UIKit's sheet already covers everything).
     var blocksScreenInline: Bool {
-        blocksBackground && renderedVisible && sheetController == nil
+        blocksBackground && !isHidden && sheetController == nil
             && !(presentationStyle == "pageSheet" || presentationStyle == "formSheet")
     }
 }
@@ -7293,7 +7328,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// interrupt the animation and leave the thumb painted at its old edge.
     private var switchUserValues: [ObjectIdentifier: Bool] = [:]
     private var modalVisibility: [ObjectIdentifier: Bool] = [:]
-    private var modalFocusRestore: [ObjectIdentifier: UIView] = [:]
+    private var modalFocusRestore: [ObjectIdentifier: (view: UIView, identity: String)] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
@@ -10581,7 +10616,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: picker)
         case "Modal":
             let modal = result as! CraftNativeModalView
-            let focusBeforeContent = firstResponder(in: rootStack) ?? lastFocusedInput
+            let focusBeforeContent = firstResponder(in: view) ?? lastFocusedInput
             modal.sheetPresenter = self
             modal.presentationStyle = props["presentationStyle"] as? String ?? "overFullScreen"
             modal.sheetDetents = props["sheetDetents"] as? [String] ?? ["medium", "large"]
@@ -10607,8 +10642,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let wasVisible = modalVisibility[modalID]
             modalVisibility[modalID] = visible
             if visible, wasVisible != true, let focusBeforeContent,
-               !focusBeforeContent.isDescendant(of: modal) {
-                modalFocusRestore[modalID] = focusBeforeContent
+               focusBeforeContent.isFirstResponder,
+               let identity = inputIdentities[ObjectIdentifier(focusBeforeContent)] {
+                modalFocusRestore[modalID] = (focusBeforeContent, identity)
+            }
+            let dismissed = nonEmptyHandler(events["onDismissComplete"])
+            modal.onDismissComplete = { [weak self, weak modal] in
+                guard let self, let modal, !self.isLeavingScreen else { return }
+                self.modalBlockedShell[modalID] = "\(modal.blocksScreenInline):\(modal.transparent)"
+                self.hybridEvents?.nativeScreenModalChanged(self)
+                if let (restore, identity) = self.modalFocusRestore.removeValue(forKey: modalID),
+                   restore.window != nil, self.inputIdentities[ObjectIdentifier(restore)] == identity,
+                   self.firstResponder(in: self.view) == nil {
+                    self.lastFocusedInput = restore
+                    self.restoreFocus(restore)
+                }
+                if let dismissed {
+                    self.send(type: "EVENT", payload: ["handlerName": dismissed, "nativeEvent": [:]])
+                }
             }
             if visible, wasVisible != true { positionModals() }
             modal.setVisible(visible, opacity: styleNumber(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)
@@ -10621,17 +10672,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 guard self.modalBlockedShell[ObjectIdentifier(modal)] != state else { return }
                 self.modalBlockedShell[ObjectIdentifier(modal)] = state
                 self.hybridEvents?.nativeScreenModalChanged(self)
-            }
-            if !visible, wasVisible == true {
-                let restore = modalFocusRestore.removeValue(forKey: modalID)
-                DispatchQueue.main.async { [weak self, weak restore] in
-                    guard let self, !self.isLeavingScreen, let restore, restore.window != nil, restore.isDescendant(of: self.view) else { return }
-                    self.lastFocusedInput = restore
-                    _ = restore.becomeFirstResponder()
-                }
-            }
-            modal.onRequestClose = nonEmptyHandler(events["onRequestClose"]).map { handler in
-                { [weak self] reason in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["reason": reason]]) }
             }
             if wasVisible != visible, visible || wasVisible == true {
                 let lifecycleHandler = visible ? events["onShow"] : events["onDismiss"]
@@ -11442,6 +11482,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
         modalVisibility.removeValue(forKey: id)
+        modalFocusRestore.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
@@ -12082,8 +12123,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             direction: style["gradientDirection"] as? String,
             colors: [color(style["gradientFrom"]), color(style["gradientVia"]), color(style["gradientTo"])]
         )
-        view.alpha = styleNumber(style["opacity"]) ?? 1
-        view.isHidden = style["display"] as? String == "none"
+        if !(view is CraftNativeModalView) {
+            view.alpha = styleNumber(style["opacity"]) ?? 1
+            view.isHidden = style["display"] as? String == "none"
+        }
         let borderRadius = styleNumber(style["borderRadius"]) ?? 0
         let cornerRadiusKeys = ["borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius", "borderBottomLeftRadius"]
         let hasCornerRadii = cornerRadiusKeys.contains { style[$0] != nil }

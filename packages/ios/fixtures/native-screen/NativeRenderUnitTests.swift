@@ -5286,6 +5286,48 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(controller.evaluateScript("__modalEvents.join('|')")?.toString(), "shown|requested:backdrop|dismissed|shown|dismissed")
     }
 
+    func testModalDismissCompleteFollowsLayerReleaseAndSkipsStaleClosures() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        screen.evaluateScript("globalThis.events = []; globalThis.__stxNativeCallback = json => { const m = JSON.parse(json); if (m.type === 'EVENT') events.push(m.payload.handlerName); };")
+        func render(_ visible: Bool?, animation: String = "slide") {
+            let children: [[String: Any]] = visible.map { shown in [[
+                "type": "Modal", "props": ["key": "sheet", "visible": shown, "animationType": animation, "presentationStyle": "pageSheet"],
+                "events": ["onDismiss": "dismissed", "onDismissComplete": "complete"],
+            ]] } ?? []
+            screen.render(document(children))
+        }
+        func events() -> String? { screen.evaluateScript("events.join('|')")?.toString() }
+        func until(_ done: @escaping () -> Bool) {
+            let condition = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in done() }, object: nil)
+            wait(for: [condition], timeout: 5)
+        }
+
+        render(true, animation: "none")
+        until { screen.presentedViewController?.view.window != nil }
+        render(false)
+        XCTAssertEqual(events(), "dismissed")
+        until { events() == "dismissed|complete" }
+        XCTAssertNil(screen.presentedViewController, "completion comes after UIKit releases the sheet")
+        render(false, animation: "none")
+        XCTAssertEqual(events(), "dismissed|complete")
+
+        render(true, animation: "none")
+        until { screen.presentedViewController?.view.window != nil }
+        let first = screen.presentedViewController
+        render(false)
+        render(true, animation: "none")
+        until { screen.presentedViewController != nil && screen.presentedViewController !== first }
+        XCTAssertEqual(events(), "dismissed|complete|dismissed", "reopening cancels the older completion")
+        render(false)
+        render(nil)
+        until { screen.presentedViewController == nil }
+        XCTAssertEqual(events(), "dismissed|complete|dismissed|dismissed", "the discarded scope gets no completion")
+    }
+
     /// A form in a modal whose fields fit the screen until the keyboard
     /// rises: the button at the end has to scroll up above the keyboard. A
     /// trail review's Save sat under the keyboard with nothing to scroll.
