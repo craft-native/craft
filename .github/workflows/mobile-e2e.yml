@@ -181,6 +181,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      # A fresh macOS runner is still building its Spotlight index while the
+      # simulator boots: load averages of 200-400, with mds_stores on top,
+      # starved XCTest's app launch until it timed out (#560). Nothing these
+      # jobs run searches with Spotlight.
+      - name: Stop Spotlight indexing
+        run: sudo mdutil -a -i off || true
 
       # These fixtures explicitly use runtimeDir: null; they need Bun and
       # Xcode, while the separate protocol job builds and tests Zig.
@@ -310,6 +316,12 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
+      # A fresh macOS runner is still building its Spotlight index while the
+      # simulator boots: load averages of 200-400, with mds_stores on top,
+      # starved XCTest's app launch until it timed out (#560). Nothing these
+      # jobs run searches with Spotlight.
+      - name: Stop Spotlight indexing
+        run: sudo mdutil -a -i off || true
       - name: Install the pinned native fixture toolchain
         uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
         with:
@@ -342,6 +354,12 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
+      # A fresh macOS runner is still building its Spotlight index while the
+      # simulator boots: load averages of 200-400, with mds_stores on top,
+      # starved XCTest's app launch until it timed out (#560). Nothing these
+      # jobs run searches with Spotlight.
+      - name: Stop Spotlight indexing
+        run: sudo mdutil -a -i off || true
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -391,6 +409,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      # A fresh macOS runner is still building its Spotlight index while the
+      # simulator boots: load averages of 200-400, with mds_stores on top,
+      # starved XCTest's app launch until it timed out (#560). Nothing these
+      # jobs run searches with Spotlight.
+      - name: Stop Spotlight indexing
+        run: sudo mdutil -a -i off || true
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
@@ -655,6 +679,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      # A fresh macOS runner is still building its Spotlight index while the
+      # simulator boots: load averages of 200-400, with mds_stores on top,
+      # starved XCTest's app launch until it timed out (#560). Nothing these
+      # jobs run searches with Spotlight.
+      - name: Stop Spotlight indexing
+        run: sudo mdutil -a -i off || true
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
