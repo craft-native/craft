@@ -273,6 +273,10 @@ jobs:
             run_bounded 20 xcrun simctl list devices || true
           } > "$evidence_dir/simulator.txt" 2>&1
           run_bounded 20 xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
+          # The whole device's log is cut off by the bound above before it
+          # reaches the end of the window; the test app's own lines (the
+          # animation probe, #522) reach it.
+          run_bounded 60 xcrun simctl spawn booted log show --last 30m --style compact --predicate 'process BEGINSWITH "Native"' > "$evidence_dir/app.log" 2>&1 || true
           {
             find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
               \( -name '*NativeNavigation*' -o -name '*NativeRender*' -o -name '*Craft*' \) -print 2>/dev/null || true

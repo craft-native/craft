@@ -296,6 +296,44 @@ final class CraftSceneDelegate: NSObject, UIWindowSceneDelegate {
     }
 }
 
+/// Evidence for a UI test whose wait for the app to go idle never ends
+/// (#522): launched with `-CraftLogAnimations YES`, the app logs every two
+/// seconds the layers that still have animations, and the nearest view
+/// with a test ID around each. Off unless a test asks for it.
+enum CraftAnimationProbe {
+    private static var timer: Timer?
+
+    static func startIfAsked() {
+        guard UserDefaults.standard.bool(forKey: "CraftLogAnimations"), timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in log() }
+    }
+
+    private static func log() {
+        var moving: [String] = []
+        func named(_ view: UIView?) -> String {
+            var current = view
+            while let candidate = current {
+                if let id = candidate.accessibilityIdentifier, !id.isEmpty { return "#" + id }
+                current = candidate.superview
+            }
+            return ""
+        }
+        func visit(_ layer: CALayer) {
+            if let keys = layer.animationKeys(), !keys.isEmpty {
+                let view = layer.delegate as? UIView
+                let owner = view.map { String(describing: type(of: $0)) } ?? String(describing: type(of: layer))
+                moving.append("\(owner)\(named(view))[\(keys.joined(separator: ","))]")
+            }
+            layer.sublayers?.forEach(visit)
+        }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            scene.windows.forEach { visit($0.layer) }
+        }
+        guard !moving.isEmpty else { return }
+        NSLog("[craft animations] %d: %@", moving.count, moving.prefix(12).joined(separator: " "))
+    }
+}
+
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let config = CraftConfig.bundled()
@@ -303,6 +341,7 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
         CraftChromeFonts.configure(config)
         // First, so a crash anywhere in the rest of launch is reported too.
         CraftCrashReporter.shared.start(config)
+        CraftAnimationProbe.startIfAsked()
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().setNotificationCategories(CraftNotificationCategory.registered(config.notificationCategories ?? []))
         // Before launch finishes, which is the only time iOS accepts it.

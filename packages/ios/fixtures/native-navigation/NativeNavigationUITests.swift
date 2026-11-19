@@ -730,6 +730,8 @@ final class NativeNavigationUITests: XCTestCase {
 
     func testRefreshedScrollViewKeepsInputFocusAcrossKeyedMoves() {
         let app = XCUIApplication()
+        // Logs what is still animating if a wait for idle never ends (#522).
+        app.launchArguments += ["-CraftLogAnimations", "YES"]
         app.launch()
         app.buttons["navigation-open-details"].tap()
         XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 10))
@@ -1600,6 +1602,8 @@ final class NativeNavigationUITests: XCTestCase {
     /// UIKit back button, the screen's own back, an edge swipe and a replace.
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
+        // Logs what is still animating if a wait for idle never ends (#522).
+        app.launchArguments += ["-CraftLogAnimations", "YES"]
         app.launch()
         let rootScroll = app.scrollViews["native-root-scroll"]
         XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
