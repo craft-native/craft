@@ -5175,8 +5175,24 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
         addGestureRecognizer(keyboardTapGesture)
         pullToRefresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
+        panGestureRecognizer.addTarget(self, action: #selector(panMoved(_:)))
         addSubview(contentStack)
         setAxis(.vertical)
+    }
+
+    private var panEndedAt: CFTimeInterval = 0
+
+    /// Whether the touch going on now, or the one that has just lifted,
+    /// scrolled this view. A field the touch began on is not focused by it.
+    var touchScrolled: Bool {
+        switch panGestureRecognizer.state {
+        case .began, .changed: return true
+        default: return CACurrentMediaTime() - panEndedAt < 0.2
+        }
+    }
+
+    @objc private func panMoved(_ pan: UIPanGestureRecognizer) {
+        if pan.state == .ended || pan.state == .cancelled { panEndedAt = CACurrentMediaTime() }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -6580,6 +6596,32 @@ private final class CraftNativeSelectableTextView: UITextView {
 final class CraftNativeTextField: UITextField {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+    /// Unfocused, a field has no text to select or magnify. Its text pan and
+    /// loupe still started on a drag that began on it, before the scroll
+    /// view's own pan could: the form did not move, and the touch focused
+    /// the field when it lifted (#573).
+    override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        if !isFirstResponder, recognizer.view === self {
+            let name = String(describing: type(of: recognizer))
+            if recognizer is UIPanGestureRecognizer || name.contains("Pan") || name.contains("Loupe") { return false }
+        }
+        return super.gestureRecognizerShouldBegin(recognizer)
+    }
+
+    /// A touch that scrolled the form is a scroll, not a tap on the field it
+    /// began on: lifted, it focused that field and moved the keyboard's
+    /// target (#573). Focus asked for at any other time is given as before.
+    override func becomeFirstResponder() -> Bool {
+        if !isFirstResponder {
+            var ancestor = superview
+            while let view = ancestor {
+                if let scroll = view as? CraftNativeScrollView, scroll.touchScrolled { return false }
+                ancestor = view.superview
+            }
+        }
+        return super.becomeFirstResponder()
     }
 
     var padding = UIEdgeInsets.zero {

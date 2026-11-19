@@ -613,6 +613,112 @@ final class NativeRenderUITests: XCTestCase {
         XCTAssertTrue(end.isHittable, "the last line can be reached: end \(end.frame), scroll \(scroll.frame)")
     }
 
+    /// #562, from stx's forms suite sideways: with a field focused and the
+    /// keyboard up, each 55-point drag of the root ScrollView was reported to
+    /// move the form about 280 points and back. A drag moves the content by
+    /// about as far as the finger went, and it stays, whether it starts on
+    /// the page or on the focused field. (XCUITest's default-speed drag
+    /// flings about 270 points here even after a hold, keyboard or none, so
+    /// these are slow.)
+    func testADragOfASidewaysFormWithTheKeyboardUpMovesItAsFarAsTheFinger() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["open-form"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15), app.debugDescription)
+        open.tap()
+        let email = app.textFields["form-email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 10), app.debugDescription)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock {
+            XCUIDevice.shared.orientation = .portrait
+            let upright = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)
+            _ = XCTWaiter.wait(for: [upright], timeout: 10)
+        }
+        let sideways = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)
+        wait(for: [sideways], timeout: 10)
+        let scroll = app.scrollViews["form-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10), app.debugDescription)
+        email.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard came up")
+        let password = app.secureTextFields["form-password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 10), app.debugDescription)
+        Thread.sleep(forTimeInterval: 1)
+
+        // Pressed, dragged, held so nothing coasts, as stx's suite does: the
+        // first three from the page, the last three from the focused field.
+        var moves: [String] = []
+        for (step, dy) in [(1, -55.0), (2, 55.0), (3, -55.0), (4, 55.0), (5, -55.0), (6, 55.0)] as [(Int, CGFloat)] {
+            let before = password.frame.minY
+            let start = step <= 3
+                ? scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                : email.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0.3)
+            Thread.sleep(forTimeInterval: 0.8)
+            let after = password.frame.minY
+            Thread.sleep(forTimeInterval: 1)
+            let settled = password.frame.minY
+            moves.append("drag \(step) \(Int(dy)): \(Int(before)) -> \(Int(after)) -> \(Int(settled))")
+            // Toward the finger, by no more than it went (less at an end).
+            XCTAssertEqual((after - before).sign, dy.sign, "drag \(step) moved the form the wrong way: \(moves)")
+            XCTAssertLessThanOrEqual(abs(after - before), abs(dy) + 12, "drag \(step) moved the form further than the finger: \(moves)")
+            XCTAssertEqual(settled, after, accuracy: 2, "drag \(step): the form moved again after the finger let go: \(moves)")
+            XCTAssertEqual(email.value(forKey: "hasKeyboardFocus") as? Bool, true, "drag \(step) took the focus off the field: \(moves)")
+        }
+        let record = XCTAttachment(string: moves.joined(separator: "\n"))
+        record.name = "Sideways drags with the keyboard up"
+        record.lifetime = .keepAlways
+        add(record)
+    }
+
+    /// #573: a drag that began on a field that was not focused did not
+    /// scroll the form, and the field took the focus when the finger lifted.
+    /// A drag from an unfocused field scrolls toward the finger, slow or
+    /// quick, and the field that had the focus keeps it.
+    func testADragFromAnUnfocusedFieldScrollsAndLeavesTheFocusWhereItWas() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["open-form"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15), app.debugDescription)
+        open.tap()
+        let email = app.textFields["form-email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 10), app.debugDescription)
+        let password = app.secureTextFields["form-password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 10), app.debugDescription)
+        email.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard came up")
+        Thread.sleep(forTimeInterval: 1)
+
+        var moves: [String] = []
+        // Slow, held so nothing coasts; then quick, which flings.
+        let scroll = app.scrollViews["form-scroll"]
+        for (step, dy, quick) in [(1, -55.0, false), (2, 55.0, false), (3, -55.0, true), (4, 55.0, true)] as [(Int, CGFloat, Bool)] {
+            // An unfocused field wholly on screen, wherever the last fling left the form.
+            let visible = scroll.frame
+            let field = [password] + (0..<8).map { app.textFields["form-extra-\($0)"] }
+            let from = try XCTUnwrap(field.first { $0.exists && visible.contains($0.frame) }, "no unfocused field on screen: \(moves)")
+            let before = from.frame.minY
+            let start = from.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            if quick {
+                start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)), withVelocity: .default, thenHoldForDuration: 0.3)
+                Thread.sleep(forTimeInterval: 2)
+            } else {
+                start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0.3)
+                Thread.sleep(forTimeInterval: 0.8)
+            }
+            let after = from.frame.minY
+            let focused = [email, password].first { ($0.value(forKey: "hasKeyboardFocus") as? Bool) == true }?.identifier ?? "none"
+            moves.append("drag \(step) \(Int(dy))\(quick ? " quick" : "") from \(from.identifier): \(Int(before)) -> \(Int(after)), focus \(focused)")
+            XCTAssertGreaterThan((after - before) * (dy > 0 ? 1 : -1), 10, "drag \(step) did not scroll the form toward the finger: \(moves)")
+            XCTAssertEqual(focused, "form-email", "drag \(step) moved the focus: \(moves)")
+        }
+        let record = XCTAttachment(string: moves.joined(separator: "\n"))
+        record.name = "Drags from an unfocused field"
+        record.lifetime = .keepAlways
+        add(record)
+    }
+
     func testTypingAndButtonUpdatesDoNotDropTheKeyboard() throws {
         let app = XCUIApplication()
         app.launch()
