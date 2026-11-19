@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { anchorCanQualify, HELD_GESTURE_SECONDS, selectHeldVideoFrame, validateHeldVideoFrame } from '../scripts/held-viewer-video'
+import { anchorCanQualify, HELD_GESTURE_SECONDS, heldGestureSeconds, selectHeldVideoFrame, validateHeldVideoFrame } from '../scripts/held-viewer-video'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const window = { recordSpawnWall: 100, recordingStartedObservedWall: 100.5, synthesisWall: 102, releasedWall: 108 }
@@ -305,4 +305,19 @@ test('the anchor check is sufficient, never proof of impossibility', () => {
   const decoded = Array.from({ length: 60 }, (_, index) => ({ value: index * 600, timescale: 600 }))
   // The real hold contains it, so refusing at readiness would have been wrong.
   expect(() => selectHeldVideoFrame(hold, decoded)).not.toThrow()
+})
+
+test('a bracket wider than the nominal gesture asks for a hold longer than the bracket (#563)', () => {
+  // v0.0.507: the recorder took 10.16s to report its first frame beside an
+  // 8.34s hold, so no frame's interval could fit.
+  const hold = heldGestureSeconds(1000.56, 1010.72)
+  expect(hold).toBeGreaterThan(10.16)
+  expect(anchorCanQualify(1000.56, 1010.72, hold)).toBe(true)
+  expect(hold).toBe(12.2)
+  // A narrow bracket keeps the nominal gesture; nothing asks for less.
+  expect(heldGestureSeconds(100, 101.2)).toBe(HELD_GESTURE_SECONDS)
+  expect(heldGestureSeconds(100, 104)).toBe(HELD_GESTURE_SECONDS)
+  // Bounded: a recorder that slow has failed anyway.
+  expect(heldGestureSeconds(100, 160)).toBe(30)
+  expect(() => heldGestureSeconds(106, 100)).toThrow('ordered first-frame bracket')
 })

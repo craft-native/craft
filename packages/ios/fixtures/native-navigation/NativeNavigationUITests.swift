@@ -543,7 +543,10 @@ final class NativeNavigationUITests: XCTestCase {
         // synthesized press and records the screen while the finger is down.
         // An after-release image alone cannot prove this transient UI.
         FileHandle.standardOutput.write(Data("CRAFT_TAB_LCV_HOLD_BEGIN \(Date().timeIntervalSince1970)\n".utf8))
-        tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 6)
+        // Six seconds, or longer when the recorder started slowly enough
+        // that no frame could fit in six (#563): the capture asks for it.
+        let requested = Double(ProcessInfo.processInfo.environment["CRAFT_HELD_SECONDS"] ?? "") ?? 6
+        tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: min(30, max(6, requested)))
         FileHandle.standardOutput.write(Data("CRAFT_TAB_LCV_HOLD_END \(Date().timeIntervalSince1970)\n".utf8))
         let after = XCTAttachment(screenshot: app.screenshot())
         after.name = "Large content viewer after release"

@@ -212,8 +212,12 @@ describe('independent held viewer capture', () => {
       const pending = waitForHeldViewerReady(ready, new Promise(() => {}), 500)
       await Bun.sleep(40)
       await Bun.write(ready, 'positive control verified')
-      await pending
+      expect(await pending).toBe(6)
       expect(existsSync(ready)).toBe(true)
+      // The hold the capture asks for comes back with readiness (#563).
+      const longer = join(dir, 'ready-longer')
+      await Bun.write(longer, 'Screenshot control and public recording first frame verified\nholdSeconds=12.2\n')
+      expect(await waitForHeldViewerReady(longer, new Promise(() => {}), 500)).toBe(12.2)
       await expect(waitForHeldViewerReady(ready, Promise.resolve(1), 200)).rejects.toThrow('exit 1')
     }
     finally { removeTempDir(dir) }

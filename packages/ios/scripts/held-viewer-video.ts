@@ -50,6 +50,25 @@ export function anchorCanQualify(spawnWall: number, readyWall: number, holdSecon
   return readyWall - spawnWall < holdSeconds
 }
 
+/** Room around the first-frame bracket in a hold asked for because of it. */
+export const HELD_HOLD_MARGIN_SECONDS = 2
+/** The longest hold asked for: a recorder slower than this has failed anyway. */
+export const HELD_HOLD_LIMIT_SECONDS = 30
+
+/**
+ * How long the fixture should hold, given the recording's first-frame
+ * bracket: the nominal gesture, or longer than the bracket when the bracket
+ * is wider (#563). A slow recorder on a loaded runner widened it to 10.16s
+ * beside an 8.34s hold, and no frame could fit; a hold longer than the bracket
+ * gives the qualification, which stays exactly as strict, a frame to find.
+ */
+export function heldGestureSeconds(spawnWall: number, readyWall: number): number {
+  if (![spawnWall, readyWall].every(value => Number.isFinite(value) && value > 0) || spawnWall > readyWall)
+    throw new Error('Expected an ordered first-frame bracket')
+  const fitting = Math.ceil((readyWall - spawnWall + HELD_HOLD_MARGIN_SECONDS) * 10) / 10
+  return Math.min(HELD_HOLD_LIMIT_SECONDS, Math.max(HELD_GESTURE_SECONDS, fitting))
+}
+
 /** PNG encoding time does not determine when its source frame was captured. */
 export function validateHeldVideoFrame(input: HeldVideoFrameTiming): {
   frameWallEarliest: number

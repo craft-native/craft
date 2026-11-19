@@ -1,7 +1,7 @@
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { nativeFixtureCommand } from './native-fixture-command'
-import { anchorCanQualify, HELD_GESTURE_SECONDS, validateHeldVideoFrame } from './held-viewer-video'
+import { anchorCanQualify, HELD_GESTURE_SECONDS, heldGestureSeconds, validateHeldVideoFrame } from './held-viewer-video'
 import { verifyHeldViewerExtractor } from './held-viewer-extractor'
 
 export const heldViewerTest = 'NativeNavigationUITests/NativeNavigationUITests/testTabBarLargeContentViewerDuringAccessibilityHold'
@@ -10,7 +10,12 @@ export function includesHeldViewer(selection: readonly string[]): boolean {
   return !selection.length || selection.some(value => heldViewerTest === value || heldViewerTest.startsWith(`${value}/`))
 }
 
-export async function waitForHeldViewerReady(ready: string, exited: Promise<number>, timeoutMs = 35_000): Promise<void> {
+/**
+ * Waits for the capture to be ready and returns the hold it asks the fixture
+ * to perform: the nominal gesture unless the recording's first-frame bracket
+ * needs a longer one (#563).
+ */
+export async function waitForHeldViewerReady(ready: string, exited: Promise<number>, timeoutMs = 35_000): Promise<number> {
   if (!isAbsolute(ready) || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new Error('Expected an absolute readiness path and a positive timeout')
   let code: number | undefined, failure: unknown
@@ -20,7 +25,10 @@ export async function waitForHeldViewerReady(ready: string, exited: Promise<numb
   while (performance.now() < deadline) {
     if (failure) throw failure
     if (code !== undefined) throw new Error(`Viewer watcher exited before readiness (exit ${code})`)
-    if (existsSync(ready)) return
+    if (existsSync(ready)) {
+      const hold = Number(/^holdSeconds=([\d.]+)$/m.exec(readFileSync(ready, 'utf8'))?.[1])
+      return Number.isFinite(hold) && hold >= HELD_GESTURE_SECONDS ? hold : HELD_GESTURE_SECONDS
+    }
     await Bun.sleep(25)
   }
   throw new Error('Viewer screenshot positive control did not become ready before its deadline')
@@ -314,6 +322,7 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
   const recordReceipt = join(options.output, 'recording.json'), frameReceipt = join(options.output, 'frame.json')
   let extractor: string | undefined, extractorBuild: Awaited<ReturnType<typeof verifyHeldViewerExtractor>> | undefined
   let anchorRisk: string | undefined
+  let holdSeconds: number | undefined
   const setupDeadline = performance.now() + 30_000
   const deadline = performance.now() + (options.timeoutMs ?? 45 * 60_000)
   let recordingResult: Awaited<ReturnType<typeof nativeFixtureCommand>> | undefined
@@ -329,7 +338,7 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
   }
   let remainder = '', doneAt: number | undefined
   const receipt = (verifiedDuringHold: boolean, error?: string) => ({
-    verifiedDuringHold, error, anchorRisk, method: 'public-simctl-recordVideo-decoded-frame', timing,
+    verifiedDuringHold, error, anchorRisk, holdSeconds, method: 'public-simctl-recordVideo-decoded-frame', timing,
     simulator: options.simulator, screenshot: png, movie, recording: recordReceipt, frame: frameReceipt,
     recordingResult, resolvedTool: tool, extractorBuild, extractorManifest: options.extractorManifest,
     compositorStimulus: 'Opt-in native ActivityIndicator in the maintained test fixture; no system display override.',
@@ -389,11 +398,19 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
     // as the limit failed v0.0.473 on a 6.337s bracket that the real ~7.7s
     // hold would have contained. The qualification below knows the actual
     // hold and remains strict; this is the early reading, not the verdict.
-    anchorRisk = anchorCanQualify(anchor.spawnWall, anchor.readyWall)
+    // The fixture holds longer than the bracket when the bracket is wider
+    // than the nominal gesture (#563): only a hold that can contain a whole
+    // frame interval gives the strict qualification below something to find.
+    holdSeconds = heldGestureSeconds(anchor.spawnWall, anchor.readyWall)
+    anchorRisk = anchorCanQualify(anchor.spawnWall, anchor.readyWall, holdSeconds)
       ? undefined
-      : `first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s, wider than the nominal ${HELD_GESTURE_SECONDS}-second gesture; only synthesis overhead can leave room for a frame`
+      : `first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s, wider than the longest hold the fixture is asked for (${holdSeconds}s)`
     if (anchorRisk) console.warn(`::warning::Public recording ${anchorRisk}`)
-    await Bun.write(publicReady, 'Screenshot control and public recording first frame verified\n')
+    else if (holdSeconds > HELD_GESTURE_SECONDS)
+      console.log(`Public recording first-frame bracket spans ${(anchor.readyWall - anchor.spawnWall).toFixed(3)}s; asking the fixture to hold ${holdSeconds}s`)
+    // Written whole, then moved into place: the runner reads it as soon as it exists.
+    writeFileSync(`${publicReady}.partial`, `Screenshot control and public recording first frame verified\nholdSeconds=${holdSeconds}\n`)
+    renameSync(`${publicReady}.partial`, publicReady)
     while (performance.now() < deadline) {
       signal.throwIfAborted()
       if (recordingFailure) throw recordingFailure

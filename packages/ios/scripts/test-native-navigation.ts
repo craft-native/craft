@@ -194,7 +194,9 @@ try {
     try {
       // Prove and warm the independent public capture path before XCTest can
       // synthesize its hold. A failed control must never start the gesture.
-      if (watcher) await waitForHeldViewerReady(ready, watcher.exited)
+      // The hold the capture asks for reaches the UI test as
+      // CRAFT_HELD_SECONDS: xcodebuild passes TEST_RUNNER_ variables to it.
+      if (watcher) process.env.TEST_RUNNER_CRAFT_HELD_SECONDS = String(await waitForHeldViewerReady(ready, watcher.exited))
       launchWatch = watchLaunchWait(liveLog, device.udid, resultBundle)
       runXcodeTests([
         // Retain live XCTest activity as well as the structured result bundle.
