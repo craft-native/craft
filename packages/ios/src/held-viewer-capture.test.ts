@@ -258,12 +258,21 @@ describe('independent held viewer capture', () => {
     expect(timing.line('Synthesize event', 102)).toBe(false)
   })
 
+  test('a longer fixture request requires a press of that duration', () => {
+    const timing = new HeldViewerTiming()
+    timing.line(begin, 100, 11)
+    timing.line('Press Home for 6.0 seconds', 101, 11)
+    expect(timing.line('Synthesize event', 102, 11)).toBe(false)
+    timing.line('Press Home for 11.0 seconds', 103, 11)
+    expect(timing.line('Synthesize event', 104, 11)).toBe(true)
+  })
+
   test('public driver trace verifies the same during-hold screenshot timing as native fixtures', () => {
     const timing = new HeldViewerTiming()
     timing.line('DRIVER BEGIN holdtab Today | 6.0 | 100', 100)
     expect(timing.line('Synthesize event', 101)).toBe(false)
-    timing.line('t = 1s Press "craft-tab-/" Button[0.5, 0.5] for 6.0 seconds', 101)
-    expect(timing.line('t = 2s Synthesize event', 102)).toBe(true)
+    timing.line('t = 1s Press "craft-tab-/" Button[0.5, 0.5] for 6.0 seconds', 101, 11)
+    expect(timing.line('t = 2s Synthesize event', 102, 11)).toBe(true)
     timing.captured(102.8, 103.2)
     timing.line('DRIVER END holdtab Today | 108', 108)
     expect(() => timing.verify()).not.toThrow()

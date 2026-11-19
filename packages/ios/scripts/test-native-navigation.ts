@@ -7,7 +7,7 @@ import { nativeNavigationGroup, verifyNativeNavigationResults } from './native-n
 import { nativeTestResultBundle } from './native-test-result'
 import { watchLaunchWait } from './launch-wait-start'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
-import { includesHeldViewer, waitForHeldViewerReady } from './held-viewer-capture'
+import { includesHeldViewer, spawnNativeNavigationTestRunner, waitForHeldViewerReady } from './held-viewer-capture'
 import { buildHeldViewerExtractor } from './held-viewer-extractor'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-navigation')
@@ -25,9 +25,9 @@ function run(args: string[], cwd: string): void {
     throw new Error(`${args[0]} exited with ${result.exitCode}`)
 }
 
-function runXcodeTests(args: string[], cwd: string, resultBundle: string, expectedTestCount?: number): void {
+function runXcodeTests(args: string[], cwd: string, resultBundle: string, expectedTestCount?: number, holdSeconds?: number): void {
   console.log(args.join(' '))
-  const result = Bun.spawnSync(args, { cwd, stdout: 'inherit', stderr: 'inherit' })
+  const result = spawnNativeNavigationTestRunner(args, cwd, holdSeconds)
   const evidence = process.env.CRAFT_NATIVE_NAVIGATION_RESULT
   if (result.exitCode === 0) {
     const summary = Bun.spawnSync(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', resultBundle], { stdout: 'pipe', stderr: 'pipe' })
@@ -194,9 +194,7 @@ try {
     try {
       // Prove and warm the independent public capture path before XCTest can
       // synthesize its hold. A failed control must never start the gesture.
-      // The hold the capture asks for reaches the UI test as
-      // CRAFT_HELD_SECONDS: xcodebuild passes TEST_RUNNER_ variables to it.
-      if (watcher) process.env.TEST_RUNNER_CRAFT_HELD_SECONDS = String(await waitForHeldViewerReady(ready, watcher.exited))
+      const holdSeconds = watcher ? await waitForHeldViewerReady(ready, watcher.exited) : undefined
       launchWatch = watchLaunchWait(liveLog, device.udid, resultBundle)
       runXcodeTests([
         // Retain live XCTest activity as well as the structured result bundle.
@@ -207,7 +205,7 @@ try {
         '-collect-test-diagnostics', 'never',
         ...selection,
         'test-without-building',
-      ], output, resultBundle, groupCases?.length)
+      ], output, resultBundle, groupCases?.length, holdSeconds)
     }
     catch (error) { testFailure = error }
     finally {

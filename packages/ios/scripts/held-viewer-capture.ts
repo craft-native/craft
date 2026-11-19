@@ -34,6 +34,13 @@ export async function waitForHeldViewerReady(ready: string, exited: Promise<numb
   throw new Error('Viewer screenshot positive control did not become ready before its deadline')
 }
 
+export function spawnNativeNavigationTestRunner(args: string[], cwd: string, holdSeconds?: number) {
+  // Bun's implicit child environment can predate readiness. Pass the duration
+  // explicitly; xcodebuild strips TEST_RUNNER_ in the XCTest runner.
+  const env = holdSeconds === undefined ? undefined : { ...process.env, TEST_RUNNER_CRAFT_HELD_SECONDS: String(holdSeconds) }
+  return Bun.spawnSync(args, { cwd, env, stdout: 'inherit', stderr: 'inherit' })
+}
+
 /** Log evidence is a timing gate, never a substitute for reviewing the PNG. */
 export class HeldViewerTiming {
   beganAt?: number
@@ -45,7 +52,7 @@ export class HeldViewerTiming {
   private press = false
   private markerKind?: 'fixture' | 'driver'
 
-  line(value: string, observedAt: number): boolean {
+  line(value: string, observedAt: number, fixtureHoldSeconds = HELD_GESTURE_SECONDS): boolean {
     const fixtureBegin = /\bCRAFT_TAB_LCV_HOLD_BEGIN (\S+)\s*$/.exec(value)
     const fixtureEnd = /\bCRAFT_TAB_LCV_HOLD_END (\S+)\s*$/.exec(value)
     const driverBegin = /\bDRIVER BEGIN holdtab ([^|]+?)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*$/.exec(value)
@@ -76,7 +83,8 @@ export class HeldViewerTiming {
       this.releasedAt = timestamp((driverEnd?.[2] ?? fixtureEnd?.[1])!)
     }
     if (this.beganAt === undefined || this.releasedAt !== undefined) return false
-    if (/\bPress\b.*\bfor 6(?:\.0+)? seconds\b/.test(value)) this.press = true
+    const pressedFor = /\bPress\b.*\bfor (\d+(?:\.\d+)?) seconds\b/.exec(value)?.[1]
+    if (pressedFor !== undefined) this.press = Number(pressedFor) === (this.markerKind === 'driver' ? HELD_GESTURE_SECONDS : fixtureHoldSeconds)
     if (this.press && this.synthesisObservedAt === undefined && value.includes('Synthesize event')) {
       this.synthesisObservedAt = observedAt
       return true
@@ -430,14 +438,14 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
           offset += read
           const lines = (remainder + chunk.subarray(0, read).toString()).split('\n')
           remainder = lines.pop()!
-          for (const line of lines) timing.line(line, now())
+          for (const line of lines) timing.line(line, now(), holdSeconds)
         }
       }
       if (timing.releasedAt !== undefined) {
         const { beganAt, synthesisObservedAt, releasedAt } = timing
         if (beganAt === undefined || synthesisObservedAt === undefined
           || beganAt > synthesisObservedAt || releasedAt - synthesisObservedAt < 5.5)
-          throw new Error('Missing actual six-second synthesized hold evidence')
+          throw new Error(`Missing evidence of the requested ${holdSeconds}-second synthesized hold`)
         await Bun.write(recordStop, 'Actual synthesized hold released\n')
         await recording
         if (recordingFailure) throw recordingFailure

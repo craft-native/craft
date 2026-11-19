@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { captureHeldViewerVideo } from '../scripts/held-viewer-capture'
+import { captureHeldViewerVideo, spawnNativeNavigationTestRunner, waitForHeldViewerReady } from '../scripts/held-viewer-capture'
 import { buildHeldViewerExtractor } from '../scripts/held-viewer-extractor'
 import type { nativeFixtureCommand } from '../scripts/native-fixture-command'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
@@ -9,8 +9,12 @@ import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 const simulator = '9E10C320-E7FF-4D3E-ADE8-9A75FC60EC16'
 const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
 
-for (const alteredAnchor of [false, true]) {
-  test(`video evidence ${alteredAnchor ? 'rejects a substituted anchor' : 'records before readiness and verifies actual captured PTS after release'}`, async () => {
+for (const [scenario, alteredAnchor, slowRecorder] of [
+  ['records before readiness and verifies actual captured PTS after release', false, false],
+  ['rejects a substituted anchor', true, false],
+  ['qualifies the longer hold passed to the XCTest subprocess', false, true],
+] as const) {
+  test(`video evidence ${scenario}`, async () => {
     const dir = createTempDir('craft-held-video-pipeline-')
     try {
       const output = join(dir, 'evidence'), log = join(dir, 'log'), ready = join(dir, 'ready'), swiftc = join(dir, 'swiftc'), macosSdk = join(dir, 'MacOSX.sdk')
@@ -20,6 +24,10 @@ for (const alteredAnchor of [false, true]) {
       const calls: string[][] = []
       const completed = { code: 0, signal: null, stdout: '', stderr: '', timedOut: false, cancelled: false, processGroup: 123, groupDisposed: true as const }
       const now = 102
+      const spawnWall = slowRecorder ? 80 : 99
+      const readyWall = slowRecorder ? 88.934 : 99.1
+      const release = slowRecorder ? 115 : 108
+      const offset = slowRecorder ? 24 : 4
       const command: typeof nativeFixtureCommand = async (args) => {
         calls.push(args)
         if (args[1] === 'status_bar') throw new Error('A live compositor fixture must not depend on a system display RPC during its held gesture')
@@ -40,7 +48,7 @@ for (const alteredAnchor of [false, true]) {
         if (args[1]?.endsWith('held-viewer-record.ts')) {
           expect(existsSync(ready)).toBe(false)
           await Bun.write(args[4]!, 'actual synthetic movie')
-          await Bun.write(args[7]!, JSON.stringify({ completed: true, spawnWall: 99, readyWall: 99.1 }))
+          await Bun.write(args[7]!, JSON.stringify({ completed: true, spawnWall, readyWall }))
           await Bun.write(args[5]!, 'Recording started')
           const deadline = performance.now() + 4000
           while (!existsSync(args[6]!) && performance.now() < deadline) await Bun.sleep(10)
@@ -48,13 +56,13 @@ for (const alteredAnchor of [false, true]) {
           return completed
         }
         expect(args[0]).toBe(join(output, 'held-viewer-frame'))
-        expect(args.slice(4)).toEqual(['99', '99.1', '102', '108'])
+        expect(args.slice(4)).toEqual([spawnWall, readyWall, now, release].map(String))
         await Bun.write(args[2]!, pixel)
         const hash = (bytes: Uint8Array | string) => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
         await Bun.write(args[3]!, JSON.stringify({
-          verified: true, recordSpawnWall: alteredAnchor ? 98 : 99, recordingStartedObservedWall: 99.1,
-          synthesisWall: 102, releasedWall: 108, firstPTS: { value: 0, timescale: 1 },
-          selectedPTS: { value: 4, timescale: 1 }, actualPTS: { value: 4, timescale: 1 },
+          verified: true, recordSpawnWall: alteredAnchor ? spawnWall - 1 : spawnWall, recordingStartedObservedWall: readyWall,
+          synthesisWall: now, releasedWall: release, firstPTS: { value: 0, timescale: 1 },
+          selectedPTS: { value: offset, timescale: 1 }, actualPTS: { value: offset, timescale: 1 },
           pngSha256: hash(pixel), movieSha256: hash('actual synthetic movie'),
         }))
         return completed
@@ -79,9 +87,18 @@ for (const alteredAnchor of [false, true]) {
       while (!existsSync(ready) && performance.now() < deadline) await Bun.sleep(10)
       expect(existsSync(ready)).toBe(true)
       expect(existsSync(join(output, 'recording-ready'))).toBe(true)
-      appendFileSync(log, 'CRAFT_TAB_LCV_HOLD_BEGIN 100\nPress Home for 6 seconds\nSynthesize event\n')
+      const holdSeconds = await waitForHeldViewerReady(ready, run.then(() => 0))
+      expect(holdSeconds).toBe(slowRecorder ? 11 : 6)
+      // Stand in for xcodebuild with a real child process. Derive the activity
+      // duration from the child's environment, as XCTest does after prefix removal.
+      const runner = spawnNativeNavigationTestRunner([process.execPath, '-e', `
+        const seconds = Number(process.env.TEST_RUNNER_CRAFT_HELD_SECONDS)
+        if (!Number.isFinite(seconds)) process.exit(1)
+        await Bun.write(${JSON.stringify(log)}, 'CRAFT_TAB_LCV_HOLD_BEGIN 100\\nPress Home for ' + seconds.toFixed(1) + ' seconds\\nSynthesize event\\n')
+      `], dir, holdSeconds)
+      expect(runner.exitCode).toBe(0)
       await Bun.sleep(50)
-      appendFileSync(log, 'CRAFT_TAB_LCV_HOLD_END 108\n')
+      appendFileSync(log, `CRAFT_TAB_LCV_HOLD_END ${release}\n`)
       if (alteredAnchor) await expect(run).rejects.toThrow('Frame timing does not match')
       else await run
       expect(calls.some(args => args.includes('screenshot'))).toBe(false)
@@ -93,7 +110,7 @@ for (const alteredAnchor of [false, true]) {
       expect(calls.some(args => args[1] === 'status_bar')).toBe(false)
       if (!alteredAnchor) {
         expect(receipt.method).toBe('public-simctl-recordVideo-decoded-frame')
-        expect(receipt.validated).toEqual({ frameWallEarliest: 103, frameWallLatest: 103.1, frameOffsetFromFirstPTS: 4 })
+        expect(receipt.validated).toEqual({ frameWallEarliest: spawnWall + offset, frameWallLatest: readyWall + offset, frameOffsetFromFirstPTS: offset })
       }
     }
     finally { removeTempDir(dir) }
