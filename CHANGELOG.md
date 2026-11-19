@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.518...v0.0.519)
+
+## 🧪 Tests
+
+- **svelte**: build the SDK before checking packed declarations ([478d7e6](https://github.com/craft-native/craft/commit/478d7e6)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.517...v0.0.518)
 
 ## 🧪 Tests
