@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.517...v0.0.518)
+
+## 🧪 Tests
+
+- **ios**: honor the requested held-viewer duration ([cade5de](https://github.com/craft-native/craft/commit/cade5de)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.516...v0.0.517)
 
 ## 🧪 Tests
