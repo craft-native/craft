@@ -50,6 +50,16 @@ extension DriverTests {
             XCTAssertEqual(identified("prompt-dismissals").label, "Prompt dismissals: \(cycle)")
             XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
         }
+        // The system password-save prompt can arrive after optional polling
+        // ends. The next real interaction must handle only that interruption.
+        run("tapid present-delayed-prompt")
+        run("dismiss")
+        run("expect Save Password? | 8")
+        run("tapid continue-training")
+        run("labelid continued-count Continued: 1")
+        run("absent Save Password?")
+        XCTAssertEqual(identified("prompt-dismissals").label, "Prompt dismissals: 3")
+        XCTAssertEqual(identified("body-taps").label, "Body taps: 0")
     }
 
     private func retainFocusEvidence(_ name: String, immediateValue: String?) -> [[String: Any]] {

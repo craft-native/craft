@@ -48,6 +48,7 @@ import Darwin
 ///   audit <name>          accessibility audit (element descriptions, Dynamic Type, contrast); logs each issue
 ///   unlabelled            logs every hittable button without a label (FAIL if any)
 ///   dismiss [label]       a system prompt's button (default Not Now: "Save Password?")
+///                         permits one deferred password-save interruption after Not Now
 ///   ifid <id> <command…>  runs the command only when that element is there (a screen shown the first time)
 ///   iftext <text> | <command…>  runs the command only when something shows text (web content has no identifiers)
 ///   log <text>
@@ -63,6 +64,8 @@ final class DriverTests: XCTestCase {
     private var bundledJourney = false
     private var lastTappedInput: XCUIElement?
     private var lastBooleanTap: [String: Any]?
+    private var passwordSaveDismissalPending = false
+    private var passwordSaveMonitorInstalled = false
 
     func get(_ path: String, timeout: Double = 15) -> Data? {
         var result: Data?
@@ -146,6 +149,37 @@ final class DriverTests: XCTestCase {
         }
         let any = root.descendants(matching: .any).matching(predicate).firstMatch
         return any.exists ? any : nil
+    }
+
+    func passwordPromptDismissalAllowed(label: String, title: String, pending: Bool) -> Bool {
+        pending && label == "Not Now" && title == "Save Password?"
+    }
+
+    func armDeferredPasswordDismissal(_ label: String) {
+        guard label == "Not Now" else { return }
+        passwordSaveDismissalPending = true
+        guard !passwordSaveMonitorInstalled else { return }
+        passwordSaveMonitorInstalled = true
+        // iOS can defer password saving until the first gesture after sign-in,
+        // after optional polling has ended. XCTest supplies the actual blocking
+        // dialog here. Never search the body or accept a permission/purchase.
+        _ = addUIInterruptionMonitor(withDescription: "Requested deferred password-save dismissal") { [weak self] prompt in
+            guard let self else { return false }
+            let title = prompt.staticTexts.matching(NSPredicate(format: "label == %@", "Save Password?")).firstMatch
+            guard title.exists,
+                  self.passwordPromptDismissalAllowed(label: label, title: title.label, pending: self.passwordSaveDismissalPending),
+                  let button = prompt.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable }) else { return false }
+            button.tap()
+            let settle = Date().addingTimeInterval(1.5)
+            while button.exists && Date() < settle { Thread.sleep(forTimeInterval: 0.25) }
+            guard !button.exists else {
+                self.note("dismiss deferred password prompt: STILL SHOWN")
+                return false
+            }
+            self.passwordSaveDismissalPending = false
+            self.note("dismiss deferred password prompt: tapped")
+            return true
+        }
     }
 
     /// Where a label is looked for, in order: the topmost presented alert,
@@ -867,6 +901,7 @@ final class DriverTests: XCTestCase {
         case "dismiss":
             // A system prompt over the app ("Save Password?" → Not Now), wherever iOS shows it.
             let label = arg.isEmpty ? "Not Now" : arg
+            armDeferredPasswordDismissal(label)
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             // Optional prompt dismissal must never activate a same-named
             // control on the screen behind it. Resolve only presented dialogs
@@ -898,6 +933,7 @@ final class DriverTests: XCTestCase {
                 while button.exists && Date() < settle { Thread.sleep(forTimeInterval: 0.25) }
                 gone = !button.exists
             }
+            if gone && label == "Not Now" { passwordSaveDismissalPending = false }
             note("dismiss \(label): \(gone ? "tapped" : tapped ? "STILL SHOWN" : "none shown")")
         case "log": note(arg)
         default: XCTFail("Unknown command \(command)"); note("FAIL unknown command \(command)")

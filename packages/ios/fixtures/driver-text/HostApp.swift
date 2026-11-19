@@ -366,6 +366,33 @@ final class DriverDismissController: UIViewController {
             }
         }, for: .touchUpInside)
         stack.addArrangedSubview(present)
+        let delayed = UIButton(type: .system)
+        delayed.setTitle("Present delayed password prompt", for: .normal)
+        delayed.accessibilityIdentifier = "present-delayed-prompt"
+        delayed.addAction(UIAction { [weak self] _ in
+            // Arrive after the driver's unchanged six-second optional check.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                guard let self else { return }
+                let alert = UIAlertController(title: "Save Password?", message: "Late native interruption fixture", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Not Now", style: .cancel) { [weak self] _ in
+                    guard let self else { return }
+                    self.dismissals += 1
+                    self.promptCount.text = "Prompt dismissals: \(self.dismissals)"
+                })
+                alert.addAction(UIAlertAction(title: "Save", style: .default))
+                self.present(alert, animated: true)
+            }
+        }, for: .touchUpInside)
+        stack.addArrangedSubview(delayed)
+        let continued = UILabel()
+        continued.accessibilityIdentifier = "continued-count"
+        continued.text = "Continued: 0"
+        let proceed = UIButton(type: .system)
+        proceed.setTitle("Continue training", for: .normal)
+        proceed.accessibilityIdentifier = "continue-training"
+        proceed.addAction(UIAction { [weak continued] _ in continued?.text = "Continued: 1" }, for: .touchUpInside)
+        stack.addArrangedSubview(proceed)
+        stack.addArrangedSubview(continued)
         view.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),

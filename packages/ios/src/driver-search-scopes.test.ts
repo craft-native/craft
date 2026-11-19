@@ -7,8 +7,12 @@ test.skipIf(process.platform !== 'darwin')('looks for a label in the presented a
   const template = readFileSync(join(import.meta.dir, '../templates/testing/DriverTests.swift.template'), 'utf8')
   const start = template.indexOf('    func searchScopes<Scope>(')
   const end = template.indexOf('    func presentedScopes()', start)
+  const lateStart = template.indexOf('    func passwordPromptDismissalAllowed(')
+  const lateEnd = template.indexOf('    func armDeferredPasswordDismissal(', lateStart)
   expect(start).toBeGreaterThan(0)
   expect(end).toBeGreaterThan(start)
+  expect(lateStart).toBeGreaterThan(0)
+  expect(lateEnd).toBeGreaterThan(lateStart)
   // Exact selection prefers the modal; dismissal excludes the body altogether.
   expect(template).toContain('for scope in presentedScopes()')
   expect(template).toContain('self.presentedScopes().filter { $0.elementType == .alert || $0.elementType == .sheet }')
@@ -18,11 +22,17 @@ test.skipIf(process.platform !== 'darwin')('looks for a label in the presented a
     const source = join(dir, 'main.swift')
     writeFileSync(source, `import Foundation
 ${template.slice(start, end)}
+${template.slice(lateStart, lateEnd)}
 // Me's "Sign out" row stays hittable behind its own "Sign out?" sheet.
 precondition(searchScopes(alerts: [String](), sheets: ["sign-out-sheet"], app: "app") == ["sign-out-sheet", "app"])
 precondition(searchScopes(alerts: ["alert"], sheets: ["sheet"], app: "app") == ["alert", "sheet", "app"])
 precondition(searchScopes(alerts: ["older", "newest"], sheets: [String](), app: "app") == ["newest", "app"])
 precondition(searchScopes(alerts: [String](), sheets: [String](), app: "app") == ["app"])
+precondition(passwordPromptDismissalAllowed(label: "Not Now", title: "Save Password?", pending: true))
+precondition(!passwordPromptDismissalAllowed(label: "Not Now", title: "Save Password?", pending: false))
+precondition(!passwordPromptDismissalAllowed(label: "Save", title: "Save Password?", pending: true))
+precondition(!passwordPromptDismissalAllowed(label: "Allow", title: "Save Password?", pending: true))
+precondition(!passwordPromptDismissalAllowed(label: "Not Now", title: "Delete workout?", pending: true))
 print("driver search scopes passed")
 `)
     const child = Bun.spawn(['swift', source], { stdout: 'pipe', stderr: 'pipe' })
