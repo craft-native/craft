@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.516...v0.0.517)
+
+## 🧪 Tests
+
+- **android**: exercise current overlay and tab contracts ([bdf9ad2](https://github.com/craft-native/craft/commit/bdf9ad2)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.515...v0.0.516)
 
 ## 🐛 Bug Fixes
