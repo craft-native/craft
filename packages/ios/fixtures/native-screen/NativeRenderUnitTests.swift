@@ -5738,6 +5738,47 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(toggle.isOn)
     }
 
+    /// On iOS 26 a tap turns the thumb into a glass lens that glides across.
+    /// Every render set the switch's colours again, even to the same value,
+    /// and on a device that rebuilt its glass: the render from the value
+    /// event, a few frames into the tap, took the lens away and the thumb
+    /// snapped across. A render that changes nothing leaves the colours and
+    /// the enabled state alone; one that changes them still applies them.
+    func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func screen(_ value: Bool, track: String? = nil) -> [String: Any] {
+            var props: [String: Any] = ["key": "consent", "value": value]
+            if let track { props["trackColor"] = ["true": track, "false": "#3A3A3C"] }
+            return document([
+                ["type": "Switch", "props": props, "events": ["onValueChange": "consentChanged"]],
+                ["type": "Text", "children": [value ? "On" : "Off"]],
+            ])
+        }
+        for track in [nil, "#34C759"] as [String?] {
+            controller.render(screen(false, track: track))
+            let toggle = try XCTUnwrap(find(UISwitch.self, key: "consent", below: controller.view))
+            // Stand-ins nothing in the host would set: any render that sets the
+            // colours again replaces them.
+            let sentinel = UIColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1)
+            toggle.onTintColor = sentinel
+            toggle.thumbTintColor = sentinel
+            toggle.tintColor = sentinel
+
+            toggle.setOn(true, animated: true)
+            toggle.sendActions(for: .valueChanged)
+            controller.render(screen(true, track: track))
+            XCTAssertEqual(toggle.onTintColor, sentinel, "the value event's render set the on colour again (track \(track ?? "none"))")
+            XCTAssertEqual(toggle.thumbTintColor, sentinel, "the value event's render set the thumb colour again (track \(track ?? "none"))")
+            XCTAssertEqual(toggle.tintColor, sentinel, "the value event's render set the off colour again (track \(track ?? "none"))")
+        }
+
+        // A change of colour is still applied.
+        controller.render(screen(true, track: "#FF9500"))
+        let toggle = try XCTUnwrap(find(UISwitch.self, key: "consent", below: controller.view))
+        XCTAssertEqual(toggle.onTintColor?.cgColor.components?.prefix(3).map { ($0 * 255).rounded() }, [255, 149, 0])
+    }
+
     func testControlledSwitchDoesNotInterruptTheNativeTapAnimation() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

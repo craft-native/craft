@@ -7170,6 +7170,24 @@ private final class CraftNativeSwitch: UISwitch {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
     }
 
+    /// The colours last given, so a render that changes nothing does not
+    /// set them again. Set on iOS 26, even to the same value, a colour
+    /// rebuilds the switch's glass: a tap's thumb lost its lens a few frames
+    /// in, when the screen re-rendered from the value event, and snapped
+    /// across instead of gliding.
+    private var appliedColours: (on: UIColor?, off: UIColor?, thumb: UIColor?)?
+
+    func applyColours(on: UIColor?, off: UIColor?, thumb: UIColor?) {
+        if let applied = appliedColours, applied.on == on, applied.off == off, applied.thumb == thumb { return }
+        appliedColours = (on, off, thumb)
+        if onTintColor != on { onTintColor = on }
+        tintColor = off
+        if thumbTintColor != thumb { thumbTintColor = thumb }
+    }
+
+    func applyEnabled(_ enabled: Bool) {
+        if isEnabled != enabled { isEnabled = enabled }
+    }
 }
 
 private final class CraftNativeSlider: UISlider {
@@ -10660,16 +10678,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     toggle.setOn(value, animated: false)
                 }
             }
-            toggle.isEnabled = props["disabled"] as? Bool != true
-            if let track = props["trackColor"] as? [String: Any] {
-                toggle.onTintColor = color(track["true"])
-                toggle.tintColor = color(track["false"])
+            let track = props["trackColor"] as? [String: Any]
+            let onColour = track.map { color($0["true"]) } ?? color(style["color"])
+            let offColour = color(props["ios_backgroundColor"]) ?? track.flatMap { color($0["false"]) }
+            if let toggle = toggle as? CraftNativeSwitch {
+                toggle.applyEnabled(props["disabled"] as? Bool != true)
+                toggle.applyColours(on: onColour, off: offColour, thumb: color(props["thumbColor"]))
             } else {
-                toggle.onTintColor = color(style["color"])
-                toggle.tintColor = nil
+                toggle.isEnabled = props["disabled"] as? Bool != true
+                toggle.onTintColor = onColour
+                toggle.tintColor = offColour
+                toggle.thumbTintColor = color(props["thumbColor"])
             }
-            toggle.thumbTintColor = color(props["thumbColor"])
-            if let background = color(props["ios_backgroundColor"]) { toggle.tintColor = background }
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: toggle)
         case "Slider":
             let slider = result as! UISlider

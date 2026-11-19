@@ -563,7 +563,9 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(nativeSwift).toContain('sliderFinished')
     expect(nativeSwift).toContain('toggle.onTintColor')
     expect(nativeSwift).toContain('toggle.thumbTintColor')
-    expect(nativeSwift).toContain('toggle.onTintColor = color(style["color"])')
+    // The on colour falls back to the style's colour, and is set only when it changes (#574).
+    expect(nativeSwift).toContain('let onColour = track.map { color($0["true"]) } ?? color(style["color"])')
+    expect(nativeSwift).toContain('toggle.applyColours(on: onColour, off: offColour, thumb: color(props["thumbColor"]))')
     expect(nativeSwift).toContain('imageLoadStartHandlers')
     expect(nativeSwift).toContain('imageLoadEndHandlers')
     expect(nativeSwift).toContain('imageFailure')
