@@ -1417,6 +1417,7 @@ final class CraftNativeRenderSurfaceView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         updateMetrics()
+        if window != nil { redraw() }
     }
 
     override func layoutSubviews() {
@@ -1492,7 +1493,11 @@ final class CraftNativeRenderSurfaceView: UIView {
     }
 
     private func redraw() {
-        guard let frame = shown, !destroyed, !lost, reportedMetrics != nil, let drawable = metalLayer.nextDrawable() else { return }
+        // Off screen nothing composites the layer and hands its drawables
+        // back, so asking for one would wait out its full second on the main
+        // thread; the frame is kept and drawn once the surface is back.
+        guard let frame = shown, !destroyed, !lost, reportedMetrics != nil, window != nil, !isHidden,
+              let drawable = metalLayer.nextDrawable() else { return }
         guard let buffer = encode(frame, into: drawable.texture) else { return }
         buffer.present(drawable)
         buffer.commit()
