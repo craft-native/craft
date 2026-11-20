@@ -441,6 +441,10 @@ export interface NativeGate {
   publicPaths?: string[]
   /** Where a signed-out launch starts instead. Must itself be public. */
   redirect: string
+  /** Native link paths requiring a stored session. Each also covers nested paths. */
+  protectedLinks?: string[]
+  /** Where a protected link takes a guest, with its destination in `next`. Defaults to `redirect`. */
+  linkRedirect?: string
   /** The secure-storage key holding the sign-in. Defaults to `sessionTokenKey`. */
   token?: string
 }
@@ -557,6 +561,14 @@ export function hybridConfigProblems(config: Pick<CraftConfig, 'renderer' | 'nat
       problems.push(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.publicPaths.`)
     if (gate.token !== undefined && (typeof gate.token !== 'string' || !gate.token))
       problems.push('nativeGate.token must be the secure-storage key the sign-in lives under.')
+    const protectedLinks = gate.protectedLinks
+    if (protectedLinks !== undefined && (!Array.isArray(protectedLinks) || protectedLinks.some(path => typeof path !== 'string' || path.startsWith('//') || normalizeNativePath(path) !== path)))
+      problems.push('nativeGate.protectedLinks must contain absolute paths with no query, hash or trailing slash.')
+    if (gate.linkRedirect !== undefined && (typeof gate.linkRedirect !== 'string' || gate.linkRedirect.startsWith('//') || normalizeNativePath(gate.linkRedirect) !== gate.linkRedirect || !matchNativePath(config.nativeScreens, gate.linkRedirect, config.nativeScreenConstraints)))
+      problems.push('nativeGate.linkRedirect must be an absolute nativeScreens path with no query, hash or trailing slash.')
+    const linkRedirect = gate.linkRedirect ?? gate.redirect
+    if (typeof linkRedirect === 'string' && Array.isArray(protectedLinks) && protectedLinks.some(path => typeof path === 'string' && (linkRedirect === path || (path !== '/' && linkRedirect.startsWith(`${path}/`)))))
+      problems.push('nativeGate.linkRedirect cannot itself be protected by nativeGate.protectedLinks.')
   }
   if (config.nativeApp !== undefined) {
     if (typeof config.nativeApp !== 'string' || !/^[A-Za-z_$][\w$-]*$/.test(config.nativeApp))

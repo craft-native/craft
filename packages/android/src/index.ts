@@ -342,6 +342,10 @@ export interface AndroidNativeGate {
   publicPaths?: string[]
   /** Where a signed-out launch starts instead. */
   redirect: string
+  /** Native link paths requiring a stored session. Each also covers nested paths. */
+  protectedLinks?: string[]
+  /** Where a protected link takes a guest, with its destination in `next`. Defaults to `redirect`. */
+  linkRedirect?: string
   /** The secure-storage key holding the sign-in. Defaults to `sessionTokenKey`. */
   token?: string
 }
@@ -851,6 +855,13 @@ function validateNativeRouteConfig(config: CraftAndroidConfig): void {
       throw new Error(`nativeGate.redirect "${gate.redirect}" must also be listed in nativeGate.publicPaths.`)
     if (gate.token !== undefined && (typeof gate.token !== 'string' || !gate.token))
       throw new Error('nativeGate.token must be the secure-storage key the sign-in lives under.')
+    if (gate.protectedLinks !== undefined && (!Array.isArray(gate.protectedLinks) || gate.protectedLinks.some(path => typeof path !== 'string' || path.startsWith('//') || normalizeNativeRoutePath(path) !== path)))
+      throw new Error('nativeGate.protectedLinks must contain absolute paths with no query, hash or trailing slash.')
+    if (gate.linkRedirect !== undefined && (typeof gate.linkRedirect !== 'string' || gate.linkRedirect.startsWith('//') || normalizeNativeRoutePath(gate.linkRedirect) !== gate.linkRedirect || !matchesNativeRoute(config.nativeScreens, gate.linkRedirect, config.nativeScreenConstraints)))
+      throw new Error('nativeGate.linkRedirect must be an absolute nativeScreens path with no query, hash or trailing slash.')
+    const linkRedirect = gate.linkRedirect ?? gate.redirect
+    if (gate.protectedLinks?.some(path => linkRedirect === path || (path !== '/' && linkRedirect.startsWith(`${path}/`))))
+      throw new Error('nativeGate.linkRedirect cannot itself be protected by nativeGate.protectedLinks.')
   }
 
   if (config.nativeApp !== undefined) {

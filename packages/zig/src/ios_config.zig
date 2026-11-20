@@ -238,13 +238,14 @@ const crash_reporting_fields = [_]Field{
     .{ .name = "sessions", .kind = .bool, .required = false },
 };
 
-/// `CraftConfig.NativeGate`: which screens a signed-out launch may start on,
-/// resolved by the shell before the first frame is built. Every field is
-/// optional, and a gate with no `redirect` simply does not run.
+/// `CraftConfig.NativeGate`: where a signed-out launch or protected link may
+/// open, resolved by the shell before building the destination screen.
 const native_gate_fields = [_]Field{
     .{ .name = "publicPaths", .kind = .string_array, .required = false },
     .{ .name = "redirect", .kind = .string, .required = false },
     .{ .name = "token", .kind = .string, .required = false },
+    .{ .name = "protectedLinks", .kind = .string_array, .required = false },
+    .{ .name = "linkRedirect", .kind = .string, .required = false },
 };
 
 /// `CraftConfig.TabBar` and its optional selected-indicator styling.
