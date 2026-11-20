@@ -2236,7 +2236,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     const a11y = swift.slice(swift.indexOf('private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView)'))
     expect(a11y).toContain('let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)')
-    expect(a11y).toContain('view.isAccessibilityElement = !container && role != "none"')
+    expect(a11y).toContain('view.isAccessibilityElement = !view.craftAccessibilityHidden && !container && role != "none"')
     expect(a11y).toContain('view.accessibilityContainerType = container && (view.accessibilityLabel != nil || controlledVideo) ? .semanticGroup : .none')
     expect(a11y).toContain('case "tablist": traits.insert(.tabBar)')
   })
