@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.525...v0.0.526)
+
+## 🧪 Tests
+
+- **android**: update the spoken language fixture ([84e759f](https://github.com/craft-native/craft/commit/84e759f)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.524...v0.0.525)
 
 ## 🧪 Tests
