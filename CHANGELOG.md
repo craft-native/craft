@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.522...v0.0.523)
+
+## 🐛 Bug Fixes
+
+- **native**: respect hidden accessibility subtrees ([8a38814](https://github.com/craft-native/craft/commit/8a38814)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.521...v0.0.522)
 
 ## 🚀 Features
