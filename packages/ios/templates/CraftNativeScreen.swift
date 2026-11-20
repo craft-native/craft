@@ -8,6 +8,7 @@ import CryptoKit
 import Darwin
 import JavaScriptCore
 import MapKit
+import Metal
 import OSLog
 import Security
 import SwiftUI
@@ -1255,6 +1256,312 @@ private final class CraftNativeActivityIndicatorView: UIActivityIndicatorView {
 /// another app opens (the app needs the `audio` background mode, which
 /// `enableBackgroundAudio` writes), and comes back into its place when the
 /// app does.
+/// The screen's surfaces by their `surface` name, for the script thread:
+/// `craft.renderSurface.present` finds its surface here without waiting for
+/// the main thread, and learns whether it is ready to show a frame (#578).
+final class CraftNativeRenderSurfaces {
+    private let lock = NSLock()
+    private var byName: [String: CraftNativeRenderSurfaceView] = [:]
+
+    func view(_ name: String) -> CraftNativeRenderSurfaceView? {
+        lock.lock(); defer { lock.unlock() }
+        return byName[name]
+    }
+
+    /// Main thread. A name another surface holds is not taken: the first one
+    /// keeps drawing, and the second is told (`DUPLICATE`).
+    func register(_ name: String, _ view: CraftNativeRenderSurfaceView) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if let holder = byName[name], holder !== view { return false }
+        byName[name] = view
+        return true
+    }
+
+    /// Main thread. Only the surface that holds the name gives it up.
+    func unregister(_ name: String, _ view: CraftNativeRenderSurfaceView) {
+        lock.lock(); if byName[name] === view { byName.removeValue(forKey: name) }; lock.unlock()
+    }
+}
+
+/// A box shared TypeScript draws into, frame by frame, without a WebView
+/// (#578). A frame is `width × height` 0xAARRGGBB words, the CPU graphics
+/// core's format (`metal_surface.zig`); in memory that is BGRA, so it is
+/// uploaded to a texture as it is and drawn to the box's pixels with the
+/// node's filter. The latest frame submitted before the main thread gets to
+/// it is the one shown.
+final class CraftNativeRenderSurfaceView: UIView {
+    override class var layerClass: AnyClass { CAMetalLayer.self }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
+    }
+
+    /// The GPU everything is drawn with; nil where there is none, and then
+    /// the capability is not offered.
+    static let device: MTLDevice? = MTLCreateSystemDefaultDevice()
+    static let maximumSide = 8192
+    private static let queue = device?.makeCommandQueue()
+    private static let pipeline: MTLRenderPipelineState? = {
+        guard let device else { return nil }
+        let source = """
+        #include <metal_stdlib>
+        using namespace metal;
+        struct CraftSurfaceOut { float4 position [[position]]; float2 uv; };
+        vertex CraftSurfaceOut craft_surface_vertex(uint id [[vertex_id]]) {
+            float2 corner = float2((id << 1) & 2, id & 2);
+            CraftSurfaceOut out;
+            out.position = float4(corner * float2(2, -2) + float2(-1, 1), 0, 1);
+            out.uv = corner;
+            return out;
+        }
+        fragment float4 craft_surface_fragment(CraftSurfaceOut in [[stage_in]], texture2d<float> frame [[texture(0)]], sampler filter [[sampler(0)]]) {
+            return frame.sample(filter, in.uv);
+        }
+        """
+        guard let library = try? device.makeLibrary(source: source, options: nil) else { return nil }
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "craft_surface_vertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "craft_surface_fragment")
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        return try? device.makeRenderPipelineState(descriptor: descriptor)
+    }()
+    private static func sampler(_ filter: MTLSamplerMinMagFilter) -> MTLSamplerState? {
+        let descriptor = MTLSamplerDescriptor()
+        descriptor.minFilter = filter
+        descriptor.magFilter = filter
+        descriptor.sAddressMode = .clampToEdge
+        descriptor.tAddressMode = .clampToEdge
+        return device?.makeSamplerState(descriptor: descriptor)
+    }
+    /// Whether this host can draw a surface at all: the `renderSurface` capability.
+    static var available: Bool { pipeline != nil }
+    private static let nearest = sampler(.nearest)
+    private static let linear = sampler(.linear)
+
+    struct Frame { let words: Data; let width: Int; let height: Int }
+
+    var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
+    /// The script's name for this surface (`surface`).
+    private(set) var name = ""
+    var linearFilter = false { didSet { if linearFilter != oldValue { redraw() } } }
+    /// The screen's handlers by event name (`onReady`, `onResize`, `onLost`,
+    /// `onRestored`, `onError`), and how an event reaches them. There is no
+    /// destroy event: the script removed the node, so it knows, and from
+    /// then on `present` throws `NOT_FOUND`.
+    var handlers: [String: String] = [:]
+    var emit: ((_ handler: String, _ nativeEvent: [String: Any]) -> Void)?
+    private weak var registry: CraftNativeRenderSurfaces?
+    /// Whether this surface holds its name; a duplicate does not, and stays blank.
+    private var holdsName = false
+
+    private let lock = NSLock()
+    /// Guarded by `lock`: read by the script thread.
+    private var presentable = false
+    private var pending: Frame?
+    private var drawScheduled = false
+    /// Main thread.
+    private var shown: Frame?
+    private var texture: MTLTexture?
+    private var reportedReady = false
+    private var reportedUnavailable = false
+    private var reportedMetrics: [String: Any]?
+    private var lost = false
+    private var destroyed = false
+    private var observers: [NSObjectProtocol] = []
+    /// Frames drawn to the layer, for checks.
+    private(set) var drawnFrames = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        metalLayer.device = Self.device
+        metalLayer.pixelFormat = .bgra8Unorm
+        metalLayer.framebufferOnly = false
+        metalLayer.isOpaque = true
+        metalLayer.contentsGravity = .resize
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.lose("background") },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.restore() },
+        ]
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    private func fire(_ event: String, _ nativeEvent: [String: Any] = [:]) {
+        guard let handler = handlers[event], !handler.isEmpty else { return }
+        emit?(handler, nativeEvent)
+    }
+
+    /// Takes `name` in `registry`. Main thread.
+    func configure(name: String, opaque: Bool, linear: Bool, registry: CraftNativeRenderSurfaces) {
+        if name != self.name || registry !== self.registry {
+            if holdsName { self.registry?.unregister(self.name, self) }
+            self.name = name
+            self.registry = registry
+            holdsName = !name.isEmpty && registry.register(name, self)
+            if !holdsName {
+                setPresentable(false)
+                if !name.isEmpty { fire("onError", ["code": "DUPLICATE", "message": "Another RenderSurface on this screen is already named \(name)"]) }
+            } else if reportedMetrics != nil { setPresentable(!lost) }
+        }
+        if metalLayer.isOpaque != opaque { metalLayer.isOpaque = opaque }
+        linearFilter = linear
+        if !Self.available, !reportedUnavailable, handlers["onError"] != nil, !destroyed {
+            reportedUnavailable = true
+            fire("onError", ["code": "UNAVAILABLE", "message": "This device has no Metal GPU for a RenderSurface"])
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateMetrics()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateMetrics()
+    }
+
+    /// The box's size in points and pixels: `onReady` the first time it has
+    /// one in a window, `onResize` on every change after.
+    private func updateMetrics() {
+        guard !destroyed, Self.pipeline != nil else { return }
+        let scale = window?.screen.scale ?? traitCollection.displayScale
+        let pixelWidth = min(Self.maximumSide, Int((bounds.width * scale).rounded(.up)))
+        let pixelHeight = min(Self.maximumSide, Int((bounds.height * scale).rounded(.up)))
+        guard window != nil, pixelWidth > 0, pixelHeight > 0 else { return }
+        metalLayer.contentsScale = scale
+        let size = CGSize(width: pixelWidth, height: pixelHeight)
+        if metalLayer.drawableSize != size { metalLayer.drawableSize = size }
+        let metrics: [String: Any] = ["width": Double(bounds.width), "height": Double(bounds.height), "scale": Double(scale),
+                                      "pixelWidth": pixelWidth, "pixelHeight": pixelHeight]
+        if let reported = reportedMetrics, NSDictionary(dictionary: reported).isEqual(to: metrics) { return }
+        reportedMetrics = metrics
+        let first = !reportedReady
+        reportedReady = true
+        setPresentable(!lost && holdsName)
+        fire(first ? "onReady" : "onResize", metrics)
+        // The last frame is drawn again at the new size.
+        redraw()
+    }
+
+    private func setPresentable(_ value: Bool) {
+        lock.lock(); presentable = value; lock.unlock()
+    }
+
+    private func lose(_ reason: String) {
+        guard !destroyed, !lost, reportedReady, Self.pipeline != nil else { return }
+        lost = true
+        setPresentable(false)
+        fire("onLost", ["reason": reason])
+    }
+
+    private func restore() {
+        guard !destroyed, lost else { return }
+        lost = false
+        // Nothing is kept across a loss: the script draws again.
+        shown = nil
+        setPresentable(reportedMetrics != nil && holdsName)
+        fire("onRestored", reportedMetrics ?? [:])
+    }
+
+    /// From any thread: whether the frame was taken. A surface that is not
+    /// ready, lost or gone takes none.
+    func submit(_ frame: Frame) -> Bool {
+        lock.lock()
+        guard presentable else { lock.unlock(); return false }
+        pending = frame
+        let schedule = !drawScheduled
+        drawScheduled = true
+        lock.unlock()
+        if schedule { DispatchQueue.main.async { [weak self] in self?.drawPending() } }
+        return true
+    }
+
+    private func drawPending() {
+        lock.lock()
+        let frame = pending
+        pending = nil
+        drawScheduled = false
+        lock.unlock()
+        guard let frame, !destroyed, !lost else { return }
+        shown = frame
+        redraw()
+    }
+
+    private func redraw() {
+        guard let frame = shown, !destroyed, !lost, reportedMetrics != nil, let drawable = metalLayer.nextDrawable() else { return }
+        guard let buffer = encode(frame, into: drawable.texture) else { return }
+        buffer.present(drawable)
+        buffer.commit()
+        drawnFrames += 1
+    }
+
+    /// The frame drawn into `target` with the node's filter, in a command
+    /// buffer not yet committed.
+    private func encode(_ frame: Frame, into target: MTLTexture) -> MTLCommandBuffer? {
+        guard let device = Self.device, let pipeline = Self.pipeline, let queue = Self.queue,
+              let sampler = linearFilter ? Self.linear : Self.nearest else { return nil }
+        if texture?.width != frame.width || texture?.height != frame.height {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: frame.width, height: frame.height, mipmapped: false)
+            descriptor.usage = .shaderRead
+            texture = device.makeTexture(descriptor: descriptor)
+        }
+        guard let texture else { return nil }
+        frame.words.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            texture.replace(region: MTLRegionMake2D(0, 0, frame.width, frame.height), mipmapLevel: 0, withBytes: base, bytesPerRow: frame.width * 4)
+        }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+        guard let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return nil }
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setFragmentTexture(texture, index: 0)
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        return buffer
+    }
+
+    /// The last frame as the layer shows it, `pixelWidth × pixelHeight`
+    /// 0xAARRGGBB words, drawn the same way into a texture of its own.
+    /// For checks; nil before a frame or while lost.
+    func readPixels() -> [UInt32]? {
+        guard let device = Self.device, let frame = shown, !lost,
+              let width = reportedMetrics?["pixelWidth"] as? Int, let height = reportedMetrics?["pixelHeight"] as? Int else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .shared
+        guard let target = device.makeTexture(descriptor: descriptor), let buffer = encode(frame, into: target) else { return nil }
+        buffer.commit()
+        buffer.waitUntilCompleted()
+        var words = [UInt32](repeating: 0, count: width * height)
+        words.withUnsafeMutableBytes { bytes in
+            target.getBytes(bytes.baseAddress!, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        return words
+    }
+
+    /// Removed from its screen, or the screen went away: says so, gives up its
+    /// name and every GPU resource. Main thread.
+    func destroy() {
+        guard !destroyed else { return }
+        destroyed = true
+        setPresentable(false)
+        lock.lock(); pending = nil; lock.unlock()
+        if holdsName { registry?.unregister(name, self) }
+        holdsName = false
+        shown = nil
+        texture = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers = []
+    }
+}
+
 private final class CraftNativeVideoView: UIView, AVPlayerViewControllerDelegate {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
@@ -7430,6 +7737,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         var pending: [Int: DispatchWorkItem] = [:]
     }
     private let timers = Timers()
+    /// The screen's RenderSurfaces by name, for `craft.renderSurface.present` (#578).
+    let renderSurfaces = CraftNativeRenderSurfaces()
     /// The script asked for an animation frame it has not had yet
     /// (`requestAnimationFrame`, CraftNativeFrameClock). Main thread only.
     private var frameWanted = false
@@ -7983,7 +8292,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func scriptInputs() -> ScriptInputs {
-        let capabilities = CraftNativeActions.capabilities(config: config)
+        let capabilities = CraftNativeActions.capabilities(config: config) + (CraftNativeRenderSurfaceView.available ? ["renderSurface"] : [])
         let capabilityData = try? JSONSerialization.data(withJSONObject: capabilities)
         return ScriptInputs(
             capabilityJSON: capabilityData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]",
@@ -8065,6 +8374,51 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         jsContext.setObject(scheduleTimer, forKeyedSubscript: "craftNativeScheduleTimer" as NSString)
         jsContext.setObject(cancelTimer, forKeyedSubscript: "craftNativeCancelTimer" as NSString)
+        // `craft.renderSurface.present(surface, pixels, width, height)` (#578):
+        // a real function, not a message, so a frame's words are copied
+        // straight out of the script's Uint32Array where it runs, never
+        // serialised. True when the surface took the frame; false while it is
+        // not ready yet or lost; throws for bad arguments, an unknown name
+        // (NOT_FOUND) or a host without the capability (UNAVAILABLE).
+        let surfaces = renderSurfaces
+        let presentSurface: @convention(block) (JSValue, JSValue, JSValue, JSValue) -> Any = { name, pixels, width, height in
+            guard let context = JSContext.current() else { return false }
+            func raise(_ code: String, _ message: String) -> Any {
+                let error = JSValue(newErrorFromMessage: "\(code): \(message)", in: context)
+                error?.setValue(code, forProperty: "code")
+                context.exception = error
+                return NSNull()
+            }
+            func typeError(_ message: String) -> Any {
+                context.exception = context.objectForKeyedSubscript("TypeError")?.construct(withArguments: [message])
+                return NSNull()
+            }
+            guard CraftNativeRenderSurfaceView.available else { return raise("UNAVAILABLE", "This device cannot draw a RenderSurface") }
+            guard name.isString, let key = name.toString(), !key.isEmpty else { return typeError("renderSurface.present needs a surface name") }
+            let side = Double(CraftNativeRenderSurfaceView.maximumSide)
+            guard width.isNumber, height.isNumber else { return typeError("renderSurface.present needs a width and a height") }
+            let w = width.toDouble(), h = height.toDouble()
+            guard w.isFinite, h.isFinite, w >= 1, h >= 1, w <= side, h <= side, w.rounded() == w, h.rounded() == h else {
+                return typeError("renderSurface.present needs a whole width and height from 1 to 8192")
+            }
+            let ctx = context.jsGlobalContextRef
+            var exception: JSValueRef?
+            guard JSValueGetTypedArrayType(ctx, pixels.jsValueRef, &exception) == kJSTypedArrayTypeUint32Array,
+                  let array = JSValueToObject(ctx, pixels.jsValueRef, &exception) else {
+                return typeError("renderSurface.present needs a Uint32Array of 0xAARRGGBB words")
+            }
+            let count = JSObjectGetTypedArrayLength(ctx, array, &exception)
+            guard count == Int(w) * Int(h) else {
+                return typeError("renderSurface.present was given \(count) words; \(Int(w)) by \(Int(h)) needs \(Int(w) * Int(h))")
+            }
+            guard let surface = surfaces.view(key) else { return raise("NOT_FOUND", "No RenderSurface named \(key) on this screen") }
+            // The pointer is to the start of the array's buffer, not of a view
+            // into it (`subarray`): the view's own offset is added.
+            guard let buffer = JSObjectGetTypedArrayBytesPtr(ctx, array, &exception) else { return typeError("renderSurface.present could not read its pixels") }
+            let offset = JSObjectGetTypedArrayByteOffset(ctx, array, &exception)
+            return surface.submit(.init(words: Data(bytes: buffer.advanced(by: offset), count: count * 4), width: Int(w), height: Int(h)))
+        }
+        jsContext.setObject(presentSurface, forKeyedSubscript: "craftNativeRenderSurfacePresent" as NSString)
         // The next display frame, from the script's thread; the frame itself
         // comes back there as `__craftNativeFireFrame`.
         let requestFrame: @convention(block) () -> Void = { [weak self] in
@@ -8686,6 +9040,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 keep('navigation', {
                     setOptions: function(options) { craftNativeSetOptions(JSON.stringify(options || {})); }
                 });
+                // The host's own function, so a frame's Uint32Array is read in
+                // place instead of being sent as a message (#578).
+                if (typeof craftNativeRenderSurfacePresent === 'function') {
+                    keep('renderSurface', { present: craftNativeRenderSurfacePresent });
+                }
                 // shortcuts already has a capability-owned accessor above.
                 // Do not wrap it in keep(): its adopt setter would let a
                 // bundle replace native set/clear during bootstrap.
@@ -10834,6 +11193,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             configureStack(keyboard, style: style)
             keyboard.configureKeyboard(props: props)
             reconcileChildren(children, in: keyboard, parent: current, path: path, style: style)
+        case "RenderSurface":
+            let surface = result as! CraftNativeRenderSurfaceView
+            surface.handlers = events
+            surface.emit = { [weak self] handler, nativeEvent in
+                self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
+            }
+            surface.configure(name: props["surface"] as? String ?? "", opaque: props["opaque"] as? Bool ?? true,
+                              linear: props["filter"] as? String == "linear", registry: renderSurfaces)
         case "Video":
             let video = result as! CraftNativeVideoView
             let autoplay = (props["autoplay"] as? Bool) == true || (props["autoPlay"] as? Bool) == true
@@ -11072,6 +11439,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return CraftNativeKeyboardAvoidingView()
         case "Video":
             return CraftNativeVideoView(host: self)
+        case "RenderSurface":
+            return CraftNativeRenderSurfaceView(frame: .zero)
         case "Map":
             return CraftNativeMapView()
         case "Icon":
@@ -11117,6 +11486,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "image": return "Image"
         case "imagebackground": return "ImageBackground"
         case "video": return "Video"
+        case "rendersurface", "render-surface": return "RenderSurface"
         case "map": return "Map"
         case "icon": return "Icon"
         case "scrollview": return "ScrollView"
@@ -11444,6 +11814,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let owner = node.protocolId { flatListOwners = flatListOwners.filter { $0.value != owner } }
         }
         if node.view is CraftNativeSvgView, let owner = node.protocolId { svgOwners = svgOwners.filter { $0.value != owner } }
+        // Gone with its node or its screen; a recycled row keeps its surface.
+        if !preservingInputDrafts { (node.view as? CraftNativeRenderSurfaceView)?.destroy() }
         let id = ObjectIdentifier(node.view)
         if let modal = node.view as? CraftNativeModalView {
             modal.resetForTeardown()

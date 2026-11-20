@@ -5786,6 +5786,115 @@ final class NativeRenderUnitTests: XCTestCase {
     /// event, a few frames into the tap, took the lens away and the thumb
     /// snapped across. A render that changes nothing leaves the colours and
     /// the enabled state alone; one that changes them still applies them.
+    /// A RenderSurface (#578): frames of 0xAARRGGBB words drawn to its box,
+    /// scaled with its filter, from a script that addresses it by name.
+    func testARenderSurfaceDrawsEachFrameItIsGivenAndAnswersOnlyForItsOwnName() throws {
+        let host = CraftNativeScreenController(config: CraftConfig())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { host.viewDidDisappear(false); window.isHidden = true }
+        host.evaluateScript("""
+            globalThis.__surfaceEvents = [];
+            globalThis.__stxNativeCallback = function(json) {
+                const message = JSON.parse(json);
+                if (message.type === 'EVENT') __surfaceEvents.push(message.payload);
+            };
+            globalThis.__present = function(name, words, width, height) {
+                try { return String(craft.renderSurface.present(name, words, width, height)); }
+                catch (error) { return 'threw ' + (error.code || error.name); }
+            };
+        """)
+        XCTAssertEqual(host.evaluateScript("__stxNativeBridge.capabilities.indexOf('renderSurface') >= 0")?.toBool(), true,
+                       "a host with a Metal GPU offers the capability")
+        func events(_ handler: String) -> [[String: Any]] {
+            host.evaluateScript("__surfaceEvents.filter(e => e.handlerName === '\(handler)').map(e => e.nativeEvent)")?.toArray() as? [[String: Any]] ?? []
+        }
+        func wait(_ what: String, _ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(3)
+            while !condition(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+            XCTAssertTrue(condition(), what)
+        }
+        func present(_ name: String, _ words: String, _ width: Double, _ height: Double) -> String? {
+            host.evaluateScript("__present('\(name)', \(words), \(width), \(height))")?.toString()
+        }
+        func surface(_ key: String, width: Double = 40, filter: String? = nil) -> [String: Any] {
+            var props: [String: Any] = ["key": key, "surface": "map"]
+            if let filter { props["filter"] = filter }
+            return ["type": "RenderSurface", "props": props, "style": ["width": width, "height": 20],
+                    "events": ["onReady": "ready", "onResize": "resized", "onLost": "lost", "onRestored": "restored", "onError": "failed"]]
+        }
+        let scale = Int(window.screen.scale)
+
+        // Not mounted yet: the name answers nothing.
+        XCTAssertEqual(present("map", "new Uint32Array(1)", 1, 1), "threw NOT_FOUND")
+        host.render(document([surface("first")]))
+        let first = try XCTUnwrap(find(CraftNativeRenderSurfaceView.self, key: "first", below: host.view))
+        wait("the surface says it is ready") { !events("ready").isEmpty }
+        XCTAssertEqual(events("ready").first?["pixelWidth"] as? Int, 40 * scale)
+        XCTAssertEqual(events("ready").first?["pixelHeight"] as? Int, 20 * scale)
+        XCTAssertEqual(events("ready").first?["width"] as? Double, 40)
+
+        // Red on the left, blue on the right, each to its own half (nearest).
+        XCTAssertEqual(present("map", "new Uint32Array([0xFFFF0000, 0xFF0000FF])", 2, 1), "true")
+        wait("the frame is drawn") { first.drawnFrames >= 1 }
+        var pixels = try XCTUnwrap(first.readPixels())
+        let width = 40 * scale
+        XCTAssertEqual(pixels.count, width * 20 * scale)
+        XCTAssertEqual(pixels[0], 0xFFFF0000)
+        XCTAssertEqual(pixels[width / 2 - 1], 0xFFFF0000, "nearest keeps the left half red to its edge")
+        XCTAssertEqual(pixels[width / 2], 0xFF0000FF)
+        XCTAssertEqual(pixels[pixels.count - 1], 0xFF0000FF)
+
+        // A view into a larger buffer is read from where it starts.
+        XCTAssertEqual(present("map", "new Uint32Array([0xFFFFFFFF, 0xFF00FF00, 0xFF00FF00]).subarray(1)", 2, 1), "true")
+        wait("the second frame is drawn") { (first.readPixels()?.first).map { $0 == 0xFF00FF00 } == true }
+
+        // Linear blends across the middle; the box's new size is reported.
+        host.render(document([surface("first", width: 60, filter: "linear")]))
+        wait("the resize is reported") { events("resized").last?["pixelWidth"] as? Int == 60 * scale }
+        XCTAssertEqual(present("map", "new Uint32Array([0xFFFF0000, 0xFF0000FF])", 2, 1), "true")
+        wait("the linear frame is drawn") { first.readPixels()?.count == 60 * scale * 20 * scale && first.readPixels()?.first == 0xFFFF0000 }
+        pixels = try XCTUnwrap(first.readPixels())
+        let middle = pixels[60 * scale / 2]
+        XCTAssertTrue(middle != 0xFFFF0000 && middle != 0xFF0000FF && (middle >> 16) & 0xFF > 0 && middle & 0xFF > 0,
+                      "linear mixes red and blue at the middle, got \(String(middle, radix: 16))")
+
+        // Bad frames throw and draw nothing.
+        XCTAssertEqual(present("map", "new Uint32Array(3)", 2, 1), "threw TypeError", "a wrong word count")
+        XCTAssertEqual(present("map", "new Int32Array(2)", 2, 1), "threw TypeError", "not a Uint32Array")
+        XCTAssertEqual(present("map", "new Uint32Array(2)", 2.5, 1), "threw TypeError", "a fractional width")
+        XCTAssertEqual(present("map", "new Uint32Array(1)", 0, 1), "threw TypeError", "an empty frame")
+        XCTAssertEqual(present("", "new Uint32Array(1)", 1, 1), "threw TypeError", "no name")
+
+        // A second surface of the same name is an error and stays blank; the first keeps drawing.
+        host.render(document([surface("first", width: 60, filter: "linear"), surface("second")]))
+        wait("the duplicate is reported") { events("failed").contains { $0["code"] as? String == "DUPLICATE" } }
+        let second = try XCTUnwrap(find(CraftNativeRenderSurfaceView.self, key: "second", below: host.view))
+        let drawn = first.drawnFrames
+        XCTAssertEqual(present("map", "new Uint32Array([0xFF000000, 0xFF000000])", 2, 1), "true")
+        wait("the first surface still draws") { first.drawnFrames > drawn }
+        XCTAssertEqual(second.drawnFrames, 0, "the duplicate drew a frame")
+
+        // Lost in the background, back on return; a lost surface takes no frame.
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        wait("the loss is reported") { events("lost").first?["reason"] as? String == "background" }
+        XCTAssertEqual(present("map", "new Uint32Array(2)", 2, 1), "false")
+        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        wait("the return is reported") { !events("restored").isEmpty }
+        XCTAssertNil(first.readPixels(), "nothing is kept across a loss")
+        XCTAssertEqual(present("map", "new Uint32Array([0xFFFF0000, 0xFFFF0000])", 2, 1), "true")
+        wait("frames are taken again") { first.readPixels()?.first == 0xFFFF0000 }
+
+        // Removed: the name answers nothing until a new surface mounts under it.
+        host.render(document([]))
+        XCTAssertEqual(present("map", "new Uint32Array(1)", 1, 1), "threw NOT_FOUND")
+        let readies = events("ready").count
+        host.render(document([surface("again")]))
+        wait("a remount is a new surface with its own ready") { events("ready").count == readies + 1 }
+        XCTAssertEqual(present("map", "new Uint32Array(1)", 1, 1), "true")
+    }
+
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

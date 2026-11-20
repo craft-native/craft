@@ -1487,6 +1487,55 @@ delivered frame, so its first is `0`. The app script started with no activity,
 for a background refresh or a silent push, counts from its own first frame the
 same way; nothing is drawn there, so its frames come about ten a second.
 
+### iOS render surfaces
+
+A `RenderSurface` is a box that shared TypeScript draws into, frame by frame,
+with no WebView (#578). The host draws it with Metal; a frame is a pixel
+upload, the CPU graphics core's `0xAARRGGBB` words, not a GPU command stream.
+
+```ts
+// <RenderSurface surface="map" filter="nearest" style="flex: 1" @ready="start" />
+const frame = new Uint32Array(width * height) // 0xAARRGGBB, row by row
+requestAnimationFrame(function draw() {
+  paint(frame)
+  craft.renderSurface.present('map', frame, width, height)
+  requestAnimationFrame(draw)
+})
+```
+
+- **Props.** `surface` is the name a script addresses it by, unique on the
+  screen; a second live surface of a name already taken sends `onError` with
+  `DUPLICATE` and stays blank while the first keeps drawing. `filter` is
+  `nearest` (the default, for pixel art) or `linear`; `opaque` defaults to
+  `true` (a surface that is not opaque takes premultiplied alpha).
+- **Size.** The box takes its size from layout like any view. A frame of any
+  size up to 8192 pixels a side is scaled to the box's pixels with the filter,
+  so a resize crossing a frame never drops it, and a game can draw below the
+  display's resolution.
+- **`craft.renderSurface.present(surface, pixels, width, height)`** is the
+  host's own function, not a message: the words of the `Uint32Array` (a
+  `subarray` view included) are copied once, where the script runs. The last
+  frame given before the next display frame is the one shown. It answers `true`
+  when the surface took the frame and `false` while it is not ready yet or is
+  lost. It throws `TypeError` for anything but a `Uint32Array` of exactly
+  `width × height` words, whole sizes from 1 to 8192 and a name; an Error with
+  `code: 'NOT_FOUND'` for a name no surface on the screen holds (before its
+  mount, and from its removal on); and `code: 'UNAVAILABLE'` on a host without
+  the capability.
+- **Events.** `onReady` the first time the box has a size in a window, then
+  `onResize` on each change, both `{ width, height, scale, pixelWidth,
+  pixelHeight }`. `onLost` (`{ reason: 'background' }`) when the app goes to the
+  background and `onRestored` (the metrics again) when it returns; nothing is
+  kept across a loss, so draw again. `onError` with `UNAVAILABLE` or
+  `DUPLICATE`. There is no destroy event: the script removed the node, and from
+  then on `present` throws `NOT_FOUND`; a new mount of the same name is a new
+  surface with its own `onReady`.
+- **Capability.** `renderSurface` is in the bridge's `capabilities` only on a
+  device with a Metal GPU. Without it the node still mounts, draws nothing and
+  sends `onError` with `UNAVAILABLE`.
+
+Android has no `RenderSurface` yet (#393).
+
 ### The app script (`nativeApp`)
 
 `nativeApp` names a bundle route that has no screen (Stacks names it `__app`).
