@@ -1,5 +1,32 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.521...v0.0.522)
+
+## 🚀 Features
+
+- **android**: keep a credential only a fingerprint or face releases ([97dcea2](https://github.com/craft-native/craft/commit/97dcea2)) _(by glennmichael123)_ ([#565](https://github.com/craft-native/craft/issues/565), [#564](https://github.com/craft-native/craft/issues/564))
+- **ios**: tell a native screen where the floating tab actions are ([52397e5](https://github.com/craft-native/craft/commit/52397e5)) _(by glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com)_ ([#523](https://github.com/craft-native/craft/issues/523))
+- **ios**: a RenderSurface node that shared TypeScript draws into ([1e56e70](https://github.com/craft-native/craft/commit/1e56e70)) _(by glennmichael123)_ ([#578](https://github.com/craft-native/craft/issues/578), [#392](https://github.com/craft-native/craft/issues/392), [#393](https://github.com/craft-native/craft/issues/393), [stacksjs/stx#2108](https://github.com/stacksjs/stx/issues/2108), [#2109](https://github.com/craft-native/craft/issues/2109))
+- **macos**: stage, scan and quarantine web-view downloads ([41b9a77](https://github.com/craft-native/craft/commit/41b9a77)) _(by glennmichael123)_ ([#567](https://github.com/craft-native/craft/issues/567))
+- **ios**: tell a web page how far the floating tab actions reach into it ([c8a89d6](https://github.com/craft-native/craft/commit/c8a89d6)) _(by glennmichael123)_ ([#523](https://github.com/craft-native/craft/issues/523))
+
+## 🐛 Bug Fixes
+
+- **ios**: require network control to confirm driver changes ([eb2fade](https://github.com/craft-native/craft/commit/eb2fade)) _(by Chris Breuer)_
+- **ios**: leave a RenderSurface's drawables alone while it is off screen ([f849e12](https://github.com/craft-native/craft/commit/f849e12)) _(by glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com)_ ([#578](https://github.com/craft-native/craft/issues/578))
+- **types**: declare craft.renderSurface, which iOS native screens now install ([950a126](https://github.com/craft-native/craft/commit/950a126)) _(by glennmichael123)_ ([#578](https://github.com/craft-native/craft/issues/578))
+
+## 🧪 Tests
+
+- **ios**: draw a RenderSurface and its props with hostile numbers ([0292a64](https://github.com/craft-native/craft/commit/0292a64)) _(by glennmichael123)_ ([#578](https://github.com/craft-native/craft/issues/578))
+- **ios**: a RenderSurface on a host without a GPU says so once and never draws ([1c8b1bd](https://github.com/craft-native/craft/commit/1c8b1bd)) _(by glennmichael123)_ ([#578](https://github.com/craft-native/craft/issues/578))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+- _glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.520...v0.0.521)
 
 ## 🐛 Bug Fixes
