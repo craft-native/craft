@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.519...v0.0.520)
+
+## 🚀 Features
+
+- **native**: define protected link admission in the gate config ([1cb75bd](https://github.com/craft-native/craft/commit/1cb75bd)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **ios**: gate protected links before presenting screens ([024a0ed](https://github.com/craft-native/craft/commit/024a0ed)) _(by Chris Breuer)_
+- **android**: admit guest links before opening protected routes ([4619bc5](https://github.com/craft-native/craft/commit/4619bc5)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.518...v0.0.519)
 
 ## 🧪 Tests
