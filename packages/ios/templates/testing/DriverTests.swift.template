@@ -358,6 +358,11 @@ final class DriverTests: XCTestCase {
 
     /// The switch answers `/exec` with 200 whatever the hook did, its first
     /// word the hook's exit code: only `exit 0` is a hook that worked.
+    func switchTestNetwork(_ state: String) -> Bool {
+        guard state == "online" || state == "offline" else { return false }
+        return get("/\(state)") != nil
+    }
+
     func hookSucceeded(_ answer: String) -> Bool {
         // get() already requires HTTP success. Custom control servers may
         // return a message or no body. Preserve the legacy shell protocol's
@@ -538,7 +543,8 @@ final class DriverTests: XCTestCase {
             Thread.sleep(forTimeInterval: Double(arg) ?? 3)
             app.activate()
         case "wait": Thread.sleep(forTimeInterval: Double(arg) ?? 1)
-        case "net": _ = get("/\(arg)"); note("net \(arg)")
+        case "net":
+            check(switchTestNetwork(arg), "net \(arg): expected a successful response from the network control server")
         case "delay": _ = get("/delay?ms=\(arg)"); note("delay \(arg)ms")
         case "exec":
             guard let data = get("/exec?name=\(arg)", timeout: 180), let out = String(data: data, encoding: .utf8) else {

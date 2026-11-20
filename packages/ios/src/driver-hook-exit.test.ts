@@ -37,7 +37,7 @@ test.skipIf(process.platform !== 'darwin')('honors successful HTTP hooks while r
   const template = readFileSync(join(import.meta.dir, '../templates/testing/DriverTests.swift.template'), 'utf8')
   const getStart = template.indexOf('    func get(')
   const getEnd = template.indexOf('    /// The journey,', getStart)
-  const hookStart = template.indexOf('    func hookSucceeded(')
+  const hookStart = template.indexOf('    func switchTestNetwork(')
   const hookEnd = template.indexOf('    func switchFlipped(', hookStart)
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     switch (new URL(request.url).pathname) {
@@ -46,6 +46,8 @@ test.skipIf(process.platform !== 'darwin')('honors successful HTTP hooks while r
       case '/shell-failure': return new Response('exit 1 reinstall failed')
       case '/shell-malformed': return new Response('exit 01 not a zero exit status')
       case '/empty': return new Response(null, { status: 204 })
+      case '/offline': return new Response('offline')
+      case '/online': return new Response('network switch unavailable', { status: 503 })
       case '/failure': return new Response('cleanup failed', { status: 500 })
       default: return new Response('no such hook', { status: 404 })
     }
@@ -71,6 +73,9 @@ ${template.slice(hookStart, hookEnd)}
         XCTAssertFalse(accepted("/shell-malformed"))
         XCTAssertFalse(accepted("/failure"))
         XCTAssertFalse(accepted("/unknown"))
+        XCTAssertTrue(switchTestNetwork("offline"))
+        XCTAssertFalse(switchTestNetwork("online"))
+        XCTAssertFalse(switchTestNetwork("message"))
     }
 }
 let suite = XCTestSuite(name: "Owned control hooks")
