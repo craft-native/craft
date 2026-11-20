@@ -396,19 +396,35 @@ final class CraftMacUserScripts: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-/// Downloads started by any tab, saved to ~/Downloads under a name that never overwrites.
+/// Downloads started by any tab. Each is written to `<name>.part` beside the name it
+/// will have in ~/Downloads, which never overwrites, and only takes that name once it
+/// is complete: a file that is still arriving, or was never checked, is never there
+/// under a name that looks finished (#567). The complete file carries
+/// `com.apple.quarantine`, so macOS asks before opening it, as it does for Safari's.
+/// When the screen checks downloads (`scanDownloads(true)`), a complete file is
+/// reported `scanning` and waits for `answerDownload(id, 'allow' | 'block')`.
 final class CraftMacDownloads: NSObject, WKDownloadDelegate {
     static let shared = CraftMacDownloads()
-    private struct Entry { let id: String; weak var tab: CraftMacTab?; var path: String; var observation: NSKeyValueObservation? }
+    /// Where downloads land. Checks point it at a folder of their own.
+    static var folder: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    static let partialSuffix = ".part"
+    /// A scan that never answers blocks the file: nothing vouched for it.
+    static var scanTimeout: TimeInterval = 600
+    private struct Entry {
+        let id: String; weak var tab: CraftMacTab?; var path: String; var partial: String; let origin: URL?
+        var observation: NSKeyValueObservation?; var scanning = false
+    }
     private var entries: [ObjectIdentifier: Entry] = [:]
     private var downloads: [WKDownload] = []
     private var lastReport: [String: CFAbsoluteTime] = [:]
+    /// Whether the screen checks each download before it takes its name.
+    var scans = false
 
     func adopt(_ download: WKDownload, tab: CraftMacTab) {
         download.delegate = self
         downloads.append(download)
         let id = UUID().uuidString
-        var entry = Entry(id: id, tab: tab, path: "")
+        var entry = Entry(id: id, tab: tab, path: "", partial: "", origin: tab.view.url)
         entry.observation = download.progress.observe(\.fractionCompleted) { [weak self, weak download] _, _ in
             guard let self, let download else { return }
             DispatchQueue.main.async { self.report(download, state: "progress") }
@@ -416,27 +432,104 @@ final class CraftMacDownloads: NSObject, WKDownloadDelegate {
         entries[ObjectIdentifier(download)] = entry
     }
 
-    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let name = (suggestedFilename as NSString).lastPathComponent.isEmpty ? "download" : (suggestedFilename as NSString).lastPathComponent
-        var destination = folder.appendingPathComponent(name), copy = 1
+    /// The first `name`, `name 2`, `name 3` … that no file, no partial file and no
+    /// other download in flight has.
+    private func available(_ name: String) -> URL {
         let stem = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
-        while FileManager.default.fileExists(atPath: destination.path) {
-            copy += 1
-            destination = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(copy)" : "\(stem) \(copy).\(ext)")
+        var destination = Self.folder.appendingPathComponent(name), copy = 1
+        func taken(_ url: URL) -> Bool {
+            FileManager.default.fileExists(atPath: url.path) || FileManager.default.fileExists(atPath: url.path + Self.partialSuffix)
+                || entries.values.contains { $0.path == url.path }
         }
-        entries[ObjectIdentifier(download)]?.path = destination.path
-        report(download, state: "started")
-        completionHandler(destination)
+        while taken(destination) {
+            copy += 1
+            destination = Self.folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(copy)" : "\(stem) \(copy).\(ext)")
+        }
+        return destination
     }
 
-    func downloadDidFinish(_ download: WKDownload) { report(download, state: "finished"); finish(download) }
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        let name = (suggestedFilename as NSString).lastPathComponent.isEmpty ? "download" : (suggestedFilename as NSString).lastPathComponent
+        let destination = available(name)
+        entries[ObjectIdentifier(download)]?.path = destination.path
+        entries[ObjectIdentifier(download)]?.partial = destination.path + Self.partialSuffix
+        report(download, state: "started")
+        completionHandler(URL(fileURLWithPath: destination.path + Self.partialSuffix))
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let entry = entries[ObjectIdentifier(download)] else { return }
+        quarantine(URL(fileURLWithPath: entry.partial), from: download.originalRequest?.url, origin: entry.origin)
+        guard scans else { reveal(download); return }
+        entries[ObjectIdentifier(download)]?.scanning = true
+        report(download, state: "scanning")
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanTimeout) { [weak self] in
+            _ = self?.answer(entry.id, allow: false, reason: "The scan did not answer")
+        }
+    }
+
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        if let entry = entries[ObjectIdentifier(download)] { discard(entry.partial) }
         report(download, state: "failed", extra: ["message": error.localizedDescription])
         finish(download)
     }
 
-    /// Progress is reported at most every 250ms; a start, finish or failure always is.
+    /// The screen's verdict on a download it was asked to check: whether one was waiting.
+    func answer(_ id: String, allow: Bool, reason: String?) -> Bool {
+        guard let download = downloads.first(where: { entries[ObjectIdentifier($0)]?.id == id }),
+              let entry = entries[ObjectIdentifier(download)], entry.scanning else { return false }
+        entries[ObjectIdentifier(download)]?.scanning = false
+        if allow { reveal(download) }
+        else {
+            discard(entry.partial)
+            report(download, state: "blocked", extra: reason.map { ["message": $0] } ?? [:])
+            finish(download)
+        }
+        return true
+    }
+
+    /// The complete file takes its name, or the next free one if something took it meanwhile.
+    private func reveal(_ download: WKDownload) {
+        guard let entry = entries[ObjectIdentifier(download)] else { return }
+        var destination = URL(fileURLWithPath: entry.path)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            entries[ObjectIdentifier(download)]?.path = ""
+            destination = available(destination.lastPathComponent)
+        }
+        do {
+            try FileManager.default.moveItem(at: URL(fileURLWithPath: entry.partial), to: destination)
+            entries[ObjectIdentifier(download)]?.path = destination.path
+            report(download, state: "finished")
+        } catch {
+            discard(entry.partial)
+            report(download, state: "failed", extra: ["message": error.localizedDescription])
+        }
+        finish(download)
+    }
+
+    /// Marks a downloaded file as coming from the web, with the app as the agent, the
+    /// way Safari marks its downloads: macOS then asks before it opens the file. macOS
+    /// keeps no URL from the quarantine properties (nor for Chrome's downloads), so
+    /// where the file came from goes where browsers put it, Finder's "Where from".
+    private func quarantine(_ file: URL, from source: URL?, origin: URL?) {
+        let info = Bundle.main.infoDictionary
+        let agent = info?["CFBundleDisplayName"] as? String ?? info?["CFBundleName"] as? String ?? ProcessInfo.processInfo.processName
+        var values = URLResourceValues()
+        values.quarantineProperties = [kLSQuarantineAgentNameKey as String: agent, kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
+        var target = file
+        try? target.setResourceValues(values)
+        // A data: or blob: URL is the file itself, not where it came from.
+        let froms = [source, origin].compactMap { $0 }.filter { $0.scheme == "http" || $0.scheme == "https" }.map(\.absoluteString)
+        guard !froms.isEmpty, let list = try? PropertyListSerialization.data(fromPropertyList: froms, format: .binary, options: 0) else { return }
+        _ = list.withUnsafeBytes { setxattr(file.path, "com.apple.metadata:kMDItemWhereFroms", $0.baseAddress, list.count, 0, 0) }
+    }
+
+    private func discard(_ partial: String) {
+        guard !partial.isEmpty else { return }
+        try? FileManager.default.removeItem(atPath: partial)
+    }
+
+    /// Progress is reported at most every 250ms; every other state always is.
     private func report(_ download: WKDownload, state: String, extra: [String: Any] = [:]) {
         guard let entry = entries[ObjectIdentifier(download)] else { return }
         let now = CFAbsoluteTimeGetCurrent()
@@ -445,14 +538,18 @@ final class CraftMacDownloads: NSObject, WKDownloadDelegate {
         var detail: [String: Any] = ["id": entry.id, "state": state, "path": entry.path, "name": (entry.path as NSString).lastPathComponent,
             "url": download.originalRequest?.url?.absoluteString ?? "",
             "received": download.progress.completedUnitCount, "total": download.progress.totalUnitCount, "fraction": download.progress.fractionCompleted]
+        // Where the file is while it is not yet at `path`, for a scanner to read.
+        if state == "started" || state == "progress" || state == "scanning" { detail["partialPath"] = entry.partial }
         extra.forEach { detail[$0.key] = $0.value }
         entry.tab?.emit("download", detail)
     }
 
-    /// Stop a download that is still running; what arrived is kept as resume data no one uses yet.
+    /// Stop a download that is still running or waiting for its scan; what arrived is removed.
     func cancel(_ id: String) -> Bool {
-        guard let download = downloads.first(where: { entries[ObjectIdentifier($0)]?.id == id }) else { return false }
-        download.cancel { _ in }
+        guard let download = downloads.first(where: { entries[ObjectIdentifier($0)]?.id == id }),
+              let entry = entries[ObjectIdentifier(download)] else { return false }
+        if entry.scanning { discard(entry.partial) }
+        else { download.cancel { [weak self] _ in self?.discard(entry.partial) } }
         report(download, state: "failed", extra: ["message": "Cancelled", "cancelled": true])
         finish(download)
         return true
@@ -460,7 +557,7 @@ final class CraftMacDownloads: NSObject, WKDownloadDelegate {
 
     /// A file in ~/Downloads (after resolving links), or nil: the screen may only point at downloads.
     static func downloadedFile(_ path: String) -> URL? {
-        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].resolvingSymlinksInPath().standardizedFileURL.path
+        let folder = Self.folder.resolvingSymlinksInPath().standardizedFileURL.path
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
         guard file.path.hasPrefix(folder + "/"), FileManager.default.fileExists(atPath: file.path) else { return nil }
         return file
@@ -619,6 +716,11 @@ final class CraftMacWebTabs {
         case "clearData": clearData(options, answer: answer); return
         case "setCookies": setCookies(options, answer: answer); return
         case "cancelDownload": answer(CraftMacDownloads.shared.cancel(args.first as? String ?? "")); return
+        case "scanDownloads": CraftMacDownloads.shared.scans = args.first as? Bool == true; answer(true); return
+        case "answerDownload":
+            let verdict = args.dropFirst().first as? String
+            guard verdict == "allow" || verdict == "block" else { fail("INVALID_ARGUMENT", "answerDownload needs 'allow' or 'block'"); return }
+            answer(CraftMacDownloads.shared.answer(args.first as? String ?? "", allow: verdict == "allow", reason: args.dropFirst(2).first as? String)); return
         case "revealDownload", "openDownload":
             guard let file = CraftMacDownloads.downloadedFile(args.first as? String ?? "") else { fail("NOT_FOUND", "Not a file in Downloads"); return }
             // An app or a script is revealed, never run: opening it is the person's call in Finder.

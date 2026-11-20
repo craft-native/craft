@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import Network
 
 // Tabs through the real renderer and real WKWebViews, built the way
 // `buildMacOSNative({ webkit: true })` builds them. Pages are data: URLs,
@@ -17,6 +18,32 @@ final class CraftMacRuntime {
     func send(_ type: String, _ payload: [String: Any], correlation: String? = nil) {
         if type == "CRAFT_EVENT", payload["event"] as? String == "craftWebView", let detail = payload["detail"] as? [String: Any] { sent.append(detail) }
     }
+}
+
+/// Files for downloads, served on the loopback interface: `/ok/<name>` arrives whole,
+/// `/partial/<name>` stops half way until the check drops the connection.
+final class FixtureFiles {
+    let listener = try! NWListener(using: .tcp, on: .any)
+    var held: NWConnection?
+    var port: UInt16 { listener.port?.rawValue ?? 0 }
+    init() {
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: .main)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let head = String(decoding: data ?? Data(), as: UTF8.self)
+                let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                let name = (path as NSString).lastPathComponent
+                let body = Data("craft download \(name)".utf8)
+                let partial = path.hasPrefix("/partial/")
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: \(partial ? body.count * 2 : body.count)\r\nContent-Disposition: attachment; filename=\"\(name)\"\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(header.utf8) + body, completion: .contentProcessed { _ in
+                    if partial { self?.held = connection } else { connection.cancel() }
+                })
+            }
+        }
+        listener.start(queue: .main)
+    }
+    func url(_ path: String) -> String { "http://127.0.0.1:\(port)\(path)" }
 }
 
 @main struct WebChecks {
@@ -40,6 +67,103 @@ final class CraftMacRuntime {
         require(wait { done }, "Web.\(method) never answered")
         require(failure.isEmpty, "Web.\(method) failed: \(failure)")
         return result
+    }
+
+    static func whereFrom(_ path: String) -> [String]? {
+        let size = getxattr(path, "com.apple.metadata:kMDItemWhereFroms", nil, 0, 0, 0)
+        guard size > 0 else { return nil }
+        var data = Data(count: size)
+        _ = data.withUnsafeMutableBytes { getxattr(path, "com.apple.metadata:kMDItemWhereFroms", $0.baseAddress, size, 0, 0) }
+        return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String]
+    }
+    static func quarantine(_ path: String) -> [String: Any]? {
+        (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.quarantinePropertiesKey]))?.quarantineProperties
+    }
+
+    /// Downloads arrive under `.part`, take their name only once complete (and, when the
+    /// screen checks them, once it allows them), are quarantined, and leave nothing behind
+    /// when they fail, are blocked or are cancelled (#567).
+    static func checkDownloads(_ runtime: CraftMacRuntime) {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("craft-web-downloads-\(UUID().uuidString)")
+        try! manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let previousFolder = CraftMacDownloads.folder
+        CraftMacDownloads.folder = folder
+        defer { CraftMacDownloads.folder = previousFolder; try? manager.removeItem(at: folder) }
+        let files = FixtureFiles()
+        require(wait { files.port != 0 }, "The download server did not start")
+        let fetcher = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        _ = call("create", [["id": "downloads", "url": page("Downloads")]], runtime)
+        let tab = CraftMacWebTabs.shared.tabs["downloads"]!
+        func start(_ address: String) {
+            fetcher.startDownload(using: URLRequest(url: URL(string: files.url(address))!)) { CraftMacDownloads.shared.adopt($0, tab: tab) }
+        }
+        func events(_ state: String) -> [[String: Any]] {
+            runtime.sent.filter { $0["tab"] as? String == "downloads" && $0["type"] as? String == "download" && $0["state"] as? String == state }
+        }
+        func event(_ state: String, _ name: String) -> [String: Any]? {
+            events(state).last { ($0["url"] as? String)?.hasSuffix("/" + name) == true }
+        }
+        func exists(_ path: String) -> Bool { manager.fileExists(atPath: path) }
+        let suffix = CraftMacDownloads.partialSuffix
+
+        // Without a scan the file is staged, then takes its name, quarantined.
+        start("/ok/report.zip")
+        require(wait { event("finished", "report.zip") != nil }, "A download did not finish: \(runtime.sent.filter { $0["type"] as? String == "download" })")
+        let report = folder.appendingPathComponent("report.zip").path
+        require(event("started", "report.zip")?["partialPath"] as? String == report + suffix, "A download was not written to its .part file")
+        require(event("finished", "report.zip")?["path"] as? String == report && exists(report) && !exists(report + suffix), "A finished download did not take its name")
+        require((try? String(contentsOfFile: report, encoding: .utf8)) == "craft download report.zip", "A finished download lost its contents")
+        let marked = quarantine(report)
+        require(marked?[kLSQuarantineAgentNameKey as String] as? String == ProcessInfo.processInfo.processName, "A download was not quarantined with the app as its agent: \(String(describing: marked))")
+        require(whereFrom(report) == [files.url("/ok/report.zip")], "A download did not say where it came from: \(String(describing: whereFrom(report)))")
+        require(marked?[kLSQuarantineTypeKey as String] as? String == kLSQuarantineTypeWebDownload as String, "A download was not quarantined as a web download")
+
+        // A download that fails half way leaves neither its partial file nor its name.
+        start("/partial/big.bin")
+        let big = folder.appendingPathComponent("big.bin").path
+        require(wait { files.held != nil && exists(big + suffix) }, "A download in progress was not at its .part file")
+        require(!exists(big), "A download in progress already had its finished name")
+        files.held?.cancel()
+        require(wait { event("failed", "big.bin") != nil }, "A failed download was not reported")
+        require(wait { !exists(big + suffix) } && !exists(big), "A failed download left its partial file behind")
+
+        // With a scan, a complete file waits at .part for the screen's verdict.
+        _ = call("scanDownloads", [true], runtime)
+        defer { _ = call("scanDownloads", [false], runtime) }
+        start("/ok/report.zip")
+        require(wait { event("scanning", "report.zip") != nil }, "A download the screen checks was not reported scanning")
+        let scanning = event("scanning", "report.zip")!
+        let second = folder.appendingPathComponent("report 2.zip").path
+        require(scanning["path"] as? String == second, "A second download of a name did not get the next free one")
+        require(scanning["partialPath"] as? String == second + suffix && exists(second + suffix) && !exists(second), "A scanned download took its name before it was allowed")
+        require(quarantine(second + suffix)?[kLSQuarantineAgentNameKey as String] != nil, "A download was handed to its scan without quarantine")
+        require(call("answerDownload", [scanning["id"] as! String, "allow"], runtime) as? Bool == true, "answerDownload did not take a waiting scan")
+        require(wait { event("finished", "report.zip")?["path"] as? String == second }, "An allowed download did not finish")
+        require(exists(second) && !exists(second + suffix) && quarantine(second) != nil, "An allowed download did not take its name, quarantined")
+        require(call("answerDownload", [scanning["id"] as! String, "allow"], runtime) as? Bool == false, "A finished download was answered again")
+
+        // A blocked file is removed and never takes its name.
+        start("/ok/tool.dmg")
+        require(wait { event("scanning", "tool.dmg") != nil }, "A second scanned download was not reported scanning")
+        let tool = folder.appendingPathComponent("tool.dmg").path
+        require(call("answerDownload", [event("scanning", "tool.dmg")!["id"] as! String, "block", "Matched a signature"], runtime) as? Bool == true, "answerDownload did not block a waiting scan")
+        require(wait { event("blocked", "tool.dmg") != nil }, "A blocked download was not reported")
+        require(event("blocked", "tool.dmg")?["message"] as? String == "Matched a signature", "A blocked download lost the screen's reason")
+        require(!exists(tool) && !exists(tool + suffix), "A blocked download was left on disk")
+
+        // Cancelling a download that waits for its scan removes it.
+        start("/ok/later.txt")
+        require(wait { event("scanning", "later.txt") != nil }, "A third scanned download was not reported scanning")
+        let later = folder.appendingPathComponent("later.txt").path
+        require(call("cancelDownload", [event("scanning", "later.txt")!["id"] as! String], runtime) as? Bool == true, "cancelDownload did not take a download waiting for its scan")
+        require(event("failed", "later.txt")?["cancelled"] as? Bool == true, "A cancelled download was not reported cancelled")
+        require(!exists(later) && !exists(later + suffix), "A cancelled download was left on disk")
+
+        var code = ""
+        CraftMacWebTabs.shared.perform("answerDownload", ["any", "maybe"], owner: runtime, answer: { _ in }, fail: { failure, _ in code = failure })
+        require(code == "INVALID_ARGUMENT", "answerDownload took a verdict that is neither allow nor block")
+        _ = call("close", ["downloads"], runtime)
     }
 
     static func main() {
@@ -153,6 +277,8 @@ final class CraftMacRuntime {
         require(session?.domain == ".example.com" && session?.isSecure == true && session?.isHTTPOnly == true && session?.sameSitePolicy == .sameSiteLax && session?.expiresDate != nil, "An imported cookie lost its attributes")
         require(stored.first { $0.name == "plain" }?.isSessionOnly == true, "A cookie without an expiry was not a session cookie")
         require((call("clearData", [["profile": "checks", "private": true]], runtime) as? [String: Any])?["cleared"] as? Bool == true, "clearData did not answer")
+
+        checkDownloads(runtime)
 
         // Unknown tabs fail with NOT_FOUND instead of answering.
         var code = ""

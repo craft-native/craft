@@ -66,6 +66,8 @@ through `craft.web`, and decides where each appears with `<WebView tab>`:
 | `answerPermission(request, 'grant' \| 'deny' \| 'prompt')` | whether the request was still waiting |
 | `clearData({ profile, private?, host?, types? })` | `{ cleared }`; `types` from `cookies`, `storage`, `cache` |
 | `cancelDownload(id)`, `revealDownload(path)`, `openDownload(path)` | |
+| `scanDownloads(on)` | `true`; while on, each complete download waits for `answerDownload` |
+| `answerDownload(id, 'allow' \| 'block', reason?)` | whether that download was waiting for its scan |
 
 **Content blockers** (an ad blocker) are WebKit content-rule lists. WebKit
 compiles each once and keeps it on disk under its identifier and version, so a
@@ -78,7 +80,15 @@ page's scripts cannot see unless `world: 'page'`; CSS lands at document start,
 JS at document end unless `at: 'start'`, and pages pick a new set up on their
 next load. **Downloads** can
 only be revealed or opened inside ~/Downloads, and an app or script is revealed
-in Finder rather than run.
+in Finder rather than run. A download is written to `<name>.part` and takes its
+name only once it is complete, so nothing in ~/Downloads looks finished before
+it is. The complete file carries `com.apple.quarantine` with the app as its
+agent, so macOS asks before opening it, and Finder's "Where from" names the
+http(s) URL it came from. With `scanDownloads(true)`, a complete file is reported
+`scanning` with its `partialPath` for the app's scanner to read, and waits for
+`answerDownload(id, 'allow')`, which gives it its name, or `'block'`, which
+removes it; a scan that never answers blocks it after ten minutes. A download
+that fails, is cancelled or is blocked leaves no file behind.
 
 Each profile has its own website data store (cookies, storage, cache), found
 again on every launch by a UUID derived from its name (macOS 14+; `default` is
@@ -94,8 +104,9 @@ themeColor, camera, microphone; coalesced to one per run-loop turn),
 (the page's process died and was reloaded), `permission` (a site asks for the
 camera or microphone: `{ request, kind, origin }`; answer it with
 `answerPermission`, or it is denied after two minutes) and `download` (`started`,
-`progress` at most every 250ms, `finished`, `failed`, saved to ~/Downloads
-under a name that never overwrites). Links to other apps' schemes (`mailto:`,
+`progress` at most every 250ms, `scanning`, `finished`, `blocked` with the
+scan's `message`, `failed`; saved to ~/Downloads under a name that never
+overwrites, with `partialPath` while the file is still at `.part`). Links to other apps' schemes (`mailto:`,
 `facetime:`) open those apps. JavaScript alerts, confirms, prompts and file
 inputs use native sheets on the tab's window. A window that closes closes the
 tabs it owns.
