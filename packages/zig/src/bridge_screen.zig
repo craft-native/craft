@@ -23,6 +23,16 @@ pub const capability_actions = [_]capabilities.ActionDecl{
 
 const BridgeError = bridge_error.BridgeError;
 
+/// AppKit types, resolved only on Apple targets.
+///
+/// Spelling `@import("macos.zig").objc.id` inline would import that module from
+/// a Windows build, and it imports `bridge_dialog.zig`, whose Windows path is a
+/// deliberate `@compileError`. That single file-level reference is what kept
+/// `capabilities` — whose registry lists this bridge — from compiling on
+/// Windows at all.
+const ScreenObjectId = if (builtin.os.tag == .macos) @import("macos.zig").objc.id else ?*anyopaque;
+const ScreenSelector = if (builtin.os.tag == .macos) @import("macos.zig").objc.SEL else ?*anyopaque;
+
 /// Screen / Display info bridge.
 ///
 /// macOS implementation reads `[NSScreen screens]` (every connected
@@ -39,7 +49,11 @@ pub const ScreenBridge = struct {
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) Self {
-        installScreenChangeObserver();
+        // `installScreenChangeObserver` reaches into AppKit. Guarding the call at
+        // compile time is what keeps `macos.zig` — and through it
+        // `bridge_dialog.zig`, whose Windows path is a `@compileError` — out of
+        // a non-Apple build entirely.
+        if (comptime builtin.os.tag == .macos) installScreenChangeObserver();
         return .{ .allocator = allocator };
     }
 
@@ -54,7 +68,7 @@ pub const ScreenBridge = struct {
     }
 
     fn getDisplays(self: *Self) !void {
-        if (builtin.os.tag != .macos) {
+        if (comptime builtin.os.tag != .macos) {
             bridge_error.sendResultToJS(self.allocator, "getDisplays", "{\"displays\":[]}");
             return;
         }
@@ -90,7 +104,7 @@ pub const ScreenBridge = struct {
     }
 
     fn getPrimary(self: *Self) !void {
-        if (builtin.os.tag != .macos) {
+        if (comptime builtin.os.tag != .macos) {
             bridge_error.sendResultToJS(self.allocator, "getPrimary", "{}");
             return;
         }
@@ -115,7 +129,7 @@ pub const ScreenBridge = struct {
 // =============================================================================
 
 var screen_observer_installed = false;
-var screen_observer_instance: @import("macos.zig").objc.id = null;
+var screen_observer_instance: ScreenObjectId = null;
 
 /// The permit to dispatch `craft:screen:change`, taken out when the observer is
 /// actually installed.
@@ -129,7 +143,7 @@ var screen_change_emitter: ?capabilities.Emitter = null;
 
 fn installScreenChangeObserver() void {
     if (screen_observer_installed) return;
-    if (builtin.os.tag != .macos) return;
+    if (comptime builtin.os.tag != .macos) return;
     const macos = @import("macos.zig");
     const objc = macos.objc;
 
@@ -158,7 +172,8 @@ fn installScreenChangeObserver() void {
     screen_change_emitter = capabilities.registerEmitter(.screen_change);
 }
 
-export fn handleScreenChange(_: @import("macos.zig").objc.id, _: @import("macos.zig").objc.SEL, _: @import("macos.zig").objc.id) callconv(.c) void {
+export fn handleScreenChange(_: ScreenObjectId, _: ScreenSelector, _: ScreenObjectId) callconv(.c) void {
+    if (comptime builtin.os.tag != .macos) return;
     const macos = @import("macos.zig");
     const webview = macos.getGlobalWebView() orelse return;
     // Named through the emitter rather than spelled again here, so the string
@@ -170,7 +185,8 @@ export fn handleScreenChange(_: @import("macos.zig").objc.id, _: @import("macos.
     _ = macos.msgSend2(webview, "evaluateJavaScript:completionHandler:", js, @as(?*anyopaque, null));
 }
 
-fn appendScreenJson(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, screen: @import("macos.zig").objc.id, idx: c_ulong) !void {
+fn appendScreenJson(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, screen: ScreenObjectId, idx: c_ulong) !void {
+    if (comptime builtin.os.tag != .macos) return;
     const macos = @import("macos.zig");
     // frame is the full screen (origin at bottom-left in AppKit coords).
     // visibleFrame excludes menu bar + dock — usually what apps want.

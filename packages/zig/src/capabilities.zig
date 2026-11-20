@@ -300,29 +300,63 @@ fn appendReason(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), reason
     }
 }
 
+/// Whether `name` appears in a backend's routed set.
+pub fn isRouted(routed: []const []const u8, name: []const u8) bool {
+    for (routed) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return true;
+    }
+    return false;
+}
+
 /// Render the whole manifest as JSON.
-///
-/// Built at call time from the registry and the live-emitter set rather than
-/// cached: an emitter can register after the page loads (a subsystem that only
-/// initialises on first use), and a manifest that answered from a snapshot
-/// would be exactly the stale-declaration problem this file exists to prevent.
 pub fn buildManifest(gpa: std.mem.Allocator, registry: []const NamespaceDecl) ![]u8 {
+    return buildManifestFor(gpa, registry, null, "");
+}
+
+/// Render the manifest for a backend that dispatches only some namespaces.
+///
+/// `routed_here` names what the calling backend can reach; `demotion_reason` is
+/// what the page is told about the rest. A `declared` namespace outside that set
+/// is demoted to `unavailable`, because `declared` is a claim about the audited
+/// dispatch chain -- on every other backend the page would otherwise be promised
+/// a surface that answers PLATFORM_NOT_SUPPORTED the moment it is used.
+///
+/// Only `declared` is demoted. `undeclared` (craft claims nothing), `unrouted`
+/// (nothing can reach it anywhere) and `unavailable` (known not to work) are
+/// already true on every backend, and rewriting them would lose precision.
+pub fn buildManifestFor(
+    gpa: std.mem.Allocator,
+    registry: []const NamespaceDecl,
+    routed_here: ?[]const []const u8,
+    demotion_reason: []const u8,
+) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
 
     try out.appendSlice(gpa, "{\"namespaces\":{");
     for (registry, 0..) |ns, index| {
         if (index > 0) try out.append(gpa, ',');
+        // A declared namespace this backend cannot dispatch has nothing to
+        // promise, so it also loses its action table: those names describe the
+        // chain that does have the arm.
+        const demoted = if (routed_here) |routed|
+            ns.status == .declared and !isRouted(routed, ns.name)
+        else
+            false;
+        const status: NamespaceStatus = if (demoted) .unavailable else ns.status;
+        const reason: ?[]const u8 = if (demoted) demotion_reason else ns.reason;
+        const actions: []const ActionDecl = if (demoted) &.{} else ns.actions;
+
         try out.append(gpa, '"');
         try appendEscaped(gpa, &out, ns.name);
         try out.appendSlice(gpa, "\":{\"status\":\"");
-        try out.appendSlice(gpa, @tagName(ns.status));
+        try out.appendSlice(gpa, @tagName(status));
         try out.append(gpa, '"');
-        try appendReason(gpa, &out, ns.reason);
+        try appendReason(gpa, &out, reason);
 
-        if (ns.actions.len > 0) {
+        if (actions.len > 0) {
             try out.appendSlice(gpa, ",\"actions\":{");
-            for (ns.actions, 0..) |action, action_index| {
+            for (actions, 0..) |action, action_index| {
                 if (action_index > 0) try out.append(gpa, ',');
                 try out.append(gpa, '"');
                 try appendEscaped(gpa, &out, action.name);

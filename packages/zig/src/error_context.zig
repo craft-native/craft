@@ -4,9 +4,11 @@ const std = @import("std");
 /// Provides detailed error information with stack traces and context
 /// Get current timestamp in milliseconds (compatible with Zig 0.16)
 fn getMilliTimestamp() i64 {
-    var ts: std.c.timespec = undefined;
-    if (std.c.clock_gettime(.REALTIME, &ts) != 0) return 0;
-    return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+    // `compat.milliTimestamp` is this exact function, cross-platform. The copy
+    // that lived here reached for POSIX `clock_gettime`, whose `clockid_t` is
+    // `void` on Windows, so every module carrying it failed to compile for
+    // that target — which is why `zig build test` could not run there.
+    return @import("compat.zig").milliTimestamp();
 }
 
 pub const ErrorSeverity = enum {
