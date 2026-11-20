@@ -1172,8 +1172,11 @@ action reaches up into it, as `--craft-floating-actions-height` on its root
 element and the `craftFloatingActionsLayout` event (`{ height, frame }`), apart
 from `--craft-tab-bar-height`; pad its end with
 `max(var(--craft-tab-bar-height, 0px), var(--craft-floating-actions-height, 0px))`.
-Anything that does not scroll is given nothing: keep important controls out
-from under its trailing footprint.
+Anything that does not scroll is given no room by the host, but a native
+screen's script hears the same `craftFloatingActionsLayout` window event
+(`{ height, frame }`, in the screen's points; `frame` is null and `height` 0
+once nothing floats over it), sent when it changes, so a fixed control can be
+moved out from under the action.
 Omitting `iconOnly` retains the standard accessory presentation and spacing.
 The `@stacksjs/stx/native` navigation/chrome types carry the same `iconOnly`
 option; no separate compiler or compact-accessory prop is needed.

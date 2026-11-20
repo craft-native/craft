@@ -2500,9 +2500,10 @@ export interface CraftTabBarLayoutEvent extends CustomEvent {
 
 /**
  * iOS: where the compact tab actions (`tabAccessory` with `iconOnly`) float
- * over the page. `height` is how far they reach up from the page's bottom
- * edge, the same value as `--craft-floating-actions-height`; `frame` is in
- * the page's CSS pixels, or null while nothing floats over it.
+ * over the page or native screen. `height` is how far they reach up from its
+ * bottom edge (on a web page, the same value as
+ * `--craft-floating-actions-height`); `frame` is in the page's CSS pixels or
+ * the screen's points, or null while nothing floats over it.
  */
 export interface CraftFloatingActionsLayoutEvent extends CustomEvent {
   detail: {

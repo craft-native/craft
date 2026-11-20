@@ -9957,6 +9957,29 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         visit(renderedRoot, inside: false)
         floatingClearanceApplied = actions != nil
+        reportFloatingActions(actions.map { view.convert($0, from: nil) })
+    }
+
+    /// What the screen's script last heard of the floating actions.
+    private var reportedFloatingActions: [String: Any]?
+
+    /// The floating actions, for what a scroll view's room cannot reach: a
+    /// screen that does not scroll keeps a control out from under them
+    /// itself (#523). The same `craftFloatingActionsLayout` a web page hears:
+    /// `height` is how far they reach up from the screen's bottom edge, and
+    /// `frame` is where they are in the screen's points, or null while
+    /// nothing floats over it. Sent when it changes.
+    private func reportFloatingActions(_ frame: CGRect?) {
+        let visible = frame.flatMap { $0.intersects(view.bounds) ? $0.integral : nil }
+        let height = visible.map { Int(max(0, view.bounds.maxY - $0.minY).rounded()) } ?? 0
+        let detail: [String: Any] = ["height": height, "frame": visible.map {
+            ["x": Int($0.minX), "y": Int($0.minY), "width": Int($0.width), "height": Int($0.height)] as [String: Any]
+        } ?? NSNull()]
+        if let reported = reportedFloatingActions, NSDictionary(dictionary: reported).isEqual(to: detail) { return }
+        // Nothing to say on a screen that never had any.
+        if reportedFloatingActions == nil, visible == nil { return }
+        reportedFloatingActions = detail
+        send(type: "CRAFT_EVENT", payload: ["event": "craftFloatingActionsLayout", "detail": detail])
     }
 
     /// A layout moved a view, or the actions moved: measured again once the

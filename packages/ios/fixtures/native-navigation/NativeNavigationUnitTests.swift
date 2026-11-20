@@ -1098,6 +1098,20 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(kept, -0.5)
         XCTAssertLessThan(kept, 40)
 
+        // The screen's script hears where they float, for what does not scroll.
+        screen.evaluateScript("""
+            globalThis.__floating = [];
+            const previous = globalThis.__stxNativeCallback;
+            globalThis.__stxNativeCallback = function(json) {
+                const message = JSON.parse(json);
+                if (message.type === 'CRAFT_EVENT' && message.payload.event === 'craftFloatingActionsLayout') __floating.push(message.payload.detail);
+                if (typeof previous === 'function') return previous(json);
+            };
+        """)
+        func floating() -> [String: Any]? {
+            screen.evaluateScript("__floating[__floating.length - 1]")?.toDictionary() as? [String: Any]
+        }
+
         // A vertical group of two: 103 points of capsule, 10 above the bar.
         screen.evaluateScript(group("vertical"))
         await displayWait("the scroll view clears a vertical group") { CraftChrome.shared.floatingActions != nil && abs(scroll.contentInset.bottom - (113 - kept)) <= 1 }
@@ -1112,6 +1126,10 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(scroll.frame, viewport)
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
         XCTAssertEqual(screen.additionalSafeAreaInsets.bottom, 0)
+        let inScreen = screen.view.convert(actions, from: nil).integral
+        await displayWait("the screen's script hears where the group floats") { (floating()?["frame"] as? [String: Any])?["y"] as? Int == Int(inScreen.minY) }
+        XCTAssertEqual(floating()?["height"] as? Int, Int((screen.view.bounds.maxY - inScreen.minY).rounded()))
+        XCTAssertEqual((floating()?["frame"] as? [String: Any])?["width"] as? Int, Int(inScreen.width))
 
         // A horizontal group reaches 58 points up, and the room follows it.
         screen.evaluateScript(group("horizontal"))
@@ -1132,6 +1150,7 @@ final class NativeNavigationUnitTests: XCTestCase {
         await displayWait("the room returns with the group") { abs(scroll.contentInset.bottom - (113 - kept)) <= 1 }
         screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
         await displayWait("the room goes with the actions") { CraftChrome.shared.floatingActions == nil && scroll.contentInset.bottom < 0.5 }
+        await displayWait("the screen's script hears that nothing floats") { floating()?["height"] as? Int == 0 && floating()?["frame"] is NSNull }
         let restoredEnd = await contentEnd()
         XCTAssertEqual(restoredEnd, plainEnd, accuracy: 1)
     }
