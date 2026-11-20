@@ -656,6 +656,12 @@ internal object CraftNativePrelude {
         }
     }
 
+    fun gatedLinkDestination(raw: String, path: String, protectedPaths: List<String>, redirect: String, signedIn: () -> Boolean): String? {
+        if (!gateAdmits(path, protectedPaths) || signedIn()) return null
+        if (!raw.startsWith("/") || raw.startsWith("//") || raw.any { it == '\\' || it.code < 32 || it.code == 127 }) return redirect
+        return "$redirect?next=${Uri.encode(raw)}"
+    }
+
     fun script(
         bridgeFields: String,
         post: String,

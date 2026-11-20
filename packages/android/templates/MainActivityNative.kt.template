@@ -5421,6 +5421,7 @@ class MainActivity : AppCompatActivity() {
     internal var nativeAppState = "inactive"
         private set
     private var deliveredInitialDeepLink = false
+    private var initialDeepLinkRedirect: String? = null
     private var initialDeepLink: Uri? = null
     private var initialDeepLinkClaimed = false
     private var appInitialDeepLinkClaimed = false
@@ -5599,15 +5600,12 @@ class MainActivity : AppCompatActivity() {
         }
         val launch = initialDeepLink?.let { routes.appPath(it.toString(), urlSchemes) }
         if (launch != null) deliveredInitialDeepLink = true
-        // A launch link is deliberately not gated. Suppressing one would have
-        // to decide whether it is dropped or replayed after signing in, and
-        // UIKit does not gate them either — its gate resolves the start path
-        // while links are still queued for replay. Same gap, both hosts, and
-        // better as its own change than as a silent asymmetry here.
-        val start = if (launch != null) launch else gatedStartPath(routes.initialPath)
+        val linkRedirect = launch?.let { gatedLinkPath(it, initialDeepLink?.encodedFragment) }
+        initialDeepLinkRedirect = linkRedirect
+        val start = linkRedirect ?: launch ?: gatedStartPath(routes.initialPath)
         val tab = routes.tabFor(start)
         val match = routes.match(start)
-        if (launch == null || tab != null || (routes.tabs.isEmpty() && match != null)) {
+        if (linkRedirect != null || launch == null || tab != null || (routes.tabs.isEmpty() && match != null)) {
             selectTab(tab?.let(routes.tabs::indexOf) ?: 0, initial = match)
         } else {
             selectTab(0)
@@ -5649,6 +5647,19 @@ class MainActivity : AppCompatActivity() {
         }
         Log.i(TAG, "no sign-in under $key: starting on $redirect instead of $start")
         return redirect
+    }
+
+    /** A guest's protected link starts Login without opening the linked screen or its tab. */
+    private fun gatedLinkPath(path: String, fragment: String?): String? {
+        val gate = config.optJSONObject("nativeGate") ?: return null
+        val entries = gate.optJSONArray("protectedLinks") ?: return null
+        val redirect = gate.optString("linkRedirect").ifBlank { gate.optString("redirect") }
+        if (redirect.isBlank() || routes.match(redirect) == null) return null
+        val match = routes.match(path) ?: return null
+        val protectedPaths = (0 until entries.length()).map { entries.optString(it) }
+        val raw = path + (fragment?.let { "#$it" } ?: "")
+        val key = gate.optString("token").ifBlank { CraftNativePrelude.sessionTokenKey(config) }
+        return CraftNativePrelude.gatedLinkDestination(raw, match.path, protectedPaths, redirect) { !stores.secureValue(key).isNullOrEmpty() }
     }
 
     private fun installChrome() {
@@ -9421,7 +9432,9 @@ class MainActivity : AppCompatActivity() {
         }
 
     /** A link as the screens hear it: `CraftAppLinks.describe`, which the page bridge uses too. */
-    internal fun deepLinkData(uri: android.net.Uri): JSONObject = CraftAppLinks.describe(uri)
+    internal fun deepLinkData(uri: android.net.Uri): JSONObject = CraftAppLinks.describe(uri).apply {
+        if (uri == initialDeepLink) initialDeepLinkRedirect?.let { put("nativeRedirect", it) }
+    }
 
     /** App-wide news (the app's state, a link): every screen and the app script hear it. */
     private fun publish(type: String, payload: JSONObject) {
@@ -9516,8 +9529,12 @@ class MainActivity : AppCompatActivity() {
                 CraftAppLinks.openBrowser(this, link)
                 return
             }
-            publish("DEEP_LINK", deepLinkData(link).put("initial", false))
-            if (::routes.isInitialized && !routes.isEmpty) routes.appPath(link.toString(), urlSchemes)?.let { navigateOpen(it, fromLink = true) }
+            val path = if (::routes.isInitialized && !routes.isEmpty) routes.appPath(link.toString(), urlSchemes) else null
+            val redirect = path?.let { gatedLinkPath(it, link.encodedFragment) }
+            val detail = CraftAppLinks.describe(link).put("initial", false)
+            if (redirect != null) detail.put("nativeRedirect", redirect)
+            publish("DEEP_LINK", detail)
+            (redirect ?: path)?.let { navigateOpen(it, fromLink = true) }
         }
     }
 
