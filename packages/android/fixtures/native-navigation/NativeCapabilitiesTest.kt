@@ -1401,6 +1401,50 @@ class NativeCapabilitiesTest {
         return requireNotNull(answer)
     }
 
+    /**
+     * A biometric credential (#565). The emulator has no fingerprint or face
+     * enrolled, and enrolling one is a change to the device's settings, so
+     * the read behind a prompt is not exercised here; everything that needs
+     * no person is: nothing is written without an enrolled biometric, a
+     * half-written entry is forgotten rather than reported, and bad
+     * arguments and a disabled capability are refused.
+     */
+    @Test
+    fun aBiometricCredentialIsNeverKeptWithoutAnEnrolledBiometric() {
+        val context = instrumentation.targetContext
+        val vault = context.getSharedPreferences("craft-biometric-vault", android.content.Context.MODE_PRIVATE)
+        vault.edit().clear().commit()
+        val host = CraftNativeCapabilities(context, JSONObject().put("enableBiometric", true))
+        try {
+            val enrolled = CraftBiometricVault.available(context)
+            val stored = call(host, "Biometrics", "storeCredential", JSONArray().put("session").put("secret-token"))
+            if (enrolled) assertEquals(true, stored.data)
+            else {
+                assertEquals("BIOMETRICS_UNAVAILABLE", stored.code)
+                assertTrue("nothing may be written without a biometric", vault.all.isEmpty())
+            }
+            assertEquals(enrolled, call(host, "Biometrics", "hasCredential", JSONArray().put("session")).data)
+            assertEquals(true, call(host, "Biometrics", "deleteCredential", JSONArray().put("session")).data)
+            assertEquals(false, call(host, "Biometrics", "hasCredential", JSONArray().put("session")).data)
+            assertTrue(vault.all.isEmpty())
+
+            // A value whose key is gone (a restored backup, a cleared Keystore)
+            // is not a credential: it is forgotten, not reported.
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest("orphan".toByteArray())
+            val alias = "dev.craft.native.biometric." + digest.joinToString("") { "%02x".format(it) }
+            vault.edit().putString(alias, JSONObject().put("key", "AA==").put("iv", "AA==").put("value", "AA==").toString()).commit()
+            assertEquals(false, call(host, "Biometrics", "hasCredential", JSONArray().put("orphan")).data)
+            assertFalse("the orphaned value was kept", vault.contains(alias))
+
+            assertEquals("INVALID_ARGUMENT", call(host, "Biometrics", "hasCredential", JSONArray().put("")).code)
+            assertEquals("INVALID_ARGUMENT", call(host, "Biometrics", "storeCredential", JSONArray().put("session")).code)
+            assertEquals("INVALID_ARGUMENT", call(host, "Biometrics", "storeCredential", JSONArray().put("session").put(42)).code)
+        } finally { host.close() }
+        val disabled = CraftNativeCapabilities(context, JSONObject())
+        try { assertEquals("CAPABILITY_DISABLED", call(disabled, "Biometrics", "hasCredential", JSONArray().put("session")).code) }
+        finally { disabled.close() }
+    }
+
     @Test
     fun fetchUsesTheSameTextProtocolAsTheIosHost() {
         val server = ServerSocket(0)

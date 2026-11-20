@@ -110,9 +110,13 @@ await biometrics.storeCredential('session', sessionToken)
 ```
 
 Writes a Keychain item behind the faces or fingers enrolled right now, on
-this device only and only while it has a passcode. Writing does not prompt.
-Rejects with `BIOMETRICS_UNAVAILABLE` when nothing is enrolled or there is no
-passcode, so the app never keeps a token no one could open.
+this device only and only while it has a passcode. On Android the value is
+sealed with an AES-256-GCM key, and that key is wrapped with an RSA key pair
+of its own in the AndroidKeyStore. The private half decrypts only after
+`BiometricPrompt` passes a strong biometric, and enrolling another one
+invalidates it. Writing does not prompt on either. Rejects with
+`BIOMETRICS_UNAVAILABLE` when nothing is enrolled or there is no passcode or
+screen lock, so the app never keeps a token no one could open.
 
 ### `biometrics.getCredential(key, reason?)`
 
@@ -120,8 +124,8 @@ passcode, so the app never keeps a token no one could open.
 const token = await biometrics.getCredential('session', 'Unlock your account')
 ```
 
-The system shows Face ID or Touch ID with `reason`, and the Keychain releases
-the value only if the person passes. Resolves to `null` when there is none,
+The system shows Face ID or Touch ID (on Android, the biometric prompt) with
+`reason`, and the value is released only if the person passes. Resolves to `null` when there is none,
 including a credential invalidated because another face or finger was
 enrolled. That is deliberate, and the app should ask for the password again.
 Rejects with `AUTHENTICATION_CANCELLED` or `AUTHENTICATION_FAILED`. The read
@@ -138,8 +142,9 @@ Forgets the credential without a prompt, for example when signing out.
 
 These credentials are kept apart from `secureStorage`: never cached in memory,
 never shared with a web page, and not removed by `secureStorage.clear()`.
-iOS only for now. On Android, `storeCredential` and `getCredential` reject
-with `UNSUPPORTED` and `hasCredential` resolves `false`.
+Both hosts carry them, for native screens and hybrid pages alike. A host
+without the store (a browser) rejects `storeCredential` and `getCredential`
+with `UNSUPPORTED` and resolves `hasCredential` to `false`.
 
 ## Capability and lifecycle behavior
 

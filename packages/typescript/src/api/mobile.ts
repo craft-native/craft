@@ -814,15 +814,17 @@ export const biometrics = {
    * does not sign anyone in to a server on its own; for that, use passkeys.
    *
    * On iOS it is a Keychain item written behind the currently enrolled
-   * faces or fingers, on this device only. Writing does not prompt. Enrolling
+   * faces or fingers, on this device only. On Android it is sealed with a
+   * key of its own in the AndroidKeyStore that only a strong biometric
+   * (`BiometricPrompt`) unlocks. Writing does not prompt on either. Enrolling
    * another face or finger invalidates it, and {@link getCredential} then
    * resolves to `null`, so the app asks for the password again. It is kept
    * apart from {@link secureStorage}: never cached, never shared with a web
    * page, and not removed by `secureStorage.clear()`.
    *
    * Rejects with `BIOMETRICS_UNAVAILABLE` when no face or finger is enrolled
-   * or the device has no passcode, and with `UNSUPPORTED` where the platform
-   * has no such store yet (Android, for now).
+   * or the device has no passcode or screen lock, and with `UNSUPPORTED`
+   * where the host has no such store (a browser, or a Craft too old for it).
    */
   async storeCredential(key: string, value: string): Promise<void> {
     const credentials = biometricCredentials()

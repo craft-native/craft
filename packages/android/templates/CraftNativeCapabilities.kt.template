@@ -1335,7 +1335,61 @@ internal class CraftNativeCapabilities(
                     }
                 }
             }
+            "storeCredential", "getCredential", "hasCredential", "deleteCredential" -> credential(requestToken, method, args, completion)
             else -> complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Biometrics method"), completion)
+        }
+    }
+
+    /**
+     * A credential only a fingerprint or face releases (#565): see
+     * CraftBiometricVault. Keystore work is off the main thread; a read is
+     * the person's to answer, and a screen that goes away takes its prompt
+     * with it (`cancel`).
+     */
+    private fun credential(requestToken: String, method: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {
+        val key = CraftBiometricVault.validKey(args.opt(0))
+        if (key == null) {
+            complete(requestToken, failure("INVALID_ARGUMENT", "A biometric credential needs a non-empty key"), completion)
+            return
+        }
+        fun vault(work: () -> Any?) = networkExecutor.execute {
+            val result = try { success(work() ?: JSONObject.NULL) } catch (error: CraftBiometricVault.Failure) {
+                failure(error.code, error.message ?: error.code)
+            } catch (error: Exception) {
+                failure("STORAGE_FAILED", error.message ?: "The biometric credential could not be used")
+            }
+            complete(requestToken, result, completion)
+        }
+        when (method) {
+            "hasCredential" -> vault { CraftBiometricVault.has(context, key) }
+            "deleteCredential" -> vault { CraftBiometricVault.delete(context, key); true }
+            "storeCredential" -> {
+                val value = args.opt(1) as? String
+                if (args.length() != 2 || value == null) {
+                    complete(requestToken, failure("INVALID_ARGUMENT", "storeCredential needs a key and a string value"), completion)
+                    return
+                }
+                vault { CraftBiometricVault.store(context, key, value); true }
+            }
+            "getCredential" -> {
+                val host = activity
+                if (host !is FragmentActivity) {
+                    complete(requestToken, failure("AUTHENTICATION_FAILED", "Activity does not support biometric prompts"), completion)
+                    return
+                }
+                val reason = (args.opt(1) as? String)?.takeIf { it.isNotBlank() } ?: "Sign in"
+                mainHandler.post {
+                    if (cancelled.contains(requestToken)) { complete(requestToken, success(JSONObject.NULL), completion); return@post }
+                    CraftBiometricVault.read(host, key, reason) { result ->
+                        biometricPrompts.remove(requestToken)
+                        val outcome = result.fold(
+                            { success(it ?: JSONObject.NULL) },
+                            { error -> if (error is CraftBiometricVault.Failure) failure(error.code, error.message ?: error.code) else failure("AUTHENTICATION_FAILED", error.message ?: "Biometric authentication failed") },
+                        )
+                        complete(requestToken, outcome, completion)
+                    }?.let { biometricPrompts[requestToken] = it }
+                }
+            }
         }
     }
 

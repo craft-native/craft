@@ -1357,6 +1357,12 @@ export async function init(options: InitOptions): Promise<void> {
 
   const permissionPolicy = readFileSync(join(TEMPLATES_DIR, 'CraftPermissionPolicy.kt.template'), 'utf8')
   writeFileSync(join(output, 'app/src/main/java', packagePath, 'CraftPermissionPolicy.kt'), permissionPolicy.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName))
+  // Both renderers: native screens and the hybrid bridge share the
+  // biometric credential vault (#565).
+  writeFileSync(
+    join(output, 'app/src/main/java', packagePath, 'CraftBiometricVault.kt'),
+    readFileSync(join(TEMPLATES_DIR, 'CraftBiometricVault.kt.template'), 'utf8').replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+  )
 
   // Create CraftBridge.kt
   const craftBridgeTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftBridge.kt.template'), 'utf-8')

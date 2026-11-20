@@ -1543,10 +1543,39 @@ class CraftBridge(
                     pickMultiple: function() { return legacyPickImage().then(function(photo) { return [normalizePhoto(photo)]; }); },
                     isAvailable: function() { return Promise.resolve(!!craft.capabilities.camera); }
                 };
+                // A credential only a fingerprint or face releases (#565).
+                // Each call has its own id: a read waits on the person, and a
+                // second call must not settle the first.
+                var credentialSequence = 0;
+                var credentialRequests = Object.create(null);
+                window.__craftCredentialResult = function(id, result) {
+                    var pending = credentialRequests[id];
+                    if (!pending) return;
+                    delete credentialRequests[id];
+                    if (result && result.code) pending.reject(Object.assign(new Error(result.message || result.code), { code: result.code }));
+                    else pending.resolve(result ? result.value : null);
+                };
+                function credential(method, key, value, reason) {
+                    return new Promise(function(resolve, reject) {
+                        credentialSequence += 1;
+                        var id = credentialSequence;
+                        credentialRequests[id] = {resolve: resolve, reject: reject};
+                        try {
+                            CraftAndroid.biometricCredential(id, method, key == null ? '' : String(key), value == null ? null : String(value), reason == null ? null : String(reason));
+                        } catch (error) {
+                            delete credentialRequests[id];
+                            reject(error);
+                        }
+                    });
+                }
                 craft.biometrics = {
                     isAvailable: function() { return Promise.resolve(!!craft.capabilities.biometric); },
                     getBiometricType: function() { return Promise.resolve(craft.capabilities.biometric ? 'fingerprint' : null); },
-                    authenticate: function(reason) { return legacyAuthenticate(reason); }
+                    authenticate: function(reason) { return legacyAuthenticate(reason); },
+                    storeCredential: function(key, value) { return credential('storeCredential', key, value, null).then(function() {}); },
+                    getCredential: function(key, reason) { return credential('getCredential', key, null, reason); },
+                    hasCredential: function(key) { return credential('hasCredential', key, null, null).then(Boolean); },
+                    deleteCredential: function(key) { return credential('deleteCredential', key, null, null).then(function() {}); }
                 };
                 craft.secureStorage = {
                     set: function(key, value) { return Promise.resolve().then(function() { legacySecureStore.set(key, value); }); },
@@ -2379,6 +2408,54 @@ class CraftBridge(
             } catch (error: Exception) {
                 rejectBiometricRequest(error.message ?: "Biometric authentication failed")
             }
+        }
+    }
+
+    /**
+     * `craft.biometrics.storeCredential`, `getCredential`, `hasCredential`
+     * and `deleteCredential` for the page (#565), through CraftBiometricVault,
+     * which native screens use too. Answers `__craftCredentialResult(id, …)`
+     * with `{ value }` or `{ code, message }`.
+     */
+    @JavascriptInterface
+    fun biometricCredential(id: Int, method: String, key: String, value: String?, reason: String?) {
+        fun answer(result: JSONObject) {
+            if (closed) return
+            evaluatePromiseJavascript("window.__craftCredentialResult && window.__craftCredentialResult($id, $result)")
+        }
+        fun refuse(code: String, message: String) = answer(JSONObject().put("code", code).put("message", message))
+        if (!{{ENABLE_BIOMETRIC}}) { refuse("CAPABILITY_DISABLED", "Biometric authentication is disabled"); return }
+        val name = CraftBiometricVault.validKey(key) ?: run { refuse("INVALID_ARGUMENT", "A biometric credential needs a non-empty key"); return }
+        fun vault(work: () -> Any?) = java.util.concurrent.Executors.newSingleThreadExecutor().let { executor ->
+            executor.execute {
+                try { answer(JSONObject().put("value", work() ?: JSONObject.NULL)) }
+                catch (error: CraftBiometricVault.Failure) { refuse(error.code, error.message ?: error.code) }
+                catch (error: Exception) { refuse("STORAGE_FAILED", error.message ?: "The biometric credential could not be used") }
+                finally { executor.shutdown() }
+            }
+        }
+        when (method) {
+            "hasCredential" -> vault { CraftBiometricVault.has(activity, name) }
+            "deleteCredential" -> vault { CraftBiometricVault.delete(activity, name); true }
+            "storeCredential" -> {
+                if (value == null) { refuse("INVALID_ARGUMENT", "storeCredential needs a key and a string value"); return }
+                vault { CraftBiometricVault.store(activity, name, value); true }
+            }
+            "getCredential" -> {
+                val host = activity as? FragmentActivity ?: run { refuse("AUTHENTICATION_FAILED", "Activity does not support biometric prompts"); return }
+                activity.runOnUiThread {
+                    if (closed) return@runOnUiThread
+                    runCatching { biometricPrompt?.cancelAuthentication() }
+                    biometricPrompt = CraftBiometricVault.read(host, name, reason?.takeIf { it.isNotBlank() } ?: "Sign in") { result ->
+                        biometricPrompt = null
+                        result.fold(
+                            { answer(JSONObject().put("value", it ?: JSONObject.NULL)) },
+                            { error -> if (error is CraftBiometricVault.Failure) refuse(error.code, error.message ?: error.code) else refuse("AUTHENTICATION_FAILED", error.message ?: "Biometric authentication failed") },
+                        )
+                    }
+                }
+            }
+            else -> refuse("UNKNOWN_ACTION", "Unsupported biometric credential method")
         }
     }
 

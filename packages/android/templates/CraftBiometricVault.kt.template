@@ -1,0 +1,203 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import org.json.JSONObject
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.SecureRandom
+import java.security.spec.MGF1ParameterSpec
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.OAEPParameterSpec
+import javax.crypto.spec.PSource
+import javax.crypto.spec.SecretKeySpec
+
+/**
+ * A credential only a fingerprint or face releases (#565, the Android half of
+ * #564): an app that locks until the person proves who they are, or asks again
+ * before a sensitive action.
+ *
+ * Each key has its own AndroidKeyStore RSA key pair. The private key decrypts
+ * only after `BiometricPrompt` authenticates a `CryptoObject` holding it
+ * (`setUserAuthenticationRequired`, strong biometrics only), and enrolling
+ * another fingerprint or face invalidates it for good
+ * (`setInvalidatedByBiometricEnrollment`). The value itself is sealed with a
+ * fresh AES-256-GCM key, and only that key is wrapped with the RSA public
+ * key, so a value of any length fits. Writing uses the public key, which needs
+ * no prompt: iOS writes without one too.
+ *
+ * Kept apart from secure storage on purpose: a preferences file of its own
+ * holding only ciphertext, never cached, observed or shared with a page, and
+ * not cleared by `secureStorage.clear()`.
+ */
+object CraftBiometricVault {
+    class Failure(val code: String, message: String) : Exception(message)
+
+    private const val KEYSTORE = "AndroidKeyStore"
+    private const val PREFERENCES = "craft-biometric-vault"
+    private const val ALIAS_PREFIX = "dev.craft.native.biometric."
+    private const val RSA = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
+    // AndroidKeyStore's OAEP takes SHA-256 for the digest and SHA-1 for MGF1.
+    private val oaep = OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT)
+
+    fun validKey(value: Any?): String? = (value as? String)?.takeIf { it.isNotEmpty() && it.length <= 1024 }
+
+    /** Whether a strong biometric is enrolled, with a secure lock screen behind it. */
+    fun available(context: Context): Boolean =
+        BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+
+    private fun preferences(context: Context) = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    /** The Keystore alias for a key: a digest, so any key makes a valid alias. */
+    private fun alias(key: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+        return ALIAS_PREFIX + digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+
+    private fun encode(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    private fun decode(text: String) = Base64.decode(text, Base64.NO_WRAP)
+
+    /**
+     * Seals `value` under `key`, replacing what was there, without a prompt.
+     * Refused with `BIOMETRICS_UNAVAILABLE` when nothing is enrolled.
+     */
+    @Synchronized
+    fun store(context: Context, key: String, value: String) {
+        if (!available(context)) throw Failure("BIOMETRICS_UNAVAILABLE", "No fingerprint or face is enrolled on this device")
+        val alias = alias(key)
+        val store = keyStore()
+        runCatching { store.deleteEntry(alias) }
+        val publicKey = try {
+            val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEYSTORE)
+            val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(2048)
+                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA1)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+                .setUserAuthenticationRequired(true)
+                .setInvalidatedByBiometricEnrollment(true)
+                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG) }
+                .build()
+            generator.initialize(spec)
+            generator.generateKeyPair().public
+        } catch (error: Exception) {
+            // A key that needs a biometric cannot be made without one enrolled.
+            throw Failure("BIOMETRICS_UNAVAILABLE", error.message ?: "The device cannot keep a biometric key")
+        }
+        // The Keystore's own public key object refuses some providers' OAEP;
+        // an ordinary copy of it encrypts the same.
+        val wrapping = KeyFactory.getInstance(publicKey.algorithm).generatePublic(X509EncodedKeySpec(publicKey.encoded))
+        val secret = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val sealed = Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.ENCRYPT_MODE, SecretKeySpec(secret, "AES"), GCMParameterSpec(128, iv))
+            doFinal(value.toByteArray(Charsets.UTF_8))
+        }
+        val wrapped = Cipher.getInstance(RSA).run {
+            init(Cipher.ENCRYPT_MODE, wrapping, oaep)
+            doFinal(secret)
+        }
+        secret.fill(0)
+        val entry = JSONObject().put("key", encode(wrapped)).put("iv", encode(iv)).put("value", encode(sealed))
+        if (!preferences(context).edit().putString(alias, entry.toString()).commit()) {
+            runCatching { store.deleteEntry(alias) }
+            throw Failure("STORAGE_FAILED", "The biometric credential could not be written")
+        }
+    }
+
+    /**
+     * A cipher ready to unwrap `key`'s value once a prompt authenticates it,
+     * or null when there is none. A key invalidated by a change of enrolment
+     * is removed with its value and answers null, as iOS does.
+     */
+    @Synchronized
+    private fun unwrapper(context: Context, key: String): Pair<Cipher, JSONObject>? {
+        val alias = alias(key)
+        val entry = preferences(context).getString(alias, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val privateKey = runCatching { keyStore().getKey(alias, null) as? PrivateKey }.getOrNull()
+        if (entry == null || privateKey == null) {
+            if (entry != null || privateKey != null) forget(context, alias)
+            return null
+        }
+        return try {
+            Cipher.getInstance(RSA).apply { init(Cipher.DECRYPT_MODE, privateKey, oaep) } to entry
+        } catch (_: KeyPermanentlyInvalidatedException) {
+            forget(context, alias)
+            null
+        }
+    }
+
+    /** Whether a credential is kept under `key`, asked without any prompt. */
+    fun has(context: Context, key: String): Boolean = unwrapper(context, key) != null
+
+    /** Forgets the credential, without a prompt. */
+    @Synchronized
+    fun delete(context: Context, key: String) = forget(context, alias(key))
+
+    private fun forget(context: Context, alias: String) {
+        preferences(context).edit().remove(alias).commit()
+        runCatching { keyStore().deleteEntry(alias) }
+    }
+
+    /**
+     * Asks for the credential with `reason`: `done` gets the value once the
+     * person passes, null when there is none, or a [Failure]
+     * (`AUTHENTICATION_CANCELLED`, `AUTHENTICATION_FAILED`). Main thread. The
+     * prompt is returned so its owner can cancel it.
+     */
+    fun read(activity: FragmentActivity, key: String, reason: String, done: (Result<String?>) -> Unit): BiometricPrompt? {
+        val ready = try { unwrapper(activity, key) } catch (error: Exception) {
+            done(Result.failure(Failure("AUTHENTICATION_FAILED", error.message ?: "The biometric credential could not be read")))
+            return null
+        }
+        if (ready == null) { done(Result.success(null)); return null }
+        val (cipher, entry) = ready
+        var settled = false
+        fun settle(result: Result<String?>) { if (!settled) { settled = true; done(result) } }
+        val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                settle(runCatching {
+                    val unwrap = result.cryptoObject?.cipher ?: throw Failure("AUTHENTICATION_FAILED", "The prompt returned no key")
+                    val secret = unwrap.doFinal(decode(entry.getString("key")))
+                    try {
+                        Cipher.getInstance("AES/GCM/NoPadding").run {
+                            init(Cipher.DECRYPT_MODE, SecretKeySpec(secret, "AES"), GCMParameterSpec(128, decode(entry.getString("iv"))))
+                            String(doFinal(decode(entry.getString("value"))), Charsets.UTF_8)
+                        }
+                    } finally { secret.fill(0) }
+                }.recoverCatching { error ->
+                    throw if (error is Failure) error else Failure("AUTHENTICATION_FAILED", error.message ?: "The biometric credential could not be read")
+                })
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                val cancelled = errorCode == BiometricPrompt.ERROR_USER_CANCELED || errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_CANCELED
+                settle(Result.failure(Failure(if (cancelled) "AUTHENTICATION_CANCELLED" else "AUTHENTICATION_FAILED", errString.toString())))
+            }
+            // A finger that does not match is not the end: the prompt asks again.
+            override fun onAuthenticationFailed() {}
+        })
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(reason)
+                .setNegativeButtonText("Cancel")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .build(),
+            BiometricPrompt.CryptoObject(cipher),
+        )
+        return prompt
+    }
+}
