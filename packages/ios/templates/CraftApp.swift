@@ -896,6 +896,20 @@ final class CraftChrome: ObservableObject {
         floatingActions = next
         floatingActionsHost = next == nil ? nil : host
         NotificationCenter.default.post(name: Self.floatingActionsDidMove, object: self)
+        publishLayout()
+    }
+
+    /// How far the floating actions reach up into the page from its bottom
+    /// edge, and where they are in its coordinates: a web page has no scroll
+    /// view for the host to pad, so it is told instead (#523). Zero and nil
+    /// while nothing floats, the keyboard is up, or the page ends above them.
+    private func floatingActionsInPage() -> (reach: Int, frame: CGRect?) {
+        guard tabBarVisible, !keyboardUp, let actions = floatingActions,
+              let page = webView, page.window != nil else { return (0, nil) }
+        let inPage = page.convert(actions, from: nil)
+        let reach = max(0, page.bounds.maxY - inPage.minY)
+        guard reach > 0, inPage.minY < page.bounds.maxY else { return (0, nil) }
+        return (Int(reach.rounded()), inPage.integral)
     }
     @Published var selected: String?
     /// The visible destination may be the accessory, independently of its owning stack.
@@ -1303,11 +1317,17 @@ final class CraftChrome: ObservableObject {
     }
 
     /// The bar's height as `--craft-tab-bar-height`, so the page leaves room
-    /// for it, and as an event for anything that measures.
+    /// for it, and as an event for anything that measures. The compact
+    /// actions floating above the bar are `--craft-floating-actions-height`
+    /// and `craftFloatingActionsLayout`, apart from the bar's height so a
+    /// page that pins something to the bar is not moved by them.
     func publishLayout() {
         let height = tabBarVisible && !keyboardUp ? Int(occupied) : 0
         CraftHybrid.shared.tabBarCovers(CGFloat(height))
+        let actions = floatingActionsInPage()
+        let frame = actions.frame.map { "{x:\(Int($0.minX)),y:\(Int($0.minY)),width:\(Int($0.width)),height:\(Int($0.height))}" } ?? "null"
         let script = "document.documentElement.style.setProperty('--craft-tab-bar-height','\(height)px');window.dispatchEvent(new CustomEvent('craftTabBarLayout',{detail:{height:\(height)}}));"
+            + "document.documentElement.style.setProperty('--craft-floating-actions-height','\(actions.reach)px');window.dispatchEvent(new CustomEvent('craftFloatingActionsLayout',{detail:{height:\(actions.reach),frame:\(frame)}}));"
         DispatchQueue.main.async { [weak self] in self?.webView?.evaluateJavaScript(script, completionHandler: nil) }
     }
 

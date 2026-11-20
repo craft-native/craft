@@ -1180,11 +1180,36 @@ final class NativeNavigationUnitTests: XCTestCase {
             let height = try await page.evaluateJavaScript("parseFloat(document.documentElement.style.getPropertyValue('--craft-tab-bar-height'))")
             let expected = max(0, shell.view.bounds.maxY - shell.tabBar.frame.minY).rounded()
             XCTAssertEqual(try XCTUnwrap(height as? Double), Double(expected), accuracy: 0.5, "web content must not reserve the floating action's height either")
+            // A page that ends above the action is not under it.
+            let above = try await floatingActionsHeight(page)
+            XCTAssertEqual(above, 0, accuracy: 0.5)
+            // A page reaching down under the action is told how far it reaches,
+            // apart from the bar's height (#523): it has no scroll view to pad.
+            let actions = try XCTUnwrap(CraftChrome.shared.floatingActions)
+            page.frame = screen.view.bounds
+            CraftChrome.shared.publishLayout()
+            await renderFrames()
+            let reach = (page.convert(page.bounds, to: nil).maxY - actions.minY).rounded()
+            XCTAssertGreaterThan(reach, expected, "the action floats above the bar")
+            let under = try await floatingActionsHeight(page)
+            XCTAssertEqual(under, Double(reach), accuracy: 0.5)
+            page.frame = CGRect(x: 0, y: 0, width: screen.view.bounds.width, height: 120)
             screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
             await displayWait("accessory removed") { CraftChrome.shared.tabAccessory == nil }
             await renderFrames()
             XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+            page.frame = screen.view.bounds
+            CraftChrome.shared.publishLayout()
+            await renderFrames()
+            let gone = try await floatingActionsHeight(page)
+            XCTAssertEqual(gone, 0, accuracy: 0.5, "nothing floats once the accessory is gone")
+            page.frame = CGRect(x: 0, y: 0, width: screen.view.bounds.width, height: 120)
         }
+    }
+
+    private func floatingActionsHeight(_ page: WKWebView) async throws -> Double {
+        let value = try await page.evaluateJavaScript("parseFloat(document.documentElement.style.getPropertyValue('--craft-floating-actions-height'))")
+        return try XCTUnwrap(value as? Double)
     }
 
     func testTabAccessoryRoutePushesAndRestoresTheSelectedNativeStack() async throws {

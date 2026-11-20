@@ -20,8 +20,11 @@ craft.navigation.setOptions({
 
 The title remains its accessible name and the badge announces the unread count.
 The compact button overlays content: it adds no bottom safe-area inset and no
-extra `--craft-tab-bar-height` reservation in hybrid web pages. Keep important
-controls out of its trailing footprint, or add screen-specific padding if needed. Set
+extra `--craft-tab-bar-height` reservation in hybrid web pages. A native
+screen's vertical scroll views and lists get room at their end; a web page is
+told how far the button reaches up into it as `--craft-floating-actions-height`
+(and the `craftFloatingActionsLayout` event), for padding such as
+`max(var(--craft-tab-bar-height, 0px), var(--craft-floating-actions-height, 0px))`. Set
 `tabAccessory: null` to remove it. Accessories without `iconOnly` keep the
 system's standard presentation. Removing an accessory keeps all tabs expanded.
 

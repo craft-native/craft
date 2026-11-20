@@ -511,6 +511,12 @@ native call.
 
 On iOS, `window.addEventListener('craftTabBarLayout', ...)` reports the native
 tab bar's current height as `{ detail: { height } }` in CSS pixels.
+Compact tab actions (`tabAccessory` with `iconOnly`) float above the bar and
+are not part of that height. `--craft-floating-actions-height` on the root
+element, and `craftFloatingActionsLayout` with `{ detail: { height, frame } }`,
+say how far they reach up into the page from its bottom edge, so its end can
+scroll clear of them:
+`padding-bottom: max(var(--craft-tab-bar-height, 0px), var(--craft-floating-actions-height, 0px))`.
 
 ## Requirements
 

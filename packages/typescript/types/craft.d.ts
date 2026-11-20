@@ -2481,6 +2481,19 @@ export interface CraftTabBarLayoutEvent extends CustomEvent {
   };
 }
 
+/**
+ * iOS: where the compact tab actions (`tabAccessory` with `iconOnly`) float
+ * over the page. `height` is how far they reach up from the page's bottom
+ * edge, the same value as `--craft-floating-actions-height`; `frame` is in
+ * the page's CSS pixels, or null while nothing floats over it.
+ */
+export interface CraftFloatingActionsLayoutEvent extends CustomEvent {
+  detail: {
+    height: number;
+    frame: { x: number; y: number; width: number; height: number } | null;
+  };
+}
+
 // Augment WindowEventMap for better event listener typing
 declare global {
   interface WindowEventMap {
@@ -2512,6 +2525,7 @@ declare global {
     craftShortcut: CraftShortcutEvent;
     craftSiriShortcut: CraftSiriShortcutEvent;
     craftTabBarLayout: CraftTabBarLayoutEvent;
+    craftFloatingActionsLayout: CraftFloatingActionsLayoutEvent;
     craftAppearance: CraftAppearanceEvent;
     // iOS, after `craft.music.observe(true)`.
     craftMusicChange: CraftMusicChangeEvent;

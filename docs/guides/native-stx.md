@@ -1167,9 +1167,13 @@ including on iOS 26, and floats above the bar without increasing the native
 bottom safe area or the hybrid page's `--craft-tab-bar-height`. A native
 screen's vertical `ScrollView`, `SectionList` or `FlatList` that the action
 reaches into is given that much room at its end, so its last row can be
-scrolled clear of it; see the group below. A web page, and anything that does
-not scroll, is not: keep important controls out from under its trailing
-footprint, or pad locally.
+scrolled clear of it; see the group below. A web page is told how far the
+action reaches up into it, as `--craft-floating-actions-height` on its root
+element and the `craftFloatingActionsLayout` event (`{ height, frame }`), apart
+from `--craft-tab-bar-height`; pad its end with
+`max(var(--craft-tab-bar-height, 0px), var(--craft-floating-actions-height, 0px))`.
+Anything that does not scroll is given nothing: keep important controls out
+from under its trailing footprint.
 Omitting `iconOnly` retains the standard accessory presentation and spacing.
 The `@stacksjs/stx/native` navigation/chrome types carry the same `iconOnly`
 option; no separate compiler or compact-accessory prop is needed.

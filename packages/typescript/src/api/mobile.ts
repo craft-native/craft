@@ -2958,6 +2958,9 @@ function postChrome(message: Record<string, unknown>): boolean {
  *
  * While the bar shows, `--craft-tab-bar-height` on the root element says how
  * much of the screen's bottom it covers.
+ * Compact tab actions floating above it are reported apart, as
+ * `--craft-floating-actions-height`: how far they reach up from the page's
+ * bottom edge (#523).
  */
 export const tabBar = {
   isAvailable(): boolean {
