@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.520...v0.0.521)
+
+## 🐛 Bug Fixes
+
+- **ios**: update cold-link extraction fixtures for native gating ([e54d1c5](https://github.com/craft-native/craft/commit/e54d1c5)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.519...v0.0.520)
 
 ## 🚀 Features
