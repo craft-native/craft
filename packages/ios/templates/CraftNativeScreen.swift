@@ -2866,8 +2866,26 @@ enum CraftNativePointerEvents: String {
 }
 
 private var craftNativePointerEventsKey: UInt8 = 0
+private var craftNativeAccessibilityHiddenKey: UInt8 = 0
+private var craftNativeAccessibilityOffPageKey: UInt8 = 0
 
 extension UIView {
+    fileprivate var craftAccessibilityHidden: Bool {
+        get { (objc_getAssociatedObject(self, &craftNativeAccessibilityHiddenKey) as? Bool) == true }
+        set {
+            objc_setAssociatedObject(self, &craftNativeAccessibilityHiddenKey, newValue ? NSNumber(value: true) : nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            accessibilityElementsHidden = newValue || craftAccessibilityOffPage
+        }
+    }
+
+    fileprivate var craftAccessibilityOffPage: Bool {
+        get { (objc_getAssociatedObject(self, &craftNativeAccessibilityOffPageKey) as? Bool) == true }
+        set {
+            objc_setAssociatedObject(self, &craftNativeAccessibilityOffPageKey, newValue ? NSNumber(value: true) : nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            accessibilityElementsHidden = newValue || craftAccessibilityHidden
+        }
+    }
+
     // nil identifies an internal view; even authored `auto` nodes are marked.
     var craftPointerEvents: CraftNativePointerEvents? {
         get { (objc_getAssociatedObject(self, &craftNativePointerEventsKey) as? String).flatMap(CraftNativePointerEvents.init(rawValue:)) }
@@ -3485,7 +3503,7 @@ private class CraftNativeFlowView: UIStackView {
 
     private static func spokenText(in view: UIView) -> [String] {
         var parts: [String] = []
-        for child in view.subviews where !child.isHidden && child.alpha > 0.01 {
+        for child in view.subviews where !child.isHidden && child.alpha > 0.01 && !child.accessibilityElementsHidden {
             if child.isAccessibilityElement {
                 // A Text's label is its text (applyAccessibility leaves accessibilityLabel nil).
                 let said = child.accessibilityLabel ?? (child as? UILabel)?.text
@@ -5490,7 +5508,14 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         if next != authoredPageIndex { pendingPageIndex = next; contentNeedsLayout = true }
         authoredPageIndex = next
         pageHandler = onSelect
-        if next == nil { contentStack.pageViewport = nil; reportedPage = nil; pageAnimating = false }
+        if next == nil {
+            if contentStack.pageViewport != nil {
+                for child in contentStack.arrangedSubviews { child.craftAccessibilityOffPage = false }
+            }
+            contentStack.pageViewport = nil
+            reportedPage = nil
+            pageAnimating = false
+        }
         setNeedsLayout()
     }
 
@@ -5507,7 +5532,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         let pages = contentStack.arrangedSubviews.filter { !$0.isHidden }
         let index = min(max(0, Int((contentOffset.x / bounds.width).rounded())), max(0, pages.count - 1))
         currentPageIndex = index
-        for (i, child) in pages.enumerated() { child.accessibilityElementsHidden = i != index }
+        for (i, child) in pages.enumerated() { child.craftAccessibilityOffPage = i != index }
         if reportedPage?.0 != index || reportedPage?.1 != pages.count {
             reportedPage = (index, pages.count)
             pageHandler?(index, pages.count)
@@ -13166,6 +13191,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
         let id = ObjectIdentifier(view)
+        view.craftAccessibilityHidden = (props["accessibilityHidden"] as? Bool) == true
         view.accessibilityLabel = (props["accessibilityLabel"] as? String)
             ?? ((type == "Image" || type == "ImageBackground") ? props["alt"] as? String : nil)
         view.accessibilityHint = props["accessibilityHint"] as? String
@@ -13208,7 +13234,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let container = ["ScrollView", "FlatList", "SectionList", "SegmentedControl", "Modal", "Drawer"].contains(type)
             || ["tablist", "radiogroup", "list", "menu", "menubar", "toolbar"].contains(role ?? "")
             || controlledVideo || group
-        view.isAccessibilityElement = !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))
+        view.isAccessibilityElement = !view.craftAccessibilityHidden && !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))
         view.accessibilityContainerType = container && (view.accessibilityLabel != nil || controlledVideo) ? .semanticGroup : .none
         // Keep the interaction trait native controls expose. Rebuilding this
         // set from the STX role alone otherwise turns a Slider, Picker,
@@ -13317,7 +13343,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let handler = handlers[ObjectIdentifier(sender)] {
             send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isSelected]])
         }
-        applyAccessibility([:], type: "Checkbox", to: sender)
+        if sender.isSelected { sender.accessibilityTraits.insert(.selected) }
+        else { sender.accessibilityTraits.remove(.selected) }
+        sender.accessibilityValue = sender.isSelected ? "checked" : "unchecked"
     }
 
     /// Return on a `returnKeyType="next"` field the screen does not handle

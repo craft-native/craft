@@ -15,7 +15,7 @@ import XCTest
 @MainActor
 final class HostileNumbersUnitTests: XCTestCase {
     static let props: [String] = [
-        "accessibilityActions", "accessibilityHint", "accessibilityLabel", "accessibilityLanguage",
+        "accessibilityActions", "accessibilityHidden", "accessibilityHint", "accessibilityLabel", "accessibilityLanguage",
         "accessibilityRole", "accessibilityState", "accessibilityValue", "activeOpacity", "alt",
         "alwaysBounceHorizontal", "alwaysBounceVertical", "animating", "animationType", "attributeName",
         "autoCapitalize", "autoComplete", "autoCorrect", "autoFocus", "autoPlay", "autocomplete", "autoplay",

@@ -39,7 +39,7 @@ class NativeHostileNumbersTest {
 
     companion object {
         val props = listOf(
-            "accessibilityActions", "accessibilityHint", "accessibilityLabel", "accessibilityLanguage",
+            "accessibilityActions", "accessibilityHidden", "accessibilityHint", "accessibilityLabel", "accessibilityLanguage",
             "accessibilityRole", "accessibilityState", "accessibilityValue", "activeOpacity", "alt",
             "alwaysBounceHorizontal", "alwaysBounceVertical", "animating", "animationType", "attributeName",
             "autoCapitalize", "autoComplete", "autoCorrect", "autoFocus", "autoPlay", "autocomplete", "autoplay",

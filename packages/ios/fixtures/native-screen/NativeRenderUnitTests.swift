@@ -6152,6 +6152,26 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(find(UIButton.self, key: "drawer-action", below: drawer)).isAccessibilityElement)
     }
 
+    func testHiddenSubtreeDoesNotLeakIntoAParentAccessibleName() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        for hidden in [true, false, true] {
+            controller.render(document([
+                ["type": "View", "props": ["key": "card", "accessibilityRole": "button"], "children": [
+                    ["type": "Text", "children": ["Workout"]],
+                    ["type": "View", "props": ["key": "detail", "accessibilityHidden": hidden], "children": [
+                        ["type": "Text", "children": ["Warm-up"]],
+                    ]],
+                ]],
+            ]))
+            let card = try XCTUnwrap(find(UIView.self, key: "card", below: controller.view))
+            let detail = try XCTUnwrap(find(UIView.self, key: "detail", below: controller.view))
+            XCTAssertFalse(detail.isHidden)
+            XCTAssertEqual(detail.accessibilityElementsHidden, hidden)
+            XCTAssertEqual(card.accessibilityLabel, hidden ? "Workout" : "Workout, Warm-up")
+        }
+    }
+
     /// A plain view with a label was one accessibility element whatever it
     /// held, and UIKit does not look inside an element: the button in a
     /// labelled pager, or the close button in a labelled panel, could not be

@@ -3140,7 +3140,13 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
         if (next != authoredPageIndex) pendingPageIndex = next
         authoredPageIndex = next
         pageHandler = onSelect
-        if (next == null) { content.pageViewport = null; reportedPage = null }
+        if (next == null) {
+            if (content.pageViewport != null) {
+                for (index in 0 until content.childCount) CraftNativeAccessibilityVisibility.setOffPage(content.getChildAt(index), false)
+            }
+            content.pageViewport = null
+            reportedPage = null
+        }
         requestLayout()
     }
 
@@ -3158,7 +3164,9 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
             return
         }
         currentPageIndex = index
-        pages.forEachIndexed { i, page -> page.importantForAccessibility = if (i == index) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
+        pages.forEachIndexed { i, page ->
+            CraftNativeAccessibilityVisibility.setOffPage(page, i != index)
+        }
         val report = index to pages.size
         if (report != reportedPage) { reportedPage = report; pageHandler?.invoke(index, pages.size) }
     }
@@ -3761,6 +3769,26 @@ private class CraftNativeTextField(context: Context) : EditText(context) {
         if (action == CLEAR_ACTION_ID && showsClear()) { onClearRequest?.invoke(); return true }
         return super.performAccessibilityAction(action, arguments)
     }
+}
+
+private object CraftNativeAccessibilityVisibility {
+    private val authored = java.util.WeakHashMap<View, Int>()
+    private val offPage = java.util.WeakHashMap<View, Boolean>()
+
+    fun setAuthored(view: View, importance: Int): Int {
+        if (importance == View.IMPORTANT_FOR_ACCESSIBILITY_YES) authored.remove(view)
+        else authored[view] = importance
+        return effective(view, View.IMPORTANT_FOR_ACCESSIBILITY_YES)
+    }
+
+    fun setOffPage(view: View, hidden: Boolean) {
+        if (hidden) offPage[view] = true else offPage.remove(view)
+        view.importantForAccessibility = effective(view, View.IMPORTANT_FOR_ACCESSIBILITY_AUTO)
+    }
+
+    private fun effective(view: View, fallback: Int): Int =
+        if (offPage[view] == true) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        else authored[view] ?: fallback
 }
 
 /** Hide only siblings behind the top blocking modal, restoring authored values on every update. */
@@ -8016,7 +8044,7 @@ class MainActivity : AppCompatActivity() {
         }
         CraftNativePointers.configure(control, props, style, control is CraftNativeFlexLayout || control is CraftNativeImageBackgroundView ||
             control is CraftNativeKeyboardAvoidingView || control is CraftNativeScrollView || control is CraftNativeRefreshableFlatList || control is CraftNativeModalView)
-        applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
+        applyAccessibility(screen, control, props, type, explicitKey ?: protocolId ?: path)
         applyAccessibilityActions(screen, control, props, events, longPressDisabled)
         // One element across an animated change (craft.animation.next).
         control.transitionName = craftNativeOptionalString(props.opt("transitionID"))?.takeIf { it.isNotBlank() }
@@ -9000,7 +9028,7 @@ class MainActivity : AppCompatActivity() {
         if (ids.isEmpty()) screen.accessibilityActionHandlers.remove(control) else screen.accessibilityActionIds[control] = ids
     }
 
-    private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
+    private fun applyAccessibility(screen: Screen, view: View, props: JSONObject, type: String, fallbackLabel: String) {
         val language = craftNativeAccessibilityLanguage(props.opt("accessibilityLanguage"))
         if (view is TextView) {
             view.textLocales = if (language == null) view.context.resources.configuration.locales else android.os.LocaleList(language)
@@ -9078,10 +9106,16 @@ class MainActivity : AppCompatActivity() {
                 info.hintText = craftNativeSpokenText(info.hintText, language)
             }
         })
-        ViewCompat.setImportantForAccessibility(
+        val importance = CraftNativeAccessibilityVisibility.setAuthored(
             view,
-            if (role == "none") ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_NO else ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES,
+            when {
+                craftNativeBoolean(props.opt("accessibilityHidden")) -> ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                role == "none" -> ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_NO
+                else -> ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES
+            },
         )
+        if (screen.modalAccessibility.containsKey(view)) screen.modalAccessibility[view] = importance
+        else ViewCompat.setImportantForAccessibility(view, importance)
     }
 
     private fun dp(value: Double): Int {
