@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.524...v0.0.525)
+
+## 🧪 Tests
+
+- **ios**: verify hidden accessibility groups ([8983624](https://github.com/craft-native/craft/commit/8983624)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.523...v0.0.524)
 
 ## 🧪 Tests
