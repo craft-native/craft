@@ -31,6 +31,14 @@ function gateRule(): string {
   return rule
 }
 
+function linkRule(): string {
+  const from = template.indexOf('    static func gatedLinkDestination(')
+  expect(from).toBeGreaterThan(0)
+  const to = template.indexOf('\n    }', from)
+  expect(to).toBeGreaterThan(from)
+  return template.slice(from, to + '\n    }'.length)
+}
+
 /** path, public list, whether a signed-out launch may stay there. */
 const cases: [string, string[], boolean][] = [
   ['/m', ['/m/login'], false],
@@ -57,7 +65,20 @@ test.skipIf(process.platform !== 'darwin')('the shipped allowlist rule admits ex
 
 enum Gate {
 ${gateRule()}
+${linkRule()}
 }
+
+let protectedPaths = ["/m/workouts/library", "/m/backyard"]
+let raw = "/m/workouts/library?date=2026-11-19&filter=a%2Bb#start"
+let redirect = "/m/login"
+precondition(Gate.gatedLinkDestination(raw, path: "/m/workouts/library", protectedPaths: protectedPaths, redirect: redirect) { false } ==
+    "/m/login?next=%2Fm%2Fworkouts%2Flibrary%3Fdate%3D2026-11-19%26filter%3Da%252Bb%23start")
+precondition(Gate.gatedLinkDestination(raw, path: "/m/workouts/library", protectedPaths: protectedPaths, redirect: redirect) { true } == nil)
+precondition(Gate.gatedLinkDestination("/m/backyard/rounds#clock", path: "/m/backyard/rounds", protectedPaths: protectedPaths, redirect: redirect) { false } != nil)
+for publicPath in ["/m/start", "/m/backyard-notes", "/m/store/42"] {
+    precondition(Gate.gatedLinkDestination(publicPath, path: publicPath, protectedPaths: protectedPaths, redirect: redirect) { fatalError("public link read the session") } == nil)
+}
+precondition(Gate.gatedLinkDestination("//elsewhere.invalid/m/backyard", path: "/m/backyard", protectedPaths: protectedPaths, redirect: redirect) { false } == redirect)
 
 for line in (try! String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)).split(separator: "\\n") {
     let parts = line.split(separator: "\\t", omittingEmptySubsequences: false)
@@ -98,6 +119,40 @@ test('a gate whose redirect nothing draws is refused at generation', () => {
     .toContain('must be an absolute path')
   expect(hybridConfigProblems({ ...base, nativeGate: { publicPaths: ['m/login'], redirect: '/m/login' } }).join('\n'))
     .toContain('nativeGate.publicPaths')
+  const linkGate = { publicPaths: ['/m/login'], redirect: '/m/login', protectedLinks: ['/m/backyard'] }
+  expect(hybridConfigProblems({ ...base, nativeGate: linkGate })).toEqual([])
+  expect(hybridConfigProblems({ ...base, nativeGate: { ...linkGate, protectedLinks: ['//elsewhere.invalid'] } }).join('\n')).toContain('nativeGate.protectedLinks')
+  expect(hybridConfigProblems({ ...base, nativeGate: { ...linkGate, linkRedirect: '/m/unknown' } }).join('\n')).toContain('nativeGate.linkRedirect')
+  expect(hybridConfigProblems({ ...base, nativeGate: { ...linkGate, protectedLinks: ['/m/login'] } }).join('\n')).toContain('cannot itself be protected')
+})
+
+test('queued and live UIKit links share a gate before native navigation', () => {
+  const from = template.indexOf('    func handleDeepLink(')
+  const body = template.slice(from, template.indexOf('\n    }', from))
+  expect(body).toContain('percentEncodedFragment')
+  expect(body.indexOf('gatedLinkPath(')).toBeGreaterThan(0)
+  expect(body.indexOf('gatedLinkPath(')).toBeLessThan(body.indexOf('controller.showNative('))
+  expect(body).toContain('untilShell.append(show)')
+  expect(body).toContain('show(controller)')
+  expect(body).toContain('if initial, initialDeepLinkRedirect?.url == url { return true }')
+})
+
+test('a protected launch resolves to the Login root before URL subscribers run', () => {
+  const app = readFileSync(join(import.meta.dir, '../templates/CraftApp.swift'), 'utf8')
+  const from = app.indexOf('    func captureLaunchURL(')
+  const capture = app.slice(from, app.indexOf('\n    }', from))
+  expect(capture.indexOf('prepareInitialDeepLink(url)')).toBeGreaterThan(0)
+  expect(capture.indexOf('prepareInitialDeepLink(url)')).toBeLessThan(capture.indexOf('launch.receive(url)'))
+  expect(template).toContain('startPath = redirect\n        startsNative = true\n        initialDeepLinkRedirect = (url, redirect)')
+  expect(app).toContain('CraftHybrid.shared.handleDeepLink(url, initial: initial)')
+})
+
+test('UIKit does not prewarm protected tabs before or after scheduling while signed out', () => {
+  const from = template.indexOf('    private func prepareAdjacentNativeTabs()')
+  const body = template.slice(from, template.indexOf('\n    }', from))
+  expect(body).toContain('hybrid.gatedLinkPath(tabs[$0]) == nil')
+  expect(body.indexOf('self.hybrid.gatedLinkPath(id) == nil')).toBeGreaterThan(0)
+  expect(body.indexOf('self.hybrid.gatedLinkPath(id) == nil')).toBeLessThan(body.indexOf('self.makeStack('))
 })
 
 test('the gate is resolved before anything is built, and the app script still is not', () => {

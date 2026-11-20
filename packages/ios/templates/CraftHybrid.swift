@@ -377,6 +377,7 @@ final class CraftHybrid: NSObject {
     /// What waits for the shell: links and opens that arrived before it
     /// existed (a launch from a notification or a link).
     private var untilShell: [(CraftHybridController) -> Void] = []
+    private var initialDeepLinkRedirect: (url: URL, path: String)?
 
     /// Where the page is, as it last said.
     fileprivate(set) var pagePath: String?
@@ -492,6 +493,14 @@ final class CraftHybrid: NSObject {
         }
     }
 
+    static func gatedLinkDestination(_ raw: String, path: String, protectedPaths: [String], redirect: String, signedIn: () -> Bool) -> String? {
+        guard gateAdmits(path, public: protectedPaths), !signedIn() else { return nil }
+        guard raw.hasPrefix("/"), !raw.hasPrefix("//"),
+              !raw.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 || $0.value == 92 }) else { return redirect }
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+        return raw.addingPercentEncoding(withAllowedCharacters: allowed).map { redirect + "?next=" + $0 } ?? redirect
+    }
+
     /// Send a signed-out launch to the gate's redirect before anything is built.
     ///
     /// This runs while `startPath` is still being resolved, which is the
@@ -519,6 +528,33 @@ final class CraftHybrid: NSObject {
         }
         NSLog("[craft hybrid] no sign-in under %@: starting on %@ instead of %@", key, redirect, startPath)
         startPath = redirect
+    }
+
+    fileprivate func gatedLinkPath(_ path: String, fragment: String? = nil) -> String? {
+        guard let gate = config.nativeGate, let protectedPaths = gate.protectedLinks,
+              let redirect = gate.linkRedirect ?? gate.redirect, routes.match(redirect) != nil,
+              let match = routes.match(path) else { return nil }
+        let raw = path + (fragment.map { "#" + $0 } ?? "")
+        let key = gate.token ?? config.sessionTokenKey ?? "auth.token"
+        return Self.gatedLinkDestination(raw, path: match.path, protectedPaths: protectedPaths, redirect: redirect) {
+            !(CraftNativeActions.webSecureValue(forKey: key) ?? "").isEmpty
+        }
+    }
+
+    /// Scene launch intent is available before the first view is built. Use
+    /// the selected login as its root instead of presenting it over a tab.
+    func prepareInitialDeepLink(_ url: URL) {
+        guard isEnabled, !hasWeb, controller?.isViewLoaded != true,
+              initialDeepLinkRedirect == nil,
+              let redirect = gatedLinkPath(CraftHybridRoutes.appPath(of: url), fragment: URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment) else { return }
+        startPath = redirect
+        startsNative = true
+        initialDeepLinkRedirect = (url, redirect)
+    }
+
+    func nativeRedirect(forInitialLink url: URL) -> String? {
+        guard let initialDeepLinkRedirect, initialDeepLinkRedirect.url == url else { return nil }
+        return initialDeepLinkRedirect.path
     }
 
     /// A silent push or a background refresh is waiting for the app script,
@@ -1037,14 +1073,21 @@ final class CraftHybrid: NSObject {
     /// A deep link to a native path opens the native screen; in an app with
     /// no web view, a link to its own site that no screen draws opens in the
     /// in-app browser. True when the shell took it.
-    func handleDeepLink(_ url: URL) -> Bool {
+    func handleDeepLink(_ url: URL, initial: Bool = false) -> Bool {
         guard isEnabled else { return false }
+        // The scene already chose this launch destination. Its later URL
+        // callback must not take the screen back from a newer open.
+        if initial, initialDeepLinkRedirect?.url == url { return true }
         let path = CraftHybridRoutes.appPath(of: url)
         let native = routes.match(path) != nil
         let browse = !native && !hasWeb && CraftHybridRoutes.isSite(url, site: siteURL)
         guard native || browse else { return false }
+        let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment
         let show: (CraftHybridController) -> Void = { [weak self] controller in
-            if native { controller.showNative(path: path, replace: false, fromLink: true) } else { self?.openOutside(url.absoluteString) }
+            if native {
+                let destination = self?.gatedLinkPath(path, fragment: fragment) ?? path
+                controller.showNative(path: destination, replace: false, fromLink: true)
+            } else { self?.openOutside(url.absoluteString) }
         }
         guard let controller, controller.isViewLoaded else {
             // Before the shell: a hybrid app's page has it; an all-native app
@@ -2401,7 +2444,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let owner = currentTab
         guard let index = hybrid.tabIds.firstIndex(of: owner) else { return }
         let tabs = hybrid.tabIds
-        let waiting = tabs.indices.filter { $0 != index && stacks[tabs[$0]] == nil && hybrid.routes.match(tabs[$0]) != nil }
+        let waiting = tabs.indices.filter { $0 != index && stacks[tabs[$0]] == nil && hybrid.routes.match(tabs[$0]) != nil && hybrid.gatedLinkPath(tabs[$0]) == nil }
             .sorted { abs($0 - index) < abs($1 - index) || (abs($0 - index) == abs($1 - index) && $0 > $1) }
         // One preparation pending at a time, for the tab on screen now.
         preparation?.invalidate()
@@ -2421,6 +2464,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 return
             }
             let id = tabs[next]
+            // The session may have ended since this prewarm was scheduled.
+            guard self.hybrid.gatedLinkPath(id) == nil else { self.prepareAdjacentNativeTabs(); return }
             guard self.stacks[id] == nil else { self.prepareAdjacentNativeTabs(); return }
             let nav = CraftFramePacing.shared.measure("prepare \(id)") { () -> UINavigationController in
                 let nav = self.makeStack(tab: id, rootPath: id, hidden: true)

@@ -389,7 +389,12 @@ enum CraftNativeActions {
         case ("DeepLinks", "getInitialURL"):
             if config.enableDeepLinks {
                 DeepLinkManager.shared.resolveInitialURL { url in
-                    complete(requestToken, .success(claimInitialDeepLink(url, isAppScript: isAppScript).map(deepLinkData) ?? NSNull()), completion)
+                    let payload = claimInitialDeepLink(url, isAppScript: isAppScript).map { claimed in
+                        var data = deepLinkData(claimed)
+                        data["nativeRedirect"] = CraftHybrid.shared.nativeRedirect(forInitialLink: claimed)
+                        return data
+                    }
+                    complete(requestToken, .success(payload ?? NSNull()), completion)
                 }
                 return
             } else {

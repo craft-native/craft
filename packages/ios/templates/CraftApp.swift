@@ -1739,10 +1739,12 @@ class DeepLinkManager {
     }
 
     func captureLaunchURL(_ url: URL) {
+        if !launch.settled { CraftHybrid.shared.prepareInitialDeepLink(url) }
         launch.receive(url)
     }
 
     func handleURL(_ url: URL) {
+        if !launch.settled { CraftHybrid.shared.prepareInitialDeepLink(url) }
         launch.receive(url)
         let initial = !initialURLDispatched && url == initialURL
         if initial { initialURLDispatched = true }
@@ -1751,7 +1753,7 @@ class DeepLinkManager {
         // native screens that listen; every other link is the page's. An
         // all-native app has no page: its native screens hear every link.
         if CraftHybrid.shared.isEnabled {
-            if CraftHybrid.shared.handleDeepLink(url) {
+            if CraftHybrid.shared.handleDeepLink(url, initial: initial) {
                 dispatchNative(url, initial: initial)
             } else if !CraftHybrid.shared.hasWeb {
                 enqueueNative(url, initial: initial)
@@ -2150,6 +2152,8 @@ struct CraftConfig: Codable {
         /// differ — which is exactly what the Zig conformance mirror checks,
         /// and a divergence worth not having for the sake of one word.
         var publicPaths: [String]? = nil
+        var protectedLinks: [String]? = nil
+        var linkRedirect: String? = nil
         /// Where a signed-out launch starts instead.
         var redirect: String? = nil
         /// The secure-storage key holding the sign-in. Defaults to
