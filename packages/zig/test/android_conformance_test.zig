@@ -143,8 +143,10 @@ const zig_sources = [_][]const u8{
 /// on-disk outbox, which the uncaught-exception handler also writes to;
 /// 42 when heartRate did, as iOS's did (CraftHeartRate.swift): one GATT
 /// session, its reconnects and a recording kept on disk, owned by
-/// CraftHeartRate.kt and the foreground service that keeps it reading.
-const max_not_yet_migrated: usize = 42;
+/// CraftHeartRate.kt and the foreground service that keeps it reading;
+/// 43 with biometricCredential, whose AndroidKeyStore and BiometricPrompt
+/// state is shared by the Kotlin page bridge and native screens.
+const max_not_yet_migrated: usize = 43;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -441,6 +443,8 @@ const deliberate_deferrals = [_]Deferral{
     // reading with the screen locked. The native screens reach the same
     // object through CraftNativeServices, so the page's door stays with it.
     .{ .action = "heartRate", .reason = "drives the app-wide GATT session and recording CraftHeartRate.kt and its service own" },
+
+    .{ .action = "biometricCredential", .reason = "delegates to the shared Kotlin vault, which owns AndroidKeyStore keys and the BiometricPrompt lifecycle" },
 
     // The auth-persistence trio shares one timestamp in Kotlin-configured
     // EncryptedSharedPreferences. It now survives process death, but migrating
