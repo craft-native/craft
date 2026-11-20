@@ -540,6 +540,23 @@ export interface CraftBridge {
     setOptions(options: CraftNavigationOptions): void;
   };
 
+  /**
+   * iOS native screens: draw frames into a `<RenderSurface surface="...">`
+   * (#578). Present only on a host that offers the `renderSurface`
+   * capability; see docs/guides/native-stx.md, "iOS render surfaces".
+   */
+  renderSurface?: {
+    /**
+     * Shows `pixels`, `width × height` 0xAARRGGBB words row by row, scaled to
+     * the surface's box with its filter. The words are copied before this
+     * returns. `true` when the surface took the frame; `false` while it is
+     * not ready yet or lost (draw again after `onReady` or `onRestored`).
+     * Throws `TypeError` for a bad frame, and an Error whose `code` is
+     * `NOT_FOUND` (no surface of that name on the screen) or `UNAVAILABLE`.
+     */
+    present(surface: string, pixels: Uint32Array, width: number, height: number): boolean;
+  };
+
   // ==================== Clipboard ====================
   clipboard: {
     /**
