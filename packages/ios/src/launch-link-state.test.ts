@@ -22,9 +22,18 @@ test.skipIf(process.platform !== 'darwin')('the headless app and visible navigat
     writeFileSync(source, `import Foundation
 struct ActionError: Error {}
 struct Config { let enableDeepLinks = true }
+class CraftHybrid {
+    static let shared = CraftHybrid()
+    func nativeRedirect(forInitialLink url: URL) -> String? {
+        if url.path == "/m/workouts/library" {
+            return "/m/login?next=%2Fm%2Fworkouts%2Flibrary%3Fdate%3D2026-11-21%23library"
+        }
+        return nil
+    }
+}
 class DeepLinkManager {
     static let shared = DeepLinkManager()
-    func resolveInitialURL(_ completion: (URL?) -> Void) { completion(URL(string: "lastsoulultra:///m/coaching/last-soul-ultra/plans")) }
+    func resolveInitialURL(_ completion: (URL?) -> Void) { completion(URL(string: CommandLine.arguments[2])) }
 }
 enum Actions {
     static let cancellationLock = NSLock()
@@ -44,12 +53,12 @@ ${actions.slice(begin, end)}
         if let sync { complete(requestToken, sync, completion) }
     }
 }
-func request(app: Bool) -> String? {
-    var url: String?
+func request(app: Bool) -> [String: Any]? {
+    var payload: [String: Any]?
     Actions.perform(isAppScript: app) { result in
-        if case .success(let value) = result { url = (value as? [String: Any])?["url"] as? String }
+        if case .success(let value) = result { payload = value as? [String: Any] }
     }
-    return url
+    return payload?.filter { $0.key == "url" || $0.key == "nativeRedirect" }
 }
 let firstIsApp = CommandLine.arguments[1] == "app-first"
 let answers = [request(app: firstIsApp), request(app: !firstIsApp), request(app: false), request(app: true)]
@@ -57,13 +66,19 @@ print(String(data: try! JSONSerialization.data(withJSONObject: answers.map { $0 
 `)
     const compiler = Bun.spawnSync(['swiftc', source, '-o', binary], { stdout: 'pipe', stderr: 'pipe', timeout: 120_000 })
     expect(compiler.exitCode, compiler.stderr.toString()).toBe(0)
+    const links = [
+      { url: 'lastsoulultra:///m/coaching/last-soul-ultra/plans' },
+      {
+        url: 'lastsoulultra:///m/workouts/library?date=2026-11-21#library',
+        nativeRedirect: '/m/login?next=%2Fm%2Fworkouts%2Flibrary%3Fdate%3D2026-11-21%23library',
+      },
+    ]
     for (const order of ['screen-first', 'app-first']) {
-      const result = Bun.spawnSync([binary, order], { stdout: 'pipe', stderr: 'pipe', timeout: 15_000 })
-      expect(result.exitCode, result.stderr.toString()).toBe(0)
-      expect(JSON.parse(result.stdout.toString()), order).toEqual([
-        'lastsoulultra:///m/coaching/last-soul-ultra/plans',
-        'lastsoulultra:///m/coaching/last-soul-ultra/plans', null, null,
-      ])
+      for (const link of links) {
+        const result = Bun.spawnSync([binary, order, link.url], { stdout: 'pipe', stderr: 'pipe', timeout: 15_000 })
+        expect(result.exitCode, result.stderr.toString()).toBe(0)
+        expect(JSON.parse(result.stdout.toString()), order).toEqual([link, link, null, null])
+      }
     }
   }
   finally { rmSync(directory, { recursive: true, force: true }) }
@@ -127,7 +142,13 @@ class CraftHybrid {
     static let shared = CraftHybrid()
     var isEnabled = true
     var hasWeb = false
-    func handleDeepLink(_ url: URL) -> Bool { false }
+    var prepared: [URL] = []
+    var handled: [(url: URL, initial: Bool)] = []
+    func prepareInitialDeepLink(_ url: URL) { prepared.append(url) }
+    func handleDeepLink(_ url: URL, initial: Bool) -> Bool {
+        handled.append((url, initial))
+        return false
+    }
 }
 ${manager}
 let links = DeepLinkManager.shared
@@ -141,7 +162,10 @@ var initialFlags: [Bool] = []
 links.captureLaunchURL(first)
 NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
 links.setReady()
-links.resolveInitialURL { assert($0 == first, "activation must preserve the scene's captured launch intent") }
+links.resolveInitialURL {
+    assert($0 == first, "activation must preserve the scene's captured launch intent")
+    assert(CraftHybrid.shared.prepared == [first], "the shell must prepare the captured URL before readers receive it")
+}
 links.handleURL(first)
 let hidden = links.addNativeListener(canReceive: { visible }) { url, initial in
     if visible { delivered.append(url); initialFlags.append(initial) }
@@ -176,6 +200,9 @@ assert(delivered == [first, second, third, first, fourth], "reentrant delivery m
 links.removeNativeListener(reentrant)
 _ = links.addNativeListener { url, initial in delivered.append(url) }
 assert(delivered == [first, second, third, first, fourth], "consumed links must not replay again")
+assert(CraftHybrid.shared.prepared == [first], "warm links must not be prepared as launch routes")
+assert(CraftHybrid.shared.handled.map { $0.url } == delivered, "the shell must receive each original URL in order")
+assert(CraftHybrid.shared.handled.map { $0.initial } == [true, false, false, false, false], "opening the same URL again is a warm link")
 print("native-link-replay OK")
 `)
     const child = Bun.spawn(['swift', source], { stdout: 'pipe', stderr: 'pipe' })
