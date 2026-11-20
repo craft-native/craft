@@ -134,19 +134,22 @@ class NativeNavigationTest {
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         ) as MainActivity
         try {
+            awaitText(activity, "navigation-home-state", "Home state: Ada/0")
             instrumentation.runOnMainSync {
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }.get(activity) as List<*>
+                val screen = requireNotNull(screens.last())
                 val text = TextView(activity).apply { this.text = "Guten Morgen" }
                 // View skips base accessibility metadata while detached. Use
                 // the real activity window, as the renderer does at runtime.
                 activity.addContentView(text, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 assertTrue("Speech fixture must be attached to the native window", text.isAttachedToWindow)
                 val apply = MainActivity::class.java.getDeclaredMethod(
-                    "applyAccessibility", View::class.java, JSONObject::class.java, String::class.java, String::class.java,
+                    "applyAccessibility", screen.javaClass, View::class.java, JSONObject::class.java, String::class.java, String::class.java,
                 ).apply { isAccessible = true }
                 for (language in listOf("de-DE", "en-GB", null)) {
                     val props = JSONObject().put("accessibilityLabel", "Greeting").put("accessibilityHint", "Read")
                     if (language != null) props.put("accessibilityLanguage", language)
-                    apply.invoke(activity, text, props, "Text", "greeting")
+                    apply.invoke(activity, screen, text, props, "Text", "greeting")
                     assertEquals("Greeting", text.contentDescription?.toString())
                     val info = text.createAccessibilityNodeInfo()
                     for ((field, spoken) in listOf("text" to info.text, "contentDescription" to info.contentDescription, "hintText" to info.hintText)) {
