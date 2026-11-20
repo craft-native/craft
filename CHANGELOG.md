@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.523...v0.0.524)
+
+## 🧪 Tests
+
+- **android**: classify the host-owned biometric bridge ([b1d9031](https://github.com/craft-native/craft/commit/b1d9031)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.522...v0.0.523)
 
 ## 🐛 Bug Fixes
