@@ -5895,6 +5895,39 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(present("map", "new Uint32Array(1)", 1, 1), "true")
     }
 
+    /// A host with no Metal GPU (#578): the capability is not offered, the
+    /// surface says so once at mount and never becomes ready, and `present`
+    /// throws UNAVAILABLE.
+    func testARenderSurfaceOnAHostWithoutAGPUSaysSoOnceAndNeverDraws() throws {
+        CraftNativeRenderSurfaceView.actsWithoutGPU = true
+        defer { CraftNativeRenderSurfaceView.actsWithoutGPU = false }
+        let host = CraftNativeScreenController(config: CraftConfig())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { host.viewDidDisappear(false); window.isHidden = true }
+        host.evaluateScript("""
+            globalThis.__surfaceEvents = [];
+            globalThis.__stxNativeCallback = function(json) {
+                const message = JSON.parse(json);
+                if (message.type === 'EVENT') __surfaceEvents.push(message.payload);
+            };
+        """)
+        XCTAssertEqual(host.evaluateScript("__stxNativeBridge.capabilities.indexOf('renderSurface')")?.toInt32(), -1)
+        let surface: [String: Any] = ["type": "RenderSurface", "props": ["key": "map", "surface": "map"], "style": ["width": 40, "height": 20],
+                                      "events": ["onReady": "ready", "onError": "failed"]]
+        host.render(document([surface]))
+        host.render(document([surface]))
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertEqual(host.evaluateScript("JSON.stringify(__surfaceEvents.map(e => e.handlerName + ':' + (e.nativeEvent.code || '')))")?.toString(),
+                       "[\"failed:UNAVAILABLE\"]", "one error at mount, no ready, nothing on the next render")
+        XCTAssertEqual(host.evaluateScript("""
+            (() => { try { craft.renderSurface.present('map', new Uint32Array(1), 1, 1); return 'none'; } catch (error) { return error.code; } })()
+        """)?.toString(), "UNAVAILABLE")
+        XCTAssertEqual(try XCTUnwrap(find(CraftNativeRenderSurfaceView.self, key: "map", below: host.view)).drawnFrames, 0)
+    }
+
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

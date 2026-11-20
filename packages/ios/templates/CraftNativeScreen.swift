@@ -1333,7 +1333,11 @@ final class CraftNativeRenderSurfaceView: UIView {
         return device?.makeSamplerState(descriptor: descriptor)
     }
     /// Whether this host can draw a surface at all: the `renderSurface` capability.
-    static var available: Bool { pipeline != nil }
+    static var available: Bool { !actsWithoutGPU && pipeline != nil }
+    /// Checks only: behave as a host with no Metal GPU, which a simulator
+    /// never is, so the unavailable path can be exercised. Read when a
+    /// screen starts (its capabilities) and at each use.
+    static var actsWithoutGPU = false
     private static let nearest = sampler(.nearest)
     private static let linear = sampler(.linear)
 
@@ -1428,7 +1432,7 @@ final class CraftNativeRenderSurfaceView: UIView {
     /// The box's size in points and pixels: `onReady` the first time it has
     /// one in a window, `onResize` on every change after.
     private func updateMetrics() {
-        guard !destroyed, Self.pipeline != nil else { return }
+        guard !destroyed, Self.available else { return }
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let pixelWidth = min(Self.maximumSide, Int((bounds.width * scale).rounded(.up)))
         let pixelHeight = min(Self.maximumSide, Int((bounds.height * scale).rounded(.up)))
@@ -1453,7 +1457,7 @@ final class CraftNativeRenderSurfaceView: UIView {
     }
 
     private func lose(_ reason: String) {
-        guard !destroyed, !lost, reportedReady, Self.pipeline != nil else { return }
+        guard !destroyed, !lost, reportedReady, Self.available else { return }
         lost = true
         setPresentable(false)
         fire("onLost", ["reason": reason])
