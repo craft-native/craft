@@ -741,7 +741,7 @@ function openDetailsThenUpdateBackground() {
         </g>
       </svg>
       <Icon testID="native-icon" symbol="sun.max" accessibilityLabel="Native icon" style={{"width":iconSized ? 24 : null,"height":iconSized ? 24 : null,"color":"#f59e0b"}} />
-      <Video testID="native-video" source={{"uri":""}} style={{"width":120,"height":68}} />
+      <Video testID="native-video" style={{"width":120,"height":68}} />
       <Text testID="native-caption" :text="'Image taps: ' + imageTaps" />
       <Text testID="image-status" :text="imageStatus" />
       <Text testID="image-load-end-status" :text="imageLoadEndStatus" />
