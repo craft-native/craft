@@ -2243,6 +2243,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
         var candidate: UIView? = hit
         while let current = candidate {
+            if current.gestureRecognizers?.contains(where: { $0 is CraftNativeRowSwipe && $0.isEnabled }) == true { return true }
             if let scroll = current as? UIScrollView,
                scroll.isScrollEnabled,
                scroll.alwaysBounceHorizontal || scroll.contentSize.width > scroll.bounds.width + 1 {

@@ -271,6 +271,8 @@ describe('the native app shell in a generated project', () => {
       expect(readFileSync(join(java, 'CraftHealthServicesService.kt'), 'utf8')).toContain('HealthServices.getClient(this).exerciseClient')
       expect(readFileSync(join(java, 'CraftNativeServices.kt'), 'utf8')).toContain('FirebaseMessaging.getInstance().token')
       const shell = readFileSync(join(java, 'CraftNativeShell.kt'), 'utf8')
+      expect(shell).toContain('"bubble.left", "bubble.left.fill", "message", "message.fill" -> "message-circle"')
+      expect(shell).toContain('view.text = if (icon == null) CraftNativeSymbols.glyph(symbol) else ""')
       expect(shell).toContain('override fun onInterceptTouchEvent(event: MotionEvent)')
       expect(shell).toContain('onTabSwipeStart?.invoke(dx, event.x, event.y)')
       expect(shell).toContain('tabSwipeEnabled = options.optBoolean("tabSwipeEnabled", true)')

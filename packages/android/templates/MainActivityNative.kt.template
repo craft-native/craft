@@ -1516,10 +1516,81 @@ internal class CraftNativePointerImageView(context: Context) : ImageView(context
 
 /** A deterministic flex-shaped container shared by normal views and scroll content. */
 internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
-    override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
-        CraftNativePointers.ownsTouch(this) && super.onInterceptTouchEvent(event)
-    override fun onTouchEvent(event: MotionEvent): Boolean =
-        (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+    var rowSwipe: ((String) -> Unit)? = null
+    private var swipeStartX = 0f
+    private var swipeStartY = 0f
+    private var swipeCandidate = false
+    private var swipeClaimed = false
+
+    private fun beginRowSwipe(event: MotionEvent) {
+        swipeStartX = event.x
+        swipeStartY = event.y
+        swipeCandidate = true
+        swipeClaimed = false
+    }
+
+    private fun claimRowSwipe(event: MotionEvent): Boolean {
+        if (!swipeCandidate) return false
+        val dx = kotlin.math.abs(event.x - swipeStartX)
+        val dy = kotlin.math.abs(event.y - swipeStartY)
+        val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+        if (dy > slop && dy >= dx) swipeCandidate = false
+        if (dx <= slop || dx <= dy * 1.3f) return false
+        swipeClaimed = true
+        parent?.requestDisallowInterceptTouchEvent(true)
+        return true
+    }
+
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        if (!CraftNativePointers.ownsTouch(this)) return false
+        if (rowSwipe != null) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> beginRowSwipe(event)
+                MotionEvent.ACTION_MOVE -> if (claimRowSwipe(event)) return true
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_UP -> swipeCandidate = false
+            }
+        }
+        return super.onInterceptTouchEvent(event)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        // A date strip or a row can have space between its tappable children.
+        // If no child owns the down event, the row tracks it itself. Keep
+        // vertical scroll available until this row claims a horizontal move.
+        if (rowSwipe != null && CraftNativePointers.ownsTouch(this)) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                beginRowSwipe(event)
+                super.onTouchEvent(event)
+                return true
+            }
+            if (!swipeClaimed && event.actionMasked == MotionEvent.ACTION_MOVE && claimRowSwipe(event)) {
+                val cancel = MotionEvent.obtain(event)
+                cancel.action = MotionEvent.ACTION_CANCEL
+                super.onTouchEvent(cancel)
+                cancel.recycle()
+            }
+        }
+        if (swipeClaimed) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val delta = event.x - swipeStartX
+                val vertical = kotlin.math.abs(event.y - swipeStartY)
+                val threshold = 44 * resources.displayMetrics.density
+                if (kotlin.math.abs(delta) >= threshold && kotlin.math.abs(delta) > vertical * 1.3f)
+                    rowSwipe?.invoke(if (delta < 0) "left" else "right")
+                swipeClaimed = false
+                swipeCandidate = false
+            } else if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                swipeClaimed = false
+                swipeCandidate = false
+            }
+            return true
+        }
+        val tracking = rowSwipe != null && swipeCandidate
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN)
+            swipeCandidate = false
+        val handled = (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
+        return handled || tracking
+    }
 
     private var celebration: CraftNativeCelebration? = null
     fun configureCelebration(raw: JSONObject?, radius: Float) {
@@ -2643,8 +2714,11 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         val cross = lines.sumOf { it.cross.toDouble() } + max(0, lines.size - 1) * (if (orientation == HORIZONTAL) rowGap else columnGap).toDouble()
         val desiredWidth = if (orientation == HORIZONTAL) main.roundToInt() else cross.roundToInt()
         val desiredHeight = if (orientation == HORIZONTAL) cross.roundToInt() else main.roundToInt()
-        val absWidth = absolute.maxOfOrNull { it.width } ?: 0
-        val absHeight = absolute.maxOfOrNull { it.height } ?: 0
+        // A child anchored to both edges takes that dimension from the final
+        // parent frame. Including its probe would make a cover image size its
+        // own parent to the scroll viewport, pushing the content off-screen.
+        val absWidth = absolute.maxOfOrNull { if (it.style.left != null && it.style.right != null) 0 else it.width } ?: 0
+        val absHeight = absolute.maxOfOrNull { if (it.style.top != null && it.style.bottom != null) 0 else it.height } ?: 0
         setMeasuredDimension(
             if (unboundedHorizontal) max(desiredWidth + paddingLeft + paddingRight, absWidth + paddingLeft + paddingRight)
             else resolveSize(max(desiredWidth + paddingLeft + paddingRight, absWidth + paddingLeft + paddingRight), widthMeasureSpec),
@@ -5894,6 +5968,7 @@ class MainActivity : AppCompatActivity() {
         if (screenX < location[0] || screenY < location[1]
             || screenX > location[0] + view.width || screenY > location[1] + view.height) return false
         if (view is android.widget.HorizontalScrollView) return true
+        if (view is CraftNativeFlexLayout && view.rowSwipe != null) return true
         if (view !is ViewGroup) return false
         for (index in view.childCount - 1 downTo 0) {
             if (horizontalScrollAtPoint(view.getChildAt(index), screenX, screenY)) return true
@@ -8002,6 +8077,12 @@ class MainActivity : AppCompatActivity() {
         }
         val longPressDisabled = craftNativeBoolean(props.opt("disabled")) ||
             craftNativeBoolean(props.optJSONObject("accessibilityState")?.opt("disabled"))
+        if (control is CraftNativeFlexLayout) {
+            val rowSwipe = craftNativeEventName(events, "onSwipe").takeUnless { longPressDisabled || !craftNativeBoolean(props.opt("swipeEnabled"), true) }.orEmpty()
+            control.rowSwipe = if (rowSwipe.isBlank()) null else { direction ->
+                send(screen, "EVENT", JSONObject().put("handlerName", rowSwipe).put("nativeEvent", JSONObject().put("direction", direction)))
+            }
+        }
         val longPressHandler = craftNativeEventName(events, "onLongPress").takeUnless { longPressDisabled } ?: ""
         if (longPressHandler.isNotBlank()) {
             screen.longPressHandlers[control] = longPressHandler
@@ -9947,6 +10028,7 @@ class MainActivity : AppCompatActivity() {
             if (it !is android.widget.AdapterView<*>) it.setOnClickListener(null)
             it.setOnTouchListener(null)
             it.setOnLongClickListener(null)
+            if (it is CraftNativeFlexLayout) it.rowSwipe = null
             it.setOnFocusChangeListener(null)
             it.isClickable = false
             it.isLongClickable = false

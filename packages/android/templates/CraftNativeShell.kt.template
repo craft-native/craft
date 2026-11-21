@@ -1040,7 +1040,7 @@ internal class CraftNativeChrome(
     private val accessoryGroup = LinearLayout(context)
     private val companionViews = mutableListOf<Pair<FrameLayout, JSONObject>>()
     private var renderedCompanionSpecs = ""
-    private val accessoryIcon = ImageView(context)
+    private val accessoryIcon = accessorySymbolView()
     private val accessoryBadge = TextView(context)
     private var accessorySpec: JSONObject? = null
     private val tabViews = mutableListOf<Pair<TextView, TextView>>()
@@ -1335,7 +1335,7 @@ internal class CraftNativeChrome(
                 if (!path.startsWith("/") || path.startsWith("//") || path == accessorySpec?.optString("path") || !item.has("title")) continue
                 val action = FrameLayout(context)
                 action.contentDescription = item.optString("accessibilityLabel").ifBlank { item.optString("title") }
-                action.addView(ImageView(context), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+                action.addView(accessorySymbolView(), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
                 action.setOnClickListener {
                     val choices = item.optJSONArray("menu")
                     val destinations = (0 until minOf(choices?.length() ?: 0, 12)).mapNotNull { choiceIndex ->
@@ -1663,10 +1663,10 @@ internal class CraftNativeChrome(
             val selected = isAccessoryActive(item)
             action.isSelected = selected
             action.background = if (grouped) rippleBackground() else GradientDrawable().apply { setColor(if (selected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
-            (action.getChildAt(0) as ImageView).setImageDrawable(CraftNativeIcons.drawable(context, null, item.optString("symbol"), if (selected) accent else text))
+            applyAccessorySymbol(action.getChildAt(0) as TextView, item, if (selected) accent else text)
         }
         accessory.background = if (grouped) rippleBackground() else GradientDrawable().apply { setColor(if (primarySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
-        accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), if (primarySelected) accent else text)) }
+        accessorySpec?.let { applyAccessorySymbol(accessoryIcon, it, if (primarySelected) accent else text) }
         tabViews.forEachIndexed { index, (icon, label) ->
             tabBar.getChildAt(index).isSelected = index == selectedTab && !accessorySelected
             tabBar.getChildAt(index).background = tabCellBackground(index, dark)
@@ -1702,6 +1702,21 @@ internal class CraftNativeChrome(
         if (hasWindowFocus) refreshColors() else tabViews.forEach { (icon, _) -> icon.clearAnimation() }
     }
 
+    private fun accessorySymbolView() = TextView(context).apply {
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        textSize = 20f
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    private fun applyAccessorySymbol(view: TextView, item: JSONObject, tint: Int) {
+        val symbol = item.optString("symbol")
+        val icon = CraftNativeIcons.drawable(context, null, symbol, tint)
+        view.foreground = icon
+        view.text = if (icon == null) CraftNativeSymbols.glyph(symbol) else ""
+        view.setTextColor(tint)
+    }
+
     override fun onDetachedFromWindow() {
         tabViews.forEach { (icon, _) -> icon.clearAnimation() }
         super.onDetachedFromWindow()
@@ -1727,6 +1742,13 @@ internal class CraftNativeChrome(
         view.setPadding(dp(10), 0, dp(10), 0)
         view.background = rippleBackground()
         view.contentDescription = button.optString("accessibilityLabel").ifBlank { title.ifBlank { symbol } }
+        ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+                if (id.isNotBlank()) info.viewIdResourceName = "nav-$id"
+            }
+        })
         view.setTextColor(tint)
         navButtonSpecs[view] = button
         val badge = button.optInt("badge", 0)
@@ -1823,6 +1845,7 @@ internal object CraftNativeSymbols {
             "sun.max", "sun.max.fill" -> "☀︎"
             "moon", "moon.fill", "moon.zzz" -> "☾"
             "calendar" -> "▦"
+            "stopwatch", "stopwatch.fill", "timer" -> "⏱︎"
             "chart.line.uptrend.xyaxis", "chart.xyaxis.line", "chart.bar", "chart.bar.fill" -> "📈︎"
             "heart", "heart.text.square" -> "♡"
             "heart.fill" -> "♥"
@@ -2452,7 +2475,16 @@ internal object CraftNativeIcons {
     fun drawable(context: Context, name: String?, symbol: String?, color: Int): android.graphics.drawable.Drawable? {
         val icons = load(context)
         val bare = name?.removePrefix("i-lucide-")?.substringAfter("lucide:")
-        val icon = (bare?.let(icons::get)) ?: symbol?.let(icons::get) ?: return null
+        val alias = when (symbol) {
+            "bubble.left", "bubble.left.fill", "message", "message.fill" -> "message-circle"
+            "bubble.left.and.bubble.right" -> "messages-square"
+            "stopwatch", "stopwatch.fill" -> "timer"
+            else -> null
+        }
+        val icon = bare?.let(icons::get)
+            ?: symbol?.let(icons::get)
+            ?: alias?.let(icons::get)
+            ?: return null
         return Vector(icon, color)
     }
 

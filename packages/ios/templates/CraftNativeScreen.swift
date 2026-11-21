@@ -7673,6 +7673,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
+    private var rowSwipeHandlers: [ObjectIdentifier: String] = [:]
+    private var rowSwipeRecognizers: [ObjectIdentifier: [CraftNativeRowSwipe]] = [:]
     private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var pressFeedbackRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     /// Views that show something under the finger: every pressable one that
@@ -11379,6 +11381,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // A menu owns the hold when both are authored; never open an action
         // sheet from onLongPress underneath UIKit's menu.
         updateLongPressHandler(menuDisabled || hasMenu ? nil : events["onLongPress"], for: result)
+        updateRowSwipeHandler(menuDisabled || (props["swipeEnabled"] as? Bool) == false ? nil : events["onSwipe"], for: result)
         if type != "Button" && type != "Link" && type != "Checkbox" && type != "TextInput" && type != "Picker" && type != "SegmentedControl" && type != "DatePicker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" && type != "StatusBar" && type != "RefreshControl" && type != "Map" {
             let disabled = props["disabled"] as? Bool == true
             updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
@@ -11897,6 +11900,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         unechoedText.removeValue(forKey: id)
         inputEventCounts.removeValue(forKey: id)
         if node.type == "TextInput" && !preservingInputDrafts { inputDrafts.removeValue(forKey: node.identity) }
+        rowSwipeHandlers.removeValue(forKey: id)
+        for recognizer in rowSwipeRecognizers.removeValue(forKey: id) ?? [] { view.removeGestureRecognizer(recognizer) }
         longPressHandlers.removeValue(forKey: id)
         contextMenus.removeValue(forKey: id)?.detach()
         accessibilityActionHandlers.removeValue(forKey: id)
@@ -12248,6 +12253,30 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let id = ObjectIdentifier(view)
         if let show, !show.isEmpty { underlayShowHandlers[id] = show } else { underlayShowHandlers.removeValue(forKey: id) }
         if let hide, !hide.isEmpty { underlayHideHandlers[id] = hide } else { underlayHideHandlers.removeValue(forKey: id) }
+    }
+
+    private func updateRowSwipeHandler(_ handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        guard let handler, !handler.isEmpty else {
+            rowSwipeHandlers.removeValue(forKey: id)
+            for recognizer in rowSwipeRecognizers.removeValue(forKey: id) ?? [] { view.removeGestureRecognizer(recognizer) }
+            return
+        }
+        rowSwipeHandlers[id] = handler
+        if rowSwipeRecognizers[id] == nil {
+            let directions: [UISwipeGestureRecognizer.Direction] = [.left, .right]
+            rowSwipeRecognizers[id] = directions.map { direction in
+                let recognizer = CraftNativeRowSwipe(target: self, action: #selector(viewSwiped(_:)))
+                recognizer.direction = direction
+                view.addGestureRecognizer(recognizer)
+                return recognizer
+            }
+        }
+    }
+
+    @objc private func viewSwiped(_ sender: CraftNativeRowSwipe) {
+        guard let view = sender.view, let handler = rowSwipeHandlers[ObjectIdentifier(view)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["direction": sender.direction == .left ? "left" : "right"]])
     }
 
     private func updateLongPressHandler(_ handler: String?, for view: UIView) {
@@ -14281,3 +14310,6 @@ enum CraftNativeConsole {
         }
     }
 }
+
+/// A view that owns a discrete horizontal gesture ahead of the tab shell.
+final class CraftNativeRowSwipe: UISwipeGestureRecognizer { }
