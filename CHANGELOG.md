@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.527...v0.0.528)
+
+## 🧪 Tests
+
+- **native**: cover row swipe props in hostile inputs ([0a449cd](https://github.com/craft-native/craft/commit/0a449cd)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.526...v0.0.527)
 
 ## 🐛 Bug Fixes
