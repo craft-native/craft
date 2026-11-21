@@ -623,6 +623,12 @@ internal class CraftNativeStores private constructor(
  * to the host in this isolate (a message port or the console).
  */
 internal object CraftNativePrelude {
+    fun preferredLanguages(context: Context): JSONArray = JSONArray().apply {
+        // The app configuration includes a per-app locale when Android has one.
+        val locales = context.resources.configuration.locales
+        for (index in 0 until locales.size()) put(locales.get(index).toLanguageTag())
+    }
+
     /**
      * The secure-storage key the signed-in account's token lives under
      * (`sessionTokenKey` in craft.config.json, `auth.token` by default):
@@ -870,6 +876,12 @@ internal object CraftNativePrelude {
               };
             }
           };
+          var languages = globalThis.__stxNativeBridge.preferredLanguages;
+          if (languages && languages.length) {
+            var navigator = globalThis.navigator || (globalThis.navigator = {});
+            navigator.languages = languages;
+            navigator.language = languages[0];
+          }
           $receiveSetup
 
           function parsed(json) {

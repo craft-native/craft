@@ -6385,6 +6385,7 @@ class MainActivity : AppCompatActivity() {
             capabilityTimeoutMs: $CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS,
             capabilities: ${capabilityNames()},
             initialAppState: ${JSONObject.quote(nativeAppState)},
+            preferredLanguages: ${CraftNativePrelude.preferredLanguages(this)},
             colorScheme: ${JSONObject.quote(colorScheme())},
             viewportWidth: ${resources.configuration.screenWidthDp},
             appearance: ${appearance()},
@@ -9538,10 +9539,7 @@ class MainActivity : AppCompatActivity() {
                 // The phone's own languages, most preferred first, as BCP 47
                 // tags: what an app chooses its language from before anyone
                 // has signed in.
-                .put("languages", JSONArray().apply {
-                    val preferred = android.os.LocaleList.getDefault()
-                    for (index in 0 until preferred.size()) put(preferred.get(index).toLanguageTag())
-                })
+                .put("languages", CraftNativePrelude.preferredLanguages(this))
                 .put("timezone", java.util.TimeZone.getDefault().id)
                 .put("screen", JSONObject()
                     .put("width", resources.displayMetrics.widthPixels / resources.displayMetrics.density)

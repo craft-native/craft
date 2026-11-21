@@ -300,6 +300,7 @@ internal class CraftNativeHeadlessApp(
                 capabilityTimeoutMs: 30000,
                 capabilities: $names,
                 initialAppState: 'background',
+                preferredLanguages: ${CraftNativePrelude.preferredLanguages(context)},
                 colorScheme: 'light',
                 appURL: ${JSONObject.quote(config.optString("devServerURL"))},
                 appVersion: '',

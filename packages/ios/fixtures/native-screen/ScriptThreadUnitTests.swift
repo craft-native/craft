@@ -352,6 +352,8 @@ final class ScriptThreadUnitTests: XCTestCase {
         // The script was handed to its own thread: the first frame comes from there.
         until("the first render") { find(UILabel.self, key: "count", below: controller.view)?.text == "Count: 0" }
         XCTAssertEqual(controller.evaluateScript("typeof __stxNativeBridge")?.toString(), "object")
+        XCTAssertEqual(controller.evaluateScript("navigator.languages")?.toArray() as? [String], Locale.preferredLanguages)
+        XCTAssertEqual(controller.evaluateScript("navigator.language")?.toString(), Locale.preferredLanguages.first)
         // Work queued for the script runs off the main thread (a sync call from
         // main would run on main, so this asks asynchronously).
         var scriptOnMain: Bool?

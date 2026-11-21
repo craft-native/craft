@@ -8319,6 +8319,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private struct ScriptInputs {
         let capabilityJSON: String
         let appState: String
+        let preferredLanguages: [String]
         let colorScheme: String
         let appearanceJSON: String
         let sessionTokenKey: String
@@ -8333,6 +8334,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return ScriptInputs(
             capabilityJSON: capabilityData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]",
             appState: CraftNativeActions.currentAppState(),
+            preferredLanguages: Locale.preferredLanguages,
             colorScheme: colorScheme,
             appearanceJSON: appearanceJSON(),
             sessionTokenKey: Self.jsonString(CraftSession.tokenKey(config)),
@@ -8494,6 +8496,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
         """)
+        // Let shared code read the phone language during its first evaluation.
+        let navigator = jsContext.evaluateScript("globalThis.navigator || (globalThis.navigator = {})")
+        navigator?.setObject(inputs.preferredLanguages as NSArray, forKeyedSubscript: "languages" as NSString)
+        if let language = inputs.preferredLanguages.first {
+            navigator?.setObject(language, forKeyedSubscript: "language" as NSString)
+        }
         jsContext.evaluateScript(Self.nativeWebAPICompatibilityPrelude)
         installHostAPIs()
         jsContext.evaluateScript("""
