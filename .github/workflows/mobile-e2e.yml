@@ -127,7 +127,7 @@ defaults:
 # at the workflow level so a released compiler qualification changes one line,
 # not four checkout steps plus documentation and a second test constant.
 env:
-  STX_COMPILER_VERSION: v0.2.704
+  STX_COMPILER_VERSION: v0.2.923
 
 jobs:
   media-cache:
