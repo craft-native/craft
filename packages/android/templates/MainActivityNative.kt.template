@@ -1516,7 +1516,27 @@ internal class CraftNativePointerImageView(context: Context) : ImageView(context
 
 /** A deterministic flex-shaped container shared by normal views and scroll content. */
 internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
-    var rowSwipe: ((String) -> Unit)? = null
+    private var rowSwipeHandler: String = ""
+    private var rowSwipeDirection: String? = null
+    private var rowSwipe: ((String) -> Unit)? = null
+
+    fun configureRowSwipe(handler: String, direction: String?, callback: ((String) -> Unit)?) {
+        if (rowSwipeHandler != handler || rowSwipeDirection != direction) resetRowSwipe()
+        rowSwipeHandler = handler
+        rowSwipeDirection = direction
+        rowSwipe = callback
+    }
+
+    fun acceptsRowSwipe(direction: String): Boolean =
+        rowSwipe != null && CraftNativePointers.ownsTouch(this) &&
+            (rowSwipeDirection !in setOf("left", "right") || rowSwipeDirection == direction)
+
+    private fun resetRowSwipe() {
+        swipeClaimed = false
+        swipeCandidate = false
+    }
+
+    private fun rowSwipeDirection(delta: Float) = if (delta < 0) "left" else "right"
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var swipeCandidate = false
@@ -1531,11 +1551,16 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
     private fun claimRowSwipe(event: MotionEvent): Boolean {
         if (!swipeCandidate) return false
-        val dx = kotlin.math.abs(event.x - swipeStartX)
+        val delta = event.x - swipeStartX
+        val dx = kotlin.math.abs(delta)
         val dy = kotlin.math.abs(event.y - swipeStartY)
         val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
         if (dy > slop && dy >= dx) swipeCandidate = false
         if (dx <= slop || dx <= dy * 1.3f) return false
+        if (!acceptsRowSwipe(rowSwipeDirection(delta))) {
+            swipeCandidate = false
+            return false
+        }
         swipeClaimed = true
         parent?.requestDisallowInterceptTouchEvent(true)
         return true
@@ -1575,13 +1600,13 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 val delta = event.x - swipeStartX
                 val vertical = kotlin.math.abs(event.y - swipeStartY)
                 val threshold = 44 * resources.displayMetrics.density
-                if (kotlin.math.abs(delta) >= threshold && kotlin.math.abs(delta) > vertical * 1.3f)
-                    rowSwipe?.invoke(if (delta < 0) "left" else "right")
-                swipeClaimed = false
-                swipeCandidate = false
+                val direction = rowSwipeDirection(delta)
+                val handler = rowSwipe
+                resetRowSwipe()
+                if (kotlin.math.abs(delta) >= threshold && kotlin.math.abs(delta) > vertical * 1.3f && acceptsRowSwipe(direction))
+                    handler?.invoke(direction)
             } else if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
-                swipeClaimed = false
-                swipeCandidate = false
+                resetRowSwipe()
             }
             return true
         }
@@ -1598,6 +1623,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         celebration?.configure(raw, radius)
     }
     override fun onDetachedFromWindow() {
+        resetRowSwipe()
         celebration?.stop()
         super.onDetachedFromWindow()
     }
@@ -5784,7 +5810,7 @@ class MainActivity : AppCompatActivity() {
         bars.onTabSwipeStart = { dx, x, y -> beginTabSwipe(dx, x, y) }
         bars.onTabSwipeMove = { dx -> updateTabSwipe(dx) }
         bars.onTabSwipeEnd = { dx, cancelled -> finishTabSwipe(dx, cancelled) }
-        bars.onTabSwipeShouldDefer = { x, y ->
+        bars.onTabSwipeShouldDefer = { x, y, direction ->
             val location = IntArray(2)
             bars.getLocationOnScreen(location)
             val screen = visibleScreen
@@ -5792,6 +5818,7 @@ class MainActivity : AppCompatActivity() {
                 screen.view,
                 location[0] + x,
                 location[1] + y,
+                direction,
             )
         }
         root.addView(bars)
@@ -5961,17 +5988,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Returns true when a native horizontal scroll host owns the touch point. */
-    private fun horizontalScrollAtPoint(view: View, screenX: Float, screenY: Float): Boolean {
+    private fun horizontalScrollAtPoint(view: View, screenX: Float, screenY: Float, direction: String?): Boolean {
         if (!view.isShown) return false
         val location = IntArray(2)
         view.getLocationOnScreen(location)
         if (screenX < location[0] || screenY < location[1]
             || screenX > location[0] + view.width || screenY > location[1] + view.height) return false
         if (view is android.widget.HorizontalScrollView) return true
-        if (view is CraftNativeFlexLayout && view.rowSwipe != null) return true
+        if (direction != null && view is CraftNativeFlexLayout && view.acceptsRowSwipe(direction)) return true
         if (view !is ViewGroup) return false
         for (index in view.childCount - 1 downTo 0) {
-            if (horizontalScrollAtPoint(view.getChildAt(index), screenX, screenY)) return true
+            if (horizontalScrollAtPoint(view.getChildAt(index), screenX, screenY, direction)) return true
         }
         return false
     }
@@ -8079,9 +8106,10 @@ class MainActivity : AppCompatActivity() {
             craftNativeBoolean(props.optJSONObject("accessibilityState")?.opt("disabled"))
         if (control is CraftNativeFlexLayout) {
             val rowSwipe = craftNativeEventName(events, "onSwipe").takeUnless { longPressDisabled || !craftNativeBoolean(props.opt("swipeEnabled"), true) }.orEmpty()
-            control.rowSwipe = if (rowSwipe.isBlank()) null else { direction ->
+            val callback: ((String) -> Unit)? = if (rowSwipe.isBlank()) null else { direction ->
                 send(screen, "EVENT", JSONObject().put("handlerName", rowSwipe).put("nativeEvent", JSONObject().put("direction", direction)))
             }
+            control.configureRowSwipe(rowSwipe, craftNativeOptionalString(props.opt("swipeDirection")), callback)
         }
         val longPressHandler = craftNativeEventName(events, "onLongPress").takeUnless { longPressDisabled } ?: ""
         if (longPressHandler.isNotBlank()) {
@@ -10028,7 +10056,7 @@ class MainActivity : AppCompatActivity() {
             if (it !is android.widget.AdapterView<*>) it.setOnClickListener(null)
             it.setOnTouchListener(null)
             it.setOnLongClickListener(null)
-            if (it is CraftNativeFlexLayout) it.rowSwipe = null
+            if (it is CraftNativeFlexLayout) it.configureRowSwipe("", null, null)
             it.setOnFocusChangeListener(null)
             it.isClickable = false
             it.isLongClickable = false

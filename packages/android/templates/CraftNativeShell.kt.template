@@ -1105,7 +1105,7 @@ internal class CraftNativeChrome(
     var onTabSwipeMove: ((Float) -> Unit)? = null
     var onTabSwipeEnd: ((Float, Boolean) -> Unit)? = null
     /** Lets a native horizontal scroller own the gesture from its first down. */
-    var onTabSwipeShouldDefer: ((Float, Float) -> Boolean)? = null
+    var onTabSwipeShouldDefer: ((Float, Float, String?) -> Boolean)? = null
     var tabSwipeEnabled = true
 
     init {
@@ -1211,7 +1211,7 @@ internal class CraftNativeChrome(
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val overHorizontalScroll = onTabSwipeShouldDefer?.invoke(event.x, event.y) == true
+                val overHorizontalScroll = onTabSwipeShouldDefer?.invoke(event.x, event.y, null) == true
                 horizontalScrollDeferred = overHorizontalScroll
                 if (overHorizontalScroll) parent?.requestDisallowInterceptTouchEvent(true)
                 val overActions = android.graphics.Rect().let { accessoryGroup.getGlobalVisibleRect(it) && it.contains(event.rawX.toInt(), event.rawY.toInt()) }
@@ -1225,6 +1225,8 @@ internal class CraftNativeChrome(
                 val dy = event.y - swipeDownY
                 if (kotlin.math.abs(dx) > swipeSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
                     swipeTracking = false
+                    val direction = if (dx < 0) "left" else "right"
+                    if (onTabSwipeShouldDefer?.invoke(swipeDownX, swipeDownY, direction) == true) return false
                     swipeIntercepted = onTabSwipeStart?.invoke(dx, event.x, event.y) == true
                     // Android cancels the child's touch target for this move;
                     // it does not replay the move through our onTouchEvent.

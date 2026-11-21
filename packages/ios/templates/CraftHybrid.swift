@@ -2243,12 +2243,25 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
         var candidate: UIView? = hit
         while let current = candidate {
-            if current.gestureRecognizers?.contains(where: { $0 is CraftNativeRowSwipe && $0.isEnabled }) == true { return true }
             if let scroll = current as? UIScrollView,
                scroll.isScrollEnabled,
                scroll.alwaysBounceHorizontal || scroll.contentSize.width > scroll.bounds.width + 1 {
                 return true
             }
+            candidate = current.superview
+        }
+        return false
+    }
+
+    private func rowSwipeAt(_ point: CGPoint, in root: UIView, direction: UISwipeGestureRecognizer.Direction) -> Bool {
+        let local = root.convert(point, from: view)
+        guard root.bounds.contains(local) else { return false }
+        var candidate = root.hitTest(local, with: nil)
+        while let current = candidate {
+            if current.gestureRecognizers?.contains(where: { recognizer in
+                guard let swipe = recognizer as? CraftNativeRowSwipe, swipe.isEnabled else { return false }
+                return swipe.directions.contains(direction)
+            }) == true { return true }
             candidate = current.superview
         }
         return false
@@ -3022,13 +3035,17 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             // screen to itself.
             guard nav.viewControllers.count == 1, nav.transitionCoordinator == nil,
                   !CraftChrome.shared.hiddenByScreen else { return false }
-            if let pan = gestureRecognizer as? UIPanGestureRecognizer {
-                let velocity = pan.velocity(in: view)
-                guard abs(velocity.x) > abs(velocity.y) else { return false }
-            }
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: view)
+            guard abs(velocity.x) > abs(velocity.y) else { return false }
             if let native = top as? CraftNativeScreenController,
                !native.tabSwipeEnabled || !native.contentSwipeBack { return false }
-            return !horizontalScrollAt(gestureRecognizer.location(in: view), in: top.view)
+            let location = pan.location(in: view)
+            let translation = pan.translation(in: view)
+            let start = CGPoint(x: location.x - translation.x, y: location.y - translation.y)
+            let direction: UISwipeGestureRecognizer.Direction = velocity.x < 0 ? .left : .right
+            return !rowSwipeAt(start, in: top.view, direction: direction)
+                && !horizontalScrollAt(start, in: top.view)
         }
         guard let nav = frontStack, isPopRecognizer(gestureRecognizer),
               nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
@@ -3045,6 +3062,9 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             let location = gestureRecognizer.location(in: nav.view)
             let start = CGPoint(x: location.x - moved.x, y: location.y - moved.y)
             if horizontalScrollCanScrollBack(at: nav.view.convert(start, to: view), in: native.view) { return false }
+            let direction: UISwipeGestureRecognizer.Direction = view.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .left : .right
+            if gestureRecognizer !== nav.interactivePopGestureRecognizer,
+               rowSwipeAt(nav.view.convert(start, to: view), in: native.view, direction: direction) { return false }
         }
         guard let slot = nav.topViewController as? CraftHybridWebSlot else { return true }
         // Over the page, only from its left edge: a swipe across the page is
