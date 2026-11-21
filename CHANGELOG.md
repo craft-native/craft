@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.528...v0.0.529)
+
+## 🐛 Bug Fixes
+
+- **ci**: use Pantry with native Windows Zig archive support ([c1d374c](https://github.com/craft-native/craft/commit/c1d374c)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **native**: assert the video fixture stays idle ([789a0a5](https://github.com/craft-native/craft/commit/789a0a5)) _(by Chris Breuer)_
+- **native**: declare the idle video fixture as a native player ([e0eec54](https://github.com/craft-native/craft/commit/e0eec54)) _(by Chris Breuer)_
+- **native**: qualify swipe fixtures with the released stx compiler ([9e91970](https://github.com/craft-native/craft/commit/9e91970)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.527...v0.0.528)
 
 ## 🧪 Tests
