@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.526...v0.0.527)
+
+## 🐛 Bug Fixes
+
+- **native**: arbitrate row swipes with scrolling and tabs ([0556835](https://github.com/craft-native/craft/commit/0556835)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **native**: exercise a row swipe on both mobile hosts ([49ee454](https://github.com/craft-native/craft/commit/49ee454)) _(by Chris Breuer)_
+
+## 🧹 Chores
+
+- wip ([e286638](https://github.com/craft-native/craft/commit/e286638)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.525...v0.0.526)
 
 ## 🧪 Tests
