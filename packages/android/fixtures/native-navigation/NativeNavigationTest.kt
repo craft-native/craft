@@ -1397,10 +1397,18 @@ class NativeNavigationTest {
         val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
         try {
             lateinit var info: JSONObject
+            lateinit var preferred: android.os.LocaleList
             scenario.onActivity { activity ->
                 info = activity.performImmediateCapability("Device", "getInfo", JSONArray()).data as JSONObject
+                preferred = activity.resources.configuration.locales
+                val german = android.content.res.Configuration(activity.resources.configuration).apply {
+                    setLocales(android.os.LocaleList.forLanguageTags("de-DE,en-US"))
+                }
+                val configured = activity.createConfigurationContext(german)
+                val choices = CraftNativePrelude.preferredLanguages(configured)
+                assertEquals("de-DE", choices.getString(0))
+                assertEquals("en-US", choices.getString(1))
             }
-            val preferred = android.os.LocaleList.getDefault()
             val languages = info.getJSONArray("languages")
             assertTrue("the phone has at least one language", languages.length() > 0)
             assertEquals("the phone's own list, in its order",
