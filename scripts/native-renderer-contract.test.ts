@@ -1128,8 +1128,9 @@ describe('native renderer component contract', () => {
     }
     expect(navigationHome).toContain('<g stroke="#2563eb">')
     expect(navigationHome).toContain('<text x="12" y="21"')
-    expect(navigationHome).toContain('testID="native-video"')
-    expect(navigationHome).toContain('source={{"uri":""}}')
+    const idleVideo = navigationHome.match(/<Video\b[^>]*\btestID="native-video"[^>]*>/)?.[0]
+    expect(idleVideo).toBeDefined()
+    expect(idleVideo!).not.toMatch(/\b(?:src|source)\s*=/)
     expect(iosNavigationTest).toContain('SVG accessibility metadata did not survive native mounting')
     expect(androidNavigationTest).toContain('SVG accessibility metadata did not survive native mounting')
     expect(iosNavigationTest).toContain('Video fixture did not mount as a native view')
