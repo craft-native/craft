@@ -649,6 +649,24 @@ final class NativeNavigationUITests: XCTestCase {
         try assertScrollCaptureMatchesLiveQueries(notes, in: root, application: app)
     }
 
+    func testRowSwipeWinsOverTabNavigationAndDoesNotTap() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let scroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        let row = app.buttons["native-swipe-row"]
+        reveal(row, in: scroll)
+        let state = app.staticTexts["native-swipe-state"]
+        row.swipeLeft()
+        XCTAssertTrue(waitForLabel(state, "Open: 1 swipes, 0 taps"), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["details-title"].exists)
+        row.swipeRight()
+        XCTAssertTrue(waitForLabel(state, "Closed: 2 swipes, 0 taps"), app.debugDescription)
+        row.tap()
+        XCTAssertTrue(waitForLabel(state, "Closed: 2 swipes, 1 taps"))
+    }
+
     func testHorizontalCarouselKeepsItsSwipe() {
         let app = XCUIApplication()
         app.launch()

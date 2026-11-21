@@ -19,6 +19,13 @@ const nestedButtonTaps = state(0)
 const nestedParentTaps = state(0)
 const linkAccessibilityDisabled = state(false)
 const panelAccessibilityDisabled = state(false)
+const rowSwipeOpen = state(false)
+const rowSwipeCount = state(0)
+const rowSwipePresses = state(0)
+function swipeFixtureRow(direction) {
+  rowSwipeOpen.set(direction === 'left')
+  rowSwipeCount.update(count => count + 1)
+}
 const longPressStatus = state('')
 const longPressAccessibilityDisabled = state(false)
 const switchValue = state(false)
@@ -618,6 +625,10 @@ function openDetailsThenUpdateBackground() {
     <Button testID="toggle-status-bar-content" @click="statusBarContent.set(statusBarContent() === 'light-content' ? 'dark-content' : 'light-content')">Toggle status bar content</Button>
     <Button testID="black-screen-background" @click="globalThis.craft.navigation.setOptions({ backgroundColor: '#000000' })">Black focus background</Button>
     <Button testID="background-open-details" @click="openDetailsThenUpdateBackground()">Update retained background</Button>
+    <View @swipe="swipeFixtureRow($event.direction)" :swipeDirection="rowSwipeOpen() ? 'right' : 'left'">
+      <Button testID="native-swipe-row" style={{"height":48,"width":"100%"}} @click="rowSwipePresses.update(count => count + 1)">Swipe this row</Button>
+      <Text testID="native-swipe-state" :text="(rowSwipeOpen() ? 'Open' : 'Closed') + ': ' + rowSwipeCount() + ' swipes, ' + rowSwipePresses() + ' taps'" />
+    </View>
     <ScrollView testID="tab-swipe-carousel" horizontal style={{"width":240,"height":48}}>
       <View style={{"width":720,"height":40,"flexDirection":"row","alignItems":"center","gap":16,"paddingHorizontal":12,"backgroundColor":"#1e293b"}}>
         <Text testID="tab-swipe-carousel-label" style={{"width":220,"color":"#ffffff"}}>Horizontal carousel content</Text>

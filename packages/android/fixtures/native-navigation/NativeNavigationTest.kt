@@ -64,6 +64,48 @@ class NativeNavigationTest {
     private var navigationSystemAppearance = "unchanged"
 
     @Test
+    fun rowSwipeWinsOverTabNavigationAndDoesNotTap() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            val row = awaitView(activity, "native-swipe-row")
+            instrumentation.runOnMainSync {
+                row.requestRectangleOnScreen(android.graphics.Rect(0, 0, row.width, row.height), true)
+            }
+            instrumentation.waitForIdleSync()
+            val bounds = android.graphics.Rect()
+            instrumentation.runOnMainSync { assertTrue(row.getGlobalVisibleRect(bounds)) }
+            fun swipe(left: Boolean) {
+                val start = if (left) 0.8f else 0.2f
+                val end = 1f - start
+                val x = bounds.left + bounds.width() * start
+                val delta = bounds.width() * (end - start)
+                val y = bounds.exactCenterY()
+                val down = SystemClock.uptimeMillis()
+                for (step in 0..10) {
+                    val action = when (step) {
+                        0 -> MotionEvent.ACTION_DOWN
+                        10 -> MotionEvent.ACTION_UP
+                        else -> MotionEvent.ACTION_MOVE
+                    }
+                    val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x + delta * step / 10f, y, 0)
+                    try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+                }
+            }
+            swipe(left = true)
+            awaitText(activity, "native-swipe-state", "Open: 1 swipes, 0 taps")
+            swipe(left = false)
+            awaitText(activity, "native-swipe-state", "Closed: 2 swipes, 0 taps")
+            click(activity, "native-swipe-row")
+            awaitText(activity, "native-swipe-state", "Closed: 2 swipes, 1 taps")
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+        }
+    }
+
+    @Test
     fun contextMenuUsesNativePopupAndDispatchesOnlyTheSelectedItem() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
