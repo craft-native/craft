@@ -580,8 +580,8 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
 
   // Release gates use one published installer with frozen provider replay and
   // alias closure, including the macOS HTTPS dependencies.
-  const version = '0.11.184'
-  const source = '624cd6674f8c5c2d4e4204c11ece62a00d7fac0a'
+  const version = '0.11.214'
+  const source = 'f6a85d762e728b7f91e3bebe700f08d0dc5ee5e0'
   let pinned = 0
   for (const file of files) {
     const text = readFileSync(join(directory, file), 'utf8')
@@ -856,7 +856,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(release.jobs.npm.if).toContain("needs.prepare-npm.result == 'success'")
   expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
-  expect(zigPublish?.with).toMatchObject({ version: '0.11.184', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
+  expect(zigPublish?.with).toMatchObject({ version: '0.11.214', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
   expect(zigPublish?.with?.release).toBeUndefined()
   expect(Object.entries(release.jobs).flatMap(([name, job]) =>
     (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])

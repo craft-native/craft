@@ -32,9 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install the pinned toolchain
-        uses: pantry-pm/pantry/packages/action@624cd6674f8c5c2d4e4204c11ece62a00d7fac0a # v0.11.184
+        uses: pantry-pm/pantry/packages/action@f6a85d762e728b7f91e3bebe700f08d0dc5ee5e0 # v0.11.214
         with:
-          version: '0.11.184'
+          version: '0.11.214'
       - name: Cache Zig artifacts
         uses: actions/cache@v5
         with:
