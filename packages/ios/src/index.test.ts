@@ -1498,15 +1498,20 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(app).toContain('CraftHealth.shared.pageSink = { [weak self] detail in')
     expect(app).toContain('self.sendToWeb("craftHealthHeartRate", data: detail)')
     expect(app).toContain('self.sendToWeb("craftHealthWorkout", data: detail)')
-    expect(app).toContain('"craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
+    // A stream HealthKit stopped says why, to the page and native screens (#580).
+    expect(app).toContain('self.sendToWeb("craftHealthHeartRateError", data: detail)')
+    expect(health).toContain('if heartRateErrorSink?(detail) != true { CraftWebServices.forward("craftHealthHeartRateError", data: detail) }')
+    expect(health).toContain('forName: UIApplication.protectedDataDidBecomeAvailableNotification')
+    expect(app).toContain('"craftHealthHeartRate", "craftHealthHeartRateError", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
     expect(health).toContain('HKWorkoutSession(healthStore: healthStore, configuration: configuration)')
     expect(health).toContain('builder.beginCollection(withStart: start)')
     expect(health).toContain('if pageSink?(detail) != true { CraftWebServices.forward("craftHealthHeartRate", data: detail) }')
     // An anchored query from `since` (two minutes ago by default), one at a time.
     expect(health).toContain('(since ?? Date().timeIntervalSince1970 * 1000 - 120_000) / 1000')
-    expect(health).toContain('HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)')
-    expect(health).toContain('HKAnchoredObjectQuery(type: heartType, predicate: predicate, anchor: nil, limit: HKObjectQueryNoLimit)')
-    expect(health).toContain('query.updateHandler = { [weak self] _, samples, _, _, error in')
+    expect(health).toContain('HKQuery.predicateForSamples(withStart: heartRateStart ?? Date(), end: nil, options: .strictStartDate)')
+    // From the last anchor, so a stream run again after the device unlocks sends nothing twice (#580).
+    expect(health).toContain('HKAnchoredObjectQuery(type: type, predicate: predicate, anchor: heartRateAnchor, limit: HKObjectQueryNoLimit)')
+    expect(health).toContain('query.updateHandler = { [weak self] _, samples, _, anchor, error in')
     expect(health).toMatch(/onMain \{ \[self\] in\n\s+stopHeartRateStream\(\)/)
     expect(health).toContain('if let query = heartRateQuery { healthStore?.stop(query) }')
     // Each sample once, oldest first, in getHeartRateSamples' shape; nothing for an empty batch.
@@ -2583,7 +2588,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(app).toContain('if CraftWebServices.resolve(id, result: result) { return }')
     expect(app).toContain('if CraftWebServices.reject(id, message: error, code: code) { return }')
     expect(app).toContain('CraftWebServices.forward(event, data: data)')
-    expect(app).toContain('static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
+    expect(app).toContain('static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthHeartRateError", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
     expect(screen).toContain('self?.send(type: "CRAFT_EVENT", payload: ["event": name')
   })
 
