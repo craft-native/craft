@@ -17,6 +17,12 @@ it does not mount this package's DOM adapter.
 bun add @craft-native/ts-maps
 ```
 
+`ts-maps` comes with it as a dependency, so there is nothing else to install. A
+project that type-checks dependencies (`skipLibCheck: false`) will see three
+errors inside `ts-maps`'s own declarations (`ProjectionLike` and a generator in
+`PMTiles.d.ts`). They come from that package, not from this adapter, and
+`skipLibCheck: true` hides them.
+
 ## Quick start
 
 ```ts

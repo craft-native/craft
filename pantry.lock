@@ -88,9 +88,11 @@
     "packages/ts-maps": {
       "name": "@craft-native/ts-maps",
       "version": "0.0.530",
+      "dependencies": {
+        "ts-maps": "^0.3.9"
+      },
       "devDependencies": {
         "@types/bun": "^1.2.0",
-        "ts-maps": "^0.3.9",
         "very-happy-dom": "^0.1.4"
       }
     },
