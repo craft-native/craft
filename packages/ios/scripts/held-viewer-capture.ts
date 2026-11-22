@@ -162,13 +162,14 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
   const baseline = join(options.output, 'baseline.png')
   const xcrun = dependencies.xcrun ?? Bun.which('xcrun')
   const monotonicNow = dependencies.monotonicNow ?? (() => performance.now())
-  const deadline = Math.min(dependencies.deadline ?? Infinity, monotonicNow() + 30_000)
+  let deadline = Math.min(dependencies.deadline ?? Infinity, monotonicNow() + 30_000)
   if (!Number.isFinite(deadline)) throw new Error('Invalid viewer setup deadline')
+  let anchorWaitMs: number | null = null
   let simctl: string | undefined, simctlSha256: string | undefined, sha256: string | undefined
   const receipt = (verified: boolean, error?: string) => ({
     verified, error, simulator: options.simulator, xcrun, simctl, simctlSha256,
     developerDir: process.env.DEVELOPER_DIR ?? null, calls, screenshot: baseline, sha256,
-    totalCommandBudgetMs: 30_000,
+    totalCommandBudgetMs: 30_000, anchorWaitMs,
   })
   const run = async (args: string[]) => {
     const timeoutMs = Math.max(0, Math.floor(deadline - monotonicNow()))
@@ -191,7 +192,17 @@ export async function prepareHeldViewerCapture(options: CaptureOptions, dependen
     if (!isAbsolute(simctl)) throw new Error('xcrun did not resolve an absolute simctl executable')
     simctlSha256 = new Bun.CryptoHasher('sha256').update(await Bun.file(simctl).arrayBuffer()).digest('hex')
     dependencies.onResolved?.({ simctl, simctlSha256 })
+    // The recording's first-frame wait is the recorder's, not the
+    // screenshot's: the screenshot keeps the budget it had when the wait
+    // began. Charged to it, a recorder slow to anchor on a loaded runner
+    // (27 s of 30) left the screenshot 2.6 s, and the positive control
+    // failed while both captures were healthy (#581). The wait itself is
+    // bounded by the caller's setup deadline and recorded in the receipt.
+    const reserved = Math.max(0, deadline - monotonicNow())
+    const waitStarted = monotonicNow()
     await dependencies.beforeScreenshot?.()
+    anchorWaitMs = Math.round(monotonicNow() - waitStarted)
+    deadline = monotonicNow() + reserved
     await run([simctl, 'io', options.simulator, 'screenshot', baseline])
     sha256 = await pngHash(baseline)
     await Bun.write(join(options.output, 'preflight.json'), JSON.stringify(receipt(true), null, 2))
@@ -363,9 +374,11 @@ export async function captureHeldViewerVideo(options: CaptureOptions, dependenci
       throw new Error('Viewer capture requires its verified fixture-build extractor manifest')
     extractorBuild = await verifyHeldViewerExtractor(options.extractorManifest, options.output)
     extractor = extractorBuild.path
-    // Both independent controls share the original 30-second deadline. Start
-    // recording as soon as the verified tool is available, while the baseline
-    // screenshot runs; neither control releases XCTest until both have passed.
+    // Both independent controls start inside the original 30-second deadline.
+    // Recording starts as soon as the verified tool is available; the
+    // baseline screenshot follows once the recording has anchored, with the
+    // budget it had before that wait (#581). Neither control releases
+    // XCTest until both have passed.
     const prepared = await (dependencies.prepare
       ? dependencies.prepare(startRecording)
       : prepareHeldViewerCapture({ ...options, signal, ready: join(options.output, 'screenshot-control-ready') }, {

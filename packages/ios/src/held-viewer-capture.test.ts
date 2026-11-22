@@ -441,6 +441,38 @@ describe('independent held viewer capture', () => {
  * share one simulator's I/O, so the screenshot must not run while the
  * recording is still establishing that anchor.
  */
+/**
+ * A recorder slow to close its first-frame bracket must not starve the
+ * screenshot behind it (#581): on a loaded runner the anchor wait took 27 of
+ * the 30 shared seconds, the screenshot was given 2.6 s, and the positive
+ * control failed though both captures were healthy.
+ */
+test.skipIf(process.platform !== 'darwin')('the anchor wait does not spend the screenshot\'s budget, and is recorded', async () => {
+  const dir = createTempDir('craft-anchor-budget-')
+  try {
+    const simctl = join(dir, 'simctl')
+    writeFileSync(simctl, '#!/bin/sh\nexit 0\n')
+    let now = 0
+    const budgets: number[] = []
+    const command: NonNullable<Parameters<typeof prepareHeldViewerCapture>[1]>['command'] = async (args, options) => {
+      budgets.push(options.timeoutMs)
+      if (args.includes('--find')) { now += 1000; return { code: 0, stdout: `${simctl}\n`, stderr: '', timedOut: false, cancelled: false } }
+      await Bun.write(args.at(-1)!, pixel)
+      return { code: 0, stdout: '', stderr: '', timedOut: false, cancelled: false }
+    }
+    await prepareHeldViewerCapture({ simulator, output: dir, log: join(dir, 'l'), done: join(dir, 'd'), ready: join(dir, 'r') } as never, {
+      command, xcrun: '/usr/bin/xcrun', monotonicNow: () => now,
+      beforeScreenshot: async () => { now += 27_350 },
+    })
+    // Resolution still spends the shared budget; the anchor wait does not.
+    expect(budgets).toEqual([30_000, 29_000])
+    const receipt = JSON.parse(readFileSync(join(dir, 'preflight.json'), 'utf8'))
+    expect(receipt.anchorWaitMs).toBe(27_350)
+    expect(receipt.verified).toBe(true)
+  }
+  finally { removeTempDir(dir) }
+}, 30_000)
+
 test.skipIf(process.platform !== 'darwin')('the baseline screenshot waits for the recording to close its first-frame bracket', async () => {
   const dir = createTempDir('craft-anchor-order-')
   try {
