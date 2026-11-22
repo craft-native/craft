@@ -3634,6 +3634,19 @@ export interface HealthHeartRateSample {
   motionContext?: 'sedentary' | 'active'
 }
 
+/** Why the heart-rate stream stopped. */
+export type HealthHeartRateErrorCode = 'DATABASE_INACCESSIBLE' | 'AUTHORIZATION_DENIED' | 'HEALTH_UNAVAILABLE' | 'HEALTH_ERROR'
+
+/**
+ * The heart-rate stream stopped. After `DATABASE_INACCESSIBLE` (the phone
+ * locked) it runs again by itself once the phone is unlocked; after any other
+ * code it stays stopped until `startHeartRateUpdates()` is called again.
+ */
+export interface HealthHeartRateError {
+  code: HealthHeartRateErrorCode
+  message: string
+}
+
 /** A sleep analysis stage: in bed, awake, or asleep (staged or not). */
 export type HealthSleepStage = 'inBed' | 'awake' | 'asleep' | 'core' | 'deep' | 'rem'
 
@@ -3737,7 +3750,9 @@ export interface HealthLiveWorkoutEvent {
 }
 
 /** The health reads and writes a host may or may not have, depending on the app build it runs in. */
-export type HealthReadMethod = 'getWorkouts' | 'getDailyStatistics' | 'getHeartRateSamples' | 'getSamples' | 'getSleepIntervals' | 'saveData' | 'saveMindfulSession' | 'getMindfulSessions' | 'startHeartRateUpdates' | 'stopHeartRateUpdates' | 'startWorkout' | 'pauseWorkout' | 'resumeWorkout' | 'endWorkout' | 'discardWorkout'
+export type HealthReadMethod = 'getWorkouts' | 'getDailyStatistics' | 'getHeartRateSamples' | 'getSamples' | 'getSleepIntervals' | 'saveData' | 'saveMindfulSession' | 'getMindfulSessions' | 'startHeartRateUpdates' | 'stopHeartRateUpdates' | 'onHeartRateError' | 'startWorkout' | 'pauseWorkout' | 'resumeWorkout' | 'endWorkout' | 'discardWorkout'
+
+const HEALTH_HEART_RATE_ERROR_CODES = new Set<string>(['DATABASE_INACCESSIBLE', 'AUTHORIZATION_DENIED', 'HEALTH_UNAVAILABLE', 'HEALTH_ERROR'])
 
 /** The samples of one `craftHealthHeartRate` event that look like heart-rate samples. */
 function healthHeartRateSamples(detail: unknown): HealthHeartRateSample[] {
@@ -3907,6 +3922,23 @@ export const health = {
     }
     window.addEventListener('craftHealthHeartRate', listener)
     return () => window.removeEventListener('craftHealthHeartRate', listener)
+  },
+  /**
+   * Why the heart-rate stream stopped, each time it does: the phone locked
+   * (`DATABASE_INACCESSIBLE`, and it resumes once unlocked), the grant was
+   * withdrawn, or Health is unavailable. Returns the unsubscribe. In a build
+   * that does not send it (`supports('onHeartRateError')` is false), off a
+   * phone, it never calls back.
+   */
+  onHeartRateError(callback: (error: HealthHeartRateError) => void): () => void {
+    const subscribe = getCraftRoot()?.health?.onHeartRateError
+    if (typeof subscribe !== 'function') return () => {}
+    const unsubscribe = subscribe((detail: unknown) => {
+      const error = detail as Partial<HealthHeartRateError> | null | undefined
+      if (error && typeof error.message === 'string' && typeof error.code === 'string' && HEALTH_HEART_RATE_ERROR_CODES.has(error.code))
+        callback({ code: error.code as HealthHeartRateErrorCode, message: error.message })
+    })
+    return typeof unsubscribe === 'function' ? () => { unsubscribe() } : () => {}
   },
 }
 

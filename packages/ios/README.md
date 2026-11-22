@@ -705,10 +705,16 @@ const mindful = await health.getMindfulSessions({ startDate: Date.now() - 7 * 86
 // batch, oldest first and each sample once, in getHeartRateSamples' shape.
 // Needs the 'heartRate' grant; one stream at a time.
 const stopListening = health.onHeartRate(samples => show(samples[samples.length - 1].bpm))
+// Why the stream stopped: DATABASE_INACCESSIBLE (the phone locked; it resumes
+// by itself once unlocked, and nothing is lost), AUTHORIZATION_DENIED,
+// HEALTH_UNAVAILABLE or HEALTH_ERROR. A build that never sends it has
+// supports('onHeartRateError') false.
+const stopErrors = health.onHeartRateError(({ code }) => showStreamStopped(code))
 await health.startHeartRateUpdates({ since: Date.now() - 60000 })
 // ...
 await health.stopHeartRateUpdates()
 stopListening()
+stopErrors()
 // HealthKit only has what the watch has synced. During a workout or a
 // Mindfulness session on the Apple Watch that is a reading every few seconds;
 // otherwise the watch measures every few minutes, and so do these. On a page

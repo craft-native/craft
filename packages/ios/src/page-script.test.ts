@@ -954,6 +954,17 @@ describe('craft.health heart rate as it arrives', () => {
     expect(await stopped).toBe(true)
   })
 
+  it('hands each craftHealthHeartRateError detail to onHeartRateError until it unsubscribes', () => {
+    const { craft, emit } = loadPage()
+    const errors: unknown[] = []
+    const stop = craft.health.onHeartRateError((detail: unknown) => errors.push(detail))
+    emit('craftHealthHeartRateError', { code: 'DATABASE_INACCESSIBLE', message: 'locked' })
+    emit('craftHealthHeartRate', { samples: [] })
+    stop()
+    emit('craftHealthHeartRateError', { code: 'HEALTH_ERROR', message: 'after' })
+    expect(errors).toEqual([{ code: 'DATABASE_INACCESSIBLE', message: 'locked' }])
+  })
+
   it('hands a build without HealthKit the refusal native sends', async () => {
     const { craft, refuse } = loadPage()
     const started = craft.health.startHeartRateUpdates()

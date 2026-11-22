@@ -1783,6 +1783,8 @@ export interface CraftHealth {
   startHeartRateUpdates?(options?: { since?: number }): Promise<boolean>;
   /** True also when no stream ran. */
   stopHeartRateUpdates?(): Promise<boolean>;
+  /** Each `craftHealthHeartRateError` detail, when the stream stops; returns the unsubscribe. Present only in builds that send it. */
+  onHeartRateError?(callback: (detail: CraftHealthHeartRateErrorEvent['detail']) => void): () => void;
   startWorkout?(options: CraftHealthLiveWorkoutOptions): Promise<CraftHealthLiveWorkoutStarted>;
   pauseWorkout?(): Promise<boolean>;
   resumeWorkout?(): Promise<boolean>;

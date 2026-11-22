@@ -592,6 +592,51 @@ describe('health reads', () => {
     })
   })
 
+  it('says why the heart-rate stream stopped, with only the codes the host sends, until it unsubscribes', async () => {
+    const listeners = new Set<(detail: unknown) => void>()
+    const emit = (detail: unknown) => { for (const listener of [...listeners]) listener(detail) }
+    await withWindow({
+      craft: {
+        health: {
+          startHeartRateUpdates: async () => true,
+          onHeartRateError: (listener: (detail: unknown) => void) => {
+            listeners.add(listener)
+            return () => listeners.delete(listener)
+          },
+        },
+      },
+    }, async () => {
+      expect(health.supports('onHeartRateError')).toBe(true)
+      const errors: unknown[] = []
+      const stop = health.onHeartRateError(error => errors.push(error))
+      emit({ code: 'DATABASE_INACCESSIBLE', message: 'Protected health data is inaccessible', extra: 1 })
+      emit({ code: 'AUTHORIZATION_DENIED', message: 'Not authorized' })
+      // Nothing that is not one of the host's errors.
+      emit({ code: 'SOMETHING_ELSE', message: 'x' })
+      emit({ code: 'HEALTH_ERROR' })
+      emit(null)
+      stop()
+      expect(listeners.size).toBe(0)
+      emit({ code: 'HEALTH_ERROR', message: 'after' })
+      expect(errors).toEqual([
+        { code: 'DATABASE_INACCESSIBLE', message: 'Protected health data is inaccessible' },
+        { code: 'AUTHORIZATION_DENIED', message: 'Not authorized' },
+      ])
+    })
+  })
+
+  it('hears no heart-rate error in a browser or a build that never sends one', async () => {
+    // 0.0.529 and earlier stream heart rate but have no onHeartRateError.
+    for (const window of [undefined, { craft: { health: {} } }, { craft: { health: { startHeartRateUpdates: async () => true } } }]) {
+      await withWindow(window, async () => {
+        expect(health.supports('onHeartRateError')).toBe(false)
+        const stop = health.onHeartRateError(() => { throw new Error('never') })
+        expect(typeof stop).toBe('function')
+        stop()
+      })
+    }
+  })
+
   it('has no stream in a browser or an older app: the calls refuse and onHeartRate never calls', async () => {
     for (const window of [undefined, { craft: { health: {} } }]) {
       await withWindow(window, async () => {

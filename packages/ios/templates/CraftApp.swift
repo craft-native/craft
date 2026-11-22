@@ -6353,6 +6353,14 @@ struct CraftWebView: UIViewRepresentable {
                         return craft._invoke('startHealthHeartRateUpdates', {since: since});
                     },
                     stopHeartRateUpdates: function() { return craft._invoke('stopHealthHeartRateUpdates'); },
+                    // Why the stream stopped, as craftHealthHeartRateError
+                    // ({code, message}); returns the unsubscribe. Its presence
+                    // says this build sends the error at all.
+                    onHeartRateError: function(callback) {
+                        var listener = function(event) { callback(event.detail); };
+                        window.addEventListener('craftHealthHeartRateError', listener);
+                        return function() { window.removeEventListener('craftHealthHeartRateError', listener); };
+                    },
                     startWorkout: function(options) { return craft._invoke('startHealthWorkout', options || {}); },
                     pauseWorkout: function() { return craft._invoke('pauseHealthWorkout'); },
                     resumeWorkout: function() { return craft._invoke('resumeHealthWorkout'); },
