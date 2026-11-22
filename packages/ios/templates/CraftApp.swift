@@ -2770,6 +2770,11 @@ struct CraftWebView: UIViewRepresentable {
                     self.sendToWeb("craftHealthWorkout", data: detail)
                     return true
                 }
+                CraftHealth.shared.heartRateErrorSink = { [weak self] detail in
+                    guard let self else { return false }
+                    self.sendToWeb("craftHealthHeartRateError", data: detail)
+                    return true
+                }
             }
             if config.enableHeartRate {
                 // The strap's readings and connection changes reach the page,
@@ -10615,7 +10620,7 @@ final class CraftZigRuntime: NSObject {
 enum CraftWebServices {
     private static var waiting: [String: (Result<Any, CraftNativeActionError>) -> Void] = [:]
     /// Coordinator events a native screen hears too.
-    static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]
+    static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthHeartRateError", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]
     static let event = Notification.Name("craftWebServicesEvent")
 
     static var isAvailable: Bool { CraftSwiftShim.coordinator != nil }

@@ -3,6 +3,7 @@ import UIKit
 import MapKit
 import CoreLocation
 import XCTest
+import HealthKit
 import UserNotifications
 @testable import NativeRender
 
@@ -5960,6 +5961,35 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(try colour("space")?.alpha ?? 0, 0, "only display-p3 is read from color()")
         let ink = try XCTUnwrap(find(UILabel.self, key: "ink", below: host.view))
         XCTAssertEqual(p3(ink.textColor.cgColor), [0, 0, 1, 1])
+    }
+
+    /// A heart-rate stream HealthKit stops says why, and one stopped by the
+    /// device locking runs again once it is unlocked (#580).
+    func testAHeartRateStreamThatStopsSaysWhyAndRunsAgainOnceUnlocked() throws {
+        XCTAssertEqual(CraftHealth.heartRateErrorCode(HKError(.errorDatabaseInaccessible)), "DATABASE_INACCESSIBLE")
+        XCTAssertEqual(CraftHealth.heartRateErrorCode(HKError(.errorAuthorizationDenied)), "AUTHORIZATION_DENIED")
+        XCTAssertEqual(CraftHealth.heartRateErrorCode(NSError(domain: "other", code: 1)), "HEALTH_ERROR")
+        let health = CraftHealth.shared
+        var heard: [[String: Any]] = []
+        health.heartRateErrorSink = { heard.append($0); return true }
+        defer { health.heartRateErrorSink = nil; health.stopHeartRateUpdates { _ in } }
+        let store = HKHealthStore()
+        let type = try XCTUnwrap(HKQuantityType.quantityType(forIdentifier: .heartRate))
+
+        // Locked out by data protection: reported, and run again at once
+        // here, since the simulator's protected data is available.
+        XCTAssertTrue(UIApplication.shared.isProtectedDataAvailable)
+        health.heartRateStreamFailed(HKError(.errorDatabaseInaccessible), store: store, type: type, stream: health.currentHeartRateStream)
+        XCTAssertEqual(heard.last?["code"] as? String, "DATABASE_INACCESSIBLE")
+        XCTAssertFalse((heard.last?["message"] as? String ?? "").isEmpty)
+        XCTAssertTrue(health.heartRateStreamRunning, "the stream must run again once the device is unlocked")
+
+        // Any other failure is reported and the stream stays stopped.
+        health.heartRateStreamFailed(HKError(.errorAuthorizationDenied), store: store, type: type, stream: health.currentHeartRateStream)
+        XCTAssertEqual(heard.last?["code"] as? String, "AUTHORIZATION_DENIED")
+        XCTAssertFalse(health.heartRateStreamRunning)
+        NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+        XCTAssertFalse(health.heartRateStreamRunning, "an unlock does not restart a stream HealthKit refused")
     }
 
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {

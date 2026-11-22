@@ -2,6 +2,7 @@
 import CoreLocation
 import Foundation
 import HealthKit
+import UIKit
 
 /// A HealthKit read or write that did not happen: the message a page sees,
 /// and the bridge's error code.
@@ -1150,6 +1151,16 @@ final class CraftHealth {
     private var heartRateSent: Set<UUID> = []
     /// Bumped by every start and stop, so a stopped stream's late batch is dropped.
     private var heartRateStream = 0
+    /// Where the running stream has read to, so a stream HealthKit stopped
+    /// (the device locked) runs again from there and sends nothing twice (#580).
+    private var heartRateAnchor: HKQueryAnchor?
+    private var heartRateStart: Date?
+    /// The stream stopped with the device locked, and waits to run again.
+    private var heartRateWaitingForUnlock = false
+    private var protectedDataObserver: NSObjectProtocol?
+    /// The page's `craftHealthHeartRateError`; native screens hear it through
+    /// CraftWebServices when no page owns it.
+    var heartRateErrorSink: (([String: Any]) -> Bool)?
     #if targetEnvironment(simulator)
     private var simulatedHeartRateTimer: Timer?
     #endif
@@ -1195,33 +1206,85 @@ final class CraftHealth {
                 return
             }
 
-            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)
-            let query = HKAnchoredObjectQuery(type: heartType, predicate: predicate, anchor: nil, limit: HKObjectQueryNoLimit) { [weak self] _, samples, _, _, error in
-                let rows = (samples as? [HKQuantitySample] ?? []).map { ($0.uuid, Self.heartRateRow($0)) }
-                DispatchQueue.main.async {
-                    // Stopped or replaced before its first batch: it did start.
-                    guard let self, self.heartRateStream == stream else { return completion(.success(true)) }
-                    if let error = error, (error as? HKError)?.code != .errorNoData {
-                        self.stopHeartRateStream()
-                        return completion(.failure(CraftHealthError(message: error.localizedDescription)))
-                    }
-                    self.sendHeartRate(rows)
-                    completion(.success(true))
-                }
-            }
-            query.updateHandler = { [weak self] _, samples, _, _, error in
-                if let error = error {
-                    NSLog("[craft] Apple Health heart rate: %@", error.localizedDescription)
+            heartRateStart = start
+            heartRateAnchor = nil
+            runHeartRateQuery(store: healthStore, type: heartType, stream: stream, completion: completion)
+        }
+    }
+
+    /// The stream's anchored query, from its last anchor. `completion` hears
+    /// the first batch on a start, nothing on a resume. Main only.
+    private func runHeartRateQuery(store: HKHealthStore, type: HKQuantityType, stream: Int, completion: Completion?) {
+        let predicate = HKQuery.predicateForSamples(withStart: heartRateStart ?? Date(), end: nil, options: .strictStartDate)
+        let query = HKAnchoredObjectQuery(type: type, predicate: predicate, anchor: heartRateAnchor, limit: HKObjectQueryNoLimit) { [weak self] _, samples, _, anchor, error in
+            let rows = (samples as? [HKQuantitySample] ?? []).map { ($0.uuid, Self.heartRateRow($0)) }
+            DispatchQueue.main.async {
+                // Stopped or replaced before its first batch: it did start.
+                guard let self, self.heartRateStream == stream else { completion?(.success(true)); return }
+                if let error = error, (error as? HKError)?.code != .errorNoData {
+                    guard completion != nil else { return self.heartRateStreamFailed(error, store: store, type: type, stream: stream) }
+                    self.stopHeartRateStream()
+                    completion?(.failure(CraftHealthError(message: error.localizedDescription)))
                     return
                 }
-                let rows = (samples as? [HKQuantitySample] ?? []).map { ($0.uuid, Self.heartRateRow($0)) }
-                DispatchQueue.main.async {
-                    guard let self, self.heartRateStream == stream else { return }
-                    self.sendHeartRate(rows)
-                }
+                if let anchor { self.heartRateAnchor = anchor }
+                self.sendHeartRate(rows)
+                completion?(.success(true))
             }
-            heartRateQuery = query
-            healthStore.execute(query)
+        }
+        query.updateHandler = { [weak self] _, samples, _, anchor, error in
+            let rows = (samples as? [HKQuantitySample] ?? []).map { ($0.uuid, Self.heartRateRow($0)) }
+            DispatchQueue.main.async {
+                guard let self, self.heartRateStream == stream else { return }
+                if let error { return self.heartRateStreamFailed(error, store: store, type: type, stream: stream) }
+                if let anchor { self.heartRateAnchor = anchor }
+                self.sendHeartRate(rows)
+            }
+        }
+        heartRateQuery = query
+        store.execute(query)
+    }
+
+    /// The running stream stopped (#580). The page hears why, as
+    /// `craftHealthHeartRateError` `{ code, message }`, instead of a log line
+    /// only. Locked out of the store by data protection, it runs again from
+    /// its last anchor once the device is unlocked. Main only.
+    /// Internal for XCTest, with the two readings below.
+    func heartRateStreamFailed(_ error: Error, store: HKHealthStore, type: HKQuantityType, stream: Int) {
+        let code = Self.heartRateErrorCode(error)
+        NSLog("[craft] Apple Health heart rate: %@", error.localizedDescription)
+        if let query = heartRateQuery { store.stop(query) }
+        heartRateQuery = nil
+        let detail: [String: Any] = ["code": code, "message": error.localizedDescription]
+        if heartRateErrorSink?(detail) != true { CraftWebServices.forward("craftHealthHeartRateError", data: detail) }
+        guard code == "DATABASE_INACCESSIBLE" else { return }
+        heartRateWaitingForUnlock = true
+        if protectedDataObserver == nil {
+            protectedDataObserver = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.resumeHeartRateStream(store: store, type: type)
+            }
+        }
+        // Unlocked again between the error and here.
+        if UIApplication.shared.isProtectedDataAvailable { resumeHeartRateStream(store: store, type: type) }
+    }
+
+    var heartRateStreamRunning: Bool { heartRateQuery != nil }
+    var currentHeartRateStream: Int { heartRateStream }
+
+    private func resumeHeartRateStream(store: HKHealthStore, type: HKQuantityType) {
+        guard heartRateWaitingForUnlock, heartRateQuery == nil else { return }
+        heartRateWaitingForUnlock = false
+        runHeartRateQuery(store: store, type: type, stream: heartRateStream, completion: nil)
+    }
+
+    /// A stable code for the page, from HealthKit's error.
+    static func heartRateErrorCode(_ error: Error) -> String {
+        switch (error as? HKError)?.code {
+        case .errorDatabaseInaccessible: return "DATABASE_INACCESSIBLE"
+        case .errorAuthorizationDenied, .errorAuthorizationNotDetermined: return "AUTHORIZATION_DENIED"
+        case .errorHealthDataUnavailable, .errorHealthDataRestricted: return "HEALTH_UNAVAILABLE"
+        default: return "HEALTH_ERROR"
         }
     }
 
@@ -1240,6 +1303,10 @@ final class CraftHealth {
         if let query = heartRateQuery { healthStore?.stop(query) }
         heartRateQuery = nil
         heartRateSent.removeAll()
+        heartRateAnchor = nil
+        heartRateWaitingForUnlock = false
+        if let observer = protectedDataObserver { NotificationCenter.default.removeObserver(observer) }
+        protectedDataObserver = nil
         #if targetEnvironment(simulator)
         simulatedHeartRateTimer?.invalidate()
         simulatedHeartRateTimer = nil
