@@ -1972,6 +1972,69 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
     }
 
+    func testAHiddenBarScreenCoversTheStatusBarOnlyWhileContentIsUnderIt() async throws {
+        // HQ's Login (#586): the bar hidden, an empty header above the screen's
+        // scroll view, which runs under the status bar. Once the content
+        // scrolled up nothing sat behind the clock: no bar, no edge effect.
+        let root = box("root", style: ["flex": 1, "backgroundColor": "#336699"], [
+            ["id": "header", "type": "SafeAreaView", "props": ["testID": "header"], "children": [box("slot")]],
+            ["id": "scroll", "type": "ScrollView", "props": ["testID": "scroll"], "style": ["flex": 1],
+             "children": [box("rows", style: ["height": 1600])]],
+        ])
+        let (controller, _, window) = try await bottomLayoutScreen(root, tabbed: false)
+        defer { window.isHidden = true }
+        controller.evaluateScript("craft.navigation.setOptions({ hidden: true, swipeBack: false })")
+        await settle(controller)
+        let inset = controller.view.safeAreaInsets.top
+        XCTAssertGreaterThan(inset, 0)
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        XCTAssertEqual(try frame("scroll", in: controller).minY, 0, accuracy: 0.5, "the scroll view still runs under the status bar")
+        let backdrop = try XCTUnwrap(controller.view.subviews.first { $0.accessibilityIdentifier == "craft-status-bar-backdrop" })
+        XCTAssertTrue(backdrop.isHidden, "at rest nothing covers what the screen draws under the status bar")
+
+        scroll.setContentOffset(CGPoint(x: 0, y: 200 - scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertFalse(backdrop.isHidden, "scrolled, the content under the clock has something behind it")
+        XCTAssertEqual(backdrop.alpha, 1, accuracy: 0.001)
+        let strip = backdrop.convert(backdrop.bounds, to: controller.view)
+        XCTAssertEqual(strip.minY, 0, accuracy: 0.5)
+        XCTAssertEqual(strip.height, inset, accuracy: 0.5, "exactly the status bar's strip")
+        XCTAssertEqual(strip.width, controller.view.bounds.width, accuracy: 0.5)
+        try assertColor(backdrop.backgroundColor, red: 0.2, green: 0.4, blue: 0.6)
+        let content = try XCTUnwrap(controller.view.subviews.firstIndex { scroll.isDescendant(of: $0) })
+        XCTAssertGreaterThan(try XCTUnwrap(controller.view.subviews.firstIndex(of: backdrop)), content, "drawn over the content")
+        XCTAssertFalse(backdrop.isUserInteractionEnabled)
+        XCTAssertTrue(backdrop.accessibilityElementsHidden)
+
+        scroll.setContentOffset(CGPoint(x: 0, y: 4 - scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertEqual(backdrop.alpha, 0.5, accuracy: 0.001, "it comes in over the first 8 points")
+        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertTrue(backdrop.isHidden, "and goes again at rest")
+
+        // An edgeToEdge screen keeps the whole view, the status bar's strip too.
+        controller.evaluateScript("craft.navigation.setOptions({ edgeToEdge: true })")
+        await settle(controller)
+        scroll.setContentOffset(CGPoint(x: 0, y: 200 - scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertTrue(backdrop.isHidden, "an edgeToEdge screen draws its own content under the clock")
+        controller.evaluateScript("craft.navigation.setOptions({ edgeToEdge: false })")
+        await settle(controller)
+        scroll.setContentOffset(CGPoint(x: 0, y: 200 - scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertFalse(backdrop.isHidden, "and the strip comes back once it stops being edgeToEdge")
+        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+
+        // With its bar shown, the bar sits behind the clock instead.
+        controller.evaluateScript("craft.navigation.setOptions({ hidden: false, title: 'Sign in' })")
+        await settle(controller)
+        scroll.setContentOffset(CGPoint(x: 0, y: 200 - scroll.adjustedContentInset.top), animated: false)
+        await settle(controller)
+        XCTAssertTrue(backdrop.isHidden, "a screen with a bar draws no strip of its own")
+    }
+
     func testEmptySafeAreaHeaderAboveALeadingScrollTakesNoInset() async throws {
         // A site header that draws nothing natively: a SafeAreaView whose only
         // child is empty, above the screen's scroll view. The scroll view

@@ -9228,6 +9228,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return titleFromOptions || prefersLargeTitle == true || !(navigationItem.rightBarButtonItems ?? []).isEmpty
     }
     private weak var trackedScrollView: UIScrollView?
+    /// Fills the status bar's strip on a screen that runs under it with no
+    /// bar of its own, while content is scrolled under the clock (#586).
+    private let statusBarBackdrop = UIView()
+    private var statusBarBackdropObservation: NSKeyValueObservation?
+    private weak var statusBarBackdropScroll: UIScrollView?
     /// Empty SafeAreaViews above the leading scroll view, which owns their top inset.
     private let yieldedSafeAreas = NSHashTable<CraftNativeSafeAreaView>.weakObjects()
 
@@ -9781,6 +9786,73 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll?.bottomEdgeEffect.isHidden = tabbedScroll
         }
         #endif
+        updateStatusBarBackdrop(edgeToEdge && !fullEdgeToEdge ? scroll : nil)
+    }
+
+    /// Whether this screen shows a navigation bar: its own `hidden` first,
+    /// then what `viewWillAppear` does for a screen that did not say.
+    private var showsNavigationBar: Bool {
+        guard let navigationController else { return false }
+        if let navigationBarHidden { return !navigationBarHidden }
+        if navigationController.viewControllers.first !== self || wantsNavigationBar { return true }
+        return !navigationController.isNavigationBarHidden
+    }
+
+    /// A screen whose scroll view runs under the status bar relies on a bar,
+    /// and on iOS 26 its scroll edge effect, to sit behind the clock. With no
+    /// bar there is nothing, and content scrolled up passes under the clock in
+    /// the open (#586). This strip takes the bar's place, in the colour behind
+    /// the content, and only while content is under it: at rest it is not
+    /// drawn, so a screen that puts a photo under the status bar keeps it.
+    private func updateStatusBarBackdrop(_ edgeToEdgeScroll: UIScrollView?) {
+        let scroll = showsNavigationBar || prefersStatusBarHidden ? nil : edgeToEdgeScroll
+        if scroll !== statusBarBackdropScroll {
+            statusBarBackdropObservation = nil
+            statusBarBackdropScroll = scroll
+            statusBarBackdropObservation = scroll?.observe(\.contentOffset) { [weak self] _, _ in
+                self?.refreshStatusBarBackdrop()
+            }
+        }
+        if scroll != nil, statusBarBackdrop.superview == nil {
+            statusBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
+            statusBarBackdrop.isUserInteractionEnabled = false
+            statusBarBackdrop.accessibilityElementsHidden = true
+            statusBarBackdrop.accessibilityIdentifier = "craft-status-bar-backdrop"
+            view.insertSubview(statusBarBackdrop, aboveSubview: rootStack)
+            NSLayoutConstraint.activate([
+                statusBarBackdrop.topAnchor.constraint(equalTo: view.topAnchor),
+                statusBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                statusBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                statusBarBackdrop.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            ])
+        }
+        refreshStatusBarBackdrop()
+    }
+
+    private func refreshStatusBarBackdrop() {
+        guard let scroll = statusBarBackdropScroll, view.safeAreaInsets.top > 0 else {
+            statusBarBackdrop.alpha = 0
+            statusBarBackdrop.isHidden = true
+            return
+        }
+        // How far content has gone under the status bar; full within 8 pt,
+        // as a bar's scroll edge appearance comes in.
+        let under = scroll.contentOffset.y + scroll.adjustedContentInset.top
+        let alpha = min(1, max(0, under / 8))
+        statusBarBackdrop.backgroundColor = colourBehind(scroll)
+        statusBarBackdrop.alpha = alpha
+        statusBarBackdrop.isHidden = alpha == 0
+    }
+
+    /// The first opaque fill behind a scroll view's content: its own, then its
+    /// ancestors' up to the screen, then the screen's.
+    private func colourBehind(_ scroll: UIScrollView) -> UIColor {
+        var current: UIView? = scroll
+        while let candidate = current, candidate !== view {
+            if let fill = candidate.backgroundColor, fill.resolvedColor(with: traitCollection).cgColor.alpha > 0.99 { return fill }
+            current = candidate.superview
+        }
+        return view.backgroundColor ?? .systemBackground
     }
 
     private func observeNativeEvents() {
