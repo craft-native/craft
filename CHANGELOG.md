@@ -1,5 +1,33 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.529...v0.0.530)
+
+## 🚀 Features
+
+- **ios**: draw Display P3 colours, and ignore a colour function no host reads ([7eea7de](https://github.com/craft-native/craft/commit/7eea7de)) _(by glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com)_ ([#579](https://github.com/craft-native/craft/issues/579))
+- **android**: tell a native screen where the floating tab actions are ([2f52056](https://github.com/craft-native/craft/commit/2f52056)) _(by glennmichael123)_ ([#523](https://github.com/craft-native/craft/issues/523))
+
+## 🐛 Bug Fixes
+
+- **ios**: show a large title inline at the accessibility text sizes ([e6a4497](https://github.com/craft-native/craft/commit/e6a4497)) _(by glennmichael123)_ ([#584](https://github.com/craft-native/craft/issues/584))
+- **ios**: grow segment titles with the text size, and hyphenate long words at it ([ea2ab08](https://github.com/craft-native/craft/commit/ea2ab08)) _(by glennmichael123)_ ([#582](https://github.com/craft-native/craft/issues/582), [#583](https://github.com/craft-native/craft/issues/583))
+- **ios**: give the HealthKit stub the heart-rate error sink too ([fab7fe4](https://github.com/craft-native/craft/commit/fab7fe4)) _(by glennmichael123)_ ([#580](https://github.com/craft-native/craft/issues/580))
+- **types**: declare craftHealthHeartRateError, which iOS now dispatches ([fb06fb1](https://github.com/craft-native/craft/commit/fb06fb1)) _(by glennmichael123)_ ([#580](https://github.com/craft-native/craft/issues/580))
+- **ios**: say why the live heart-rate stream stopped, and resume it after unlock ([2db2add](https://github.com/craft-native/craft/commit/2db2add)) _(by glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com)_ ([#580](https://github.com/craft-native/craft/issues/580))
+- **native**: expose preferred device languages at startup ([fad781e](https://github.com/craft-native/craft/commit/fad781e)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **ios**: stop the recorder's anchor wait spending the screenshot's budget ([aef9dc2](https://github.com/craft-native/craft/commit/aef9dc2)) _(by glennmichael123)_ ([#581](https://github.com/craft-native/craft/issues/581))
+- **ios**: pin the heart-rate stream's error event and its resume from an anchor ([4f20381](https://github.com/craft-native/craft/commit/4f20381)) _(by glennmichael123)_ ([#580](https://github.com/craft-native/craft/issues/580))
+- **native**: check app-configured language preferences ([52f19f9](https://github.com/craft-native/craft/commit/52f19f9)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+- _glennmichael123 GIT_AUTHOR_EMAIL=gtorregosa@gmail.com GIT_COMMITTER_NAME=glennmichael123 GIT_COMMITTER_EMAIL=gtorregosa@gmail.com_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.528...v0.0.529)
 
 ## 🐛 Bug Fixes
