@@ -1826,6 +1826,19 @@ class NativeNavigationTest {
             val (cleared, sameViewport) = ends()
             assertEquals("the last content must come out from under the actions, and no further", top(capsule), cleared)
             assertEquals("the page still scrolls behind the actions, in the viewport it had", viewport, sameViewport)
+            // A screen's script hears where they float, in dp of its box (#523).
+            var detail: org.json.JSONObject? = null
+            var expectedTop = 0
+            instrumentation.runOnMainSync {
+                detail = chrome.floatingActionsDetail
+                val box = IntArray(2).also { chrome.content.getLocationInWindow(it) }
+                val group = IntArray(2).also { capsule.getLocationInWindow(it) }
+                expectedTop = Math.round((group[1] - box[1]) / density)
+            }
+            val frame = detail?.optJSONObject("frame") ?: throw AssertionError("no floating actions frame: $detail")
+            assertEquals(expectedTop, frame.getInt("y"))
+            assertEquals(Math.round(capsule.height / density), frame.getInt("height"))
+            assertTrue("the reach counts from the bottom of the screen", detail!!.getInt("height") >= frame.getInt("height"))
 
             // A horizontal group reaches less far up, and the room follows it.
             apply(group("horizontal"))
@@ -1841,6 +1854,10 @@ class NativeNavigationTest {
             assertEquals(vertical, awaitReach({ it == vertical }, "the room returns with the group"))
             apply(org.json.JSONObject.NULL)
             assertEquals(0, awaitReach({ it == 0 }, "the room goes with the actions"))
+            var gone: org.json.JSONObject? = null
+            instrumentation.runOnMainSync { gone = chrome.floatingActionsDetail }
+            assertEquals("nothing floats: height 0", 0, gone?.getInt("height"))
+            assertTrue("nothing floats: no frame", gone?.isNull("frame") == true)
             assertEquals(viewport, ends().first)
         } finally {
             instrumentation.runOnMainSync { activity.finishAndRemoveTask() }

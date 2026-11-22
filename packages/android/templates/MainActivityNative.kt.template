@@ -5808,6 +5808,9 @@ class MainActivity : AppCompatActivity() {
         }
         bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }
         bars.onTabSwipeStart = { dx, x, y -> beginTabSwipe(dx, x, y) }
+        bars.onFloatingActions = { detail ->
+            visibleScreen?.takeIf { it.active }?.let { send(it, "CRAFT_EVENT", JSONObject().put("event", "craftFloatingActionsLayout").put("detail", JSONObject(detail.toString()))) }
+        }
         bars.onTabSwipeMove = { dx -> updateTabSwipe(dx) }
         bars.onTabSwipeEnd = { dx, cancelled -> finishTabSwipe(dx, cancelled) }
         bars.onTabSwipeShouldDefer = { x, y, direction ->
@@ -6499,6 +6502,10 @@ class MainActivity : AppCompatActivity() {
         host.addView(screen.view)
         val previous = visibleScreen
         visibleScreen = screen
+        // A screen shown under the floating actions hears where they are.
+        if (previous !== screen && screen.active) bars?.floatingActionsDetail?.let { detail ->
+            send(screen, "CRAFT_EVENT", JSONObject().put("event", "craftFloatingActionsLayout").put("detail", JSONObject(detail.toString())))
+        }
         if (screen.frameRequested) postFrame(screen)
         if (bars != null) applyChrome(screen)
         syncChromeModalBlock()

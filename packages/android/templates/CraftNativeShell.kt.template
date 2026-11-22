@@ -1401,6 +1401,17 @@ internal class CraftNativeChrome(
 
     /** Which views are a blocking Modal: nothing inside one is under the floating actions. */
     internal var isBlockingModal: ((View) -> Boolean)? = null
+    /**
+     * Where the floating actions are, for a screen's script (#523): the same
+     * `craftFloatingActionsLayout` detail a page hears on iOS, `height` (how
+     * far they reach up from the bottom of the screen) and `frame`, in dp of
+     * the screen's own box, or 0 and null once nothing floats. A screen that
+     * does not scroll keeps a fixed control out from under them itself.
+     * Called when it changes; [floatingActionsDetail] is the current one.
+     */
+    internal var onFloatingActions: ((JSONObject) -> Unit)? = null
+    internal var floatingActionsDetail: JSONObject? = null
+        private set
 
     internal fun setBlockedByModal(blocked: Boolean, dimmed: Boolean) {
         val dims = blocked && dimmed
@@ -1454,6 +1465,7 @@ internal class CraftNativeChrome(
      * where each of them now ends.
      */
     private fun clearFloatingActions() {
+        reportFloatingActions()
         val reach = floatingActionsReach()
         // Nothing floats and nothing was given room: no screen to walk.
         if (reach <= 0 && !floatingClearanceGiven) return
@@ -1486,6 +1498,28 @@ internal class CraftNativeChrome(
             }
         }
         visit(content, false)
+    }
+
+    private fun reportFloatingActions() {
+        val reach = floatingActionsReach()
+        val density = resources.displayMetrics.density
+        fun dp(pixels: Int) = Math.round(pixels / density)
+        val detail = JSONObject()
+        if (reach > 0 && content.height > 0) {
+            val box = IntArray(2).also { content.getLocationInWindow(it) }
+            val group = IntArray(2).also { accessoryGroup.getLocationInWindow(it) }
+            val top = group[1] - box[1]
+            detail.put("height", dp((content.height - top).coerceAtLeast(0)))
+            detail.put("frame", JSONObject().put("x", dp(group[0] - box[0])).put("y", dp(top))
+                .put("width", dp(accessoryGroup.width)).put("height", dp(accessoryGroup.height)))
+        } else {
+            // Nothing to say on a shell that never had any.
+            if (floatingActionsDetail == null) return
+            detail.put("height", 0).put("frame", JSONObject.NULL)
+        }
+        if (floatingActionsDetail?.toString() == detail.toString()) return
+        floatingActionsDetail = detail
+        onFloatingActions?.invoke(detail)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
