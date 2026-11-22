@@ -1362,6 +1362,7 @@ final class CraftHealth {
     static let shared = CraftHealth()
     var pageSink: (([String: Any]) -> Bool)?
     var workoutSink: (([String: Any]) -> Bool)?
+    var heartRateErrorSink: (([String: Any]) -> Bool)?
     func perform(method: String, args: [Any], completion rawCompletion: @escaping Completion) {
         rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
     }
