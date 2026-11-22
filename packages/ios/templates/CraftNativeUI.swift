@@ -90,6 +90,27 @@ extension UIColor {
     /// apply rather than paint the wrong colour.
     convenience init?(css value: String) {
         let text = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // `color(display-p3 r g b)` or `color(display-p3 r g b / a)`, each
+        // channel 0 to 1 or a percentage (#579): the wide-gamut colours an
+        // oklch palette resolves to, which sRGB hex would clamp.
+        if text.hasPrefix("color("), text.hasSuffix(")") {
+            let inner = text.dropFirst("color(".count).dropLast()
+            let halves = inner.split(separator: "/", omittingEmptySubsequences: false).map { $0.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init) }
+            guard halves.count <= 2, let parts = halves.first, parts.count == 4, parts[0] == "display-p3" else { return nil }
+            func channel(_ part: String) -> CGFloat? {
+                let number = part.hasSuffix("%") ? Double(part.dropLast()).map { $0 / 100 } : Double(part)
+                guard let number, number.isFinite else { return nil }
+                return CGFloat(min(max(number, 0), 1))
+            }
+            guard let r = channel(parts[1]), let g = channel(parts[2]), let b = channel(parts[3]) else { return nil }
+            var alpha: CGFloat = 1
+            if halves.count == 2 {
+                guard halves[1].count == 1, let a = channel(halves[1][0]) else { return nil }
+                alpha = a
+            }
+            self.init(displayP3Red: r, green: g, blue: b, alpha: alpha)
+            return
+        }
         if text.hasPrefix("#") {
             let hex = String(text.dropFirst())
             let digits: String

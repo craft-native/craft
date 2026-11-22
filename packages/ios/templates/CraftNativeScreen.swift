@@ -8329,7 +8329,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func scriptInputs() -> ScriptInputs {
-        let capabilities = CraftNativeActions.capabilities(config: config) + (CraftNativeRenderSurfaceView.available ? ["renderSurface"] : [])
+        // `displayP3Colors`: a style colour may be `color(display-p3 …)` (#579).
+        let capabilities = CraftNativeActions.capabilities(config: config) + (CraftNativeRenderSurfaceView.available ? ["renderSurface"] : []) + ["displayP3Colors"]
         let capabilityData = try? JSONSerialization.data(withJSONObject: capabilities)
         return ScriptInputs(
             capabilityJSON: capabilityData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]",

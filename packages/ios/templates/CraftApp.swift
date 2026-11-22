@@ -9980,6 +9980,10 @@ struct CraftWebView: UIViewRepresentable {
 // MARK: - UIColor Extension
 extension UIColor {
     convenience init?(hex: String) {
+        // A colour function this host does not read (`oklch(…)`,
+        // `color-mix(…)`) is not hex: scanning it from its first letter made
+        // `color(…)` an almost black blue (#579). Ignore it instead.
+        guard !hex.contains("(") else { return nil }
         var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
 

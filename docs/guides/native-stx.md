@@ -629,7 +629,13 @@ Changing `resizeMode` during reconciliation recomputes image clipping from the
 current mode and authored overflow/radius styles; a previous `cover` render does
 not permanently clip a later `contain` render.
 
-Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
+Colors use platform color syntax; hexadecimal colors and `rgb()`/`rgba()` are
+portable. On iOS, when the bridge's `capabilities` include `displayP3Colors`, a
+colour may also be `color(display-p3 r g b)` or `color(display-p3 r g b / a)`
+(channels from 0 to 1 or as percentages), drawn in Display P3 rather than
+clamped to sRGB (#579). Send it only behind that flag; older hosts and Android
+do not read it. A colour function a host does not read (`oklch()`,
+`color-mix()`) is ignored and the property keeps its default. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
 Android. Both hosts use the same line-breaking, gap, min/max clamping, percentage
 resolution, wrapped-line distribution, absolute inset, grid-track, and

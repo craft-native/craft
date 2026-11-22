@@ -5928,6 +5928,40 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(find(CraftNativeRenderSurfaceView.self, key: "map", below: host.view)).drawnFrames, 0)
     }
 
+    /// Display P3 colours (#579), and a colour function the host does not
+    /// read: ignored, never drawn as the near-black its first letter used
+    /// to scan to.
+    func testADisplayP3ColourIsDrawnInP3AndAnUnknownColourFunctionIsIgnored() throws {
+        let host = CraftNativeScreenController(config: CraftConfig())
+        host.loadViewIfNeeded()
+        XCTAssertEqual(host.evaluateScript("__stxNativeBridge.capabilities.indexOf('displayP3Colors') >= 0")?.toBool(), true)
+        host.render(document([
+            ["type": "View", "props": ["key": "wide"], "style": ["width": 10, "height": 10, "backgroundColor": "color(display-p3 1 0 0 / 0.5)"]],
+            ["type": "View", "props": ["key": "percent"], "style": ["width": 10, "height": 10, "backgroundColor": "color(display-p3 0% 100% 50%)"]],
+            ["type": "View", "props": ["key": "unknown"], "style": ["width": 10, "height": 10, "backgroundColor": "oklch(0.6 0.2 30)"]],
+            ["type": "View", "props": ["key": "space"], "style": ["width": 10, "height": 10, "backgroundColor": "color(rec2020 1 0 0)"]],
+            ["type": "Text", "props": ["key": "ink"], "style": ["color": "color(display-p3 0 0 1)"], "children": ["P3"]],
+        ]))
+        func colour(_ key: String) throws -> CGColor? {
+            try XCTUnwrap(find(UIView.self, key: key, below: host.view)).backgroundColor?.cgColor
+        }
+        func p3(_ color: CGColor?) -> [CGFloat]? {
+            guard let color, let space = CGColorSpace(name: CGColorSpace.displayP3),
+                  let converted = color.converted(to: space, intent: .defaultIntent, options: nil) else { return nil }
+            return converted.components?.map { ($0 * 1000).rounded() / 1000 }
+        }
+        XCTAssertEqual(p3(try colour("wide")), [1, 0, 0, 0.5])
+        let extended = try XCTUnwrap(CGColorSpace(name: CGColorSpace.extendedSRGB))
+        let red = try XCTUnwrap(try colour("wide")?.converted(to: extended, intent: .defaultIntent, options: nil)?.components)
+        XCTAssertGreaterThan(red[0], 1, "a P3 red lies outside sRGB, so it was not clamped to it")
+        XCTAssertEqual(p3(try colour("percent")), [0, 1, 0.5, 1])
+        // Ignored: the view keeps its default, clear, background.
+        XCTAssertEqual(try colour("unknown")?.alpha ?? 0, 0, "oklch is not read, and must not become near-black")
+        XCTAssertEqual(try colour("space")?.alpha ?? 0, 0, "only display-p3 is read from color()")
+        let ink = try XCTUnwrap(find(UILabel.self, key: "ink", below: host.view))
+        XCTAssertEqual(p3(ink.textColor.cgColor), [0, 0, 1, 1])
+    }
+
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
