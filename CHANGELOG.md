@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.530...v0.0.531)
+
+## 🚀 Features
+
+- **health**: hear why the heart-rate stream stopped, through health.onHeartRateError ([6e8f365](https://github.com/craft-native/craft/commit/6e8f365)) _(by glennmichael123)_ ([#580](https://github.com/craft-native/craft/issues/580))
+
+## 🐛 Bug Fixes
+
+- **ios**: keep other apps' music playing through cues, add edgeToEdge ([734bfc4](https://github.com/craft-native/craft/commit/734bfc4)) _(by Chris Breuer)_
+- **ts-maps**: depend on ts-maps, which the adapter's public types re-export ([10a1fb6](https://github.com/craft-native/craft/commit/10a1fb6)) _(by glennmichael123)_ ([#455](https://github.com/craft-native/craft/issues/455), [#585](https://github.com/craft-native/craft/issues/585))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.529...v0.0.530)
 
 ## 🚀 Features

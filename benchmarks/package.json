@@ -1,6 +1,6 @@
 {
   "name": "craft-benchmarks",
-  "version": "0.0.530",
+  "version": "0.0.531",
   "description": "Hello World benchmarks: Craft vs Electron vs Tauri",
   "type": "module",
   "scripts": {
