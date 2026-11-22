@@ -2741,6 +2741,13 @@ export interface CraftNavigationOptions {
    * colour instead of UIKit's material.
    */
   navigationBarSolid?: boolean;
+  /**
+   * **iOS only.** Lay the screen out across the whole view, under the status
+   * bar and the home indicator, instead of inside the safe area. For an
+   * immersive screen whose own background should reach every edge; wrap its
+   * controls in a `SafeAreaView` to keep them clear of the insets.
+   */
+  edgeToEdge?: boolean;
 }
 
 export {};

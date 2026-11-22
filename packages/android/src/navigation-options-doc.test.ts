@@ -87,6 +87,6 @@ test('the hosts agree on which navigation options exist, or the difference is re
   expect(ios.size).toBeGreaterThan(10)
   const android = appliedOptions()
 
-  expect([...ios].filter(key => !android.has(key)).sort()).toEqual(['backTitle', 'contentSwipeBack', 'navigationBarSolid', 'swipeBack'])
+  expect([...ios].filter(key => !android.has(key)).sort()).toEqual(['backTitle', 'contentSwipeBack', 'edgeToEdge', 'navigationBarSolid', 'swipeBack'])
   expect([...android].filter(key => !ios.has(key)).sort()).toEqual([])
 })

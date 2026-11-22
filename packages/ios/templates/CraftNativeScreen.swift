@@ -8673,7 +8673,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
     ///   backTitle, backButton, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
     ///   contentSwipeBack,
-    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, leftButtons,
+    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, edgeToEdge, leftButtons,
     ///   rightButtons, tabAccessory })`; a button's tap is the event
     ///   `navButton`. `craft.d.ts` types no navigation surface, so this list
     ///   is the public description of it — keep it in step with the keys
@@ -9199,6 +9199,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// Whether this screen opts into an opaque navigation bar filled with its
     /// own background colour. The default keeps UIKit's material appearance.
     private var navigationBarSolid = false
+    /// Whether this screen's content fills the whole view (`edgeToEdge`),
+    /// under the status bar and the home indicator, as a root SafeAreaView
+    /// does. For an immersive screen whose own background (a gradient, a
+    /// picture) should reach every edge; a SafeAreaView inside it keeps its
+    /// controls clear of the insets.
+    private var contentEdgeToEdge = false
     /// The screen's own colour (`backgroundColor`), under the status bar and
     /// the home indicator too, where its content never reaches: a black
     /// full-screen timer is black edge to edge. nil is the app's.
@@ -9295,6 +9301,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let solid = options["navigationBarSolid"] as? Bool {
             navigationBarSolid = solid
+        }
+        if let full = options["edgeToEdge"] as? Bool, full != contentEdgeToEdge {
+            contentEdgeToEdge = full
+            trackContentScrollView()
+            view.setNeedsLayout()
         }
         if options.keys.contains("titleColor") {
             navigationTitleColor = color(options["titleColor"])
@@ -9713,7 +9724,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // effect, rather than over the bar's back button. Other screens stay
         // inside the safe area.
         let edgeToEdge = scroll != nil && (prefersLargeTitle == true || scroll === leadingScroll?.view)
-        let fullEdgeToEdge = rootIsSafeAreaView
+        let fullEdgeToEdge = rootIsSafeAreaView || contentEdgeToEdge
         let topEdgeToEdge = fullEdgeToEdge || edgeToEdge
         // Bottom clearance does not depend on the leading-scroll rule for
         // navigation titles. Follow the visible scroller through wrappers,

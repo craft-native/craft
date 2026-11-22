@@ -2515,7 +2515,15 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // A sound or video starting while speech holds the session leaves it to
     // speech, which hands it over when it lets go.
     expect(services).toContain('if CraftNativeSpeech.shared.holdsSession {')
-    expect(services).toContain('CraftNativeSounds.reclaimSessionIfPlaying(handedBack: previous)')
+    expect(services).toContain('CraftNativeSounds.reclaimSessionIfPlaying(handedBack: previous, restored: restored)')
+    // The app's own category (soloAmbient by default) never lands on a session
+    // that is still active, where it would stop the music playing under a
+    // cue or a class: the session is let go first, and others are told.
+    expect(services).toContain('let restored = released || CraftNativeSounds.mixes(previous)')
+    expect(services).toContain('previous.0 == .ambient || !previous.2.isDisjoint(with: [.mixWithOthers, .duckOthers, .interruptSpokenAudioAndMixWithOthers])')
+    expect(services.indexOf('try session.setActive(false, options: .notifyOthersOnDeactivation)\n                released = true'))
+      .toBeGreaterThan(services.indexOf('private static func handBack('))
+    expect(services).toContain('guard released else { return }\n        try? session.setCategory(previous.0, mode: previous.1, options: previous.2)')
     // A video with sound mixes with the music, and may float in Picture in Picture.
     expect(screen).toContain('CraftNativeSounds.claimSession(respectSilentSwitch: false)')
     expect(screen).toContain('playerController.canStartPictureInPictureAutomaticallyFromInline = floating')

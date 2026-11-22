@@ -208,17 +208,19 @@ final class CraftNativeSpeech: NSObject, AVSpeechSynthesizerDelegate {
                     DispatchQueue.main.async {
                         guard self.pending.isEmpty else { return }
                         self.holdsSession = false
-                        CraftNativeSounds.reclaimSessionIfPlaying(handedBack: nil)
+                        CraftNativeSounds.reclaimSessionIfPlaying(handedBack: nil, restored: true)
                     }
                     return
                 }
                 let session = AVAudioSession.sharedInstance()
+                var released = false
                 do {
-                    // Deactivating ends the ducking. A video or a sound still
-                    // playing keeps it busy; the category put back below
-                    // carries no ducking, so the music comes back up anyway.
+                    // Deactivating ends the ducking and tells the music it may
+                    // come back up. A video or a sound still playing keeps the
+                    // session, and takes it over below.
                     if !soundsPlaying {
                         try session.setActive(false, options: .notifyOthersOnDeactivation)
+                        released = true
                     }
                 } catch {
                     // Busy: the last of the audio has not drained, or the app
@@ -229,11 +231,23 @@ final class CraftNativeSpeech: NSObject, AVSpeechSynthesizerDelegate {
                     }
                 }
                 self.sessionToRestore = nil
-                try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
+                // The category the app had usually does not mix (soloAmbient is
+                // the default). Put back on a session that is still active it
+                // stops the music outright, and nothing starts it again: the
+                // first spoken cue of a breathing class did exactly that. So it
+                // goes back only once the session was let go, or when it mixes.
+                let restored = released || CraftNativeSounds.mixes(previous)
+                if restored {
+                    try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
+                } else if !soundsPlaying {
+                    // Still busy and nobody of ours to take it: stop ducking
+                    // without taking the music.
+                    try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+                }
                 DispatchQueue.main.async {
                     // A cue that came in meanwhile claims the session again.
                     if self.pending.isEmpty { self.holdsSession = false }
-                    CraftNativeSounds.reclaimSessionIfPlaying(handedBack: previous)
+                    CraftNativeSounds.reclaimSessionIfPlaying(handedBack: previous, restored: restored)
                 }
             }
         }
@@ -570,21 +584,61 @@ final class CraftNativeSounds {
         guard let previous = sessionToRestore else { return }
         sessionToRestore = nil
         if CraftNativeSpeech.shared.holdsSession { return }
-        try? AVAudioSession.sharedInstance().setCategory(previous.0, mode: previous.1, options: previous.2)
+        handBack(previous)
+    }
+
+    /// Whether a session in this category plays alongside other apps' audio.
+    static func mixes(_ previous: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)) -> Bool {
+        previous.0 == .ambient || !previous.2.isDisjoint(with: [.mixWithOthers, .duckOthers, .interruptSpokenAudioAndMixWithOthers])
+    }
+
+    /// Lets the session go and puts back the category the app had. In that
+    /// order: the app's own category usually does not mix (soloAmbient is the
+    /// default), and set on a session that is still active it stops the music
+    /// of whoever was playing under us. Let go first, the other app hears it
+    /// may carry on, and the category lands where it interrupts nobody. A
+    /// session that will not let go (something of the app's still plays)
+    /// keeps the mixing category it has. Main thread.
+    private static func handBack(_ previous: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)) {
+        let session = AVAudioSession.sharedInstance()
+        var released = mixes(previous)
+        if !released {
+            do {
+                try session.setActive(false, options: .notifyOthersOnDeactivation)
+                released = true
+            } catch {
+                NSLog("[craft native] sound audio session stays active: %@", error.localizedDescription)
+            }
+        }
+        guard released else { return }
+        try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
     }
 
     /// Speech handed the session back with the category it found
     /// (`handedBack`, nil when it never took it), which may predate a sound
-    /// started while it spoke: take it again for the sound. Main thread.
-    static func reclaimSessionIfPlaying(handedBack: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?) {
-        if claimedUnderSpeech {
+    /// started while it spoke: take it again for the sound. `restored` is
+    /// false when speech left its own category in place because a sound was
+    /// playing and the one to put back would have stopped the music. The
+    /// category goes on before the session is made active, never after.
+    /// Main thread.
+    static func reclaimSessionIfPlaying(handedBack: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?, restored: Bool) {
+        let session = AVAudioSession.sharedInstance()
+        let adopted = claimedUnderSpeech
+        if adopted {
             claimedUnderSpeech = false
-            let session = AVAudioSession.sharedInstance()
             sessionToRestore = handedBack ?? (session.category, session.mode, session.categoryOptions)
-            if playing > 0 { try? session.setActive(true) }
         }
-        guard playing > 0 else { return }
-        try? AVAudioSession.sharedInstance().setCategory(category, mode: .default, options: [.mixWithOthers])
+        guard playing > 0 else {
+            // The sound ended while speech was letting go, and speech left the
+            // session to it: nobody else puts the app's category back.
+            if !restored, let handedBack, !CraftNativeSpeech.shared.holdsSession {
+                sessionToRestore = nil
+                handBack(handedBack)
+            }
+            return
+        }
+        try? session.setCategory(category, mode: .default, options: [.mixWithOthers])
+        if adopted { try? session.setActive(true) }
     }
 }
 
