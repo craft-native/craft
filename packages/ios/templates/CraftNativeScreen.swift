@@ -7892,6 +7892,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let colorChanged = previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle
         let textSizeChanged = previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory
         guard colorChanged || textSizeChanged else { return }
+        if textSizeChanged { applyLargeTitleMode() }
         refreshTraitDefaults()
         sendAppearance()
     }
@@ -9226,6 +9227,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     /// `craft.navigation.setOptions`: this screen's bar. Every key is
     /// optional and only the keys given change.
+    /// A large title, unless the text is at an accessibility size: UIKit
+    /// grows a large title to about 60 points there and truncates any title
+    /// longer than a word or two ("TRAINING PROGR…"). The title goes inline
+    /// instead, at the headline size UIKit gives it, on one line (#584).
+    private func applyLargeTitleMode() {
+        guard let prefersLargeTitle else { return }
+        let large = prefersLargeTitle && !traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        let mode: UINavigationItem.LargeTitleDisplayMode = large ? .always : .never
+        if navigationItem.largeTitleDisplayMode != mode { navigationItem.largeTitleDisplayMode = mode }
+    }
+
     private func applyNavigationOptions(_ options: [String: Any]) {
         if let tab = options["tabItem"] as? [String: Any] {
             CraftChrome.shared.updateTab(tab)
@@ -9250,7 +9262,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let largeTitle = options["largeTitle"] as? Bool {
             prefersLargeTitle = largeTitle
-            navigationItem.largeTitleDisplayMode = largeTitle ? .always : .never
+            applyLargeTitleMode()
             if largeTitle { navigationController?.navigationBar.prefersLargeTitles = true }
             trackContentScrollView()
         }

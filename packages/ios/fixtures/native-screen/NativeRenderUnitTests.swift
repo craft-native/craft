@@ -6051,6 +6051,36 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(try paragraph(.accessibilityExtraExtraExtraLarge, hyphens: "none").factor, 0)
     }
 
+    /// At the accessibility sizes a screen that asks for a large title gets
+    /// an inline one: UIKit grows a large title to about 60 points there
+    /// (measured: 60 at accessibilityExtraExtraExtraLarge) and truncates it (#584).
+    func testALargeTitleGoesInlineAtTheAccessibilitySizes() throws {
+        func mode(_ category: UIContentSizeCategory) -> UINavigationItem.LargeTitleDisplayMode {
+            let (host, parent) = screenAtTextSize(category)
+            _ = parent
+            host.evaluateScript("craft.navigation.setOptions({title:'Training programme',largeTitle:true})")
+            let deadline = Date().addingTimeInterval(2)
+            while host.navigationItem.title != "Training programme", Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+            return host.navigationItem.largeTitleDisplayMode
+        }
+        XCTAssertEqual(mode(.large), .always)
+        XCTAssertEqual(mode(.accessibilityExtraExtraExtraLarge), .never)
+
+        // A text-size change while the screen is up moves the title with it.
+        let (host, parent) = screenAtTextSize(.large)
+        host.evaluateScript("craft.navigation.setOptions({title:'Training programme',largeTitle:true})")
+        let deadline = Date().addingTimeInterval(2)
+        while host.navigationItem.title != "Training programme", Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertEqual(host.navigationItem.largeTitleDisplayMode, .always)
+        func settle() { host.view.setNeedsLayout(); host.view.layoutIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+        parent.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: .accessibilityLarge), forChild: host)
+        settle()
+        XCTAssertEqual(host.navigationItem.largeTitleDisplayMode, .never)
+        parent.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: .large), forChild: host)
+        settle()
+        XCTAssertEqual(host.navigationItem.largeTitleDisplayMode, .always)
+    }
+
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
