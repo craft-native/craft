@@ -2465,6 +2465,16 @@ export interface CraftHealthHeartRateEvent extends CustomEvent {
   detail: { samples: CraftHealthHeartRateSample[] };
 }
 
+/**
+ * The heart-rate stream from `craft.health.startHeartRateUpdates()` stopped
+ * (iOS, #580). After `DATABASE_INACCESSIBLE` (the device locked) it runs
+ * again by itself once the device is unlocked; after any other code it stays
+ * stopped until started again.
+ */
+export interface CraftHealthHeartRateErrorEvent extends CustomEvent {
+  detail: { code: 'DATABASE_INACCESSIBLE' | 'AUTHORIZATION_DENIED' | 'HEALTH_UNAVAILABLE' | 'HEALTH_ERROR'; message: string };
+}
+
 /** A live HealthKit workout changed state or reported an error (iOS). */
 export interface CraftHealthWorkoutEvent extends CustomEvent {
   detail: CraftHealthLiveWorkoutEvent;
@@ -2551,6 +2561,8 @@ declare global {
     craftHeartRate: CraftHeartRateEvent;
     // iOS, after `craft.health.startHeartRateUpdates()`.
     craftHealthHeartRate: CraftHealthHeartRateEvent;
+    // iOS, when that stream stops.
+    craftHealthHeartRateError: CraftHealthHeartRateErrorEvent;
     // iOS, while a live HealthKit workout is active.
     craftHealthWorkout: CraftHealthWorkoutEvent;
     /** Durable HealthKit batches are available; drain them again on launch. */
