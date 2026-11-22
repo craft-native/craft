@@ -48,14 +48,14 @@ final class HostileNumbersUnitTests: XCTestCase {
         "borderStyle", "borderWidth", "bottom", "color", "columnGap", "display", "elevation", "fill", "flex",
         "flexBasis", "flexDirection", "flexGrow", "flexShrink", "flexWrap", "fontFamily", "fontSize", "fontStyle",
         "fontWeight", "gap", "gradientDirection", "gradientFrom", "gradientTo", "gradientVia", "gridAutoRows",
-        "gridColumns", "gridTemplateColumns", "gridTemplateRows", "height", "justifyContent", "left",
+        "gridColumns", "gridTemplateColumns", "gridTemplateRows", "height", "hyphens", "justifyContent", "left",
         "letterSpacing", "lineHeight", "margin", "marginBottom", "marginHorizontal", "marginLeft", "marginRight",
         "marginTop", "marginVertical", "maxHeight", "maxWidth", "minHeight", "minWidth", "opacity", "order",
         "overflow", "padding", "paddingBottom", "paddingHorizontal", "paddingLeft", "paddingRight", "paddingTop",
         "paddingVertical", "pointerEvents", "position", "resizeMode", "right", "rowGap", "shadowColor",
-        "shadowOffset", "shadowOpacity", "shadowRadius", "stroke", "strokeWidth", "textAlign", "textDecorationColor",
-        "textDecorationLine", "textDecorationStyle", "textShadowColor", "textShadowOffset", "textShadowRadius",
-        "textTransform", "tintColor", "top", "transform", "width", "zIndex",
+        "shadowOffset", "shadowOpacity", "shadowRadius", "stroke", "strokeWidth", "textAlign",
+        "textDecorationColor", "textDecorationLine", "textDecorationStyle", "textShadowColor", "textShadowOffset",
+        "textShadowRadius", "textTransform", "tintColor", "top", "transform", "width", "zIndex",
     ]
 
     static let types: [String] = [

@@ -10968,9 +10968,25 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             control.selectedSegmentIndex = control.values.firstIndex(where: { $0 == selected }) ?? UISegmentedControl.noSegment
             control.isEnabled = props["disabled"] as? Bool != true
             control.selectedSegmentTintColor = color(props["tintColor"])
-            let titleAttributes: [NSAttributedString.Key: Any]? = color(style["color"]).map { [.foregroundColor: $0] }
-            control.setTitleTextAttributes(titleAttributes, for: .normal)
-            control.setTitleTextAttributes(titleAttributes, for: .selected)
+            // Titles follow the text size like the text around them (#582):
+            // the node's text style, medium by default and semibold when
+            // selected, scaled for Dynamic Type but held at 28 points so
+            // three long segments (German) still fit a phone's width.
+            func segmentFont(weight: String) -> UIFont {
+                var titleStyle = style
+                if titleStyle["fontWeight"] == nil || weight == "600" { titleStyle["fontWeight"] = weight }
+                let font = textFont(titleStyle, default: .systemFont(ofSize: 13))
+                return font.pointSize > 28 ? font.withSize(28) : font
+            }
+            var normalAttributes: [NSAttributedString.Key: Any] = [.font: segmentFont(weight: "500")]
+            var selectedAttributes: [NSAttributedString.Key: Any] = [.font: segmentFont(weight: "600")]
+            if let ink = color(style["color"]) { normalAttributes[.foregroundColor] = ink; selectedAttributes[.foregroundColor] = ink }
+            control.setTitleTextAttributes(normalAttributes, for: .normal)
+            control.setTitleTextAttributes(selectedAttributes, for: .selected)
+            // At the accessibility sizes a long title gets the width it needs
+            // instead of an equal share it cannot fit.
+            control.apportionsSegmentWidthsByContent = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+            control.invalidateIntrinsicContentSize()
             control.configureAccessibility(items: items)
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: control)
         case "Picker":
@@ -12731,6 +12747,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             paragraph.maximumLineHeight = max(lineHeight, label.font.lineHeight)
             paragraph.alignment = label.textAlignment
             attributes[.paragraphStyle] = paragraph
+        }
+        // At the accessibility sizes a word longer than a line was broken
+        // anywhere ("Recommen / ded"). Hyphenate it there, or wherever the
+        // style asks (`hyphens: 'auto'`), with the phone's language's rules;
+        // `hyphens: 'none'` keeps whole words (#583).
+        let hyphens = style["hyphens"] as? String
+        if hyphens == "auto" || (hyphens == nil && traitCollection.preferredContentSizeCategory.isAccessibilityCategory) {
+            let paragraph = (attributes[.paragraphStyle] as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            paragraph.alignment = label.textAlignment
+            paragraph.hyphenationFactor = 1
+            attributes[.paragraphStyle] = paragraph
+            if let language = Locale.preferredLanguages.first { attributes[NSAttributedString.Key("NSLanguage")] = language }
         }
         let alignment = label.textAlignment
         let lineBreakMode = label.lineBreakMode

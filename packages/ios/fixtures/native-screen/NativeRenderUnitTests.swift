@@ -5992,6 +5992,65 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(health.heartRateStreamRunning, "an unlock does not restart a stream HealthKit refused")
     }
 
+    /// A screen at an accessibility text size, for #582 and #583.
+    private func screenAtTextSize(_ category: UIContentSizeCategory) -> (CraftNativeScreenController, UIViewController) {
+        let parent = UIViewController()
+        let host = CraftNativeScreenController(config: CraftConfig())
+        parent.addChild(host)
+        parent.view.addSubview(host.view)
+        host.didMove(toParent: parent)
+        parent.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: category), forChild: host)
+        host.loadViewIfNeeded()
+        return (host, parent)
+    }
+
+    /// Segment titles follow the text size like the text around them, held
+    /// at 28 points, semibold when selected; widths follow the titles at the
+    /// accessibility sizes (#582).
+    func testSegmentTitlesFollowTheTextSizeUpToACap() throws {
+        func titles(_ category: UIContentSizeCategory) throws -> (normal: UIFont, selected: UIFont, apportions: Bool) {
+            let (host, parent) = screenAtTextSize(category)
+            _ = parent
+            host.render(document([["type": "SegmentedControl", "props": ["key": "period", "value": "week",
+                "items": [["label": "Diese Woche", "value": "week"], ["label": "Dieser Monat", "value": "month"], ["label": "Empfohlen", "value": "pick"]]]]]))
+            let control = try XCTUnwrap(find(UISegmentedControl.self, key: "period", below: host.view))
+            let normal = try XCTUnwrap(control.titleTextAttributes(for: .normal)?[.font] as? UIFont)
+            let selected = try XCTUnwrap(control.titleTextAttributes(for: .selected)?[.font] as? UIFont)
+            return (normal, selected, control.apportionsSegmentWidthsByContent)
+        }
+        let standard = try titles(.large)
+        XCTAssertEqual(standard.normal.pointSize, UIFontMetrics(forTextStyle: .body).scaledValue(for: 13, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)), accuracy: 0.5)
+        XCTAssertFalse(standard.apportions)
+        let largest = try titles(.accessibilityExtraExtraExtraLarge)
+        XCTAssertGreaterThan(largest.normal.pointSize, standard.normal.pointSize + 5, "the titles must grow with the text size")
+        XCTAssertLessThanOrEqual(largest.normal.pointSize, 28)
+        XCTAssertTrue(largest.apportions)
+        let weight = { (font: UIFont) in (font.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0 }
+        XCTAssertGreaterThan(weight(largest.selected), weight(largest.normal), "the selected title is heavier")
+    }
+
+    /// A word longer than a line hyphenates at the accessibility sizes, in
+    /// the phone's language, instead of breaking anywhere; `hyphens` says
+    /// otherwise (#583).
+    func testLongWordsHyphenateAtTheAccessibilitySizes() throws {
+        func paragraph(_ category: UIContentSizeCategory, hyphens: String? = nil) throws -> (factor: Float, language: String?) {
+            let (host, parent) = screenAtTextSize(category)
+            _ = parent
+            var style: [String: Any] = ["width": 80]
+            if let hyphens { style["hyphens"] = hyphens }
+            host.render(document([["type": "Text", "props": ["key": "label"], "style": style, "children": ["Recommended"]]]))
+            let label = try XCTUnwrap(find(UILabel.self, key: "label", below: host.view))
+            let attributes = label.attributedText?.attributes(at: 0, effectiveRange: nil) ?? [:]
+            return ((attributes[.paragraphStyle] as? NSParagraphStyle)?.hyphenationFactor ?? 0, attributes[NSAttributedString.Key("NSLanguage")] as? String)
+        }
+        let largest = try paragraph(.accessibilityExtraExtraExtraLarge)
+        XCTAssertEqual(largest.factor, 1)
+        XCTAssertEqual(largest.language, Locale.preferredLanguages.first)
+        XCTAssertEqual(try paragraph(.large).factor, 0, "at the standard sizes words stay whole")
+        XCTAssertEqual(try paragraph(.large, hyphens: "auto").factor, 1)
+        XCTAssertEqual(try paragraph(.accessibilityExtraExtraExtraLarge, hyphens: "none").factor, 0)
+    }
+
     func testARenderThatChangesNothingLeavesTheSwitchColoursAlone() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
