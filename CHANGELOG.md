@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.534...v0.0.535)
+
+## 🧪 Tests
+
+- **ios**: draw the refresh indicator prop with hostile numbers too ([0a3c0d3](https://github.com/craft-native/craft/commit/0a3c0d3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.533...v0.0.534)
 
 ## 🚀 Features
