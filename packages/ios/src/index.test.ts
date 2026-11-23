@@ -2871,6 +2871,14 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     // A form's files are read natively, and only files made here.
     expect(actions).toContain('if let form = options["form"] as? [Any] {')
     expect(actions).toContain('request.setValue("multipart/form-data; boundary=\\(boundary)", forHTTPHeaderField: "Content-Type")')
+    // A long upload: hours for the whole transfer, and background time held
+    // until it settles, so a slow uplink or a lock does not fail it at once.
+    expect(actions).toContain('let craftNativeUploadResourceTimeoutSeconds: TimeInterval = 6 * 60 * 60')
+    expect(actions).toContain('configuration.timeoutIntervalForResource = craftNativeUploadResourceTimeoutSeconds')
+    expect(actions).toContain('uploadSession.uploadTask(with: request, fromFile: $0, completionHandler: responseHandler)')
+    expect(actions).not.toContain('fetchSession.uploadTask(')
+    expect(actions).toContain('let backgroundTime = uploadFile.map { _ in CraftUploadBackgroundTime(name: "craft.upload") }')
+    expect(actions).toContain('UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)')
     expect(files).toContain('guard let url = owned(path) else {')
     expect(files).toContain('Content-Disposition: form-data; name=\\"\\(quoted(name))\\"; filename=\\"\\(quoted(filename))\\"')
     // A download goes to disk; a refused one keeps no file and says why.

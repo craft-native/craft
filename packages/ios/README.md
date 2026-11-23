@@ -1004,6 +1004,10 @@ const attachments = await craft.files.pickFile({
 const form = new FormData();
 form.append('photo', photo);                      // multipart, built natively
 await fetch('https://example.com/upload', { method: 'POST', body: form });
+// An upload may take up to 6 hours in all, and fails after 10 minutes with
+// nothing moving. It keeps the background time iOS gives (about 30 seconds)
+// through a lock or an app switch; for a long clip, also keep the screen on
+// with craft.setKeepAwake(true) (enableKeepAwake) until it settles.
 // A file for the share sheet (Save to Files, AirDrop, another app), fetched
 // straight to disk with your headers. Not 2xx: { ok: false, status, body }.
 const gpx = await craft.files.download('https://example.com/route.gpx', { headers: { Authorization: 'Bearer …' } });

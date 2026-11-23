@@ -18,6 +18,44 @@ let craftNativeFetchTimeoutSeconds: TimeInterval = 30
 /// A response body larger than this rejects with RESPONSE_TOO_LARGE rather
 /// than being copied into JavaScriptCore as one string.
 let craftNativeFetchMaxResponseBytes = 8 * 1024 * 1024
+/// A FormData upload's limit with no bytes moving either way: a large clip
+/// keeps sending, but the server may take a while to answer once it has it.
+let craftNativeUploadIdleTimeoutSeconds: TimeInterval = 600
+/// A FormData upload's limit for the whole transfer. A 120 MB clip over a
+/// weak uplink takes far longer than ten minutes, which used to fail it.
+let craftNativeUploadResourceTimeoutSeconds: TimeInterval = 6 * 60 * 60
+
+/// Background time for one upload: a lock or an app switch mid-transfer gets
+/// the grace iOS gives (about 30 seconds) instead of suspending at once. It
+/// ends once, when the transfer settles or when iOS takes the time back.
+final class CraftUploadBackgroundTime {
+    static var begin: (String, @escaping () -> Void) -> UIBackgroundTaskIdentifier = { name, expired in
+        UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)
+    }
+    static var end: (UIBackgroundTaskIdentifier) -> Void = { UIApplication.shared.endBackgroundTask($0) }
+
+    private let lock = NSLock()
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+    private var finished = false
+
+    init(name: String) {
+        let identifier = Self.begin(name) { [weak self] in self?.finish() }
+        lock.lock()
+        let alreadyFinished = finished
+        self.identifier = alreadyFinished ? .invalid : identifier
+        lock.unlock()
+        if alreadyFinished, identifier != .invalid { Self.end(identifier) }
+    }
+
+    func finish() {
+        lock.lock()
+        let identifier = self.identifier
+        self.identifier = .invalid
+        finished = true
+        lock.unlock()
+        if identifier != .invalid { Self.end(identifier) }
+    }
+}
 
 struct CraftNativeActionError: Error {
     let code: String
@@ -41,6 +79,14 @@ enum CraftNativeActions {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = craftNativeFetchTimeoutSeconds
         configuration.timeoutIntervalForResource = 600
+        return URLSession(configuration: configuration)
+    }()
+    /// FormData uploads: the same foreground session, with an upload's idle
+    /// and whole-transfer limits rather than a text request's.
+    static let uploadSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = craftNativeUploadIdleTimeoutSeconds
+        configuration.timeoutIntervalForResource = craftNativeUploadResourceTimeoutSeconds
         return URLSession(configuration: configuration)
     }()
     private static var initialDeepLinkClaimed = false
@@ -862,7 +908,7 @@ enum CraftNativeActions {
                 return
             case .success(let (file, boundary)):
                 uploadFile = file
-                request.timeoutInterval = 600
+                request.timeoutInterval = craftNativeUploadIdleTimeoutSeconds
                 request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
             }
         } else if let body = options["body"] as? String {
@@ -876,7 +922,9 @@ enum CraftNativeActions {
             return
         }
 
+        let backgroundTime = uploadFile.map { _ in CraftUploadBackgroundTime(name: "craft.upload") }
         let responseHandler: (Data?, URLResponse?, Error?) -> Void = { data, response, error in
+            backgroundTime?.finish()
             if let uploadFile { CraftNativeFiles.remove(uploadFile.path) }
             cancellationLock.lock()
             fetchTasks.removeValue(forKey: requestToken)
@@ -915,7 +963,7 @@ enum CraftNativeActions {
                 "body": String(decoding: body, as: UTF8.self),
             ]), completion)
         }
-        let task: URLSessionTask = uploadFile.map { fetchSession.uploadTask(with: request, fromFile: $0, completionHandler: responseHandler) }
+        let task: URLSessionTask = uploadFile.map { uploadSession.uploadTask(with: request, fromFile: $0, completionHandler: responseHandler) }
             ?? fetchSession.dataTask(with: request, completionHandler: responseHandler)
         let uploadID = options["uploadProgressId"] as? String ?? ""
         let expectedBytes = uploadFile.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.map { Int64($0) } ?? Int64(request.httpBody?.count ?? 0)
@@ -930,6 +978,7 @@ enum CraftNativeActions {
         cancellationLock.unlock()
         if !alreadyCancelled { task.resume() }
         else {
+            backgroundTime?.finish()
             if let uploadFile { CraftNativeFiles.remove(uploadFile.path) }
             complete(requestToken, failure("CANCELLED", "Upload cancelled"), completion)
         }

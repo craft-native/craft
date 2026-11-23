@@ -975,6 +975,62 @@ final class FilesUnitTests: XCTestCase {
         XCTAssertTrue(text.hasSuffix("\r\n--\(boundary)--\r\n"))
     }
 
+    func testAFormUploadGetsHoursForTheWholeTransfer() {
+        // A 120 MB clip over a weak uplink outlasts ten minutes, which used to
+        // be the whole transfer's limit and failed it partway.
+        let configuration = CraftNativeActions.uploadSession.configuration
+        XCTAssertEqual(configuration.timeoutIntervalForResource, 6 * 60 * 60)
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, 600, "ten minutes with nothing moving")
+    }
+
+    func testAFormUploadHoldsBackgroundTimeUntilTheServerAnswers() async throws {
+        let log = BackgroundTimeLog()
+        let (begin, end) = (CraftUploadBackgroundTime.begin, CraftUploadBackgroundTime.end)
+        defer { CraftUploadBackgroundTime.begin = begin; CraftUploadBackgroundTime.end = end }
+        CraftUploadBackgroundTime.begin = { name, _ in log.began(name) }
+        CraftUploadBackgroundTime.end = { log.ended($0) }
+        let made = try CraftNativeFiles.newFile(named: "clip.mp4")
+        let clip = Data((0..<(256 * 1024)).map { UInt8($0 % 251) })
+        try clip.write(to: made)
+        defer { CraftNativeFiles.remove(made.path) }
+        let server = try UploadSink()
+        defer { server.stop() }
+        let address = "http://127.0.0.1:\(try server.port())/upload"
+
+        let form: [[String: Any]] = [["name": "video", "path": made.path, "filename": "clip.mp4", "type": "video/mp4"]]
+        let upload = await fetch(["url": address, "method": "POST", "form": form])
+        guard case .success(let value) = upload else { return XCTFail("the upload failed: \(upload)") }
+        XCTAssertEqual((value as? [String: Any])?["status"] as? Int, 200)
+        XCTAssertGreaterThan(server.bodies.first ?? 0, clip.count, "the whole clip reached the server")
+        XCTAssertEqual(log.names, ["craft.upload"], "an upload asks for background time")
+        XCTAssertEqual(log.ends, [log.identifier], "and gives it back once it settles")
+
+        // A text request is short and asks for none.
+        guard case .success = await fetch(["url": address, "method": "POST", "body": "{}"]) else { return XCTFail("the text request failed") }
+        XCTAssertEqual(log.names.count, 1)
+    }
+
+    func testUploadBackgroundTimeEndsOnceWhenIOSTakesItBack() {
+        let log = BackgroundTimeLog()
+        var expired: (() -> Void)?
+        let (begin, end) = (CraftUploadBackgroundTime.begin, CraftUploadBackgroundTime.end)
+        defer { CraftUploadBackgroundTime.begin = begin; CraftUploadBackgroundTime.end = end }
+        CraftUploadBackgroundTime.begin = { name, handler in expired = handler; return log.began(name) }
+        CraftUploadBackgroundTime.end = { log.ended($0) }
+        let time = CraftUploadBackgroundTime(name: "craft.upload")
+        expired?()
+        XCTAssertEqual(log.ends, [log.identifier], "iOS's expiry ends it, or iOS ends the app")
+        time.finish()
+        XCTAssertEqual(log.ends.count, 1, "the transfer settling later does not end it twice")
+    }
+
+    private func fetch(_ options: [String: Any]) async -> Result<Any, CraftNativeActionError> {
+        await withCheckedContinuation { continuation in
+            CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion,
+                module: "Network", method: "fetch", args: [options], config: CraftConfig()) { continuation.resume(returning: $0) }
+        }
+    }
+
     func testAMultipartFilePreservesEveryStreamingChunk() throws {
         let made = try CraftNativeFiles.newFile(named: "session.mp4")
         // Span multiple 64 KiB production reads, with a partial final chunk.
@@ -1236,6 +1292,66 @@ final class FilesUnitTests: XCTestCase {
         }
     }
 
+}
+
+/// What an upload asked of CraftUploadBackgroundTime, from any thread.
+private final class BackgroundTimeLog: @unchecked Sendable {
+    let identifier = UIBackgroundTaskIdentifier(rawValue: 4242)
+    private let lock = NSLock()
+    private var beganNames = [String]()
+    private var endings = [UIBackgroundTaskIdentifier]()
+    var names: [String] { lock.lock(); defer { lock.unlock() }; return beganNames }
+    var ends: [UIBackgroundTaskIdentifier] { lock.lock(); defer { lock.unlock() }; return endings }
+    func began(_ name: String) -> UIBackgroundTaskIdentifier { lock.lock(); beganNames.append(name); lock.unlock(); return identifier }
+    func ended(_ identifier: UIBackgroundTaskIdentifier) { lock.lock(); endings.append(identifier); lock.unlock() }
+}
+
+/// An HTTP server on 127.0.0.1 that reads a whole request body, notes its
+/// length and answers 200, for the upload test.
+private final class UploadSink: @unchecked Sendable {
+    private let listener: NWListener
+    private let ready = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var lengths = [Int]()
+    var bodies: [Int] { lock.lock(); defer { lock.unlock() }; return lengths }
+
+    init() throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.stateUpdateHandler = { [ready] state in if case .ready = state { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: .global())
+            self?.read(connection, Data())
+        }
+        listener.start(queue: .global())
+    }
+
+    private func read(_ connection: NWConnection, _ soFar: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, complete, error in
+            guard let self else { return connection.cancel() }
+            var received = soFar
+            if let data { received.append(data) }
+            if let end = received.range(of: Data("\r\n\r\n".utf8)) {
+                let head = String(decoding: received[..<end.lowerBound], as: UTF8.self).lowercased()
+                let field = head.components(separatedBy: "\r\n").first { $0.hasPrefix("content-length:") }
+                let length = field.flatMap { Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) } ?? 0
+                if received.count - end.upperBound >= length {
+                    self.lock.lock(); self.lengths.append(length); self.lock.unlock()
+                    let reply = Data("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8)
+                    connection.send(content: reply, completion: .contentProcessed { _ in connection.cancel() })
+                    return
+                }
+            }
+            if complete || error != nil { return connection.cancel() }
+            self.read(connection, received)
+        }
+    }
+
+    func port() throws -> UInt16 {
+        guard ready.wait(timeout: .now() + 5) == .success, let port = listener.port?.rawValue else { throw URLError(.cannotConnectToHost) }
+        return port
+    }
+
+    func stop() { listener.cancel() }
 }
 
 /// A one-file HTTP server on 127.0.0.1 for the background transfer test.
