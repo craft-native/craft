@@ -85,6 +85,31 @@ type PermissionType =
 Support varies by platform and generated app capabilities. An unknown or
 unsupported permission resolves `undetermined` rather than fabricating access.
 
+## Notifications in a Desktop Webview
+
+Inside a Craft webview, the page's own `Notification.permission` doesn't
+reflect the app's notification permission: WKWebView reports `denied`, or has
+no `Notification` at all. Ask Craft instead:
+
+```typescript
+import { isCraft } from 'craft-native'
+import { notifications } from 'craft-native/mobile'
+
+if (isCraft() && await notifications.permission() !== 'granted') {
+  await notifications.requestPermission()
+}
+await notifications.show({ title: 'Post failed', body: 'Tap to retry' })
+```
+
+`permissions.check('notifications')` and `permissions.request('notifications')`
+take the same route on a desktop host. On macOS the status comes from
+Notification Center, and provisional delivery counts as `granted`; pass
+`requestPermission({ provisional: true })` to ask for it without a prompt.
+Linux and Windows need no permission and report `granted`. On iOS and Android
+the native permissions bridge answers, as for every other permission.
+
+`isCraft()` is the one check for whether a page runs inside a Craft shell.
+
 ## Android Location Semantics
 
 Android can grant either precise (`ACCESS_FINE_LOCATION`) or approximate

@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import mobile, { biometrics, brightness, bridgeNotification, crashReporter, files, health, heartRate, music, normalizeDeepLinkURL, normalizeScheduledWorkout, scheduledWorkouts, normalizeHeartRateReading, normalizeHeartRateSamples, normalizeHeartRateState, normalizeNowPlaying, notifications, pushNotifications, secureStorage, speech, splash, tabBar, watchConnectivity } from '../api/mobile'
+import mobile, { biometrics, brightness, bridgeNotification, crashReporter, files, health, heartRate, music, normalizeDeepLinkURL, normalizeScheduledWorkout, scheduledWorkouts, normalizeHeartRateReading, normalizeHeartRateSamples, normalizeHeartRateState, normalizeNowPlaying, notificationPermissionStatus, notifications, permissions, pushNotifications, secureStorage, speech, splash, tabBar, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -137,6 +137,67 @@ describe('Mobile scheduled notifications', () => {
       if (previousWindow === undefined) delete (globalThis as any).window
       else (globalThis as any).window = previousWindow
     }
+  })
+})
+
+// #590: the webview's own Notification API doesn't reflect the app's
+// permission, so inside Craft the SDK asks the desktop host.
+describe('Notification permission through the host', () => {
+  async function withCraft<T>(craft: unknown, run: () => Promise<T>): Promise<T> {
+    const previousWindow = (globalThis as any).window
+    const previousNotification = (globalThis as any).Notification
+    ;(globalThis as any).window = { craft }
+    // The page's API says denied, as WKWebView does; the host must win.
+    ;(globalThis as any).Notification = { permission: 'denied', requestPermission: async () => 'denied' }
+    try { return await run() }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+      if (previousNotification === undefined) delete (globalThis as any).Notification
+      else (globalThis as any).Notification = previousNotification
+    }
+  }
+
+  it('maps the host\'s status names', () => {
+    expect(['authorized', 'provisional', 'ephemeral', 'granted'].map(notificationPermissionStatus)).toEqual(['granted', 'granted', 'granted', 'granted'])
+    expect(notificationPermissionStatus('denied')).toBe('denied')
+    expect(['notDetermined', 'default', 'unknown', undefined].map(notificationPermissionStatus)).toEqual(['undetermined', 'undetermined', 'undetermined', 'undetermined'])
+  })
+
+  it('reads the status from the host, not the page', async () => {
+    const craft = { notifications: { getPermissionStatus: async () => 'authorized' } }
+    expect(await withCraft(craft, () => notifications.permission())).toBe('granted')
+    expect(await withCraft(craft, () => permissions.check('notifications'))).toBe('granted')
+    const fresh = { notifications: { getPermissionStatus: async () => 'notDetermined' } }
+    expect(await withCraft(fresh, () => notifications.permission())).toBe('undetermined')
+  })
+
+  it('requests through the host and passes provisional on', async () => {
+    const asked: unknown[] = []
+    const craft = { notifications: { requestPermission: async (options?: unknown) => { asked.push(options); return asked.length === 1 } } }
+    expect(await withCraft(craft, () => notifications.requestPermission({ provisional: true }))).toBe('granted')
+    expect(await withCraft(craft, () => permissions.request('notifications'))).toBe('denied')
+    expect(asked).toEqual([{ provisional: true }, undefined])
+  })
+
+  it('reports granted where the host needs no permission, and passes other failures on', async () => {
+    const unsupported = Object.assign(new Error('not supported'), { code: 'PLATFORM_NOT_SUPPORTED' })
+    expect(await withCraft({ notifications: { getPermissionStatus: async () => { throw unsupported } } }, () => notifications.permission())).toBe('granted')
+    const busy = Object.assign(new Error('busy'), { code: 'BUSY' })
+    await expect(withCraft({ notifications: { getPermissionStatus: async () => { throw busy } } }, () => notifications.permission())).rejects.toBe(busy)
+  })
+
+  it('leaves a mobile host\'s permissions bridge in charge', async () => {
+    const craft = {
+      permissions: { check: async () => 'restricted', request: async () => 'granted' },
+      notifications: { getPermissionStatus: async () => 'denied', requestPermission: async () => false },
+    }
+    expect(await withCraft(craft, () => notifications.permission())).toBe('restricted')
+    expect(await withCraft(craft, () => notifications.requestPermission())).toBe('granted')
+  })
+
+  it('falls back to the page\'s API outside Craft', async () => {
+    expect(await withCraft(undefined, () => notifications.permission())).toBe('denied')
   })
 })
 

@@ -429,6 +429,9 @@ export const permissions = {
     if (typeof window !== 'undefined' && craft?.permissions) {
       return craft.permissions.check(permission)
     }
+    if (permission === 'notifications' && craft?.notifications?.getPermissionStatus) {
+      return notifications.permission()
+    }
     // Web fallback using Permissions API
     try {
       const webPermission = mapToWebPermission(permission)
@@ -453,6 +456,9 @@ catch {
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.permissions) {
       return craft.permissions.request(permission)
+    }
+    if (permission === 'notifications' && craft?.notifications?.requestPermission) {
+      return notifications.requestPermission()
     }
     // Web fallback - trigger permission request through relevant API
     try {
@@ -1743,7 +1749,70 @@ export function bridgeNotification(options: NotificationOptions, now: number = D
  * await notifications.cancelAll()
  * ```
  */
+export interface NotificationPermissionOptions {
+  /** macOS: ask for provisional (quiet) delivery, which needs no prompt. */
+  provisional?: boolean
+}
+
+/**
+ * #590: a status from the host's `craft.notifications.getPermissionStatus`
+ * (macOS UNAuthorizationStatus names) or the web's `Notification.permission`,
+ * as a PermissionStatus. Provisional and ephemeral delivery count as granted.
+ */
+export function notificationPermissionStatus(status: unknown): PermissionStatus {
+  switch (status) {
+    case 'authorized':
+    case 'provisional':
+    case 'ephemeral':
+    case 'granted':
+      return 'granted'
+    case 'denied':
+      return 'denied'
+    default:
+      return 'undetermined'
+  }
+}
+
 export const notifications = {
+  /**
+   * Whether the app may post notifications.
+   *
+   * Inside a Craft webview this asks the native host. The page's own
+   * `Notification` API doesn't reflect the app's notification permission there
+   * (WKWebView reports it denied or lacks it). Linux and Windows need no
+   * permission, so they report granted.
+   */
+  async permission(): Promise<PermissionStatus> {
+    const craft = getCraftMobile()
+    if (craft?.permissions) return craft.permissions.check('notifications')
+    if (craft?.notifications?.getPermissionStatus) {
+      try {
+        return notificationPermissionStatus(await craft.notifications.getPermissionStatus())
+      }
+      catch (error) {
+        if ((error as { code?: unknown } | null)?.code === 'PLATFORM_NOT_SUPPORTED') return 'granted'
+        throw error
+      }
+    }
+    if (typeof Notification !== 'undefined') return notificationPermissionStatus(Notification.permission)
+    return 'undetermined'
+  },
+
+  /**
+   * Ask for permission to post notifications. Resolves with the status after
+   * the prompt: `granted`, or `denied` when the person declined (or declined
+   * before, in which case macOS shows no prompt).
+   */
+  async requestPermission(options?: NotificationPermissionOptions): Promise<PermissionStatus> {
+    const craft = getCraftMobile()
+    if (craft?.permissions) return craft.permissions.request('notifications')
+    if (craft?.notifications?.requestPermission) {
+      return (await craft.notifications.requestPermission(options)) ? 'granted' : 'denied'
+    }
+    if (typeof Notification !== 'undefined') return notificationPermissionStatus(await Notification.requestPermission())
+    return 'undetermined'
+  },
+
   /**
    * Show a local notification immediately.
    *
@@ -4172,6 +4241,9 @@ interface CraftMobileBridge {
     cancelAll(): Promise<void>
     pending(): Promise<PendingLocalNotification[]>
     setBadge(count: number): Promise<void>
+    // The desktop host (craft-bridge.js), which has no craft.permissions.
+    requestPermission?(options?: NotificationPermissionOptions): Promise<boolean>
+    getPermissionStatus?(): Promise<string>
   }
   health?: {
     requestAuthorization(types: HealthDataType[], options?: HealthAuthorizationOptions): Promise<boolean>
