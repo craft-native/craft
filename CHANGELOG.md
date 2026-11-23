@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.532...v0.0.533)
+
+## 🚀 Features
+
+- **ios**: advertise healthHeartRateErrors so a screen can trust onHeartRateError ([952590d](https://github.com/craft-native/craft/commit/952590d)) _(by glennmichael123)_ ([#580](https://github.com/craft-native/craft/issues/580))
+
+## 🐛 Bug Fixes
+
+- **ios**: keep branded glass tab captions readable ([2398d77](https://github.com/craft-native/craft/commit/2398d77)) _(by Chris Breuer)_
+- **ios**: cancel an upload iOS stops in the background, answering BACKGROUND_EXPIRED ([fda7687](https://github.com/craft-native/craft/commit/fda7687)) _(by glennmichael123)_ ([#592](https://github.com/craft-native/craft/issues/592))
+- **ios**: give a FormData upload hours, and background time through a lock ([bfce70a](https://github.com/craft-native/craft/commit/bfce70a)) _(by glennmichael123)_ ([#592](https://github.com/craft-native/craft/issues/592))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.531...v0.0.532)
 
 ## 🐛 Bug Fixes
