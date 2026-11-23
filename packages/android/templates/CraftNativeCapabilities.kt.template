@@ -67,6 +67,50 @@ internal data class CraftNativeCapabilityResult(
     val message: String? = null,
 )
 
+/** #595: `files.exportVideo`'s options, in every app (the exporter needs `enableVideoExport`). */
+internal class CraftVideoExportOptions(val box: Pair<Int, Int>, val fps: Double, val bitrate: Int, val posterAt: Double?, val poster: Boolean, val progressId: String) {
+    companion object {
+        /** The options, or the INVALID_ARGUMENT message for the first one out of range. */
+        fun parse(json: JSONObject?): Pair<CraftVideoExportOptions?, String?> {
+            val o = json ?: JSONObject()
+            var box = 1280 to 720
+            if (o.has("maxBox") && !o.isNull("maxBox")) {
+                val pair = o.optJSONArray("maxBox")
+                val a = pair?.optDouble(0) ?: Double.NaN
+                val b = pair?.optDouble(1) ?: Double.NaN
+                if (pair?.length() != 2 || a !in 16.0..7680.0 || b !in 16.0..7680.0) return null to "exportVideo maxBox is [width, height], each 16 to 7680"
+                box = a.toInt() to b.toInt()
+            }
+            val fps = if (o.has("fps")) o.optDouble("fps").takeIf { it in 1.0..120.0 } ?: return null to "exportVideo fps is 1 to 120" else 30.0
+            val kbps = if (o.has("bitrateKbps")) o.optDouble("bitrateKbps").takeIf { it in 100.0..50_000.0 } ?: return null to "exportVideo bitrateKbps is 100 to 50000" else 3000.0
+            var poster = true
+            var at: Double? = null
+            when (val value = o.opt("poster")) {
+                null, JSONObject.NULL -> Unit
+                is Boolean -> poster = value
+                is JSONObject -> if (value.has("at")) {
+                    at = value.optDouble("at").takeIf { it.isFinite() && it >= 0 } ?: return null to "exportVideo poster.at is seconds, 0 or more"
+                }
+                else -> return null to "exportVideo poster is { at } or false"
+            }
+            return CraftVideoExportOptions(box, fps, (kbps * 1000).toInt(), at, poster, o.optString("progressId", "")) to null
+        }
+
+        /** The upright size fitted inside the box the clip's way round, never larger, in even numbers. */
+        fun fittedSize(width: Int, height: Int, box: Pair<Int, Int>): Pair<Int, Int> {
+            val long = maxOf(box.first, box.second).toDouble()
+            val short = minOf(box.first, box.second).toDouble()
+            val (boxWidth, boxHeight) = if (width >= height) long to short else short to long
+            val scale = minOf(1.0, boxWidth / width, boxHeight / height)
+            fun even(value: Double) = maxOf(2, Math.round(value).toInt() / 2 * 2)
+            return even(width * scale) to even(height * scale)
+        }
+
+        /** The H.264 rate: the ceiling, or the clip's own rate when that is lower. */
+        fun targetBitrate(ceiling: Int, source: Int): Int = if (source > 0) maxOf(100_000, minOf(ceiling, source)) else ceiling
+    }
+}
+
 /** Never recycle a code while an old Activity result could still arrive. */
 internal class CraftNativePickerCodes(private var next: Int = CRAFT_NATIVE_FILE_PICK_FIRST) {
     @Synchronized fun allocate(): Int? = if (next <= CRAFT_NATIVE_FILE_PICK_LAST) next++ else null
@@ -130,6 +174,7 @@ internal class CraftNativeCapabilities(
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val closed = AtomicBoolean(false)
     private val fetchConnections = ConcurrentHashMap<String, HttpURLConnection>()
+    private val videoExports = ConcurrentHashMap<String, CraftVideoExport>()
     private val fileRoot by lazy { File(context.cacheDir, "craft-files").apply { mkdirs() } }
     private var pendingFilePick: PendingFilePick? = null
     private var pendingNotificationPermission: ((Boolean) -> Unit)? = null
@@ -188,6 +233,8 @@ internal class CraftNativeCapabilities(
 
     fun names(): JSONArray = JSONArray().apply {
         listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files", "uploadProgress").forEach(::put)
+        // #595: files.exportVideo, with FILES_EXPORT_PROGRESS.
+        if (config.optBoolean("enableVideoExport")) put("videoExport")
         put("network")
         put("storageCompareAndSet")
         put("storageSetIfAbsent")
@@ -300,6 +347,7 @@ internal class CraftNativeCapabilities(
                 "pickImage" -> pickImage(requestToken, args, completion)
                 "pickVideo" -> pickVideo(requestToken, args, completion)
                 "pickFile" -> pickFile(requestToken, args, completion)
+                "exportVideo" -> exportVideo(requestToken, args, onUploadProgress, completion)
                 "download", "write", "remove" -> networkExecutor.execute {
                     completeFile(requestToken, files(requestToken, method, args), completion)
                 }
@@ -313,6 +361,7 @@ internal class CraftNativeCapabilities(
     fun cancel(requestToken: String) {
         cancelled.add(requestToken)
         fetchConnections.remove(requestToken)?.disconnect()
+        videoExports.remove(requestToken)?.stop(failure("CANCELLED", "Video export cancelled"))
         onMain {
             if (pendingPedometerPermission?.first == requestToken) pendingPedometerPermission = null
             if (pendingFilePick?.requestToken == requestToken) {
@@ -332,6 +381,8 @@ internal class CraftNativeCapabilities(
         networkExecutor.shutdownNow()
         fetchConnections.values.forEach(HttpURLConnection::disconnect)
         fetchConnections.clear()
+        videoExports.values.forEach { it.stop(failure("CANCELLED", "Video export cancelled")) }
+        videoExports.clear()
         onMain { dismissFilePick(); pendingPedometerPermission = null; pedometerPermissionInFlight = false }
         biometricPrompts.values.forEach { it.cancelAuthentication() }
         biometricPrompts.clear()
@@ -752,6 +803,40 @@ internal class CraftNativeCapabilities(
             }
         }
         return success(JSONObject().put("ok", false).put("status", status).put("body", body.toString(Charsets.UTF_8.name())))
+    }
+
+    /**
+     * `craft.files.exportVideo` (#595). Keyed by the request token like a
+     * fetch, so API_CANCEL and screen teardown stop it and keep nothing.
+     * Progress goes out as FILES_EXPORT_PROGRESS { id, progress }.
+     */
+    private fun exportVideo(requestToken: String, args: JSONArray, onProgress: ((JSONObject) -> Unit)?, completion: (CraftNativeCapabilityResult) -> Unit) {
+        if (!config.optBoolean("enableVideoExport")) {
+            return complete(requestToken, failure("CAPABILITY_DISABLED", "files.exportVideo needs enableVideoExport"), completion)
+        }
+        val path = args.optJSONObject(0)?.optString("path") ?: args.optString(0)
+        val source = ownedFile(path)?.takeIf { it.isFile }
+            ?: return complete(requestToken, failure("INVALID_ARGUMENT", "exportVideo takes a file from craft.files, such as pickVideo's"), completion)
+        val (options, problem) = CraftVideoExportOptions.parse(args.optJSONObject(1))
+        if (options == null) return complete(requestToken, failure("INVALID_ARGUMENT", problem ?: "exportVideo options are invalid"), completion)
+        if (fileRequestCancelled(requestToken)) { cancelled.remove(requestToken); return }
+        val stem = source.nameWithoutExtension.ifBlank { "video" }
+        val video = File(fileRoot, UUID.randomUUID().toString()).apply { mkdirs() }.resolve(safeFileName("$stem.mp4"))
+        val poster = if (options.poster) File(fileRoot, UUID.randomUUID().toString()).apply { mkdirs() }.resolve(safeFileName("$stem.jpg")) else null
+        val export = CraftVideoExport(context, source, video, poster, options, progress = { fraction ->
+            if (options.progressId.isNotEmpty()) {
+                onProgress?.invoke(JSONObject().put("_event", "FILES_EXPORT_PROGRESS").put("id", options.progressId).put("progress", fraction))
+            }
+        }, done = { result ->
+            videoExports.remove(requestToken)
+            complete(requestToken, result, completion, discard = {
+                // A caller that cancelled never hears of these files.
+                val data = result.data as? JSONObject
+                for (key in listOf("video", "poster")) data?.optJSONObject(key)?.optString("path")?.let(::ownedFile)?.let(::removeOwnedFile)
+            })
+        })
+        videoExports[requestToken] = export
+        export.start()
     }
 
     private fun pickVideo(requestToken: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {

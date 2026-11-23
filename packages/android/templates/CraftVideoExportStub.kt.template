@@ -1,0 +1,22 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import java.io.File
+
+/**
+ * #595: without `enableVideoExport` the app carries no Media3, does not
+ * advertise `videoExport`, and `files.exportVideo` answers
+ * CAPABILITY_DISABLED, so a screen uploads the original.
+ */
+internal class CraftVideoExport(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    @Suppress("UNUSED_PARAMETER") source: File,
+    @Suppress("UNUSED_PARAMETER") video: File,
+    @Suppress("UNUSED_PARAMETER") poster: File?,
+    @Suppress("UNUSED_PARAMETER") options: CraftVideoExportOptions,
+    @Suppress("UNUSED_PARAMETER") progress: (Double) -> Unit,
+    private val done: (CraftNativeCapabilityResult) -> Unit,
+) {
+    fun start() = done(CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "files.exportVideo needs enableVideoExport"))
+    fun stop(@Suppress("UNUSED_PARAMETER") result: CraftNativeCapabilityResult) = Unit
+}

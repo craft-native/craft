@@ -211,6 +211,13 @@ export interface CraftAndroidConfig {
   /** Google Wallet save-link or native SDK handoff for native screens. */
   enableWallet?: boolean
   /**
+   * `craft.files.exportVideo` for native screens (#595): a phone clip
+   * converted to an upright BT.709 H.264 MP4 and a poster before upload.
+   * Adds Media3 Transformer to the app, so it is off by default; without it
+   * the host does not advertise `videoExport`.
+   */
+  enableVideoExport?: boolean
+  /**
    * The Health Connect data the app reads and writes, by the shared type
    * names (`steps`, `sleep`, `workouts`...). The manifest declares only
    * these, as Play's health permissions review requires; without it, the
@@ -529,6 +536,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   enableHealthConnect: false,
   enableHealthServices: false,
   enableWallet: false,
+  enableVideoExport: false,
   enableKeepAwake: false,
   enableDeepLinks: false,
   urlSchemes: [],
@@ -1352,6 +1360,15 @@ export async function init(options: InitOptions): Promise<void> {
       join(output, 'app/src/main/java', packagePath, 'CraftNativeNotificationReceiver.kt'),
       notificationTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
     )
+    // #595: the Media3 exporter only where the app asked for it.
+    const videoExportTemplate = readFileSync(join(
+      TEMPLATES_DIR,
+      config.enableVideoExport ? 'CraftVideoExport.kt.template' : 'CraftVideoExportStub.kt.template',
+    ), 'utf-8')
+    writeFileSync(
+      join(output, 'app/src/main/java', packagePath, 'CraftVideoExport.kt'),
+      videoExportTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+    )
     writeNativeShellSources(output, packagePath, finalPackageName, config)
   }
 
@@ -1528,6 +1545,12 @@ export async function init(options: InitOptions): Promise<void> {
       : '')
     .replace(/\{\{HEALTH_SERVICES_DEPENDENCIES\}\}/g, config.enableHealthServices
       ? '    implementation("androidx.health:health-services-client:1.1.0")'
+      : '')
+    .replace(/\{\{VIDEO_EXPORT_DEPENDENCIES\}\}/g, config.enableVideoExport && config.renderer === 'native'
+      ? `    // files.exportVideo (#595): Media3 Transformer, H.264/AAC, HDR tone mapping.
+    implementation("androidx.media3:media3-transformer:1.11.1")
+    implementation("androidx.media3:media3-effect:1.11.1")
+    implementation("androidx.media3:media3-common:1.11.1")`
       : '')
     .replace(/\{\{WALLET_DEPENDENCY\}\}/g, config.enableWallet
       ? '    // Native Google Wallet save flow for signed pass JWTs\n    implementation("com.google.android.gms:play-services-pay:16.5.0")'

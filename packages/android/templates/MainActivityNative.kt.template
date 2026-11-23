@@ -9440,7 +9440,11 @@ class MainActivity : AppCompatActivity() {
                     args,
                     completion,
                     onUploadProgress = { progress -> capabilityHandler.post {
-                        if (screen.active && screen.pendingCapabilities.contains(token)) send(screen, "NETWORK_UPLOAD_PROGRESS", progress)
+                        if (screen.active && screen.pendingCapabilities.contains(token)) {
+                            // A video export (#595) names its own event.
+                            val type = (progress.remove("_event") as? String) ?: "NETWORK_UPLOAD_PROGRESS"
+                            send(screen, type, progress)
+                        }
                     } },
                     isAppScript = screen.headless,
                 )

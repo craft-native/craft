@@ -957,6 +957,32 @@ describe('Craft Android builder', () => {
     expect(readFileSync(join(output, 'app', 'build.gradle.kts'), 'utf8')).toContain('com.google.android.gms:play-services-pay:16.5.0')
   })
 
+  // #595: a phone clip exported before upload. Media3 only where the app
+  // asked for it; every other app gets a stub and no videoExport.
+  it('carries the Media3 video exporter only with enableVideoExport', async () => {
+    const plain = createTempDir('craft-android-native-no-video-export-')
+    await init({ name: 'Plain', packageName: 'org.example.plain', output: plain, runtimeDir: null, config: { renderer: 'native' } })
+    expect(readFileSync(join(plain, 'app/src/main/java/org/example/plain/CraftVideoExport.kt'), 'utf8')).toContain('files.exportVideo needs enableVideoExport')
+    expect(readFileSync(join(plain, 'app', 'build.gradle.kts'), 'utf8')).not.toContain('androidx.media3:media3-transformer')
+
+    const output = createTempDir('craft-android-native-video-export-')
+    await init({ name: 'Clips', packageName: 'org.example.clips', output, runtimeDir: null, config: { renderer: 'native', enableVideoExport: true } })
+    const exporter = readFileSync(join(output, 'app/src/main/java/org/example/clips/CraftVideoExport.kt'), 'utf8')
+    const capabilities = readFileSync(join(output, 'app/src/main/java/org/example/clips/CraftNativeCapabilities.kt'), 'utf8')
+    const config = JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8'))
+    expect(config.enableVideoExport).toBe(true)
+    expect(capabilities).toContain('if (config.optBoolean("enableVideoExport")) put("videoExport")')
+    expect(capabilities).toContain('"exportVideo" -> exportVideo(requestToken, args, onUploadProgress, completion)')
+    expect(capabilities).toContain('videoExports.remove(requestToken)?.stop(failure("CANCELLED", "Video export cancelled"))')
+    expect(exporter).toContain('.setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)')
+    expect(exporter).toContain('.setPortraitEncodingEnabled(true)')
+    expect(exporter).toContain('InAppMp4Muxer.Factory { entries -> entries.clear() }.setAttemptStreamableOutputEnabled(true)')
+    expect(exporter).toContain('MediaCodecInfo.CodecProfileLevel.AVCProfileHigh')
+    expect(readFileSync(join(output, 'app', 'build.gradle.kts'), 'utf8')).toContain('implementation("androidx.media3:media3-transformer:1.11.1")')
+    expect(readFileSync(join(output, 'app/src/main/java/org/example/clips/MainActivity.kt'), 'utf8'))
+      .toContain('val type = (progress.remove("_event") as? String) ?: "NETWORK_UPLOAD_PROGRESS"')
+  })
+
   it('generates a DayNight background resource for native screens', async () => {
     const output = createTempDir('craft-android-dark-background-')
     await init({

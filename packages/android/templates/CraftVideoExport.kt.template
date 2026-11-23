@@ -1,0 +1,263 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.OptIn
+import androidx.media3.common.Effect
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.FrameDropEffect
+import androidx.media3.effect.Presentation
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.InAppMp4Muxer
+import androidx.media3.transformer.ProgressHolder
+import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * #595: `craft.files.exportVideo`, in apps with `enableVideoExport`. One
+ * clip as a phone films it (HEVC, HDR, portrait through a rotation, 4K60) in,
+ * a small MP4 any browser plays out: H.264 High and AAC, BT.709 SDR (HDR is
+ * tone-mapped), the rotation drawn into the pixels (portrait encoding, so no
+ * orientation hint), no metadata, moov first. The poster is a JPEG from the
+ * written MP4. The original is untouched.
+ */
+@OptIn(UnstableApi::class)
+internal class CraftVideoExport(
+    private val context: Context,
+    private val source: File,
+    private val video: File,
+    private val poster: File?,
+    private val options: CraftVideoExportOptions,
+    private val progress: (Double) -> Unit,
+    private val done: (CraftNativeCapabilityResult) -> Unit,
+) {
+    private class Probe(val width: Int, val height: Int, val rotation: Int, val durationMs: Long, val frameRate: Double, val bitrate: Int)
+
+    private val main = Handler(Looper.getMainLooper())
+    private val settled = AtomicBoolean(false)
+    private var transformer: Transformer? = null
+    private var stopped: CraftNativeCapabilityResult? = null
+    // Across a tone-mapping retry too, so progress only goes forward.
+    private var reported = -1.0
+
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+
+    /** Stop with this result (CANCELLED); nothing written is kept. */
+    fun stop(result: CraftNativeCapabilityResult) = main.post {
+        if (settled.get() || stopped != null) return@post
+        stopped = result
+        transformer?.cancel()
+        settle(result)
+    }
+
+    private fun settle(result: CraftNativeCapabilityResult) {
+        if (!settled.compareAndSet(false, true)) return
+        main.removeCallbacksAndMessages(null)
+        if (result.code != null) {
+            video.delete()
+            poster?.delete()
+            video.parentFile?.delete()
+            poster?.parentFile?.delete()
+        }
+        done(result)
+    }
+
+    private fun probe(file: File): Probe? {
+        val retriever = MediaMetadataRetriever()
+        val probe = runCatching {
+            retriever.setDataSource(file.path)
+            if (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) != "yes") return@runCatching null
+            Probe(
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0,
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0,
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0,
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0,
+                frameRate(file),
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0,
+            )
+        }.getOrNull()
+        runCatching { retriever.release() }
+        return probe?.takeIf { it.width >= 2 && it.height >= 2 && it.durationMs > 0 }
+    }
+
+    /** The video track's frame rate: its declared one, else counted from its samples. */
+    private fun frameRate(file: File): Double {
+        val extractor = MediaExtractor()
+        return runCatching {
+            extractor.setDataSource(file.path)
+            val track = (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true } ?: return@runCatching 0.0
+            val format = extractor.getTrackFormat(track)
+            extractor.selectTrack(track)
+            var samples = 0
+            var first = -1L
+            var last = -1L
+            while (extractor.sampleTime >= 0) {
+                if (first < 0) first = extractor.sampleTime
+                last = maxOf(last, extractor.sampleTime)
+                samples++
+                if (!extractor.advance()) break
+            }
+            if (samples > 1 && last > first) (samples - 1) * 1_000_000.0 / (last - first)
+            else if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrElse { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }
+            else 0.0
+        }.getOrDefault(0.0).also { runCatching { extractor.release() } }
+    }
+
+    fun start() = main.post {
+        if (settled.get()) return@post
+        val clip = probe(source) ?: return@post settle(failure("UNSUPPORTED_SOURCE", "exportVideo found no video it can read in this file"))
+        export(clip, Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
+    }
+
+    /** HLG or PQ: the clip has to be tone-mapped, never passed on tagged HDR. */
+    private fun isHdr(file: File): Boolean {
+        val extractor = MediaExtractor()
+        return runCatching {
+            extractor.setDataSource(file.path)
+            (0 until extractor.trackCount).map(extractor::getTrackFormat).any { format ->
+                format.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true && format.containsKey(MediaFormat.KEY_COLOR_TRANSFER) &&
+                    format.getInteger(MediaFormat.KEY_COLOR_TRANSFER) in setOf(MediaFormat.COLOR_TRANSFER_HLG, MediaFormat.COLOR_TRANSFER_ST2084)
+            }
+        }.getOrDefault(false).also { runCatching { extractor.release() } }
+    }
+
+    private fun export(clip: Probe, hdrMode: Int) {
+        val upright = if (clip.rotation % 180 != 0) clip.height to clip.width else clip.width to clip.height
+        val (width, height) = CraftVideoExportOptions.fittedSize(upright.first, upright.second, options.box)
+        val fps = if (clip.frameRate > 0) minOf(options.fps, clip.frameRate) else options.fps
+        val effects = mutableListOf<Effect>(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT))
+        if (clip.frameRate <= 0 || clip.frameRate > options.fps + 0.5) effects += FrameDropEffect.createDefaultFrameDropEffect(options.fps.toFloat())
+        val encoder = DefaultEncoderFactory.Builder(context)
+            .setRequestedVideoEncoderSettings(
+                VideoEncoderSettings.Builder()
+                    .setBitrate(CraftVideoExportOptions.targetBitrate(options.bitrate, clip.bitrate))
+                    .setEncodingProfileLevel(MediaCodecInfo.CodecProfileLevel.AVCProfileHigh, MediaCodecInfo.CodecProfileLevel.AVCLevel4)
+                    .build(),
+            )
+            .setEnableFallback(true)
+            .build()
+        // No location, no capture date, no device: every entry is dropped.
+        val muxer = InAppMp4Muxer.Factory { entries -> entries.clear() }.setAttemptStreamableOutputEnabled(true)
+        val export = Transformer.Builder(context)
+            .setVideoMimeType(MimeTypes.VIDEO_H264)
+            .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setPortraitEncodingEnabled(true)
+            .setEncoderFactory(encoder)
+            .setMuxerFactory(muxer)
+            .setLooper(Looper.getMainLooper())
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    if (stopped != null || settled.get()) return
+                    Thread { finished(fps) }.start()
+                }
+
+                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                    if (stopped != null || settled.get()) return
+                    video.delete()
+                    val hdr = isHdr(source)
+                    // OpenGL tone mapping needs GL ES 3 and EXT_YUV_target; a
+                    // device without them may still tone-map in its decoder.
+                    if (hdr && hdrMode == Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL && Build.VERSION.SDK_INT >= 31) {
+                        return export(clip, Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC)
+                    }
+                    val code = when {
+                        hdr -> "EXPORT_FAILED"
+                        exportException.errorCode in 2000..3999 -> "UNSUPPORTED_SOURCE"
+                        else -> "EXPORT_FAILED"
+                    }
+                    val message = if (hdr) "This device can't tone-map this HDR video to SDR (${exportException.errorCodeName})"
+                        else exportException.message ?: "exportVideo stopped (${exportException.errorCodeName})"
+                    settle(failure(code, message))
+                }
+            })
+            .build()
+        transformer = export
+        val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(source)))
+            .setEffects(Effects(emptyList(), effects))
+            .build()
+        val composition = Composition.Builder(EditedMediaItemSequence.withAudioAndVideoFrom(listOf(item)))
+            .setHdrMode(hdrMode)
+            .build()
+        runCatching { export.start(composition, video.path) }.onFailure {
+            return settle(failure("EXPORT_FAILED", it.message ?: "exportVideo could not start"))
+        }
+        val holder = ProgressHolder()
+        val poll = object : Runnable {
+            override fun run() {
+                if (settled.get() || stopped != null || transformer !== export) return
+                if (export.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
+                    val fraction = minOf(0.99, holder.progress / 100.0)
+                    if (fraction - reported >= 0.01) { reported = fraction; progress(fraction) }
+                }
+                main.postDelayed(this, 200)
+            }
+        }
+        main.postDelayed(poll, 200)
+    }
+
+    /** Measure the file as written and take the poster from it (off the main thread). */
+    private fun finished(fps: Double) {
+        val written = probe(video)
+        if (written == null) {
+            main.post { settle(failure("EXPORT_FAILED", "exportVideo wrote no video")) }
+            return
+        }
+        val width = if (written.rotation % 180 != 0) written.height else written.width
+        val height = if (written.rotation % 180 != 0) written.width else written.height
+        var posterInfo: Any = JSONObject.NULL
+        if (options.poster && poster != null) {
+            val duration = written.durationMs / 1000.0
+            val at = minOf(options.posterAt ?: minOf(1.0, duration / 3), maxOf(0.0, duration - 0.05))
+            val retriever = MediaMetadataRetriever()
+            val frame = runCatching {
+                retriever.setDataSource(video.path)
+                val us = (at * 1_000_000).toLong()
+                if (Build.VERSION.SDK_INT >= 27) retriever.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST, width, height)
+                else retriever.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST)?.let { Bitmap.createScaledBitmap(it, width, height, true) }
+            }.getOrNull()
+            runCatching { retriever.release() }
+            if (frame != null) {
+                val saved = runCatching { FileOutputStream(poster).use { frame.compress(Bitmap.CompressFormat.JPEG, 85, it) } }.getOrDefault(false)
+                if (saved) posterInfo = JSONObject().put("path", poster.path).put("name", poster.name).put("type", "image/jpeg")
+                    .put("size", poster.length()).put("width", frame.width).put("height", frame.height)
+                frame.recycle()
+            }
+            if (posterInfo == JSONObject.NULL) poster.delete()
+        }
+        val duration = written.durationMs / 1000.0
+        val result = JSONObject()
+            .put("video", JSONObject().put("path", video.path).put("name", video.name).put("type", "video/mp4").put("size", video.length())
+                .put("width", width).put("height", height).put("duration", duration))
+            .put("poster", posterInfo)
+            .put("width", width)
+            .put("height", height)
+            .put("duration", duration)
+            .put("frameRate", if (written.frameRate > 0) written.frameRate else fps)
+            .put("bytes", video.length())
+        main.post {
+            if (stopped != null) return@post
+            progress(1.0)
+            settle(CraftNativeCapabilityResult(data = result))
+        }
+    }
+}
