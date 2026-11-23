@@ -1391,7 +1391,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
 #if compiler(>=6.2)
         if #available(iOS 26.0, *) { tabBarMinimizeBehavior = .never }
 #endif
-        CraftChromeFonts.apply(to: tabBar)
+        CraftChromeFonts.apply(to: tabBar, usesBrandTint: config.tintColor != nil)
         accessoryButton.accessibilityIdentifier = "craft-tab-accessory"
         accessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
         shelfAccessoryButton.accessibilityIdentifier = "craft-tab-accessory"

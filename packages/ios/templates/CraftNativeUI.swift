@@ -609,13 +609,24 @@ enum CraftChromeFonts {
     /// The label face on a tab bar. The Liquid Glass bar reads its labels from
     /// its own appearance and ignores UITabBarItem's proxy, so the face goes on
     /// a copy of the bar's appearance, which keeps its material untouched.
-    static func apply(to tabBar: UITabBar) {
-        guard let label = tabLabelFont else { return }
+    static func apply(to tabBar: UITabBar, usesBrandTint: Bool = false) {
+        let label = tabLabelFont
+        let adaptiveSelectionInk: Bool
+        if #available(iOS 26.0, *) { adaptiveSelectionInk = usesBrandTint }
+        else { adaptiveSelectionInk = false }
+        guard label != nil || adaptiveSelectionInk else { return }
         func labelled(_ appearance: UITabBarAppearance) -> UITabBarAppearance {
             let copy = appearance.copy()
             for layout in [copy.stackedLayoutAppearance, copy.inlineLayoutAppearance, copy.compactInlineLayoutAppearance] {
-                for state in [layout.normal, layout.selected, layout.focused, layout.disabled] {
-                    state.titleTextAttributes[.font] = label
+                if let label {
+                    for state in [layout.normal, layout.selected, layout.focused, layout.disabled] {
+                        state.titleTextAttributes[.font] = label
+                    }
+                }
+                // The glass can pick up the brand colour from the content below.
+                // Use system text ink for the caption and leave the icon tint in place.
+                if adaptiveSelectionInk {
+                    layout.selected.titleTextAttributes[.foregroundColor] = UIColor.label
                 }
             }
             return copy

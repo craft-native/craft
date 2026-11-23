@@ -1706,4 +1706,33 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertNil(CraftChromeFonts.titleFont)
         XCTAssertNil(CraftChromeFonts.tabLabelFont)
     }
+
+    func testLiquidGlassKeepsItsBrandIconAndUsesAdaptiveSelectedLabelInk() throws {
+        guard #available(iOS 26.0, *) else { return }
+        let tabBar = UITabBar()
+        let brandTint = UIColor(red: 221.0 / 255, green: 15.0 / 255, blue: 21.0 / 255, alpha: 1)
+        tabBar.tintColor = brandTint
+        let appearance = UITabBarAppearance()
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes[.foregroundColor] = brandTint
+        appearance.stackedLayoutAppearance.selected.iconColor = brandTint
+        tabBar.standardAppearance = appearance
+        tabBar.scrollEdgeAppearance = appearance
+
+        CraftChromeFonts.apply(to: tabBar)
+        XCTAssertEqual(tabBar.standardAppearance.stackedLayoutAppearance.selected.titleTextAttributes[.foregroundColor] as? UIColor, brandTint)
+
+        CraftChromeFonts.apply(to: tabBar, usesBrandTint: true)
+
+        for appearance in [tabBar.standardAppearance, try XCTUnwrap(tabBar.scrollEdgeAppearance)] {
+            for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+                let ink = try XCTUnwrap(layout.selected.titleTextAttributes[.foregroundColor] as? UIColor)
+                for style in [UIUserInterfaceStyle.dark, .light] {
+                    let traits = UITraitCollection(userInterfaceStyle: style)
+                    XCTAssertEqual(ink.resolvedColor(with: traits), UIColor.label.resolvedColor(with: traits))
+                }
+            }
+            XCTAssertEqual(appearance.stackedLayoutAppearance.selected.iconColor, brandTint)
+        }
+        XCTAssertEqual(tabBar.tintColor, brandTint)
+    }
 }
