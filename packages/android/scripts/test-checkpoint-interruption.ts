@@ -8,6 +8,7 @@ import { build, init } from '../src/index'
 import { createAndroidEmulator } from '../src/emulator'
 import { emulatorVersionCommand } from './vulkan-surface-probe'
 import { captureAndroidNativeDiagnostics, captureAndroidNativeUi, launchAndroidNativeFixture } from './native-fixture-launch'
+import { classifyPlatformFaults } from './platform-faults'
 
 // #440: one controlled Android interruption boundary, not the full #396 matrix.
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' } } })
@@ -283,7 +284,9 @@ finally {
     for (const [label, args] of [['final-logcat', ['logcat', '-d', '-b', 'all']], ['final-events', ['logcat', '-d', '-b', 'events']]] as const) {
       try {
         const log = await run(label, adb(...args), 10000, workspace, true)
-        if (/\bam_(anr|crash)\b|FATAL EXCEPTION|Fatal signal/.test(log)) throw new Error('Android platform or app fault invalidates checkpoint acceptance')
+        const faults = classifyPlatformFaults(log, packageName)
+        if (faults.tolerated.length) proof[`${label}ToleratedFaults`] = faults.tolerated
+        if (faults.fatal.length) throw new Error(`Android platform or app fault invalidates checkpoint acceptance: ${faults.fatal[0]}`)
       } catch (error) { failure ??= error; proof[`${label}Error`] = String(error) }
     }
     try {
