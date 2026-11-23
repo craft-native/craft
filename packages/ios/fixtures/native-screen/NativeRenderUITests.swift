@@ -137,8 +137,7 @@ final class NativeRenderUITests: XCTestCase {
         let app = XCUIApplication()
         for mode in ["photo-abort", "library-video-replace"] {
             app.launch()
-            app.buttons["open-picker"].tap()
-            let session = app.staticTexts["picker-session"].label
+            let session = openPickerScreen(app)
             app.buttons["picker-\(mode)"].tap()
             let cancel = app.buttons["Cancel"].firstMatch
             // The system picker runs out of process: on a loaded CI simulator
@@ -205,8 +204,7 @@ final class NativeRenderUITests: XCTestCase {
         for round in 1...3 {
             let app = XCUIApplication()
             app.launch()
-            app.buttons["open-picker"].tap()
-            let session = app.staticTexts["picker-session"].label
+            let session = openPickerScreen(app)
             app.buttons["picker-replace"].tap()
             let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
             XCTAssertTrue(picker.waitForExistence(timeout: systemSheetTimeout), app.debugDescription)
@@ -404,6 +402,17 @@ final class NativeRenderUITests: XCTestCase {
         } while Date() < deadline
         XCTAssertTrue(matched, "\(element.identifier) reads \"\(String(describing: element.value))\", not \"\(expected)\", \(timeout)s after input", file: file, line: line)
         return matched
+    }
+
+    /// Opens the picker screen and returns its session once it is ready. On a
+    /// loaded runner the pushed screen can take a moment to appear, and reading
+    /// `picker-session` before it exists fails the snapshot (#591).
+    private func openPickerScreen(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) -> String {
+        app.buttons["open-picker"].tap()
+        let session = app.staticTexts["picker-session"]
+        XCTAssertTrue(session.waitForExistence(timeout: 20), app.debugDescription, file: file, line: line)
+        waitForLabel(app.staticTexts["picker-status"], "Picker ready", timeout: 20, file: file, line: line)
+        return session.label
     }
 
     @discardableResult
