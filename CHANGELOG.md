@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.533...v0.0.534)
+
+## 🚀 Features
+
+- **native**: a screen's own pull-to-refresh figure ([082c5cc](https://github.com/craft-native/craft/commit/082c5cc)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.532...v0.0.533)
 
 ## 🚀 Features
