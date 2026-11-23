@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.531...v0.0.532)
+
+## 🐛 Bug Fixes
+
+- **ios**: cover the status bar on a bar-less screen while content scrolls under it ([a4bd607](https://github.com/craft-native/craft/commit/a4bd607)) _(by glennmichael123)_ ([#586](https://github.com/craft-native/craft/issues/586))
+
+## 🧪 Tests
+
+- **ios**: wait for the picker screen before reading its session ([d6b3209](https://github.com/craft-native/craft/commit/d6b3209)) _(by glennmichael123)_ ([#591](https://github.com/craft-native/craft/issues/591))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.530...v0.0.531)
 
 ## 🚀 Features
