@@ -2880,6 +2880,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actions).not.toContain('fetchSession.uploadTask(')
     expect(actions).toContain('let backgroundTime = uploadFile.map { _ in CraftUploadBackgroundTime(name: "craft.upload") }')
     expect(actions).toContain('UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)')
+    expect(actions).toContain('failure("BACKGROUND_EXPIRED", "iOS suspended the app before the upload finished")')
+    expect(actions).toContain('backgroundTime?.watch(task)')
     expect(files).toContain('guard let url = owned(path) else {')
     expect(files).toContain('Content-Disposition: form-data; name=\\"\\(quoted(name))\\"; filename=\\"\\(quoted(filename))\\"')
     // A download goes to disk; a refused one keeps no file and says why.

@@ -1010,6 +1010,28 @@ final class FilesUnitTests: XCTestCase {
         XCTAssertEqual(log.names.count, 1)
     }
 
+    func testAnUploadIOSStopsInTheBackgroundAnswersBackgroundExpired() async throws {
+        let log = BackgroundTimeLog()
+        let (begin, end) = (CraftUploadBackgroundTime.begin, CraftUploadBackgroundTime.end)
+        defer { CraftUploadBackgroundTime.begin = begin; CraftUploadBackgroundTime.end = end }
+        CraftUploadBackgroundTime.begin = { name, expiring in log.began(name, expiring: expiring) }
+        CraftUploadBackgroundTime.end = { log.ended($0) }
+        let made = try CraftNativeFiles.newFile(named: "clip.mp4")
+        try Data(repeating: 7, count: 64 * 1024).write(to: made)
+        defer { CraftNativeFiles.remove(made.path) }
+        let server = try UploadSink(answers: false)
+        defer { server.stop() }
+        let address = "http://127.0.0.1:\(try server.port())/upload"
+        let form: [[String: Any]] = [["name": "video", "path": made.path, "filename": "clip.mp4", "type": "video/mp4"]]
+
+        let upload = Task { await fetch(["url": address, "method": "POST", "form": form]) }
+        try await waitUntil("the clip reached a server that has not answered") { !server.bodies.isEmpty && log.expiry != nil }
+        log.expiry?()
+        guard case .failure(let error) = await upload.value else { return XCTFail("an upload iOS stopped succeeded") }
+        XCTAssertEqual(error.code, "BACKGROUND_EXPIRED", "the screen hears why, not a vague network error")
+        XCTAssertEqual(log.ends, [log.identifier], "the background time ends exactly once")
+    }
+
     func testUploadBackgroundTimeEndsOnceWhenIOSTakesItBack() {
         let log = BackgroundTimeLog()
         var expired: (() -> Void)?
@@ -1018,10 +1040,31 @@ final class FilesUnitTests: XCTestCase {
         CraftUploadBackgroundTime.begin = { name, handler in expired = handler; return log.began(name) }
         CraftUploadBackgroundTime.end = { log.ended($0) }
         let time = CraftUploadBackgroundTime(name: "craft.upload")
+        let task = URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:9/never")!)
+        time.watch(task)
+        XCTAssertFalse(time.expired)
         expired?()
         XCTAssertEqual(log.ends, [log.identifier], "iOS's expiry ends it, or iOS ends the app")
+        XCTAssertTrue(time.expired)
+        XCTAssertNotEqual(task.state, .suspended, "and stops the upload rather than leaving it to fail later")
         time.finish()
         XCTAssertEqual(log.ends.count, 1, "the transfer settling later does not end it twice")
+        XCTAssertTrue(time.expired)
+
+        // Expired before the upload was handed over: it is cancelled at once.
+        let late = CraftUploadBackgroundTime(name: "craft.upload")
+        expired?()
+        let unstarted = URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:9/never")!)
+        late.watch(unstarted)
+        XCTAssertNotEqual(unstarted.state, .suspended)
+        XCTAssertEqual(log.ends.count, 2)
+
+        // Settled first: a late expiry changes nothing.
+        let settled = CraftUploadBackgroundTime(name: "craft.upload")
+        settled.finish()
+        expired?()
+        XCTAssertFalse(settled.expired)
+        XCTAssertEqual(log.ends.count, 3)
     }
 
     private func fetch(_ options: [String: Any]) async -> Result<Any, CraftNativeActionError> {
@@ -1303,6 +1346,9 @@ private final class BackgroundTimeLog: @unchecked Sendable {
     var names: [String] { lock.lock(); defer { lock.unlock() }; return beganNames }
     var ends: [UIBackgroundTaskIdentifier] { lock.lock(); defer { lock.unlock() }; return endings }
     func began(_ name: String) -> UIBackgroundTaskIdentifier { lock.lock(); beganNames.append(name); lock.unlock(); return identifier }
+    private var handler: (() -> Void)?
+    var expiry: (() -> Void)? { lock.lock(); defer { lock.unlock() }; return handler }
+    func began(_ name: String, expiring: @escaping () -> Void) -> UIBackgroundTaskIdentifier { lock.lock(); handler = expiring; lock.unlock(); return began(name) }
     func ended(_ identifier: UIBackgroundTaskIdentifier) { lock.lock(); endings.append(identifier); lock.unlock() }
 }
 
@@ -1313,9 +1359,14 @@ private final class UploadSink: @unchecked Sendable {
     private let ready = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var lengths = [Int]()
+    private var held = [NWConnection]()
+    private let answers: Bool
     var bodies: [Int] { lock.lock(); defer { lock.unlock() }; return lengths }
 
-    init() throws {
+    /// `answers: false` reads the whole body and then never replies, like a
+    /// server still taking a large clip in.
+    init(answers: Bool = true) throws {
+        self.answers = answers
         listener = try NWListener(using: .tcp, on: .any)
         listener.stateUpdateHandler = { [ready] state in if case .ready = state { ready.signal() } }
         listener.newConnectionHandler = { [weak self] connection in
@@ -1335,7 +1386,8 @@ private final class UploadSink: @unchecked Sendable {
                 let field = head.components(separatedBy: "\r\n").first { $0.hasPrefix("content-length:") }
                 let length = field.flatMap { Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) } ?? 0
                 if received.count - end.upperBound >= length {
-                    self.lock.lock(); self.lengths.append(length); self.lock.unlock()
+                    self.lock.lock(); self.lengths.append(length); if !self.answers { self.held.append(connection) }; self.lock.unlock()
+                    guard self.answers else { return }
                     let reply = Data("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8)
                     connection.send(content: reply, completion: .contentProcessed { _ in connection.cancel() })
                     return
@@ -1351,7 +1403,11 @@ private final class UploadSink: @unchecked Sendable {
         return port
     }
 
-    func stop() { listener.cancel() }
+    func stop() {
+        listener.cancel()
+        lock.lock(); let held = self.held; self.held = []; lock.unlock()
+        held.forEach { $0.cancel() }
+    }
 }
 
 /// A one-file HTTP server on 127.0.0.1 for the background transfer test.

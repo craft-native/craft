@@ -27,7 +27,9 @@ let craftNativeUploadResourceTimeoutSeconds: TimeInterval = 6 * 60 * 60
 
 /// Background time for one upload: a lock or an app switch mid-transfer gets
 /// the grace iOS gives (about 30 seconds) instead of suspending at once. It
-/// ends once, when the transfer settles or when iOS takes the time back.
+/// ends once, when the transfer settles or when iOS takes the time back. In
+/// that case the upload is cancelled and `expired` says why, so the screen
+/// hears BACKGROUND_EXPIRED rather than a vague network error later.
 final class CraftUploadBackgroundTime {
     static var begin: (String, @escaping () -> Void) -> UIBackgroundTaskIdentifier = { name, expired in
         UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)
@@ -37,9 +39,11 @@ final class CraftUploadBackgroundTime {
     private let lock = NSLock()
     private var identifier = UIBackgroundTaskIdentifier.invalid
     private var finished = false
+    private var expiredBeforeSettling = false
+    private var task: URLSessionTask?
 
     init(name: String) {
-        let identifier = Self.begin(name) { [weak self] in self?.finish() }
+        let identifier = Self.begin(name) { [weak self] in self?.expire() }
         lock.lock()
         let alreadyFinished = finished
         self.identifier = alreadyFinished ? .invalid : identifier
@@ -47,13 +51,41 @@ final class CraftUploadBackgroundTime {
         if alreadyFinished, identifier != .invalid { Self.end(identifier) }
     }
 
+    /// Whether iOS took the time back before the upload settled.
+    var expired: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return expiredBeforeSettling
+    }
+
+    /// The upload to cancel if the time runs out; cancelled at once if it
+    /// already has.
+    func watch(_ task: URLSessionTask) {
+        lock.lock()
+        let cancelNow = expiredBeforeSettling
+        self.task = cancelNow ? nil : task
+        lock.unlock()
+        if cancelNow { task.cancel() }
+    }
+
     func finish() {
         lock.lock()
         let identifier = self.identifier
         self.identifier = .invalid
         finished = true
+        task = nil
         lock.unlock()
         if identifier != .invalid { Self.end(identifier) }
+    }
+
+    private func expire() {
+        lock.lock()
+        guard !finished else { return lock.unlock() }
+        expiredBeforeSettling = true
+        let task = self.task
+        lock.unlock()
+        finish()
+        task?.cancel()
     }
 }
 
@@ -934,6 +966,10 @@ enum CraftNativeActions {
             fetchProgress.removeValue(forKey: requestToken)
             cancellationLock.unlock()
             if let error = error {
+                if backgroundTime?.expired == true {
+                    complete(requestToken, failure("BACKGROUND_EXPIRED", "iOS suspended the app before the upload finished"), completion)
+                    return
+                }
                 let code = (error as? URLError)?.code == .timedOut ? "TIMEOUT" : "NETWORK_ERROR"
                 if (error as? URLError)?.code != .cancelled {
                     CraftCrashReporter.shared.requestFailed(method: method, url: url, status: nil, error: code)
@@ -968,6 +1004,7 @@ enum CraftNativeActions {
         }
         let task: URLSessionTask = uploadFile.map { uploadSession.uploadTask(with: request, fromFile: $0, completionHandler: responseHandler) }
             ?? fetchSession.dataTask(with: request, completionHandler: responseHandler)
+        backgroundTime?.watch(task)
         let uploadID = options["uploadProgressId"] as? String ?? ""
         let expectedBytes = uploadFile.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.map { Int64($0) } ?? Int64(request.httpBody?.count ?? 0)
         let observation = !uploadID.isEmpty && onUploadProgress != nil ? task.observe(\.countOfBytesSent, options: [.initial, .new]) { task, _ in

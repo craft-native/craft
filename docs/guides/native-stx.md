@@ -13,6 +13,21 @@ For code shared with a browser, STX exports `uploadFetch` and `UploadFetchInit`
 from `@stacksjs/stx/media/client/upload-fetch`. It uses XHR upload events on the
 web and the same native fetch contract in an installed app.
 
+What a `FormData` upload survives on iOS. Each upload runs on its own session,
+with no request deadline. It may take up to 6 hours in all, and fails with
+`TIMEOUT` after 10 minutes with no bytes moving. A lock or an app switch
+mid-upload gets the background time iOS grants, about 30 seconds, sometimes
+more. If iOS takes that time back first, the upload is cancelled and rejects
+with `code: 'BACKGROUND_EXPIRED'`, so the screen can retry it when the app
+returns. Uploads do not survive the app being terminated, and the retry starts
+from the beginning. Closing the screen that started an upload, or aborting its
+signal, still cancels it. Keep a long queue on a screen that stays in the
+stack, and keep the display on with `craft.setKeepAwake(true)`
+(`enableKeepAwake`) while it runs. A device that is offline when the upload
+starts fails at once with `NETWORK_ERROR` rather than waiting for a
+connection. Android has no whole-transfer limit and is not suspended at once
+on lock.
+
 Craft's experimental `native` mobile renderer runs a compiled STX route bundle
 without a browser view. iOS evaluates the bundle with JavaScriptCore and creates
 UIKit controls. Android evaluates the same bundle with JavaScriptSandbox and
@@ -2299,7 +2314,8 @@ needs an App Transport Security exception, as the template has for
 `localhost`); bodies are UTF-8 text both ways, a `GET` or `HEAD` with a body is
 rejected, and a response larger than 8 MB rejects with `RESPONSE_TOO_LARGE`.
 Transport failures reject with a `TypeError` whose `code` is `NETWORK_ERROR` or
-`TIMEOUT`; HTTP error statuses resolve normally with `ok: false`. Streaming
+`TIMEOUT` (or, for a `FormData` upload iOS stopped in the background,
+`BACKGROUND_EXPIRED`; see Upload transfers); HTTP error statuses resolve normally with `ok: false`. Streaming
 bodies, `AbortSignal`, and arbitrary binary bodies are not part of the subset.
 `FormData` is supported only when the host advertises `files`; it is limited
 to text fields and files created by `craft.files`. Cookies use the app's
