@@ -8118,6 +8118,7 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
     func testDisabledBridgeRejectsBackgroundDeliveryAndDoesNotAdvertiseIt() async {
         let config = CraftConfig()
         XCTAssertFalse(CraftNativeActions.capabilities(config: config).contains("healthBackground"))
+        XCTAssertFalse(CraftNativeActions.capabilities(config: config).contains("healthHeartRateErrors"), "no HealthKit, no heart-rate errors")
         let result: Result<Any, CraftNativeActionError> = await withCheckedContinuation { next in
             CraftNativeActions.perform(requestToken: UUID().uuidString, version: 1, module: "HealthBackground", method: "pending", args: [], config: config) { next.resume(returning: $0) }
         }
@@ -8127,6 +8128,7 @@ final class NativeHealthBackgroundUnitTests: XCTestCase {
         enabled.enableHealthKit = true
         enabled.enableHealthKitBackground = true
         XCTAssertTrue(CraftNativeActions.capabilities(config: enabled).contains("healthBackground"))
+        XCTAssertTrue(CraftNativeActions.capabilities(config: enabled).contains("healthHeartRateErrors"), "a screen can tell this host reports why a stream stopped")
     }
 
     func testDeltaAndAnchorSurviveRelaunchUntilExplicitAcknowledgement() throws {

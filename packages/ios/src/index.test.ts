@@ -1545,6 +1545,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actions).toContain('guard config.enableHealthKit else {')
     expect(actions).toContain('CraftHealth.shared.perform(method: method, args: args)')
     expect(actions).toContain('if config.enableHealthKit { values.append("health") }')
+    expect(actions).toContain('if config.enableHealthKit { values.append("healthHeartRateErrors") }')
     // HealthKit invokes query and authorization handlers off-main on some OS
     // versions. Every public entry point normalizes its bridge completion so
     // native-screen JavaScript can resume safely after the sheet/query ends.

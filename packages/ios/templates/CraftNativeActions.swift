@@ -113,6 +113,9 @@ enum CraftNativeActions {
         if config.enableDeepLinks { values.append("deepLinks") }
         if config.enableLocalNotifications { values.append("notifications") }
         if config.enableHealthKit { values.append("health") }
+        // health.onHeartRateError (0.0.531): an older host never reports why a
+        // heart-rate stream stopped, so a screen can tell it is there.
+        if config.enableHealthKit { values.append("healthHeartRateErrors") }
         if config.enableHealthKit && config.enableHealthKitBackground { values.append("healthBackground") }
         if config.enableBarometer { values.append("barometer") }
         if config.enablePedometer { values.append("pedometer") }
