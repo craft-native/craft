@@ -60,6 +60,8 @@ try {
       enableSecureStorage: true,
       enableBiometric: true,
       enableLocalNetwork: true,
+      // #595: the Media3 exporter and its NativeVideoExportTest.
+      enableVideoExport: true,
       urlSchemes: ['craft-native-test'],
     },
     runtimeDir: null,
@@ -78,6 +80,11 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeVoiceRecordingTest.kt'), join(testDirectory, 'NativeVoiceRecordingTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilityUiTest.kt'), join(testDirectory, 'NativeCapabilityUiTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMapTest.kt'), join(testDirectory, 'NativeMapTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeVideoExportTest.kt'), join(testDirectory, 'NativeVideoExportTest.kt'))
+  // The phone clips NativeVideoExportTest exports, in the test APK's assets.
+  const testAssets = join(output, 'app/src/androidTest/assets')
+  mkdirSync(testAssets, { recursive: true })
+  for (const clip of ['sdr-portrait.mov', 'hdr-portrait.mov']) copyFileSync(join(import.meta.dir, '../fixtures/native-navigation', clip), join(testAssets, clip))
   const debugDirectory = join(output, 'app/src/debug/java', ...packageName.split('.'))
   mkdirSync(debugDirectory, { recursive: true })
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeSystemBarsReferenceActivity.kt'), join(debugDirectory, 'NativeSystemBarsReferenceActivity.kt'))

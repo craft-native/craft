@@ -2139,7 +2139,9 @@ ignored and padding optional. Anything else, URL-safe base64 included, rejects
 with `INVALID_ARGUMENT` and writes nothing.
 
 `craft.files.exportVideo(file, options)` converts a clip on the device before
-it is uploaded, where the host advertises `videoExport`. A phone films HEVC,
+it is uploaded, where the host advertises `videoExport`: every iOS app, and
+Android apps built with `enableVideoExport: true` (it adds Media3 Transformer,
+so it is off by default). A phone films HEVC,
 often HDR, portrait through a rotation matrix, up to 4K60, and many browsers
 and PCs can't play that. The export is a small MP4 any browser plays:
 
@@ -2163,7 +2165,11 @@ The original is untouched. `video` and `poster` are ordinary craft files: send
 them in `FormData`, then `craft.files.remove` them.
 
 It is cancelled like a fetch: by the request, by `API_CANCEL`, and when the
-screen goes away. A cancelled export keeps no files. On iOS it holds background
+screen goes away. A cancelled export keeps no files. Android tone-maps HDR with
+OpenGL (or in the decoder, where OpenGL can't) and encodes portrait clips
+portrait, so there is no orientation hint. It asks for H.264 High and takes
+the encoder's best profile on a device without it;
+a device that can't do either rejects with `EXPORT_FAILED`. On iOS it holds background
 time while it runs; if iOS takes that back, it rejects with
 `BACKGROUND_EXPIRED`. Other codes: `UNSUPPORTED_SOURCE` (no video it can
 read), `EXPORT_FAILED`, `CANCELLED`, and `INVALID_ARGUMENT` for a file craft
