@@ -5821,13 +5821,17 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         } else if !refreshing, !awaitingRefreshAnswer, pullToRefresh.isRefreshing {
             pullToRefresh.endRefreshing()
         }
+        updateRefreshBursts()
     }
 
     /// Applies the shared RefreshControl appearance props. UIKit's refresh
     /// control owns the spinner and optional title; keep the authored values
     /// on the control so a later reconciliation can clear them as well.
+    /// `tintColor` is any CSS colour (`transparent` and `#rrggbbaa` too), as
+    /// on Android: a screen that draws its own figure in the gap clears the
+    /// spinner with `transparent`.
     func setRefreshAppearance(_ props: [String: Any]) {
-        pullToRefresh.tintColor = (props["tintColor"] as? String).flatMap { UIColor(hex: $0) }
+        pullToRefresh.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
         guard let title = props["title"] as? String, !title.isEmpty else {
             pullToRefresh.attributedTitle = nil
             return
@@ -5841,16 +5845,32 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 
     var isRefreshingNow: Bool { pullToRefresh.isRefreshing }
 
+    // MARK: A screen's own refresh indicator
+
+    /// The figure a screen draws in the pull's gap instead of the spinner
+    /// (CraftRefreshIndicator).
+    private lazy var refreshIndicator = CraftRefreshIndicator(control: pullToRefresh)
+
+    func setRefreshIndicator(_ node: [String: Any]?) {
+        refreshIndicator.set(node)
+    }
+
+    private func updateRefreshBursts() {
+        refreshIndicator.update()
+    }
+
     @objc private func refreshPulled() {
         awaitingRefreshAnswer = true
         refreshHandler?()
+        updateRefreshBursts()
         // Once the script has answered the pull (and its render has landed):
         // a script on its own thread answers a turn or two later.
         CraftNativeScriptThread.afterScript { [weak self] in
             guard let self else { return }
             self.awaitingRefreshAnswer = false
-            guard !self.refreshingProp, self.pullToRefresh.isRefreshing else { return }
+            guard !self.refreshingProp, self.pullToRefresh.isRefreshing else { return self.updateRefreshBursts() }
             self.pullToRefresh.endRefreshing()
+            self.updateRefreshBursts()
         }
     }
 
@@ -6089,6 +6109,91 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
     }
 }
 
+/// The drawing a screen puts in a pull to refresh's gap instead of UIKit's
+/// spinner: an `<svg refreshIndicator>` among a ScrollView's or FlatList's
+/// children (or their children: a component's wrapper), hidden from the
+/// content. It is drawn in the refresh control where the spinner would be,
+/// and the spinner is cleared while it is there; the pull reveals it as it
+/// reveals the spinner. It plays its animation at its own pace and, while the
+/// page loads, alternates that with quick bursts (`animationRate` 2) every
+/// `burst` seconds. An app built before this keeps the spinner and never
+/// draws the hidden drawing.
+final class CraftRefreshIndicator {
+    static let size: CGFloat = 56
+    static let burst: TimeInterval = 1.6
+
+    private weak var control: UIRefreshControl?
+    private var view: CraftNativeSvgView?
+    private var bursts: Timer?
+
+    init(control: UIRefreshControl) {
+        self.control = control
+    }
+
+    var isShown: Bool { view != nil }
+
+    /// Show `node` in the gap, or put the spinner back when it is nil.
+    func set(_ node: [String: Any]?) {
+        guard let control else { return }
+        guard let node else {
+            if view != nil { control.tintColor = nil }
+            view?.removeFromSuperview()
+            view = nil
+            update()
+            return
+        }
+        let shown = view ?? {
+            let view = CraftNativeSvgView(frame: CGRect(x: 0, y: 0, width: Self.size, height: Self.size))
+            view.isUserInteractionEnabled = false
+            view.isAccessibilityElement = false
+            view.accessibilityElementsHidden = true
+            view.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin, .flexibleBottomMargin]
+            control.addSubview(view)
+            self.view = view
+            return view
+        }()
+        shown.drawing = node
+        shown.center = CGPoint(x: control.bounds.midX, y: control.bounds.midY)
+        control.tintColor = .clear
+        update()
+    }
+
+    /// Quick bursts while the page loads; the figure's own pace otherwise.
+    func update() {
+        guard let view, control?.isRefreshing == true else {
+            bursts?.invalidate()
+            bursts = nil
+            view?.animationRate = 1
+            return
+        }
+        guard bursts == nil else { return }
+        let timer = Timer(timeInterval: Self.burst, repeats: true) { [weak view] _ in
+            guard let view else { return }
+            view.animationRate = view.animationRate == 1 ? 2 : 1
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        bursts = timer
+    }
+
+    deinit { bursts?.invalidate() }
+
+    /// The `<svg refreshIndicator>` among `children` or their children, nil
+    /// when there is none or it says `refreshIndicator="false"`. stx passes
+    /// the attribute lower-cased.
+    static func node(in children: [Any], depth: Int = 0) -> [String: Any]? {
+        for child in children {
+            guard let node = child as? [String: Any] else { continue }
+            let props = node["props"] as? [String: Any] ?? [:]
+            if node["type"] as? String == "Svg", let flag = props["refreshIndicator"] ?? props["refreshindicator"] {
+                if (flag as? Bool) == false || (flag as? String)?.lowercased() == "false" { return nil }
+                return node
+            }
+            if depth < 2, let found = Self.node(in: node["children"] as? [Any] ?? [], depth: depth + 1) { return found }
+        }
+        return nil
+    }
+}
+
 final class CraftNativeSvgView: UIView {
     lazy var inspection = CraftChartInspection(view: self)
     override func accessibilityIncrement() { inspection.adjust(1) }
@@ -6127,6 +6232,17 @@ final class CraftNativeSvgView: UIView {
     /// When this drawing's repetition began: each one starts from its first
     /// pose when it comes on screen, as a page's SMIL starts when it loads.
     private var animationStart: CFTimeInterval?
+
+    /// How fast the keyframes play: 1 as authored, 2 twice as fast. Changing
+    /// it keeps the pose on screen and carries on from there (a refresh
+    /// indicator's figure speeding up while its page loads).
+    var animationRate: Double = 1 {
+        didSet {
+            guard animationRate != oldValue, animationRate > 0, oldValue > 0, let start = animationStart else { return }
+            let now = CACurrentMediaTime()
+            animationStart = now - (now - start) * oldValue / animationRate
+        }
+    }
 
     /// Moving now: on display, and the person has not asked for less motion,
     /// when each shape keeps its own outline (the still pose).
@@ -6181,7 +6297,7 @@ final class CraftNativeSvgView: UIView {
         let geometry = (shape["props"] as? [String: Any])?["geometry"]
         guard isAnimating, let start = animationStart,
               let animate = (shape["children"] as? [Any])?.lazy.compactMap({ $0 as? [String: Any] }).first(where: { $0["type"] as? String == "Animate" }),
-              let current = Self.keyframe(animate["props"] as? [String: Any] ?? [:], at: CACurrentMediaTime() - start) else { return geometry }
+              let current = Self.keyframe(animate["props"] as? [String: Any] ?? [:], at: (CACurrentMediaTime() - start) * animationRate) else { return geometry }
         return current
     }
 
@@ -11462,6 +11578,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.setRefreshHandler(refreshHandlerName.map { [weak self] handler in
                 { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
             }, refreshing: refreshing)
+            scroll.setRefreshIndicator(CraftRefreshIndicator.node(in: children))
             scroll.setRefreshAppearance(refreshProps)
             var contentStyle = style
             if let override = props["contentContainerStyle"] as? [String: Any] {
@@ -11827,6 +11944,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
         }, refreshing: refreshing)
         list.setRefreshAppearance(propRefresh)
+        let refreshIndicator = CraftRefreshIndicator.node(in: children)
+        list.setRefreshIndicator(refreshIndicator)
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
         list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
@@ -11851,7 +11970,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let familyChanged = list.inheritedFontFamily != fontFamily
         let rowsDrawnBefore = familyChanged && flatListRows[listKey]?.isEmpty == false
         list.apply(
-            nodes: children,
+            // The figure goes in the pull's gap, not among the rows.
+            nodes: refreshIndicator == nil ? children : children.filter { CraftRefreshIndicator.node(in: [$0]) == nil },
             horizontal: props["horizontal"] as? Bool == true,
             columns: craftNativeInt(number(props["numColumns"]) ?? 1),
             inverted: props["inverted"] as? Bool == true,

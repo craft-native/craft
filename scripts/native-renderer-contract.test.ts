@@ -3467,7 +3467,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
     expect(android).toContain('fun setRefreshHandler(handler: (() -> Unit)?, refreshing: Boolean)')
     expect(android).toContain('fun setRefreshAppearance(props: JSONObject, density: Float, fallback: Int)')
-    expect(android).toContain('setRefreshAppearance(refreshProps, resources.displayMetrics.density, refreshTintFallback(screen))')
+    expect(android).toContain('setRefreshAppearance(craftNativeRefreshProps(refreshProps, craftNativeHasRefreshIndicator(children)), resources.displayMetrics.density, refreshTintFallback(screen))')
     expect(android).toContain('background?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: Color.TRANSPARENT')
     expect(android).toContain('setRefreshHandler(refreshHandler, craftNativeBoolean(refreshProps.opt("refreshing"), craftNativeBoolean(props.opt("refreshing"))))')
     expect(android).toContain('released.filterIsInstance<CraftNativeScrollView>().forEach {\n            it.setRefreshHandler(null, false)')
@@ -4319,7 +4319,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('CraftNativeRefreshableFlatList')
     expect(android).toContain('craftNativeEventName(events, "onRefresh")')
     expect(android).toContain('val propRefresh = props.optJSONObject("refreshControl") ?: JSONObject()')
-    expect(android).toContain('setRefreshAppearance(propRefresh, refreshTintFallback(screen))')
+    expect(android).toContain('setRefreshAppearance(craftNativeRefreshProps(propRefresh, craftNativeHasRefreshIndicator(children)), refreshTintFallback(screen))')
     expect(android).toContain('private fun refreshTintFallback(screen: Screen): Int')
     expect(androidRefreshableFlatList).toContain('fun setRefreshAppearance(props: JSONObject, fallback: Int)')
     expect(androidRefreshableFlatList).toContain('runCatching { craftNativeColor(it) }.getOrNull() } ?: fallback')
@@ -5126,7 +5126,9 @@ describe('native renderer component contract', () => {
   it('keeps malformed Android refresh colors from crashing or inventing a tint', () => {
     expect(android).toContain('setColorSchemeColors(tint?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: fallback)')
     expect(android).toContain('background?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: Color.TRANSPARENT')
-    expect(ios).toContain('pullToRefresh.tintColor = (props["tintColor"] as? String).flatMap { UIColor(hex: $0) }')
+    expect(ios).toContain('pullToRefresh.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
+    // A CSS colour, `transparent` included, so a screen can clear the spinner for its own figure.
+    expect(readFileSync(new URL('../packages/ios/templates/CraftNativeFlatList.swift', import.meta.url), 'utf8')).toContain('nativeRefreshControl.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
   })
 
   it('restores native backgrounds when custom styles are removed', () => {
@@ -5479,3 +5481,21 @@ describe('mobile acceptance scopes', () => {
   }
 })
 
+
+describe('a screen\'s own pull-to-refresh figure', () => {
+  it('draws an <svg refreshIndicator> in the refresh control on iOS, spinner cleared, quicker while loading', () => {
+    expect(ios).toContain('final class CraftRefreshIndicator')
+    expect(ios).toContain('control.tintColor = .clear')
+    expect(ios).toContain('view.animationRate = view.animationRate == 1 ? 2 : 1')
+    expect(ios).toContain('scroll.setRefreshIndicator(CraftRefreshIndicator.node(in: children))')
+    // A list keeps the figure out of its rows.
+    expect(ios).toContain('children.filter { CraftRefreshIndicator.node(in: [$0]) == nil }')
+    expect(ios).toContain('at: (CACurrentMediaTime() - start) * animationRate)')
+  })
+
+  it('clears the spinner on Android, where the screen shows its figure as a row', () => {
+    expect(android).toContain('internal fun craftNativeHasRefreshIndicator(children: JSONArray?, depth: Int = 0): Boolean')
+    expect(android).toContain('setRefreshAppearance(craftNativeRefreshProps(refreshProps, craftNativeHasRefreshIndicator(children))')
+    expect(android).toContain('setRefreshAppearance(craftNativeRefreshProps(propRefresh, craftNativeHasRefreshIndicator(children))')
+  })
+})

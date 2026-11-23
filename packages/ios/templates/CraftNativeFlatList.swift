@@ -454,21 +454,32 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         } else if refreshing, !nativeRefreshControl.isRefreshing {
             nativeRefreshControl.beginRefreshing()
         }
+        refreshIndicator.update()
     }
 
     func setRefreshAppearance(_ props: [String: Any]) {
-        nativeRefreshControl.tintColor = (props["tintColor"] as? String).flatMap { UIColor(hex: $0) }
+        nativeRefreshControl.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
+    }
+
+    /// The figure a screen draws in the pull's gap instead of the spinner
+    /// (CraftRefreshIndicator, kept out of the rows by the screen).
+    private lazy var refreshIndicator = CraftRefreshIndicator(control: nativeRefreshControl)
+
+    func setRefreshIndicator(_ node: [String: Any]?) {
+        refreshIndicator.set(node)
     }
 
     @objc private func refreshTriggered() {
         awaitingRefreshAnswer = true
         refreshHandler?()
+        refreshIndicator.update()
         // Once the script has answered the pull, on its own thread or not.
         CraftNativeScriptThread.afterScript { [weak self] in
             guard let self else { return }
             self.awaitingRefreshAnswer = false
-            guard !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return }
+            guard !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return self.refreshIndicator.update() }
             self.nativeRefreshControl.endRefreshing()
+            self.refreshIndicator.update()
         }
     }
 

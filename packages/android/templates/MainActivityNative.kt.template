@@ -429,6 +429,31 @@ private fun craftNativeGridRowCount(value: Any?): Int? = craftNativeGridTrackCou
  * grey fill (`#7676801f`) came out olive. Also `rgb()`/`rgba()` and
  * `transparent`; anything else goes to Android's parser (named colours).
  */
+/**
+ * Whether a screen draws its own figure for a pull to refresh: an
+ * `<svg refreshIndicator>` among a scroll view's or list's children (or their
+ * children). Android's control draws over the content rather than opening a
+ * gap for it, so the screen shows its figure as a row while it loads and the
+ * spinner is cleared (craftNativeRefreshProps). stx passes the attribute
+ * lower-cased.
+ */
+internal fun craftNativeHasRefreshIndicator(children: JSONArray?, depth: Int = 0): Boolean {
+    if (children == null) return false
+    for (index in 0 until children.length()) {
+        val node = children.optJSONObject(index) ?: continue
+        val props = node.optJSONObject("props")
+        val flag = props?.opt("refreshIndicator") ?: props?.opt("refreshindicator")
+        if (node.optString("type") == "Svg" && flag != null && flag != JSONObject.NULL)
+            return !(flag == false || flag.toString().equals("false", ignoreCase = true))
+        if (depth < 2 && craftNativeHasRefreshIndicator(node.optJSONArray("children"), depth + 1)) return true
+    }
+    return false
+}
+
+/** A refresh control's appearance with the spinner cleared when the screen draws its own figure. */
+internal fun craftNativeRefreshProps(props: JSONObject, ownIndicator: Boolean): JSONObject =
+    if (!ownIndicator) props else JSONObject(props.toString()).put("tintColor", "transparent").put("progressBackgroundColor", "transparent")
+
 internal fun craftNativeColor(raw: String): Int {
     val value = raw.trim()
     if (value.equals("transparent", ignoreCase = true)) return Color.TRANSPARENT
@@ -7905,7 +7930,7 @@ class MainActivity : AppCompatActivity() {
                     { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject())) }
                 }
                 setRefreshHandler(refreshHandler, craftNativeBoolean(refreshProps.opt("refreshing"), craftNativeBoolean(props.opt("refreshing"))))
-                setRefreshAppearance(refreshProps, resources.displayMetrics.density, refreshTintFallback(screen))
+                setRefreshAppearance(craftNativeRefreshProps(refreshProps, craftNativeHasRefreshIndicator(children)), resources.displayMetrics.density, refreshTintFallback(screen))
                 val onScroll = craftNativeEventName(events, "onScroll")
                 if (onScroll.isNotBlank()) screen.scrollHandlers[this] = onScroll else screen.scrollHandlers.remove(this)
                 val onBegin = craftNativeEventName(events, "onScrollBeginDrag")
@@ -7988,7 +8013,7 @@ class MainActivity : AppCompatActivity() {
                 configureRefresh(refreshHandlerName?.let { handler ->
                     { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject())) }
                 }, craftNativeBoolean(propRefresh.opt("refreshing"), craftNativeBoolean(props.opt("refreshing"))))
-                setRefreshAppearance(propRefresh, refreshTintFallback(screen))
+                setRefreshAppearance(craftNativeRefreshProps(propRefresh, craftNativeHasRefreshIndicator(children)), refreshTintFallback(screen))
                 nativeList.setKeyboardShouldPersistTaps(craftNativeOptionalString(props.opt("keyboardShouldPersistTaps")) ?: "never")
                 nativeList.setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)
                 nativeList.setKeyboardDismissMode(craftNativeOptionalString(props.opt("keyboardDismissMode")).orEmpty()) {
