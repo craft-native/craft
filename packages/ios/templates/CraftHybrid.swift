@@ -1276,13 +1276,48 @@ final class CraftHybridWebSlot: UIViewController {
 
 /// A native stack lets the top screen consume Back for its presented modal
 /// before UIKit removes the screen from the navigation stack.
+/// Every removal also asks CraftRemovalGuard first, so a screen with
+/// `preventRemove` stays whichever way it was asked to go.
 class CraftNativeNavigationController: UINavigationController {
     override func popViewController(animated: Bool) -> UIViewController? {
         if let screen = topViewController as? CraftNativeScreenController,
            screen.handleBackForModal() {
             return nil
         }
+        if viewControllers.count > 1, let top = topViewController,
+           CraftRemovalGuard.blocks(removing: [top], action: "back", retry: { [weak self] in _ = self?.popViewController(animated: animated) }) {
+            return nil
+        }
         return super.popViewController(animated: animated)
+    }
+
+    override func popToRootViewController(animated: Bool) -> [UIViewController]? {
+        if CraftRemovalGuard.blocks(removing: Array(viewControllers.dropFirst()), action: "popToRoot",
+                                    retry: { [weak self] in _ = self?.popToRootViewController(animated: animated) }) {
+            return nil
+        }
+        return super.popToRootViewController(animated: animated)
+    }
+
+    override func popToViewController(_ viewController: UIViewController, animated: Bool) -> [UIViewController]? {
+        let above = Array(viewControllers.drop(while: { $0 !== viewController }).dropFirst())
+        if CraftRemovalGuard.blocks(removing: above, action: "open",
+                                    retry: { [weak self, weak viewController] in
+                                        guard let viewController else { return }
+                                        _ = self?.popToViewController(viewController, animated: animated)
+                                    }) {
+            return nil
+        }
+        return super.popToViewController(viewController, animated: animated)
+    }
+
+    override func setViewControllers(_ viewControllers: [UIViewController], animated: Bool) {
+        let gone = self.viewControllers.filter { old in !viewControllers.contains { $0 === old } }
+        if CraftRemovalGuard.blocks(removing: gone, action: "replace",
+                                    retry: { [weak self] in self?.setViewControllers(viewControllers, animated: animated) }) {
+            return
+        }
+        super.setViewControllers(viewControllers, animated: animated)
     }
 }
 
@@ -1298,6 +1333,7 @@ final class CraftNativeCoverNavigationController: CraftNativeNavigationControlle
     override func popViewController(animated: Bool) -> UIViewController? {
         guard viewControllers.count <= 1 else { return super.popViewController(animated: animated) }
         if let screen = topViewController as? CraftNativeScreenController, screen.handleBackForModal() { return nil }
+        if CraftRemovalGuard.blocks(removing: viewControllers, action: "closeCover", retry: { [weak self] in self?.onCloseAtRoot?() }) { return nil }
         onCloseAtRoot?()
         return nil
     }
@@ -1317,6 +1353,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var chromeSubscription: AnyCancellable?
     private var chromeUpdatePending = false
     private var synchronizingTabs = false
+    /// When a back-swipe was last refused for `preventRemove`.
+    private var lastRefusedSwipe = Date.distantPast
     private var accessoryModel: CraftChrome.Tab?
     private let accessoryButton = UIButton(type: .system)
     // UIKit retains its shelf's content view across removal animations. Never
@@ -2571,9 +2609,19 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
         guard let path = CraftHybridRoutes.normalize(raw) else { return }
         if let tab = hybrid.tabIds.first(where: { CraftHybridRoutes.normalize($0) == path }) {
+            let withParams = hybrid.routes.match(raw) != nil && (URLComponents(string: raw)?.query != nil || !props.isEmpty)
+            // A busy screen (`preventRemove`) in the cover, or above the tab's
+            // root when the tab is selected again, is asked first.
+            let reselected = coverStack == nil && tab == currentTab ? Array((stacks[tab]?.viewControllers ?? []).dropFirst()) : []
+            let gone = (coverStack?.viewControllers ?? [])
+                + (withParams ? screensRemoved(showing: raw, replace: false, presentation: nil) : reselected)
+            if CraftRemovalGuard.blocks(removing: gone, action: "open",
+                                        retry: { [weak self] in self?.open(raw, props: props, presentation: presentation) }) {
+                return
+            }
             // A tab is under a cover: the cover closes to show it.
             dismissCover(animated: true)
-            if hybrid.routes.match(raw) != nil, URLComponents(string: raw)?.query != nil || !props.isEmpty {
+            if withParams {
                 // A checkout/auth return targets the retained tab with new
                 // parameters. Selecting alone would discard that handoff.
                 showNative(path: raw, replace: false, props: props)
@@ -2587,6 +2635,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             return
         }
         if hybrid.hasWeb {
+            if CraftRemovalGuard.blocks(removing: coverStack?.viewControllers ?? [], action: "open",
+                                        retry: { [weak self] in self?.open(raw, props: props, presentation: presentation) }) {
+                return
+            }
             // The page is drawn in a tab's stack, under any cover.
             dismissCover(animated: true)
             pushWeb(raw)
@@ -2603,10 +2655,40 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
     }
 
+    /// The screens showNative(path: raw) would take out of their stacks, by
+    /// its own rules, so a busy one is asked before any of it happens.
+    private func screensRemoved(showing raw: String, replace: Bool, presentation: String?) -> [UIViewController] {
+        guard let match = hybrid.routes.match(raw) else { return [] }
+        if let tab = hybrid.tabIds.first(where: { CraftHybridRoutes.normalize($0) == match.path }) {
+            var gone = coverStack?.viewControllers ?? []
+            if replace, let current = visibleStack, current.viewControllers.count > 1, let last = current.viewControllers.last {
+                gone.append(last)
+            }
+            if let nav = stacks[tab], let root = nav.viewControllers.first {
+                let rootIsTheTabs = root is CraftHybridWebSlot || nativePaths[ObjectIdentifier(root)] == match.path
+                gone += rootIsTheTabs ? Array(nav.viewControllers.dropFirst()) : nav.viewControllers
+            }
+            return gone
+        }
+        if presentation == "cover", coverStack == nil, !replace { return [] }
+        guard let nav = frontStack ?? stacks.values.first else { return [] }
+        if let existing = nav.viewControllers.last(where: { nativePaths[ObjectIdentifier($0)] == match.path }) {
+            return Array(nav.viewControllers.drop(while: { $0 !== existing }).dropFirst())
+        }
+        return replace ? Array(nav.viewControllers.suffix(1)) : []
+    }
+
     /// The native screen for `raw`: the one already in the stack (popping to
     /// it), a tab's root, or a new one pushed.
     func showNative(path raw: String, replace: Bool, fromLink: Bool = false, props: [String: Any] = [:], presentation: String? = nil) {
         guard let match = hybrid.routes.match(raw) else { return }
+        // Before any of it happens: a busy screen (`preventRemove`) this would
+        // take out hears about it, and the whole open waits for its answer.
+        if CraftRemovalGuard.blocks(removing: screensRemoved(showing: raw, replace: replace, presentation: presentation),
+                                    action: replace ? "replace" : "open",
+                                    retry: { [weak self] in self?.showNative(path: raw, replace: replace, fromLink: fromLink, props: props, presentation: presentation) }) {
+            return
+        }
         interruptTabSwipe(restoringSelection: true)
         let tabs = hybrid.tabIds
         if let tab = tabs.first(where: { CraftHybridRoutes.normalize($0) == match.path }) {
@@ -2653,10 +2735,12 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             return
         }
         let screen = entry(for: raw, isTabRoot: false, depth: nil, props: props)
+        let approved = CraftRemovalGuard.isBypassing
         let show = { [weak nav] in
             guard let nav else { return }
             if replace, !nav.viewControllers.isEmpty {
-                nav.setViewControllers(Array(nav.viewControllers.dropLast()) + [screen], animated: true)
+                let swap = { nav.setViewControllers(Array(nav.viewControllers.dropLast()) + [screen], animated: true) }
+                if approved { CraftRemovalGuard.bypassing(swap) } else { swap() }
             } else {
                 nav.pushViewController(screen, animated: true)
             }
@@ -2827,7 +2911,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         if (reselect && !interruptedSwipe) || id == currentTab {
             guard let nav = stacks[id] else { return true }
             if nav.viewControllers.count > 1 {
-                nav.popToRootViewController(animated: true)
+                let toRoot = { [weak nav] in _ = nav?.popToRootViewController(animated: true) }
+                if !CraftRemovalGuard.blocks(removing: Array(nav.viewControllers.dropFirst()), action: "tabReselect", retry: toRoot) {
+                    toRoot()
+                }
                 return false
             }
             // The root again: a web root is the page's to handle (to its top,
@@ -3051,6 +3138,17 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
               nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
         if let native = nav.topViewController as? CraftNativeScreenController {
             // `swipeBack: false`: the screen's own Back is the only way back.
+            // `preventRemove`: no swipe begins, and the attempt is the same
+            // refusal a tap on Back is, once per swipe (the edge and the
+            // content-wide recognizers can both ask).
+            if native.preventRemove {
+                if Date().timeIntervalSince(lastRefusedSwipe) > 0.5 {
+                    lastRefusedSwipe = Date()
+                    _ = CraftRemovalGuard.blocks(removing: [native], action: "back",
+                                                 retry: { [weak nav] in _ = nav?.popViewController(animated: true) })
+                }
+                return false
+            }
             if !native.swipeBack { return false }
             if gestureRecognizer !== nav.interactivePopGestureRecognizer, !native.contentSwipeBack { return false }
             // A back-swipe that starts on a pager, a carousel or a chart that

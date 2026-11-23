@@ -28,6 +28,22 @@ starts fails at once with `NETWORK_ERROR` rather than waiting for a
 connection. Android has no whole-transfer limit and is not suspended at once
 on lock.
 
+To keep an uploading screen in place, set
+`craft.navigation.setOptions({ preventRemove: true })` while it sends, and set
+it back to `false` when it's done. While it is set, nothing takes the screen out
+of its stack, on iOS or Android. That covers Back (the bar button, the system
+Back, a back-swipe, the screen's own `navigation.back()`), a tab tapped again,
+`popToRoot()`, a replace, and an open or link that would pop to another
+screen, close a cover or show a tab's root. The screen hears
+`REMOVE_BLOCKED { id, action }` instead, with `action` one of `back`,
+`popToRoot`, `tabReselect`, `replace`, `open` or `closeCover`. To let it
+happen, for example after the person confirms, it calls
+`craft.navigation.proceed(id)`. Only the latest refusal can be carried
+through; a stale id, or one from before the option was cleared, does nothing.
+A back-swipe does not begin at all, and is reported once as `back`. Pushing
+another screen on top, switching tabs, or the app going to the background
+never removes the screen, so none of them is refused.
+
 Craft's experimental `native` mobile renderer runs a compiled STX route bundle
 without a browser view. iOS evaluates the bundle with JavaScriptCore and creates
 UIKit controls. Android evaluates the same bundle with JavaScriptSandbox and

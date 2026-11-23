@@ -2748,6 +2748,15 @@ export interface CraftNavigationOptions {
    * controls in a `SafeAreaView` to keep them clear of the insets.
    */
   edgeToEdge?: boolean;
+  /**
+   * Keep this screen in its stack while set, for example while it uploads,
+   * which leaving would cancel. Back, a back-swipe, a tab tapped again,
+   * `popToRoot()`, a replace, and an open that would pop past it or close
+   * its cover are refused. The screen hears `REMOVE_BLOCKED { id, action }`
+   * instead and can carry the latest one through with
+   * `craft.navigation.proceed(id)`. iOS and Android.
+   */
+  preventRemove?: boolean;
 }
 
 export {};

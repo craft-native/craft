@@ -1321,6 +1321,96 @@ final class NativeNavigationUnitTests: XCTestCase {
         await displayWait(description) { [self] in shell.coverStack == nil && shell.presentedViewController == nil }
     }
 
+    /// Waits for `screen` to refuse a removal after `previous`, and checks it
+    /// heard `action`; returns the refusal's id.
+    private func refusal(_ screen: CraftNativeScreenController, _ action: String, after previous: String?,
+                         line: UInt = #line) async throws -> String {
+        await displayWait("\(action) is refused") { screen.blockedRemovalRequest.map { $0.id != previous } ?? false }
+        let request = try XCTUnwrap(screen.blockedRemovalRequest, line: line)
+        XCTAssertEqual(request.action, action, line: line)
+        return request.id
+    }
+
+    /// `preventRemove` (#594): a screen mid-upload, which leaving would cancel,
+    /// stays whichever way it is asked to go, hears what was tried, and can
+    /// carry the latest attempt through.
+    func testAScreenThatPreventsRemovalStaysUntilItProceeds() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        shell.open("/linked-details")
+        await displayWait("the busy screen is pushed") { home.transitionCoordinator == nil && home.viewControllers.count == 2 }
+        let busy = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        busy.evaluateScript("craft.navigation.setOptions({preventRemove:true})")
+        await displayWait("the option reaches the screen") { busy.preventRemove }
+        func stays(_ what: String, line: UInt = #line) {
+            XCTAssertEqual(home.viewControllers.count, 2, "\(what): nothing was removed", line: line)
+            XCTAssertTrue(home.topViewController === busy, line: line)
+        }
+
+        // Back, from the bar or the system, and the screen's own back().
+        _ = home.popViewController(animated: false)
+        let back = try await refusal(busy, "back", after: nil)
+        stays("Back")
+        busy.evaluateScript("craft.navigation.back()")
+        let scripted = try await refusal(busy, "back", after: back)
+        stays("navigation.back()")
+        let swipe = try XCTUnwrap(home.interactivePopGestureRecognizer)
+        XCTAssertFalse(shell.gestureRecognizerShouldBegin(swipe), "no back-swipe begins on it")
+        let swiped = try await refusal(busy, "back", after: scripted)
+        XCTAssertFalse(shell.gestureRecognizerShouldBegin(swipe))
+        await renderFrames()
+        XCTAssertEqual(busy.blockedRemovalRequest?.id, swiped, "one refusal per swipe")
+        stays("a back-swipe")
+        // The tab tapped again, and a link to the tab's own path.
+        XCTAssertFalse(shell.tabTapped("/", reselect: true))
+        let reselect = try await refusal(busy, "tabReselect", after: swiped)
+        stays("tab re-tap")
+        shell.open("/")
+        let link = try await refusal(busy, "open", after: reselect)
+        stays("a link to the tab")
+        await renderFrames()
+        stays("after the frames settle")
+
+        // Only the latest refusal can be carried through: the screen agreed
+        // to the link, so the tab goes back to its root.
+        busy.proceedWithBlockedRemoval(back)
+        await renderFrames()
+        stays("a stale proceed")
+        busy.proceedWithBlockedRemoval(link)
+        await displayWait("the agreed removal happens") { home.transitionCoordinator == nil && home.viewControllers.count == 1 }
+        XCTAssertNil(busy.blockedRemovalRequest)
+
+        // With the option cleared, Back is ordinary again.
+        shell.open("/linked-details")
+        await displayWait("pushed again") { home.transitionCoordinator == nil && home.viewControllers.count == 2 }
+        let again = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        again.evaluateScript("craft.navigation.setOptions({preventRemove:true})")
+        await displayWait("busy again") { again.preventRemove }
+        again.evaluateScript("craft.navigation.setOptions({preventRemove:false})")
+        await displayWait("no longer busy") { !again.preventRemove }
+        _ = home.popViewController(animated: false)
+        await displayWait("an ordinary Back") { home.viewControllers.count == 1 }
+        XCTAssertNil(again.blockedRemovalRequest)
+    }
+
+    func testACoverWhoseScreenPreventsRemovalStaysUp() async throws {
+        defer { CraftRemovalGuard.bypassing { shell.dismissCover(animated: false) } }
+        shell.open("/linked-details", presentation: "cover")
+        let cover = try await awaitCover("the busy screen comes up as a cover")
+        let busy = try XCTUnwrap(cover.topViewController as? CraftNativeScreenController)
+        busy.evaluateScript("craft.navigation.setOptions({preventRemove:true})")
+        await displayWait("the option reaches the screen") { busy.preventRemove }
+
+        _ = cover.popViewController(animated: false)
+        let close = try await refusal(busy, "closeCover", after: nil)
+        XCTAssertTrue(shell.coverStack === cover, "its close button does not take it down")
+        shell.open("/")
+        let link = try await refusal(busy, "open", after: close)
+        await renderFrames()
+        XCTAssertTrue(shell.coverStack === cover, "nor does a link to a tab under it")
+        busy.proceedWithBlockedRemoval(link)
+        await awaitNoCover("the agreed link closes the cover")
+    }
+
     func testAPathOpenedAsACoverGetsItsOwnStackOverTheTabs() async throws {
         defer { shell.dismissCover(animated: false) }
         let home = try XCTUnwrap(stack("/"))

@@ -7722,6 +7722,36 @@ private final class CraftNativeScreenRootView: UIView {
     }
 }
 
+/// The one check every change to a native stack makes before it takes a
+/// screen out (Back, a tab re-tap, a link that pops to another screen, a
+/// replace): a screen with `preventRemove` set stays, hears
+/// `REMOVE_BLOCKED { id, action }`, and `NAVIGATE_PROCEED { id }` carries the
+/// change through. Main thread only.
+enum CraftRemovalGuard {
+    private static var bypassDepth = 0
+
+    /// Whether a removal the busy screen agreed to is under way: a change
+    /// finished later (after the next screen renders) carries it along.
+    static var isBypassing: Bool { bypassDepth > 0 }
+
+    /// Runs `change` with the guard off: a removal the busy screen agreed to.
+    static func bypassing(_ change: () -> Void) {
+        bypassDepth += 1
+        defer { bypassDepth -= 1 }
+        change()
+    }
+
+    /// Whether removing `screens` must not happen. The topmost busy one is
+    /// told what was attempted, and `retry` repeats it if the screen agrees.
+    static func blocks(removing screens: [UIViewController], action: String, retry: @escaping () -> Void) -> Bool {
+        guard bypassDepth == 0,
+              let busy = screens.reversed().compactMap({ $0 as? CraftNativeScreenController }).first(where: { $0.preventRemove })
+        else { return false }
+        busy.removalBlocked(action, retry: retry)
+        return true
+    }
+}
+
 final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate {
     private final class RenderedNode {
         /// A recycled list row's root takes the identity of the row it shows next.
@@ -8422,6 +8452,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// The native route's Back button dismisses the top presented modal before
     /// it pops the route, matching Android's activity back callback.
     @discardableResult
+    /// A removal CraftRemovalGuard refused because of `preventRemove`: the
+    /// screen hears what was attempted (`back`, `popToRoot`, `tabReselect`,
+    /// `replace`, `open`, `closeCover`) and may proceed with it by its id.
+    func removalBlocked(_ action: String, retry: @escaping () -> Void) {
+        let id = UUID().uuidString
+        blockedRemoval = (id, action, retry)
+        send(type: "REMOVE_BLOCKED", payload: ["id": id, "action": action])
+    }
+
+    /// Carries the refused removal `id` through, if it is still the latest.
+    func proceedWithBlockedRemoval(_ id: String) {
+        guard let blocked = blockedRemoval, blocked.id == id else { return }
+        blockedRemoval = nil
+        CraftRemovalGuard.bypassing(blocked.retry)
+    }
+
     func handleBackForModal() -> Bool {
         let modal = view.subviews.reversed().compactMap { $0 as? CraftNativeModalView }.first {
             ($0.isPresentedAsSheet || (!$0.isHidden && $0.alpha > 0.01)) && ($0.blocksBackground || $0.dismissOnOutsideTap)
@@ -8795,7 +8841,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
     ///   backTitle, backButton, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
     ///   contentSwipeBack,
-    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, edgeToEdge, leftButtons,
+    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, edgeToEdge, preventRemove, leftButtons,
     ///   rightButtons, tabAccessory })`; a button's tap is the event
     ///   `navButton`. `craft.d.ts` types no navigation surface, so this list
     ///   is the public description of it — keep it in step with the keys
@@ -9302,6 +9348,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// pages with a Back of its own (a first-run tour's questions) would
     /// otherwise lose its place to a stray swipe.
     private(set) var swipeBack = true
+    /// `preventRemove`: nothing takes this screen out of its stack while set
+    /// (a screen mid-upload, which leaving would cancel); see CraftRemovalGuard.
+    private(set) var preventRemove = false
+    /// The removal last refused, kept until the screen proceeds with it or
+    /// another is refused: only the latest can be carried through.
+    private var blockedRemoval: (id: String, action: String, retry: () -> Void)?
+    /// The removal last refused, as the screen heard it.
+    var blockedRemovalRequest: (id: String, action: String)? { blockedRemoval.map { ($0.id, $0.action) } }
     /// Whether iOS 26's content-wide back-swipe may begin on this screen.
     /// Setting `contentSwipeBack: false` leaves the 32-point edge gesture.
     private(set) var contentSwipeBack = true
@@ -9415,6 +9469,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let swipeBack = options["swipeBack"] as? Bool {
             self.swipeBack = swipeBack
+        }
+        if let preventRemove = options["preventRemove"] as? Bool {
+            self.preventRemove = preventRemove
+            if !preventRemove { blockedRemoval = nil }
         }
         if let contentSwipeBack = options["contentSwipeBack"] as? Bool {
             self.contentSwipeBack = contentSwipeBack
@@ -10417,8 +10475,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 if type == "NAVIGATE" {
                     navigation.pushViewController(next, animated: true)
                 } else {
-                    self.disposeRuntime()
-                    navigation.setViewControllers(Array(navigation.viewControllers.dropLast()) + [next], animated: true)
+                    let replace = { [weak self, weak navigation] in
+                        guard let self, let navigation, navigation.topViewController === self else { return }
+                        self.disposeRuntime()
+                        navigation.setViewControllers(Array(navigation.viewControllers.dropLast()) + [next], animated: true)
+                    }
+                    if CraftRemovalGuard.blocks(removing: [self], action: "replace", retry: replace) { return }
+                    replace()
                 }
             }
         case "NAVIGATION_SET_OPTIONS":
@@ -10433,6 +10496,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             guard let path = payload["path"] as? String, !path.isEmpty else { return }
             hybridEvents?.nativeScreen(self, open: path, props: payload["props"] as? [String: Any] ?? [:],
                                        presentation: payload["presentation"] as? String)
+        case "NAVIGATE_PROCEED":
+            // The screen agreed to the removal it was told about.
+            guard let id = payload["id"] as? String else { return }
+            proceedWithBlockedRemoval(id)
         case "NAVIGATE_BACK":
             if !isAppScript, navigationController?.topViewController === self {
                 navigationController?.popViewController(animated: true)
