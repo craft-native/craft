@@ -10580,7 +10580,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 onUploadProgress: { [weak self] progress in
                     DispatchQueue.main.async {
                         guard let self, self.pendingCapabilityRequests.contains(requestToken), !self.runtimeDisposed else { return }
-                        self.send(type: "NETWORK_UPLOAD_PROGRESS", payload: progress)
+                        // A video export (#595) names its own event.
+                        var payload = progress
+                        let type = payload.removeValue(forKey: "_event") as? String ?? "NETWORK_UPLOAD_PROGRESS"
+                        self.send(type: type, payload: payload)
                     }
                 },
                 completion: reply

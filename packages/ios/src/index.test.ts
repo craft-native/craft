@@ -2882,6 +2882,16 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actions).toContain('UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)')
     expect(actions).toContain('failure("BACKGROUND_EXPIRED", "iOS suspended the app before the upload finished")')
     expect(actions).toContain('backgroundTime?.watch(task)')
+    // #595: a phone clip exported on the device before upload, with every
+    // app: an upright BT.709 H.264 MP4, no metadata, moov first, cancellable.
+    expect(actions).toContain('values.append("videoExport")')
+    expect(actions).toContain('case ("Files", "exportVideo"):')
+    expect(actions).toContain('export?.stop(CraftNativeActionError(code: "CANCELLED", message: "Video export cancelled"))')
+    expect(files).toContain('composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2')
+    expect(files).toContain('AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel')
+    expect(files).toContain('writer.shouldOptimizeForNetworkUse = true')
+    expect(files).toContain('writer.metadata = []')
+    expect(files).toContain('CraftUploadBackgroundTime(name: "craft.exportVideo")')
     expect(files).toContain('guard let url = owned(path) else {')
     expect(files).toContain('Content-Disposition: form-data; name=\\"\\(quoted(name))\\"; filename=\\"\\(quoted(filename))\\"')
     // A download goes to disk; a refused one keeps no file and says why.

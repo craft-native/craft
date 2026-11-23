@@ -2138,6 +2138,39 @@ contents as `atob` does on every host: the standard alphabet, ASCII white space
 ignored and padding optional. Anything else, URL-safe base64 included, rejects
 with `INVALID_ARGUMENT` and writes nothing.
 
+`craft.files.exportVideo(file, options)` converts a clip on the device before
+it is uploaded, where the host advertises `videoExport`. A phone films HEVC,
+often HDR, portrait through a rotation matrix, up to 4K60, and many browsers
+and PCs can't play that. The export is a small MP4 any browser plays:
+
+```ts
+const clip = await craft.files.pickVideo()
+const { video, poster, width, height, duration, bytes } = await craft.files.exportVideo(clip, {
+  maxBox: [1280, 720],   // the default; portrait clips fit 720x1280, never upscaled
+  fps: 30,               // the default; a cap, so a 15 fps clip stays 15
+  bitrateKbps: 3000,     // the default; a ceiling
+  poster: { at: 1 },     // the default is min(1 s, duration / 3); false for none
+  onProgress: fraction => setProgress(fraction),
+})
+```
+
+The video is H.264 High with AAC, in BT.709 SDR: HDR is tone-mapped, not left
+tagged. The rotation is drawn into the pixels, there is no metadata (no
+location, device or creation date), and the moov atom comes first. `width`,
+`height`, `duration`, `frameRate` and `bytes` are measured from the file as
+written. The poster is a JPEG taken from the exported video, the same size.
+The original is untouched. `video` and `poster` are ordinary craft files: send
+them in `FormData`, then `craft.files.remove` them.
+
+It is cancelled like a fetch: by the request, by `API_CANCEL`, and when the
+screen goes away. A cancelled export keeps no files. On iOS it holds background
+time while it runs; if iOS takes that back, it rejects with
+`BACKGROUND_EXPIRED`. Other codes: `UNSUPPORTED_SOURCE` (no video it can
+read), `EXPORT_FAILED`, `CANCELLED`, and `INVALID_ARGUMENT` for a file craft
+didn't make or an option out of range. The host reports progress as
+`FILES_EXPORT_PROGRESS { id, progress }` for the `progressId` the runtime
+sends. Without `videoExport`, upload the original.
+
 Both maintained native hosts implement `craft.files.pickFile`. Android maps the
 shared MIME, UTI, and common extension filters to `ACTION_OPEN_DOCUMENT`, copies
 each selected document into the same app-owned directory, and enforces the

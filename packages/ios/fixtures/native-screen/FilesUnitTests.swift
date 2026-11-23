@@ -1,7 +1,10 @@
+import AVFoundation
+import CoreMedia
 import Darwin
 import ImageIO
 import UIKit
 import UniformTypeIdentifiers
+import VideoToolbox
 import Network
 import PhotosUI
 import XCTest
@@ -1435,4 +1438,285 @@ private final class OneFileServer {
     }
 
     func stop() { listener.cancel() }
+}
+
+// MARK: files.exportVideo (#595)
+
+/// Writes the clip a phone hands over: HEVC Main10, HLG BT.2020, filmed
+/// portrait (a landscape buffer under a 90° display matrix), with a GPS tag
+/// and device metadata, AAC audio. Or a plain small H.264 clip.
+private enum PhoneClip {
+    static func write(to url: URL, width: Int, height: Int, fps: Int32, frames: Int, hdr: Bool, portrait: Bool) async throws {
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let location = AVMutableMetadataItem()
+        location.identifier = .quickTimeMetadataLocationISO6709
+        location.value = "+37.7749-122.4194+010.000/" as NSString
+        location.dataType = kCMMetadataDataType_QuickTimeMetadataLocation_ISO6709 as String
+        let make = AVMutableMetadataItem()
+        make.identifier = .quickTimeMetadataMake
+        make.value = "CraftTestPhone" as NSString
+        writer.metadata = [location, make]
+        var compression: [String: Any] = [AVVideoAverageBitRateKey: 20_000_000, AVVideoExpectedSourceFrameRateKey: fps]
+        var color: [String: Any] = [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ]
+        if hdr {
+            compression[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel as String
+            color = [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_2020,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_2100_HLG,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_2020,
+            ]
+        }
+        let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: hdr ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
+            AVVideoWidthKey: width, AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: color,
+            AVVideoCompressionPropertiesKey: compression,
+        ])
+        video.expectsMediaDataInRealTime = false
+        if portrait { video.transform = CGAffineTransform(rotationAngle: .pi / 2) }
+        let format = hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: format, kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+        ])
+        writer.add(video)
+        var asbd = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM, mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
+        var audioFormat: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &audioFormat)
+        let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 128_000])
+        audio.expectsMediaDataInRealTime = false
+        writer.add(audio)
+        guard writer.startWriting() else { throw writer.error ?? NSError(domain: "PhoneClip", code: 1) }
+        writer.startSession(atSourceTime: .zero)
+
+        // Interleaved, as a camera writes: the writer stops taking video
+        // that runs too far ahead of the audio.
+        let total = Int(Double(frames) / Double(fps) * 48_000)
+        var written = 0
+        func appendAudio(until limit: Int) async throws {
+            while written < limit {
+                while !audio.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
+                let count = min(4_800, limit - written)
+                var samples = [Int16](repeating: 0, count: count * 2)
+                for index in 0..<count { let value = Int16(sin(Double(written + index) * 2 * .pi * 440 / 48_000) * 8_000); samples[index * 2] = value; samples[index * 2 + 1] = value }
+                var block: CMBlockBuffer?
+                CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: count * 4, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: count * 4, flags: 0, blockBufferOut: &block)
+                samples.withUnsafeBytes { _ = CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0, dataLength: count * 4) }
+                var sample: CMSampleBuffer?
+                CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: block!, formatDescription: audioFormat!, sampleCount: count,
+                    presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: 48_000), packetDescriptions: nil, sampleBufferOut: &sample)
+                guard let sample, audio.append(sample) else { throw writer.error ?? NSError(domain: "PhoneClip", code: 4) }
+                written += count
+            }
+        }
+        for frame in 0..<frames {
+            while !video.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+            guard let buffer else { throw NSError(domain: "PhoneClip", code: 2) }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            for plane in 0..<CVPixelBufferGetPlaneCount(buffer) {
+                // A gradient that moves, so the encoder has something to code.
+                let base = CVPixelBufferGetBaseAddressOfPlane(buffer, plane)!
+                let rows = CVPixelBufferGetHeightOfPlane(buffer, plane), stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
+                for row in 0..<rows { memset(base + row * stride, Int32((row + frame * 4) % 200 + 28), stride) }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps)) else { throw writer.error ?? NSError(domain: "PhoneClip", code: 3) }
+            try await appendAudio(until: min(total, Int(Double(frame + 1) / Double(fps) * 48_000)))
+        }
+        video.markAsFinished()
+        try await appendAudio(until: total)
+        audio.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? NSError(domain: "PhoneClip", code: 5) }
+    }
+
+    /// Top-level atom names in order, e.g. ["ftyp", "moov", "mdat"].
+    static func atoms(_ url: URL) throws -> [String] {
+        let data = try Data(contentsOf: url)
+        var names = [String](), offset = 0
+        while offset + 8 <= data.count {
+            var size = Int(data[offset..<offset + 4].reduce(UInt32(0)) { $0 << 8 | UInt32($1) })
+            let name = String(decoding: data[offset + 4..<offset + 8], as: UTF8.self)
+            if size == 1, offset + 16 <= data.count { size = Int(data[offset + 8..<offset + 16].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }) }
+            names.append(name)
+            guard size >= 8 else { break }
+            offset += size
+        }
+        return names
+    }
+}
+
+private final class ExportEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values = [[String: Any]]()
+    var all: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return values }
+    func add(_ value: [String: Any]) { lock.lock(); values.append(value); lock.unlock() }
+}
+
+extension FilesUnitTests {
+    private func exportVideo(_ path: String, _ options: [String: Any], token: String = UUID().uuidString, events: ExportEvents? = nil) async -> Result<Any, CraftNativeActionError> {
+        await withCheckedContinuation { continuation in
+            CraftNativeActions.perform(requestToken: token, version: craftNativeCapabilityProtocolVersion,
+                module: "Files", method: "exportVideo", args: [["path": path], options], config: CraftConfig(),
+                onUploadProgress: { events?.add($0) }) { continuation.resume(returning: $0) }
+        }
+    }
+
+    private func ownedFileCount() -> Int {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: CraftNativeFiles.root, includingPropertiesForKeys: nil)) ?? []
+        return folders.reduce(0) { $0 + ((try? FileManager.default.contentsOfDirectory(atPath: $1.path))?.count ?? 0) }
+    }
+
+    func testAVideoExportFitsTheBoxTheClipsWayRoundAndNeverUpscales() {
+        let box = (1280, 720)
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 3840, height: 2160), box: box) == (1280, 720))
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 2160, height: 3840), box: box) == (720, 1280), "portrait fits 720x1280")
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 1080, height: 1080), box: box) == (720, 720))
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 640, height: 360), box: box) == (640, 360), "never larger than the clip")
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 1919, height: 1081), box: box) == (1278, 720), "even dimensions")
+        XCTAssertTrue(CraftVideoExport.fittedSize(CGSize(width: 641, height: 361), box: box) == (640, 360))
+        XCTAssertEqual(CraftVideoExport.targetBitrate(ceiling: 3_000_000, source: 40_000_000), 3_000_000)
+        XCTAssertEqual(CraftVideoExport.targetBitrate(ceiling: 3_000_000, source: 1_200_000), 1_200_000, "no more bits than the clip had")
+        XCTAssertEqual(CraftVideoExport.targetBitrate(ceiling: 3_000_000, source: 0), 3_000_000)
+    }
+
+    func testAPhonesHDRPortraitClipExportsAsAnUprightSDRH264MP4AndPoster() async throws {
+        let source = try CraftNativeFiles.newFile(named: "IMG_0001.MOV")
+        defer { CraftNativeFiles.remove(source.path) }
+        try await PhoneClip.write(to: source, width: 3840, height: 2160, fps: 60, frames: 60, hdr: true, portrait: true)
+        let original = try Data(contentsOf: source)
+        let events = ExportEvents()
+
+        guard case .success(let value) = await exportVideo(source.path, ["progressId": "clip"], events: events),
+              let result = value as? [String: Any], let video = result["video"] as? [String: Any], let path = video["path"] as? String else {
+            return XCTFail("the export failed")
+        }
+        let poster = result["poster"] as? [String: Any]
+        defer { CraftNativeFiles.remove(path); (poster?["path"] as? String).map { _ = CraftNativeFiles.remove($0) } }
+        XCTAssertEqual(try Data(contentsOf: source), original, "the original is untouched")
+        XCTAssertEqual(video["type"] as? String, "video/mp4")
+        XCTAssertTrue(path.hasSuffix("IMG_0001.mp4"), path)
+        XCTAssertEqual(result["width"] as? Int, 720)
+        XCTAssertEqual(result["height"] as? Int, 1280)
+        XCTAssertEqual(result["frameRate"] as? Double ?? 0, 30, accuracy: 0.5, "60 fps capped at 30")
+        XCTAssertEqual(result["duration"] as? Double ?? 0, 1, accuracy: 0.1)
+        let url = URL(fileURLWithPath: path)
+        let bytes = try Data(contentsOf: url)
+        XCTAssertEqual(result["bytes"] as? Int, bytes.count, "measured from the written file")
+
+        let written = AVURLAsset(url: url)
+        let videoTracks = try await written.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(videoTracks.first)
+        let (transform, naturalSize, descriptions) = try await track.load(.preferredTransform, .naturalSize, .formatDescriptions)
+        XCTAssertEqual(transform, .identity, "the rotation is in the pixels")
+        XCTAssertEqual(naturalSize, CGSize(width: 720, height: 1280))
+        let description = try XCTUnwrap(descriptions.first)
+        XCTAssertEqual(CMFormatDescriptionGetMediaSubType(description), kCMVideoCodecType_H264)
+        let atoms = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Any]
+        let avcC = try XCTUnwrap(atoms?["avcC"] as? Data)
+        XCTAssertEqual(avcC[1], 100, "H.264 High profile")
+        XCTAssertEqual(CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String, kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String)
+        XCTAssertEqual(CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String, kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String, "tone-mapped, not tagged HLG")
+        XCTAssertEqual(CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_YCbCrMatrix) as? String, kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String)
+        let audioTracks = try await written.loadTracks(withMediaType: .audio)
+        let audio = try XCTUnwrap(audioTracks.first)
+        let audioDescriptions = try await audio.load(.formatDescriptions)
+        let audioDescription = try XCTUnwrap(audioDescriptions.first)
+        XCTAssertEqual(CMFormatDescriptionGetMediaSubType(audioDescription), kAudioFormatMPEG4AAC)
+
+        let metadata = try await written.load(.metadata)
+        XCTAssertEqual(metadata, [], "no metadata")
+        for marker in ["+37.7749", "CraftTestPhone", "\u{A9}xyz"] {
+            XCTAssertNil(bytes.range(of: Data(marker.utf8)), "\(marker) was copied into the export")
+        }
+        let order = try PhoneClip.atoms(url)
+        XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: "moov")), try XCTUnwrap(order.firstIndex(of: "mdat")), "faststart: \(order)")
+        XCTAssertLessThan(bytes.count, 3_000_000 / 8 * 2, "about the bitrate ceiling for one second")
+
+        let posterPath = try XCTUnwrap(poster?["path"] as? String)
+        XCTAssertEqual(poster?["type"] as? String, "image/jpeg")
+        let image = try XCTUnwrap(CGImageSourceCreateWithURL(URL(fileURLWithPath: posterPath) as CFURL, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any]
+        XCTAssertEqual(properties?[kCGImagePropertyPixelWidth] as? Int, 720)
+        XCTAssertEqual(properties?[kCGImagePropertyPixelHeight] as? Int, 1280)
+
+        let progress = events.all.compactMap { $0["progress"] as? Double }
+        XCTAssertTrue(events.all.allSatisfy { $0["_event"] as? String == "FILES_EXPORT_PROGRESS" && $0["id"] as? String == "clip" })
+        XCTAssertEqual(progress.last, 1)
+        XCTAssertEqual(progress, progress.sorted(), "progress only goes forward")
+    }
+
+    func testAVideoExportKeepsALowerFrameRateAndCanSkipThePoster() async throws {
+        let source = try CraftNativeFiles.newFile(named: "slow.mov")
+        defer { CraftNativeFiles.remove(source.path) }
+        try await PhoneClip.write(to: source, width: 640, height: 360, fps: 15, frames: 15, hdr: false, portrait: false)
+        guard case .success(let value) = await exportVideo(source.path, ["poster": false]), let result = value as? [String: Any],
+              let path = (result["video"] as? [String: Any])?["path"] as? String else { return XCTFail("the export failed") }
+        defer { CraftNativeFiles.remove(path) }
+        XCTAssertEqual(result["frameRate"] as? Double ?? 0, 15, accuracy: 0.5, "a cap, not a target")
+        XCTAssertEqual(result["width"] as? Int, 640)
+        XCTAssertEqual(result["height"] as? Int, 360)
+        XCTAssertTrue(result["poster"] is NSNull)
+    }
+
+    func testAVideoExportRefusesWhatItCannotUse() async throws {
+        guard case .failure(let outside) = await exportVideo(Bundle.main.bundlePath + "/Info.plist", [:]) else { return XCTFail("a file craft did not make was read") }
+        XCTAssertEqual(outside.code, "INVALID_ARGUMENT")
+        let text = try CraftNativeFiles.newFile(named: "notes.mov")
+        try Data("not a movie".utf8).write(to: text)
+        defer { CraftNativeFiles.remove(text.path) }
+        guard case .failure(let unreadable) = await exportVideo(text.path, [:]) else { return XCTFail("text exported as video") }
+        XCTAssertEqual(unreadable.code, "UNSUPPORTED_SOURCE")
+        guard case .failure(let options) = await exportVideo(text.path, ["fps": 0]) else { return XCTFail("fps 0 accepted") }
+        XCTAssertEqual(options.code, "INVALID_ARGUMENT")
+    }
+
+    @MainActor
+    func testACancelledVideoExportKeepsNoFiles() async throws {
+        let source = try CraftNativeFiles.newFile(named: "long.mov")
+        defer { CraftNativeFiles.remove(source.path) }
+        try await PhoneClip.write(to: source, width: 1920, height: 1080, fps: 30, frames: 150, hdr: false, portrait: false)
+        let baseline = ownedFileCount()
+        let token = UUID().uuidString
+        let events = ExportEvents()
+        var answered = false
+        CraftNativeActions.perform(requestToken: token, version: craftNativeCapabilityProtocolVersion,
+            module: "Files", method: "exportVideo", args: [["path": source.path], ["progressId": "c"]], config: CraftConfig(),
+            onUploadProgress: { events.add($0) }) { _ in answered = true }
+        try await waitUntil("the export is under way", timeout: 30) { !events.all.isEmpty }
+        CraftNativeActions.cancel(requestToken: token)
+        try await waitUntil("the cancelled export's files are gone", timeout: 30) { ownedFileCount() == baseline }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(ownedFileCount(), baseline)
+        XCTAssertFalse(answered, "a cancelled request is answered by the cancel, not twice")
+    }
+
+    func testAVideoExportIOSStopsInTheBackgroundAnswersBackgroundExpired() async throws {
+        let log = BackgroundTimeLog()
+        let (begin, end) = (CraftUploadBackgroundTime.begin, CraftUploadBackgroundTime.end)
+        defer { CraftUploadBackgroundTime.begin = begin; CraftUploadBackgroundTime.end = end }
+        CraftUploadBackgroundTime.begin = { name, expiring in log.began(name, expiring: expiring) }
+        CraftUploadBackgroundTime.end = { log.ended($0) }
+        let source = try CraftNativeFiles.newFile(named: "late.mov")
+        defer { CraftNativeFiles.remove(source.path) }
+        try await PhoneClip.write(to: source, width: 1920, height: 1080, fps: 30, frames: 150, hdr: false, portrait: false)
+        let baseline = ownedFileCount()
+        let events = ExportEvents()
+        let export = Task { await exportVideo(source.path, ["progressId": "b"], events: events) }
+        try await waitUntil("the export is under way", timeout: 30) { !events.all.isEmpty && log.expiry != nil }
+        log.expiry?()
+        guard case .failure(let error) = await export.value else { return XCTFail("an export iOS stopped succeeded") }
+        XCTAssertEqual(error.code, "BACKGROUND_EXPIRED")
+        XCTAssertEqual(log.names, ["craft.exportVideo"])
+        XCTAssertEqual(log.ends, [log.identifier], "the background time ends exactly once")
+        XCTAssertEqual(ownedFileCount(), baseline, "nothing half-written is kept")
+    }
 }

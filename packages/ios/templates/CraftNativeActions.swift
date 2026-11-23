@@ -40,7 +40,7 @@ final class CraftUploadBackgroundTime {
     private var identifier = UIBackgroundTaskIdentifier.invalid
     private var finished = false
     private var expiredBeforeSettling = false
-    private var task: URLSessionTask?
+    private var onExpire: (() -> Void)?
 
     init(name: String) {
         let identifier = Self.begin(name) { [weak self] in self?.expire() }
@@ -61,11 +61,17 @@ final class CraftUploadBackgroundTime {
     /// The upload to cancel if the time runs out; cancelled at once if it
     /// already has.
     func watch(_ task: URLSessionTask) {
+        watch { task.cancel() }
+    }
+
+    /// What to stop if the time runs out (#595: a video export); run at once
+    /// if it already has.
+    func watch(_ stop: @escaping () -> Void) {
         lock.lock()
-        let cancelNow = expiredBeforeSettling
-        self.task = cancelNow ? nil : task
+        let stopNow = expiredBeforeSettling
+        onExpire = stopNow ? nil : stop
         lock.unlock()
-        if cancelNow { task.cancel() }
+        if stopNow { stop() }
     }
 
     func finish() {
@@ -73,7 +79,7 @@ final class CraftUploadBackgroundTime {
         let identifier = self.identifier
         self.identifier = .invalid
         finished = true
-        task = nil
+        onExpire = nil
         lock.unlock()
         if identifier != .invalid { Self.end(identifier) }
     }
@@ -82,10 +88,10 @@ final class CraftUploadBackgroundTime {
         lock.lock()
         guard !finished else { return lock.unlock() }
         expiredBeforeSettling = true
-        let task = self.task
+        let stop = onExpire
         lock.unlock()
         finish()
-        task?.cancel()
+        stop?()
     }
 }
 
@@ -106,6 +112,7 @@ enum CraftNativeActions {
     private static var biometricContexts = [String: LAContext]()
     #endif
     private static var fetchTasks = [String: URLSessionTask]()
+    private static var videoExports = [String: CraftVideoExport]()
     private static var fetchProgress = [String: NSKeyValueObservation]()
     private static let fetchSession: URLSession = {
         let configuration = URLSessionConfiguration.default
@@ -131,6 +138,8 @@ enum CraftNativeActions {
         // as it arrives) need nothing the app has to declare.
         var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "dialog", "speech", "audio", "eventStream", "linking", "badge", "animation", "viewFocus", "viewMeasure", "viewReparent", "viewNonModalPresentation", "nativePlatformControls"]
         values.append("uploadProgress")
+        // #595: files.exportVideo, with FILES_EXPORT_PROGRESS.
+        values.append("videoExport")
         values.append("network")
         values.append("nativePager")
         values.append("storageCompareAndSet")
@@ -402,6 +411,9 @@ enum CraftNativeActions {
             DispatchQueue.main.async {
                 CraftNativeFiles.pickVideo(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
+            return
+        case ("Files", "exportVideo"):
+            exportVideo(requestToken: requestToken, args: args, onProgress: onUploadProgress, completion: completion)
             return
         case ("Files", "pickFile"):
             let options = args.first as? [String: Any] ?? [:]
@@ -884,13 +896,58 @@ enum CraftNativeActions {
         #endif
         let task = fetchTasks.removeValue(forKey: requestToken)
         fetchProgress.removeValue(forKey: requestToken)
+        let export = videoExports.removeValue(forKey: requestToken)
         cancellationLock.unlock()
+        export?.stop(CraftNativeActionError(code: "CANCELLED", message: "Video export cancelled"))
         #if CRAFT_PERMISSION_BIOMETRIC
         context?.invalidate()
         #endif
         task?.cancel()
         CraftNativeFiles.cancelPicker(requestToken: requestToken)
         CraftNativePasskeys.shared.cancel(requestToken: requestToken)
+    }
+
+    /// `craft.files.exportVideo` (#595). Keyed by the request token like a
+    /// fetch, so `API_CANCEL` and route teardown stop it and keep nothing.
+    /// Progress goes out as `FILES_EXPORT_PROGRESS { id, progress }` when the
+    /// options name a `progressId`.
+    private static func exportVideo(
+        requestToken: String,
+        args: [Any],
+        onProgress: (([String: Any]) -> Void)?,
+        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+    ) {
+        let path = (args.first as? [String: Any])?["path"] as? String ?? args.first as? String
+        guard let path, let source = CraftNativeFiles.owned(path) else {
+            complete(requestToken, failure("INVALID_ARGUMENT", "exportVideo takes a file from craft.files, such as pickVideo's"), completion)
+            return
+        }
+        let options: CraftVideoExport.Options
+        do { options = try CraftVideoExport.Options(args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]) }
+        catch let error as CraftNativeActionError { complete(requestToken, .failure(error), completion); return }
+        catch { complete(requestToken, failure("INVALID_ARGUMENT", error.localizedDescription), completion); return }
+        let progressID = options.progressID
+        let export = CraftVideoExport(source: source, options: options, progress: { fraction in
+            guard !progressID.isEmpty else { return }
+            onProgress?(["_event": "FILES_EXPORT_PROGRESS", "id": progressID, "progress": fraction])
+        }, done: { result in
+            cancellationLock.lock()
+            videoExports.removeValue(forKey: requestToken)
+            cancellationLock.unlock()
+            complete(requestToken, result, completion, onCancel: {
+                // A caller that cancelled never hears of these files.
+                guard case .success(let value) = result, let value = value as? [String: Any] else { return }
+                for key in ["video", "poster"] {
+                    if let path = (value[key] as? [String: Any])?["path"] as? String { CraftNativeFiles.remove(path) }
+                }
+            })
+        })
+        cancellationLock.lock()
+        let alreadyCancelled = cancelledRequests.contains(requestToken)
+        if !alreadyCancelled { videoExports[requestToken] = export }
+        cancellationLock.unlock()
+        if alreadyCancelled { complete(requestToken, failure("CANCELLED", "Video export cancelled"), completion) }
+        else { export.start() }
     }
 
     /// `fetch` for native screens: one URLSession data task per request, keyed
