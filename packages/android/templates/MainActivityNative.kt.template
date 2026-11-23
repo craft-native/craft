@@ -5358,6 +5358,8 @@ class MainActivity : AppCompatActivity() {
     ) {
         /** What the screen set with `craft.navigation.setOptions`, merged. */
         var options = JSONObject()
+        /** The removal last refused for `preventRemove` (#594): its id and how to carry it through. */
+        var blockedRemoval: Pair<String, () -> Unit>? = null
         /** Overrides from a native `<StatusBar>` node, reset on each render. */
         var statusBarStyle: String? = null
         var statusBarHidden: Boolean? = null
@@ -5827,7 +5829,7 @@ class MainActivity : AppCompatActivity() {
         bars.onTab = { index ->
             interruptTabSwipe()
             haptic()
-            if (index == currentTab && !startsOutsideTab(index)) popToRoot()
+            if (index == currentTab && !startsOutsideTab(index)) popToRoot("tabReselect")
             else selectTab(index, canonical = true)
         }
         bars.isBlockingModal = { it is CraftNativeModalView && it.blocksBackground && it.visibility == View.VISIBLE }
@@ -5867,6 +5869,10 @@ class MainActivity : AppCompatActivity() {
     /** A tab chosen: its stack shows, its root screen opened the first time. */
     private fun selectTab(index: Int, initial: CraftNativeRouteMatch? = null, canonical: Boolean = false) {
         if (index !in tabStacks.indices) return
+        // A busy screen (`preventRemove`) in the cover, or in a temporary
+        // root this would replace, is asked first.
+        val displacing = if (canonical && startsOutsideTab(index)) tabStacks[index].toList() else emptyList()
+        if (removalBlocked((cover?.screens?.toList() ?: emptyList()) + displacing, "open") { selectTab(index, initial, canonical) }) return
         // The tabs are under a cover: it closes first.
         closeCover(animated = false)
         interruptTabSwipe()
@@ -6044,22 +6050,32 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val match = routes.match(path)
+        // A removal the busy screen agreed to carries on through the steps
+        // that finish after a screen closes.
+        val approved = removalBypass > 0
+        fun again(step: () -> Unit) = if (approved) bypassingRemovalGuard(step) else step()
+        val retry = { navigateOpen(target, fromLink, replace, props, presentation) }
         // A tab is under a cover: the cover closes to show it.
         if (cover != null && routes.tabFor(path) != null) {
-            closeCover(animated = !fromLink) { navigateOpen(target, fromLink, replace, props) }
+            if (removalBlocked(screens.toList(), "open", retry)) return
+            closeCover(animated = !fromLink) { again { navigateOpen(target, fromLink, replace, props) } }
             return
         }
         if (replace && match != null && screens.isNotEmpty()) {
+            if (removalBlocked(screens.takeLast(1), "replace", retry)) return
             val stack = screens
             val removed = stack.removeAt(stack.lastIndex)
             val previous = stack.lastOrNull()
             closeScreen(removed) {
-                if (screens === stack && stack.lastOrNull() === previous) navigateOpen(path, fromLink, props = props)
+                if (screens === stack && stack.lastOrNull() === previous) again { navigateOpen(path, fromLink, props = props) }
             }
             return
         }
         val tab = routes.tabFor(path)
         if (tab != null) {
+            val index = routes.tabs.indexOf(tab)
+            val stack = tabStacks.getOrNull(index) ?: emptyList<Screen>()
+            if (removalBlocked(if (startsOutsideTab(index)) stack.toList() else stack.drop(1), "open", retry)) return
             selectTab(routes.tabs.indexOf(tab), canonical = true)
             popToRoot()
             val root = screens.firstOrNull()
@@ -6088,6 +6104,7 @@ class MainActivity : AppCompatActivity() {
         // Already in this stack (perhaps under others): back to it, with the params it was opened with now.
         val existing = screens.lastOrNull { it.path == match.path }
         if (existing != null) {
+            if (removalBlocked(screens.dropWhile { it !== existing }.drop(1), "open", retry)) return
             val stack = screens
             val removed = mutableListOf<Screen>()
             while (stack.lastOrNull() !== existing) removed.add(stack.removeAt(stack.lastIndex))
@@ -6862,6 +6879,7 @@ class MainActivity : AppCompatActivity() {
                 // only reject the headless app isolate here.
                 if (screen !== appScreen) {
                     payload.keys().forEach { key -> screen.options.put(key, payload.opt(key)) }
+                    if (payload.has("preventRemove") && !payload.optBoolean("preventRemove")) screen.blockedRemoval = null
                     if (visibleScreen === screen) applyChrome(screen)
                     if (payload.has("backgroundColor")) applyScreenBackground(screen)
                 }
@@ -6895,13 +6913,24 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
                 if (message.optString("type") == "NAVIGATE_REPLACE") {
-                    val stack = screens
-                    val removed = stack.removeAt(stack.lastIndex)
-                    val previous = stack.lastOrNull()
-                    closeScreen(removed) {
-                        if (screens === stack && stack.lastOrNull() === previous) openScreen(route, payload.optJSONObject("params") ?: JSONObject())
+                    val replaceTop: () -> Unit = {
+                        val stack = screens
+                        val removed = stack.removeAt(stack.lastIndex)
+                        val previous = stack.lastOrNull()
+                        closeScreen(removed) {
+                            if (screens === stack && stack.lastOrNull() === previous) openScreen(route, payload.optJSONObject("params") ?: JSONObject())
+                        }
                     }
+                    if (removalBlocked(screens.takeLast(1), "replace", replaceTop)) return
+                    replaceTop()
                 } else openScreen(route, payload.optJSONObject("params") ?: JSONObject())
+            }
+            "NAVIGATE_PROCEED" -> {
+                // The busy screen agreed to the removal it was told about.
+                val blocked = screen.blockedRemoval ?: return
+                if (blocked.first != payload.optString("id")) return
+                screen.blockedRemoval = null
+                bypassingRemovalGuard(blocked.second)
             }
             "NAVIGATE_BACK" -> if (visibleScreen === screen) back()
             "NAVIGATE_POP_TO_ROOT" -> if (visibleScreen === screen) popToRoot()
@@ -9843,9 +9872,33 @@ class MainActivity : AppCompatActivity() {
         CraftCrashReporter.captureJavaScript(name, message, stack, screen.route ?: "home", screen.headless)
     }
 
+    /** Above zero while a removal the busy screen agreed to is carried through. */
+    private var removalBypass = 0
+
+    private fun bypassingRemovalGuard(change: () -> Unit) {
+        removalBypass++
+        try { change() } finally { removalBypass-- }
+    }
+
+    /**
+     * The one check every removal makes first (#594): a screen with
+     * `preventRemove` set stays, hears `REMOVE_BLOCKED { id, action }`, and
+     * `NAVIGATE_PROCEED { id }` carries the latest refused removal through.
+     * `gone` is in stack order; the topmost busy screen is told.
+     */
+    private fun removalBlocked(gone: List<Screen>, action: String, retry: () -> Unit): Boolean {
+        if (removalBypass > 0) return false
+        val busy = gone.lastOrNull { it.options.optBoolean("preventRemove") } ?: return false
+        val id = java.util.UUID.randomUUID().toString()
+        busy.blockedRemoval = id to retry
+        send(busy, "REMOVE_BLOCKED", JSONObject().put("id", id).put("action", action))
+        return true
+    }
+
     /** Back to the first screen in one move. */
-    private fun popToRoot() {
+    private fun popToRoot(action: String = "popToRoot") {
         interruptTabSwipe()
+        if (removalBlocked(screens.drop(1), action) { popToRoot(action) }) return
         val stack = screens
         val removed = mutableListOf<Screen>()
         while (stack.size > 1) removed.add(stack.removeAt(stack.lastIndex))
@@ -9862,9 +9915,11 @@ class MainActivity : AppCompatActivity() {
         if (visibleScreen == null) return
         // Back from a cover's first screen closes the cover.
         if (cover != null && screens.size <= 1) {
+            if (removalBlocked(screens.toList(), "closeCover") { back() }) return
             closeCover()
             return
         }
+        if (screens.size > 1 && removalBlocked(screens.takeLast(1), "back") { back() }) return
         if (screens.size > 1) {
             val stack = screens
             val removed = stack.removeAt(stack.lastIndex)

@@ -1428,6 +1428,143 @@ class NativeNavigationTest {
      * back to the screen underneath as it was left. Until then a path could
      * only be pushed onto the visible tab.
      */
+    /**
+     * `preventRemove` (#594): a screen mid-upload, which leaving would cancel,
+     * stays whichever way it is asked to go, hears what was tried, and can
+     * carry the latest attempt through.
+     */
+    @Test
+    fun aScreenThatPreventsRemovalStaysUntilItProceeds() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        lateinit var activity: MainActivity
+        fun <T> onMain(read: () -> T): T {
+            var value: T? = null
+            scenario.onActivity { value = read() }
+            @Suppress("UNCHECKED_CAST")
+            return value as T
+        }
+        fun field(name: String): Any? = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(activity)
+        fun member(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
+        fun open(path: String, presentation: String? = null) {
+            scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("navigateOpen", String::class.java, Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType, JSONObject::class.java, String::class.java)
+                    .apply { isAccessible = true }.invoke(activity, path, false, false, JSONObject(), presentation)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        fun stack(): List<*> = onMain { (field("screens") as List<*>).toList() }
+        fun coverPath(): String? = onMain { field("cover")?.let { member(it, "path") as String } }
+        fun visiblePath(): String? = onMain { field("visibleScreen")?.let { member(it, "path") as String? } }
+        fun await(message: String, ready: () -> Boolean) {
+            repeat(60) {
+                if (ready()) return
+                SystemClock.sleep(100)
+            }
+            throw AssertionError("$message; cover ${coverPath()}, visible ${visiblePath()}, stack ${stack().size}")
+        }
+        fun systemBack() {
+            scenario.onActivity { activity.onBackPressedDispatcher.onBackPressed() }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        fun visible(): Any = requireNotNull(onMain { field("visibleScreen") })
+        fun evaluate(screen: Any, source: String): String =
+            (member(screen, "isolate") as androidx.javascriptengine.JavaScriptIsolate).evaluateJavaScriptAsync(source).get(5, java.util.concurrent.TimeUnit.SECONDS)
+        fun preventing(screen: Any): Boolean = onMain { (member(screen, "options") as JSONObject).optBoolean("preventRemove") }
+        fun setOptions(screen: Any, json: String) {
+            await("the screen's script is up") { evaluate(screen, "typeof globalThis.craft?.navigation?.setOptions") == "function" }
+            evaluate(screen, "craft.navigation.setOptions($json); 'ok'")
+        }
+        // What the screen hears: every REMOVE_BLOCKED, beside what it handled before.
+        fun listen(screen: Any) {
+            await("the screen's script is up") { evaluate(screen, "typeof globalThis.craft?.navigation?.setOptions") == "function" }
+            evaluate(screen, "globalThis.__removals = []; const prior = globalThis.__stxNativeCallback; " +
+                "globalThis.__stxNativeCallback = json => { const m = JSON.parse(json); if (m.type === 'REMOVE_BLOCKED') __removals.push(m.payload); return prior && prior(json); }; 'ready'")
+        }
+        fun removals(screen: Any) = org.json.JSONArray(evaluate(screen, "JSON.stringify(__removals)"))
+        fun refused(screen: Any, action: String, count: Int): String {
+            await("$action is refused") { removals(screen).length() == count }
+            val last = removals(screen).getJSONObject(count - 1)
+            assertEquals(action, last.getString("action"))
+            return last.getString("id")
+        }
+        fun proceed(screen: Any, id: String) {
+            scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("receive", screen.javaClass, String::class.java).apply { isAccessible = true }
+                    .invoke(activity, screen, JSONObject().put("type", "NAVIGATE_PROCEED").put("payload", JSONObject().put("id", id)).toString())
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        }
+        try {
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            open("/linked-details")
+            await("the busy screen is pushed") { stack().size == 2 && visiblePath() == "/linked-details" }
+            val busy = visible()
+            listen(busy)
+            setOptions(busy, "{preventRemove:true}")
+            await("the option reaches the host") { preventing(busy) }
+            fun stays(what: String) {
+                assertEquals("$what: nothing was removed", 2, stack().size)
+                assertSame(busy, visible())
+            }
+
+            // System Back (the button and the gesture are one callback), and the screen's own back().
+            systemBack()
+            val back = refused(busy, "back", 1)
+            stays("system Back")
+            evaluate(busy, "craft.navigation.back(); 'ok'")
+            refused(busy, "back", 2)
+            stays("navigation.back()")
+            // The tab tapped again goes to its root: refused as a re-tap.
+            scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("popToRoot", String::class.java).apply { isAccessible = true }.invoke(activity, "tabReselect")
+            }
+            refused(busy, "tabReselect", 3)
+            stays("tab re-tap")
+            // A link to the tab's own path.
+            open("/")
+            val link = refused(busy, "open", 4)
+            stays("a link to the tab")
+
+            // Only the latest refusal is carried through.
+            proceed(busy, back)
+            SystemClock.sleep(300)
+            stays("a stale proceed")
+            proceed(busy, link)
+            await("the agreed removal happens") { stack().size == 1 && visiblePath() != "/linked-details" }
+
+            // A cover whose screen is busy stays up, through its own Back and a link under it.
+            open("/capabilities", "cover")
+            await("the cover is up") { coverPath() == "/capabilities" && visiblePath() == "/capabilities" }
+            val covered = visible()
+            listen(covered)
+            setOptions(covered, "{preventRemove:true}")
+            await("the cover's option reaches the host") { preventing(covered) }
+            systemBack()
+            refused(covered, "closeCover", 1)
+            assertEquals("its Back does not close it", "/capabilities", coverPath())
+            open("/summary")
+            val under = refused(covered, "open", 2)
+            assertEquals("nor does a link to a tab under it", "/capabilities", coverPath())
+            proceed(covered, under)
+            await("the agreed link closes the cover") { coverPath() == null && visiblePath() == "/summary" }
+
+            // With the option cleared, Back is ordinary again.
+            open("/linked-details")
+            await("pushed again") { visiblePath() == "/linked-details" }
+            val again = visible()
+            setOptions(again, "{preventRemove:true}")
+            await("busy again") { preventing(again) }
+            setOptions(again, "{preventRemove:false}")
+            await("no longer busy") { !preventing(again) }
+            systemBack()
+            await("an ordinary Back") { visiblePath() != "/linked-details" }
+        } finally {
+            scenario.close()
+        }
+    }
+
     @Test
     fun aPathOpenedAsACoverGetsItsOwnStackOverTheBars() {
         val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)

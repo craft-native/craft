@@ -15,6 +15,15 @@ import { join } from 'node:path'
  * it is read instead of when someone notices.
  */
 const shell = readFileSync(join(import.meta.dir, '../templates/CraftNativeShell.kt.template'), 'utf8')
+const activity = readFileSync(join(import.meta.dir, '../templates/MainActivityNative.kt.template'), 'utf8')
+
+/**
+ * The `setOptions` keys the activity reads off a screen itself rather than
+ * through the chrome: navigation behaviour, such as `preventRemove` (#594).
+ */
+function screenOptions(): Set<string> {
+  return new Set([...activity.matchAll(/\.options\.optBoolean\("([a-zA-Z]+)"\)/g)].map(match => match[1]!))
+}
 
 /** Every `setOptions` key `CraftNativeChrome.apply` consults. */
 function appliedOptions(): Set<string> {
@@ -65,7 +74,7 @@ test('every option either host reads is declared on CraftNavigationOptions', () 
   const start = swift.indexOf('`craft.navigation.setOptions`: this screen\'s bar.')
   expect(start).toBeGreaterThan(0)
   const ios = new Set([...swift.slice(start, start + 6000).matchAll(/options(?:\.keys\.contains\(|\[)"([a-zA-Z]+)"/g)].map(match => match[1]!))
-  const read = new Set([...ios, ...appliedOptions()])
+  const read = new Set([...ios, ...appliedOptions(), ...screenOptions()])
   expect(read.size).toBeGreaterThan(14)
 
   const declared = declaredOptions()
@@ -85,7 +94,7 @@ test('the hosts agree on which navigation options exist, or the difference is re
   expect(start).toBeGreaterThan(0)
   const ios = new Set([...swift.slice(start, start + 6000).matchAll(/options(?:\.keys\.contains\(|\[)"([a-zA-Z]+)"/g)].map(match => match[1]!))
   expect(ios.size).toBeGreaterThan(10)
-  const android = appliedOptions()
+  const android = new Set([...appliedOptions(), ...screenOptions()])
 
   expect([...ios].filter(key => !android.has(key)).sort()).toEqual(['backTitle', 'contentSwipeBack', 'edgeToEdge', 'navigationBarSolid', 'swipeBack'])
   expect([...android].filter(key => !ios.has(key)).sort()).toEqual([])
