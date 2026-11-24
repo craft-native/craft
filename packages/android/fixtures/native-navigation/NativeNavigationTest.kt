@@ -4163,6 +4163,138 @@ class NativeNavigationTest {
         } finally { scenario.close() }
     }
 
+    /**
+     * #576: Back, touch and accessibility agree on the top layer for a modal
+     * nested inside another, through repeated openings; the keyboard takes
+     * Back first; and a blocking modal with no close handler owns Back.
+     */
+    @Test
+    fun backTouchAndAccessibilityAgreeOnTheTopLayerOfNestedModals() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var activity: MainActivity
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            val screen = requireNotNull(MainActivity::class.java.getDeclaredField("visibleScreen").apply { isAccessible = true }.get(activity))
+            val isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+            fun evaluate(javascript: String) = isolate.evaluateJavaScriptAsync(javascript).get(5, java.util.concurrent.TimeUnit.SECONDS)
+            evaluate("globalThis.layerEvents = []; globalThis.__stxNativeCallback = json => { const m = JSON.parse(json); if (m.type === 'EVENT' && /^(request|pressed)-/.test(m.payload.handlerName)) layerEvents.push(m.payload.handlerName); }; 'ready'")
+            val render = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }
+            // The outer sheet holds a button and, declared inside it, a
+            // smaller modal over that button. `blocker` has no close handler.
+            fun draw(inner: Boolean, blocker: Boolean = false) {
+                scenario.onActivity {
+                    val document = JSONObject("""{"id":"root","type":"View","style":{"flex":1},"children":[
+                        {"id":"outer","type":"Modal","props":{"testID":"outer-modal","visible":true,"animationType":"none"},"events":{"onRequestClose":"request-outer"},"children":[
+                            {"id":"under","type":"Pressable","props":{"testID":"under-button"},"style":{"width":240,"height":240},"events":{"onPress":"pressed-under"}},
+                            {"id":"field","type":"TextInput","props":{"testID":"outer-field"},"style":{"width":240,"height":48}},
+                            {"id":"inner","type":"Modal","props":{"testID":"inner-modal","visible":$inner,"animationType":"none"},"events":{"onRequestClose":"request-inner"},"children":[
+                                {"id":"inner-body","type":"View","style":{"flex":1}}
+                            ]}
+                        ]},
+                        {"id":"blocker","type":"Modal","props":{"testID":"blocker-modal","visible":$blocker,"animationType":"none"}}
+                    ]}""")
+                    render.invoke(activity, screen, document)
+                }
+            }
+            fun events() = evaluate("layerEvents.join('|')")
+            fun awaitEvents(expected: String) {
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                while (events() != expected && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(30)
+                assertEquals(expected, events())
+            }
+            fun tapOnScreen(view: View) {
+                val location = IntArray(2)
+                instrumentation.runOnMainSync { view.getLocationOnScreen(location) }
+                val x = location[0] + view.width / 2f
+                val y = location[1] + view.height / 2f
+                val down = SystemClock.uptimeMillis()
+                for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                    val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0)
+                    try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+                }
+                instrumentation.waitForIdleSync()
+            }
+            fun back() = scenario.onActivity { activity.onBackPressedDispatcher.onBackPressed() }
+
+            draw(inner = false)
+            val outer = awaitView(activity, "outer-modal")
+            val under = awaitView(activity, "under-button")
+            tapOnScreen(under)
+            awaitEvents("pressed-under")
+            var expected = "pressed-under"
+            repeat(3) { round ->
+                // Opening and closing again: the nested modal is above its
+                // parent every time, for drawing, touch, Back and TalkBack.
+                draw(inner = true)
+                val inner = awaitView(activity, "inner-modal") { it.visibility == View.VISIBLE }
+                scenario.onActivity {
+                    val viewport = inner.parent as ViewGroup
+                    assertSame("round $round: both modals are promoted to the screen", viewport, outer.parent)
+                    assertTrue("round $round: the nested modal is drawn above its parent", viewport.indexOfChild(inner) > viewport.indexOfChild(outer))
+                    assertTrue(inner.z > outer.z)
+                    assertEquals("round $round: TalkBack skips the covered parent",
+                        View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, outer.importantForAccessibility)
+                }
+                back()
+                expected += "|request-inner"
+                awaitEvents(expected)
+                // Still up while the screen decides: a tap over the covered
+                // button lands on the nested modal (its backdrop, already
+                // asked to close), never on the button underneath.
+                tapOnScreen(under)
+                SystemClock.sleep(200)
+                assertEquals("round $round: the covered button is not touched", expected, events())
+                draw(inner = false)
+                awaitView(activity, "inner-modal") { it.visibility != View.VISIBLE }
+                scenario.onActivity {
+                    assertTrue(outer.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+                }
+                tapOnScreen(under)
+                expected += "|pressed-under"
+                awaitEvents(expected)
+            }
+
+            // A blocking modal with no close handler owns Back: nothing below
+            // it is asked to close, and the screen stays.
+            draw(inner = false, blocker = true)
+            val blocker = awaitView(activity, "blocker-modal") { it.visibility == View.VISIBLE }
+            scenario.onActivity { assertTrue(blocker.z > outer.z) }
+            back()
+            back()
+            SystemClock.sleep(300)
+            assertEquals(expected, events())
+            assertSame("Back did not leave the screen", screen, MainActivity::class.java.getDeclaredField("visibleScreen").apply { isAccessible = true }.get(activity))
+            tapOnScreen(under)
+            SystemClock.sleep(200)
+            assertEquals("the blocker takes touches too", expected, events())
+            draw(inner = false, blocker = false)
+            awaitView(activity, "blocker-modal") { it.visibility != View.VISIBLE }
+
+            // The keyboard takes Back before the modal it is typing in.
+            val field = awaitView(activity, "outer-field")
+            scenario.onActivity {
+                field.requestFocus()
+                androidx.core.view.WindowCompat.getInsetsController(activity.window, field).show(androidx.core.view.WindowInsetsCompat.Type.ime())
+            }
+            fun imeVisible(): Boolean {
+                var visible = false
+                instrumentation.runOnMainSync { visible = androidx.core.view.ViewCompat.getRootWindowInsets(field)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true }
+                return visible
+            }
+            val shown = SystemClock.uptimeMillis() + 5_000
+            while (!imeVisible() && SystemClock.uptimeMillis() < shown) SystemClock.sleep(50)
+            org.junit.Assume.assumeTrue("this device shows no soft keyboard", imeVisible())
+            back()
+            val hidden = SystemClock.uptimeMillis() + 5_000
+            while (imeVisible() && SystemClock.uptimeMillis() < hidden) SystemClock.sleep(50)
+            assertFalse("Back closed the keyboard", imeVisible())
+            assertEquals("and asked no modal to close", expected, events())
+            back()
+            awaitEvents("$expected|request-outer")
+        } finally { scenario.close() }
+    }
+
     @Test
     fun aNonTabStartIsTheFirstScreenAndExplicitTabNavigationReplacesIt() {
         val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
