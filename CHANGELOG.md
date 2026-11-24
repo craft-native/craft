@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.538...v0.0.539)
+
+## 🚀 Features
+
+- **android**: keep a screen in its stack while it sets preventRemove ([eda775d](https://github.com/craft-native/craft/commit/eda775d)) _(by glennmichael123)_ ([#594](https://github.com/craft-native/craft/issues/594))
+- **sdk**: ask the desktop host for notification permission, not the webview ([45e5aa2](https://github.com/craft-native/craft/commit/45e5aa2)) _(by glennmichael123)_ ([#590](https://github.com/craft-native/craft/issues/590))
+- **ios**: keep a screen in its stack while it sets preventRemove ([17e0162](https://github.com/craft-native/craft/commit/17e0162)) _(by glennmichael123)_ ([#594](https://github.com/craft-native/craft/issues/594))
+
+## 🧪 Tests
+
+- **android**: stub the preventRemove guard in the navigation-replace fixture ([c09e1aa](https://github.com/craft-native/craft/commit/c09e1aa)) _(by glennmichael123)_ ([#594](https://github.com/craft-native/craft/issues/594))
+- **e2e**: name the tap the simulator dropped before SpringBoard saw it ([316aab0](https://github.com/craft-native/craft/commit/316aab0)) _(by glennmichael123)_ ([#450](https://github.com/craft-native/craft/issues/450))
+- **android**: Back, touch and TalkBack agree on the top layer of nested modals ([466b1b5](https://github.com/craft-native/craft/commit/466b1b5)) _(by glennmichael123)_ ([#576](https://github.com/craft-native/craft/issues/576))
+- **android**: let a stock app's background broadcast ANR pass the checkpoint leg ([aedf882](https://github.com/craft-native/craft/commit/aedf882)) _(by glennmichael123)_ ([#593](https://github.com/craft-native/craft/issues/593))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.537...v0.0.538)
 
 ## 🐛 Bug Fixes
