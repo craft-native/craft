@@ -52,6 +52,19 @@ class Navigation {
     fun openCover(match: Match, props: JSONObject) { error("This fixture opens no cover") }
     fun replace(path: String, props: JSONObject = JSONObject()) = navigateOpen(path, replace = true, props = props)
     fun complete() { pending.toList().also { pending.clear() }.forEach { it() } }
+    // #594: a screen that sets preventRemove holds the navigation until it
+    // proceeds; \`blocking\` stands in for that screen's option here.
+    val tabStacks = mutableListOf<MutableList<Screen>>()
+    fun startsOutsideTab(index: Int) = false
+    var blocking = false
+    var blocked: Pair<String, () -> Unit>? = null
+    var removalBypass = 0
+    fun bypassingRemovalGuard(change: () -> Unit) { removalBypass++; try { change() } finally { removalBypass-- } }
+    fun removalBlocked(gone: List<Screen>, action: String, retry: () -> Unit): Boolean {
+        if (!blocking || removalBypass > 0 || gone.isEmpty()) return false
+        blocked = action to retry
+        return true
+    }
 ${method}
 }
 fun main() {
@@ -92,7 +105,19 @@ fun main() {
     check(crossTab.currentTab == 1 && originalStack.none { it.name == "Login" })
     check(crossTab.selectedCanonicalTab) { "An explicit tab URL did not select the canonical tab root" }
     check(crossTab.received!!.values["props"] === props)
-    println("PASS atomic replacement waits for teardown, reuses canonical screens, preserves parameters and respects a changed stack")
+
+    // A screen being replaced that prevents removal stays, and the
+    // replacement runs once it proceeds.
+    val guarded = Navigation()
+    guarded.blocking = true
+    guarded.replace(path, props)
+    check(guarded.disposed.isEmpty() && guarded.pending.isEmpty()) { "A screen that prevents removal was torn down" }
+    check(guarded.blocked?.first == "replace") { "The refusal did not name the replace: \${guarded.blocked}" }
+    guarded.bypassingRemovalGuard { guarded.blocked!!.second() }
+    check(guarded.disposed.single().name == "Login" && guarded.pending.size == 1)
+    guarded.complete()
+    check(guarded.screens.map { it.name } == listOf("Today", "Claim"))
+    println("PASS atomic replacement waits for teardown, reuses canonical screens, preserves parameters, respects a changed stack and holds for preventRemove")
 }
 `)
 }, 180_000)
