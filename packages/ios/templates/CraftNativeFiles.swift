@@ -1090,6 +1090,348 @@ enum CraftNativeFiles {
     }
 }
 
+// MARK: Exporting a video for upload (#595)
+
+/// `craft.files.exportVideo`: one phone clip in (HEVC, HDR, rotated, 4K60),
+/// a small MP4 any browser plays out. H.264 High and AAC, BT.709 SDR (the
+/// video composition tone-maps HDR), the rotation drawn into the pixels, no
+/// metadata, moov first. The poster is taken from the written MP4, so it is
+/// SDR, upright and the video's size. The original file is left alone.
+final class CraftVideoExport {
+    struct Options {
+        var box = (1280, 720)
+        var fps = 30.0
+        var bitrate = 3_000_000
+        var posterAt: Double?
+        var poster = true
+        var progressID = ""
+
+        init(_ options: [String: Any]) throws {
+            func invalid(_ message: String) -> CraftNativeActionError { CraftNativeActionError(code: "INVALID_ARGUMENT", message: message) }
+            if let value = options["maxBox"] {
+                guard let pair = value as? [Any], pair.count == 2,
+                      let a = craftNativeNumber(pair[0])?.doubleValue, let b = craftNativeNumber(pair[1])?.doubleValue,
+                      a.isFinite, b.isFinite, a >= 16, b >= 16, a <= 7680, b <= 7680 else {
+                    throw invalid("exportVideo maxBox is [width, height], each 16 to 7680")
+                }
+                box = (Int(a), Int(b))
+            }
+            if let value = options["fps"] {
+                guard let fps = craftNativeNumber(value)?.doubleValue, fps.isFinite, fps >= 1, fps <= 120 else { throw invalid("exportVideo fps is 1 to 120") }
+                self.fps = fps
+            }
+            if let value = options["bitrateKbps"] {
+                guard let kbps = craftNativeNumber(value)?.doubleValue, kbps.isFinite, kbps >= 100, kbps <= 50_000 else { throw invalid("exportVideo bitrateKbps is 100 to 50000") }
+                bitrate = Int(kbps * 1000)
+            }
+            if let value = options["poster"] {
+                if let enabled = value as? Bool { poster = enabled }
+                else if let spec = value as? [String: Any] {
+                    if let at = spec["at"] {
+                        guard let seconds = craftNativeNumber(at)?.doubleValue, seconds.isFinite, seconds >= 0 else { throw invalid("exportVideo poster.at is seconds, 0 or more") }
+                        posterAt = seconds
+                    }
+                } else if !(value is NSNull) { throw invalid("exportVideo poster is { at } or false") }
+            }
+            progressID = options["progressId"] as? String ?? ""
+        }
+    }
+
+    /// The upright size fitted inside the box (its long side along the
+    /// clip's long side), never larger than the clip, in even numbers.
+    static func fittedSize(_ upright: CGSize, box: (Int, Int)) -> (width: Int, height: Int) {
+        let long = Double(max(box.0, box.1)), short = Double(min(box.0, box.1))
+        let width = Double(upright.width), height = Double(upright.height)
+        let (boxWidth, boxHeight) = width >= height ? (long, short) : (short, long)
+        let scale = min(1, boxWidth / width, boxHeight / height)
+        func even(_ value: Double) -> Int { max(2, Int(value.rounded()) / 2 * 2) }
+        return (even(width * scale), even(height * scale))
+    }
+
+    /// The H.264 rate: the ceiling, or the clip's own rate when that is lower.
+    static func targetBitrate(ceiling: Int, source: Float) -> Int {
+        source > 0 ? max(100_000, min(ceiling, Int(source))) : ceiling
+    }
+
+    static let queue = DispatchQueue(label: "craft.files.exportVideo", qos: .userInitiated)
+
+    private let source: URL
+    private let options: Options
+    private let progress: (Double) -> Void
+    private let done: (Result<Any, CraftNativeActionError>) -> Void
+    private let lock = NSLock()
+    private var stopped: CraftNativeActionError?
+    private var settled = false
+    private var reader: AVAssetReader?
+    private var writer: AVAssetWriter?
+    private var output: URL?
+    private var backgroundTime: CraftUploadBackgroundTime?
+
+    init(source: URL, options: Options, progress: @escaping (Double) -> Void, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        self.source = source
+        self.options = options
+        self.progress = progress
+        self.done = done
+    }
+
+    /// Stop with this error: CANCELLED for the caller, BACKGROUND_EXPIRED
+    /// when iOS takes the time back. Nothing written is kept.
+    func stop(_ error: CraftNativeActionError) {
+        lock.lock()
+        guard stopped == nil, !settled else { return lock.unlock() }
+        stopped = error
+        let reader = self.reader, writer = self.writer
+        lock.unlock()
+        reader?.cancelReading()
+        if writer?.status == .writing { writer?.cancelWriting() }
+        Self.queue.async { self.settle(.failure(error)) }
+    }
+
+    private var stopError: CraftNativeActionError? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopped
+    }
+
+    private func settle(_ result: Result<Any, CraftNativeActionError>) {
+        lock.lock()
+        guard !settled else { return lock.unlock() }
+        settled = true
+        let output = self.output
+        let result = stopped.map { Result<Any, CraftNativeActionError>.failure($0) } ?? result
+        lock.unlock()
+        backgroundTime?.finish()
+        if case .failure = result, let output { try? FileManager.default.removeItem(at: output.deletingLastPathComponent()) }
+        done(result)
+    }
+
+    private func fail(_ code: String, _ message: String) { settle(.failure(CraftNativeActionError(code: code, message: message))) }
+
+    func start() {
+        backgroundTime = CraftUploadBackgroundTime(name: "craft.exportVideo")
+        backgroundTime?.watch { [weak self] in
+            self?.stop(CraftNativeActionError(code: "BACKGROUND_EXPIRED", message: "iOS suspended the app before the export finished"))
+        }
+        Self.queue.async { self.run() }
+    }
+
+    private func run() {
+        guard stopError == nil else { return settle(.failure(stopError!)) }
+        let asset = AVURLAsset(url: source, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        guard asset.isReadable, let videoTrack = asset.tracks(withMediaType: .video).first else {
+            return fail("UNSUPPORTED_SOURCE", "exportVideo found no video it can read in this file")
+        }
+        let duration = asset.duration
+        guard duration.isValid, duration.seconds > 0 else { return fail("UNSUPPORTED_SOURCE", "exportVideo found no duration in this file") }
+        let transform = videoTrack.preferredTransform
+        let bounds = CGRect(origin: .zero, size: videoTrack.naturalSize).applying(transform)
+        let upright = CGSize(width: abs(bounds.width), height: abs(bounds.height))
+        guard upright.width >= 2, upright.height >= 2 else { return fail("UNSUPPORTED_SOURCE", "exportVideo found a video with no size") }
+        let size = Self.fittedSize(upright, box: options.box)
+        let sourceRate = Double(videoTrack.nominalFrameRate)
+        let fps = sourceRate > 0 ? min(options.fps, sourceRate) : options.fps
+
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = CGSize(width: size.width, height: size.height)
+        composition.frameDuration = CMTime(seconds: 1 / fps, preferredTimescale: 60_000)
+        composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layer.setTransform(transform
+            .concatenating(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
+            .concatenating(CGAffineTransform(scaleX: CGFloat(size.width) / upright.width, y: CGFloat(size.height) / upright.height)), at: .zero)
+        instruction.layerInstructions = [layer]
+        composition.instructions = [instruction]
+
+        // A recording with spatial audio carries several audio tracks: take
+        // the AAC one when there is one, else the first enabled.
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        let audioTrack = audioTracks.first { track in
+            (track.formatDescriptions as? [CMFormatDescription])?.contains { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC } == true
+        } ?? audioTracks.first { $0.isEnabled } ?? audioTracks.first
+
+        let name = (CraftNativeFiles.safeName(source.deletingPathExtension().lastPathComponent) as NSString).deletingPathExtension
+        let stem = name.isEmpty ? "video" : name
+        let url: URL, reader: AVAssetReader, writer: AVAssetWriter
+        do {
+            url = try CraftNativeFiles.newFile(named: stem + ".mp4")
+            reader = try AVAssetReader(asset: asset)
+            writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        } catch {
+            return fail("EXPORT_FAILED", error.localizedDescription)
+        }
+        lock.lock()
+        self.output = url
+        self.reader = reader
+        self.writer = writer
+        lock.unlock()
+        writer.shouldOptimizeForNetworkUse = true
+        writer.metadata = []
+
+        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: [videoTrack], videoSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ])
+        videoOutput.videoComposition = composition
+        videoOutput.alwaysCopiesSampleData = false
+        let color: [String: Any] = [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ]
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: size.width,
+            AVVideoHeightKey: size.height,
+            AVVideoColorPropertiesKey: color,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: Self.targetBitrate(ceiling: options.bitrate, source: videoTrack.estimatedDataRate),
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC,
+                AVVideoExpectedSourceFrameRateKey: fps,
+                AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
+            ],
+        ])
+        videoInput.expectsMediaDataInRealTime = false
+        guard reader.canAdd(videoOutput), writer.canAdd(videoInput) else { return fail("UNSUPPORTED_SOURCE", "exportVideo can't convert this video") }
+        reader.add(videoOutput)
+        writer.add(videoInput)
+
+        var audioPair: (AVAssetReaderTrackOutput, AVAssetWriterInput)?
+        if let audioTrack {
+            var stereo = AudioChannelLayout()
+            stereo.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+            let layout = Data(bytes: &stereo, count: MemoryLayout<AudioChannelLayout>.size)
+            let audioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVChannelLayoutKey: layout,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+            ])
+            audioOutput.alwaysCopiesSampleData = false
+            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVChannelLayoutKey: layout,
+                AVEncoderBitRateKey: 128_000,
+            ])
+            audioInput.expectsMediaDataInRealTime = false
+            if reader.canAdd(audioOutput), writer.canAdd(audioInput) {
+                reader.add(audioOutput)
+                writer.add(audioInput)
+                audioPair = (audioOutput, audioInput)
+            }
+        }
+
+        guard stopError == nil else { return settle(.failure(stopError!)) }
+        guard reader.startReading() else {
+            return fail("UNSUPPORTED_SOURCE", reader.error?.localizedDescription ?? "exportVideo can't read this video")
+        }
+        guard writer.startWriting() else {
+            reader.cancelReading()
+            return fail("EXPORT_FAILED", writer.error?.localizedDescription ?? "exportVideo can't write the MP4")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        let group = DispatchGroup()
+        let total = duration.seconds
+        var reported = -1.0
+        group.enter()
+        let videoQueue = DispatchQueue(label: "craft.files.exportVideo.video")
+        videoInput.requestMediaDataWhenReady(on: videoQueue) { [weak self] in
+            while videoInput.isReadyForMoreMediaData {
+                guard self?.stopError == nil, let sample = videoOutput.copyNextSampleBuffer() else {
+                    videoInput.markAsFinished()
+                    group.leave()
+                    return
+                }
+                let seconds = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+                if !videoInput.append(sample) {
+                    reader.cancelReading()
+                    videoInput.markAsFinished()
+                    group.leave()
+                    return
+                }
+                let fraction = min(0.99, max(0, seconds / total))
+                if fraction - reported >= 0.01 { reported = fraction; self?.progress(fraction) }
+            }
+        }
+        if let (audioOutput, audioInput) = audioPair {
+            group.enter()
+            let audioQueue = DispatchQueue(label: "craft.files.exportVideo.audio")
+            audioInput.requestMediaDataWhenReady(on: audioQueue) { [weak self] in
+                while audioInput.isReadyForMoreMediaData {
+                    guard self?.stopError == nil, let sample = audioOutput.copyNextSampleBuffer(), audioInput.append(sample) else {
+                        audioInput.markAsFinished()
+                        group.leave()
+                        return
+                    }
+                }
+            }
+        }
+        group.notify(queue: Self.queue) { [self] in
+            if let error = stopError { return settle(.failure(error)) }
+            if reader.status == .failed || writer.status == .failed {
+                writer.cancelWriting()
+                let error = writer.error ?? reader.error
+                return fail(reader.status == .failed ? "UNSUPPORTED_SOURCE" : "EXPORT_FAILED", error?.localizedDescription ?? "exportVideo stopped")
+            }
+            writer.finishWriting { [self] in
+                Self.queue.async { [self] in
+                    if let error = stopError { return settle(.failure(error)) }
+                    guard writer.status == .completed else {
+                        return fail("EXPORT_FAILED", writer.error?.localizedDescription ?? "exportVideo could not finish the MP4")
+                    }
+                    finished(url, stem: stem)
+                }
+            }
+        }
+    }
+
+    /// Measure the file as written and take the poster from it.
+    private func finished(_ url: URL, stem: String) {
+        let written = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        guard let track = written.tracks(withMediaType: .video).first else { return fail("EXPORT_FAILED", "exportVideo wrote no video") }
+        let size = track.naturalSize
+        let duration = written.duration.seconds
+        let frameRate = Double(track.nominalFrameRate)
+        let bytes = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.intValue ?? 0
+        var poster: Any = NSNull()
+        if options.poster {
+            let generator = AVAssetImageGenerator(asset: written)
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
+            generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+            let at = min(options.posterAt ?? min(1, duration / 3), max(0, duration - 0.05))
+            if let image = try? generator.copyCGImage(at: CMTime(seconds: at, preferredTimescale: 600), actualTime: nil),
+               case .success(let file) = CraftNativeFiles.writeJPEG(image, quality: 0.85, name: stem + ".jpg") {
+                poster = file
+            }
+        }
+        guard stopError == nil else {
+            if let file = poster as? [String: Any], let path = file["path"] as? String { CraftNativeFiles.remove(path) }
+            return settle(.failure(stopError!))
+        }
+        progress(1)
+        settle(.success([
+            "video": CraftNativeFiles.describe(url, type: "video/mp4", extra: ["width": Int(size.width), "height": Int(size.height), "duration": duration]),
+            "poster": poster,
+            "width": Int(size.width),
+            "height": Int(size.height),
+            "duration": duration,
+            "frameRate": frameRate,
+            "bytes": bytes,
+        ]))
+    }
+}
+
 // `craft.media` on a native screen: video and audio kept on the phone for
 // when there is no signal (a gym's basement, a plane). Not tmp/craft-files,
 // which iOS and the sweep above both empty: Application Support/craft-media,
@@ -1599,347 +1941,5 @@ final class CraftNativeMediaTransfers: NSObject, URLSessionDownloadDelegate {
             self?.backgroundCompletion = nil
             done?()
         }
-    }
-}
-
-// MARK: Exporting a video for upload (#595)
-
-/// `craft.files.exportVideo`: one phone clip in (HEVC, HDR, rotated, 4K60),
-/// a small MP4 any browser plays out. H.264 High and AAC, BT.709 SDR (the
-/// video composition tone-maps HDR), the rotation drawn into the pixels, no
-/// metadata, moov first. The poster is taken from the written MP4, so it is
-/// SDR, upright and the video's size. The original file is left alone.
-final class CraftVideoExport {
-    struct Options {
-        var box = (1280, 720)
-        var fps = 30.0
-        var bitrate = 3_000_000
-        var posterAt: Double?
-        var poster = true
-        var progressID = ""
-
-        init(_ options: [String: Any]) throws {
-            func invalid(_ message: String) -> CraftNativeActionError { CraftNativeActionError(code: "INVALID_ARGUMENT", message: message) }
-            if let value = options["maxBox"] {
-                guard let pair = value as? [Any], pair.count == 2,
-                      let a = craftNativeNumber(pair[0])?.doubleValue, let b = craftNativeNumber(pair[1])?.doubleValue,
-                      a.isFinite, b.isFinite, a >= 16, b >= 16, a <= 7680, b <= 7680 else {
-                    throw invalid("exportVideo maxBox is [width, height], each 16 to 7680")
-                }
-                box = (Int(a), Int(b))
-            }
-            if let value = options["fps"] {
-                guard let fps = craftNativeNumber(value)?.doubleValue, fps.isFinite, fps >= 1, fps <= 120 else { throw invalid("exportVideo fps is 1 to 120") }
-                self.fps = fps
-            }
-            if let value = options["bitrateKbps"] {
-                guard let kbps = craftNativeNumber(value)?.doubleValue, kbps.isFinite, kbps >= 100, kbps <= 50_000 else { throw invalid("exportVideo bitrateKbps is 100 to 50000") }
-                bitrate = Int(kbps * 1000)
-            }
-            if let value = options["poster"] {
-                if let enabled = value as? Bool { poster = enabled }
-                else if let spec = value as? [String: Any] {
-                    if let at = spec["at"] {
-                        guard let seconds = craftNativeNumber(at)?.doubleValue, seconds.isFinite, seconds >= 0 else { throw invalid("exportVideo poster.at is seconds, 0 or more") }
-                        posterAt = seconds
-                    }
-                } else if !(value is NSNull) { throw invalid("exportVideo poster is { at } or false") }
-            }
-            progressID = options["progressId"] as? String ?? ""
-        }
-    }
-
-    /// The upright size fitted inside the box (its long side along the
-    /// clip's long side), never larger than the clip, in even numbers.
-    static func fittedSize(_ upright: CGSize, box: (Int, Int)) -> (width: Int, height: Int) {
-        let long = Double(max(box.0, box.1)), short = Double(min(box.0, box.1))
-        let width = Double(upright.width), height = Double(upright.height)
-        let (boxWidth, boxHeight) = width >= height ? (long, short) : (short, long)
-        let scale = min(1, boxWidth / width, boxHeight / height)
-        func even(_ value: Double) -> Int { max(2, Int(value.rounded()) / 2 * 2) }
-        return (even(width * scale), even(height * scale))
-    }
-
-    /// The H.264 rate: the ceiling, or the clip's own rate when that is lower.
-    static func targetBitrate(ceiling: Int, source: Float) -> Int {
-        source > 0 ? max(100_000, min(ceiling, Int(source))) : ceiling
-    }
-
-    static let queue = DispatchQueue(label: "craft.files.exportVideo", qos: .userInitiated)
-
-    private let source: URL
-    private let options: Options
-    private let progress: (Double) -> Void
-    private let done: (Result<Any, CraftNativeActionError>) -> Void
-    private let lock = NSLock()
-    private var stopped: CraftNativeActionError?
-    private var settled = false
-    private var reader: AVAssetReader?
-    private var writer: AVAssetWriter?
-    private var output: URL?
-    private var backgroundTime: CraftUploadBackgroundTime?
-
-    init(source: URL, options: Options, progress: @escaping (Double) -> Void, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
-        self.source = source
-        self.options = options
-        self.progress = progress
-        self.done = done
-    }
-
-    /// Stop with this error: CANCELLED for the caller, BACKGROUND_EXPIRED
-    /// when iOS takes the time back. Nothing written is kept.
-    func stop(_ error: CraftNativeActionError) {
-        lock.lock()
-        guard stopped == nil, !settled else { return lock.unlock() }
-        stopped = error
-        let reader = self.reader, writer = self.writer
-        lock.unlock()
-        reader?.cancelReading()
-        if writer?.status == .writing { writer?.cancelWriting() }
-        Self.queue.async { self.settle(.failure(error)) }
-    }
-
-    private var stopError: CraftNativeActionError? {
-        lock.lock()
-        defer { lock.unlock() }
-        return stopped
-    }
-
-    private func settle(_ result: Result<Any, CraftNativeActionError>) {
-        lock.lock()
-        guard !settled else { return lock.unlock() }
-        settled = true
-        let output = self.output
-        let result = stopped.map { Result<Any, CraftNativeActionError>.failure($0) } ?? result
-        lock.unlock()
-        backgroundTime?.finish()
-        if case .failure = result, let output { try? FileManager.default.removeItem(at: output.deletingLastPathComponent()) }
-        done(result)
-    }
-
-    private func fail(_ code: String, _ message: String) { settle(.failure(CraftNativeActionError(code: code, message: message))) }
-
-    func start() {
-        backgroundTime = CraftUploadBackgroundTime(name: "craft.exportVideo")
-        backgroundTime?.watch { [weak self] in
-            self?.stop(CraftNativeActionError(code: "BACKGROUND_EXPIRED", message: "iOS suspended the app before the export finished"))
-        }
-        Self.queue.async { self.run() }
-    }
-
-    private func run() {
-        guard stopError == nil else { return settle(.failure(stopError!)) }
-        let asset = AVURLAsset(url: source, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-        guard asset.isReadable, let videoTrack = asset.tracks(withMediaType: .video).first else {
-            return fail("UNSUPPORTED_SOURCE", "exportVideo found no video it can read in this file")
-        }
-        let duration = asset.duration
-        guard duration.isValid, duration.seconds > 0 else { return fail("UNSUPPORTED_SOURCE", "exportVideo found no duration in this file") }
-        let transform = videoTrack.preferredTransform
-        let bounds = CGRect(origin: .zero, size: videoTrack.naturalSize).applying(transform)
-        let upright = CGSize(width: abs(bounds.width), height: abs(bounds.height))
-        guard upright.width >= 2, upright.height >= 2 else { return fail("UNSUPPORTED_SOURCE", "exportVideo found a video with no size") }
-        let size = Self.fittedSize(upright, box: options.box)
-        let sourceRate = Double(videoTrack.nominalFrameRate)
-        let fps = sourceRate > 0 ? min(options.fps, sourceRate) : options.fps
-
-        let composition = AVMutableVideoComposition()
-        composition.renderSize = CGSize(width: size.width, height: size.height)
-        composition.frameDuration = CMTime(seconds: 1 / fps, preferredTimescale: 60_000)
-        composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-        composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-        composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-        layer.setTransform(transform
-            .concatenating(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
-            .concatenating(CGAffineTransform(scaleX: CGFloat(size.width) / upright.width, y: CGFloat(size.height) / upright.height)), at: .zero)
-        instruction.layerInstructions = [layer]
-        composition.instructions = [instruction]
-
-        // A recording with spatial audio carries several audio tracks: take
-        // the AAC one when there is one, else the first enabled.
-        let audioTracks = asset.tracks(withMediaType: .audio)
-        let audioTrack = audioTracks.first { track in
-            (track.formatDescriptions as? [CMFormatDescription])?.contains { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC } == true
-        } ?? audioTracks.first { $0.isEnabled } ?? audioTracks.first
-
-        let name = (CraftNativeFiles.safeName(source.deletingPathExtension().lastPathComponent) as NSString).deletingPathExtension
-        let stem = name.isEmpty ? "video" : name
-        let url: URL, reader: AVAssetReader, writer: AVAssetWriter
-        do {
-            url = try CraftNativeFiles.newFile(named: stem + ".mp4")
-            reader = try AVAssetReader(asset: asset)
-            writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        } catch {
-            return fail("EXPORT_FAILED", error.localizedDescription)
-        }
-        lock.lock()
-        self.output = url
-        self.reader = reader
-        self.writer = writer
-        lock.unlock()
-        writer.shouldOptimizeForNetworkUse = true
-        writer.metadata = []
-
-        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: [videoTrack], videoSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        ])
-        videoOutput.videoComposition = composition
-        videoOutput.alwaysCopiesSampleData = false
-        let color: [String: Any] = [
-            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-        ]
-        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: size.width,
-            AVVideoHeightKey: size.height,
-            AVVideoColorPropertiesKey: color,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: Self.targetBitrate(ceiling: options.bitrate, source: videoTrack.estimatedDataRate),
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC,
-                AVVideoExpectedSourceFrameRateKey: fps,
-                AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
-            ],
-        ])
-        videoInput.expectsMediaDataInRealTime = false
-        guard reader.canAdd(videoOutput), writer.canAdd(videoInput) else { return fail("UNSUPPORTED_SOURCE", "exportVideo can't convert this video") }
-        reader.add(videoOutput)
-        writer.add(videoInput)
-
-        var audioPair: (AVAssetReaderTrackOutput, AVAssetWriterInput)?
-        if let audioTrack {
-            var stereo = AudioChannelLayout()
-            stereo.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
-            let layout = Data(bytes: &stereo, count: MemoryLayout<AudioChannelLayout>.size)
-            let audioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVChannelLayoutKey: layout,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsNonInterleaved: false,
-            ])
-            audioOutput.alwaysCopiesSampleData = false
-            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVChannelLayoutKey: layout,
-                AVEncoderBitRateKey: 128_000,
-            ])
-            audioInput.expectsMediaDataInRealTime = false
-            if reader.canAdd(audioOutput), writer.canAdd(audioInput) {
-                reader.add(audioOutput)
-                writer.add(audioInput)
-                audioPair = (audioOutput, audioInput)
-            }
-        }
-
-        guard stopError == nil else { return settle(.failure(stopError!)) }
-        guard reader.startReading() else {
-            return fail("UNSUPPORTED_SOURCE", reader.error?.localizedDescription ?? "exportVideo can't read this video")
-        }
-        guard writer.startWriting() else {
-            reader.cancelReading()
-            return fail("EXPORT_FAILED", writer.error?.localizedDescription ?? "exportVideo can't write the MP4")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        let group = DispatchGroup()
-        let total = duration.seconds
-        var reported = -1.0
-        group.enter()
-        let videoQueue = DispatchQueue(label: "craft.files.exportVideo.video")
-        videoInput.requestMediaDataWhenReady(on: videoQueue) { [weak self] in
-            while videoInput.isReadyForMoreMediaData {
-                guard self?.stopError == nil, let sample = videoOutput.copyNextSampleBuffer() else {
-                    videoInput.markAsFinished()
-                    group.leave()
-                    return
-                }
-                let seconds = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-                if !videoInput.append(sample) {
-                    reader.cancelReading()
-                    videoInput.markAsFinished()
-                    group.leave()
-                    return
-                }
-                let fraction = min(0.99, max(0, seconds / total))
-                if fraction - reported >= 0.01 { reported = fraction; self?.progress(fraction) }
-            }
-        }
-        if let (audioOutput, audioInput) = audioPair {
-            group.enter()
-            let audioQueue = DispatchQueue(label: "craft.files.exportVideo.audio")
-            audioInput.requestMediaDataWhenReady(on: audioQueue) { [weak self] in
-                while audioInput.isReadyForMoreMediaData {
-                    guard self?.stopError == nil, let sample = audioOutput.copyNextSampleBuffer(), audioInput.append(sample) else {
-                        audioInput.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
-            }
-        }
-        group.notify(queue: Self.queue) { [self] in
-            if let error = stopError { return settle(.failure(error)) }
-            if reader.status == .failed || writer.status == .failed {
-                writer.cancelWriting()
-                let error = writer.error ?? reader.error
-                return fail(reader.status == .failed ? "UNSUPPORTED_SOURCE" : "EXPORT_FAILED", error?.localizedDescription ?? "exportVideo stopped")
-            }
-            writer.finishWriting { [self] in
-                Self.queue.async { [self] in
-                    if let error = stopError { return settle(.failure(error)) }
-                    guard writer.status == .completed else {
-                        return fail("EXPORT_FAILED", writer.error?.localizedDescription ?? "exportVideo could not finish the MP4")
-                    }
-                    finished(url, stem: stem)
-                }
-            }
-        }
-    }
-
-    /// Measure the file as written and take the poster from it.
-    private func finished(_ url: URL, stem: String) {
-        let written = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-        guard let track = written.tracks(withMediaType: .video).first else { return fail("EXPORT_FAILED", "exportVideo wrote no video") }
-        let size = track.naturalSize
-        let duration = written.duration.seconds
-        let frameRate = Double(track.nominalFrameRate)
-        let bytes = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.intValue ?? 0
-        var poster: Any = NSNull()
-        if options.poster {
-            let generator = AVAssetImageGenerator(asset: written)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
-            generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
-            let at = min(options.posterAt ?? min(1, duration / 3), max(0, duration - 0.05))
-            if let image = try? generator.copyCGImage(at: CMTime(seconds: at, preferredTimescale: 600), actualTime: nil),
-               case .success(let file) = CraftNativeFiles.writeJPEG(image, quality: 0.85, name: stem + ".jpg") {
-                poster = file
-            }
-        }
-        guard stopError == nil else {
-            if let file = poster as? [String: Any], let path = file["path"] as? String { CraftNativeFiles.remove(path) }
-            return settle(.failure(stopError!))
-        }
-        progress(1)
-        settle(.success([
-            "video": CraftNativeFiles.describe(url, type: "video/mp4", extra: ["width": Int(size.width), "height": Int(size.height), "duration": duration]),
-            "poster": poster,
-            "width": Int(size.width),
-            "height": Int(size.height),
-            "duration": duration,
-            "frameRate": frameRate,
-            "bytes": bytes,
-        ]))
     }
 }

@@ -28,6 +28,16 @@ export function androidMediaProbeSource(shell: string): string {
   }).join('\n\n')
 }
 
+// The iOS probe compiles CraftNativeFiles.swift from `enum CraftNativeMedia {`
+// to the end of the file, with only the ownership file and a stand-in error
+// beside it. Whatever follows the media code there must compile on its own, so
+// code that needs the rest of the template (#595's video export) sits above it.
+export function iosMediaProbeSource(files: string): string {
+  const media = files.slice(files.indexOf('enum CraftNativeMedia {'))
+  if (!media.startsWith('enum CraftNativeMedia')) throw new Error('iOS media implementation missing')
+  return media
+}
+
 /** Real ENOSPC, cache cleanup, retry, coalescing and offline video decode on an isolated native probe. */
 /** How long each command the media-cache harness runs may take. */
 export const mediaCommandLimitMs = 180_000
@@ -158,8 +168,7 @@ export async function verifyMobileMediaCache(options: MobileMediaCacheTestOption
     if (options.platform === 'ios') {
       const files = await Bun.file(join(root, 'ios/templates/CraftNativeFiles.swift')).text()
       const ownership = await Bun.file(join(root, 'ios/templates/CraftNativeMediaOwnership.swift')).text()
-      const media = files.slice(files.indexOf('enum CraftNativeMedia {'))
-      if (!media.startsWith('enum CraftNativeMedia')) throw new Error('iOS media implementation missing')
+      const media = iosMediaProbeSource(files)
       const source = join(scratch, 'main.swift')
       // A CLI process has no app sandbox. Give only its cache root a private test
       // directory; all download/commit/prune logic is the production source.

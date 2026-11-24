@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { verifyMobileMediaCache } from '../mobile-testing'
-import { androidMediaProbeSource, mediaCommandFailure, mediaCommandLimitMs } from '../mobile-media-testing'
+import { androidMediaProbeSource, iosMediaProbeSource, mediaCommandFailure, mediaCommandLimitMs } from '../mobile-media-testing'
 
 test('the Android media probe includes the shipped resumable downloader and durable worker', async () => {
   const shell = await Bun.file(new URL('../../../android/templates/CraftNativeShell.kt.template', import.meta.url)).text()
@@ -10,6 +10,15 @@ test('the Android media probe includes the shipped resumable downloader and dura
   expect(source).toContain('internal class CraftNativeMediaWorker(')
   expect(source).not.toContain('internal class CraftNativeChunks')
   expect(() => androidMediaProbeSource(source.replace('internal class CraftNativeMediaWorker', 'class MissingWorker'))).toThrow('CraftNativeMediaWorker')
+})
+
+test('the iOS media probe compiles only the media code, not what needs the rest of the template', async () => {
+  const files = await Bun.file(new URL('../../../ios/templates/CraftNativeFiles.swift', import.meta.url)).text()
+  const source = iosMediaProbeSource(files)
+  expect(source).toContain('final class CraftNativeMediaTransfers')
+  // The probe has none of these: CraftVideoExport (#595) once followed the media code and broke it.
+  for (const outside of ['CraftVideoExport', 'CraftNativeFiles.', 'CraftUploadBackgroundTime', 'craftNativeNumber(']) expect(source).not.toContain(outside)
+  expect(() => iosMediaProbeSource('enum Other {}')).toThrow('iOS media implementation missing')
 })
 
 test('media cache tests reject an unknown platform before creating a probe', async () => {

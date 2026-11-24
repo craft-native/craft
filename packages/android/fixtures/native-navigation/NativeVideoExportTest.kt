@@ -20,6 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -36,6 +37,9 @@ class NativeVideoExportTest {
     private val root = File(context.cacheDir, "craft-files")
     private val enabled = JSONObject().put("enableVideoExport", true)
 
+    // The cache is shared with the other test classes in this APK, which leave
+    // their own files in it; each test here starts from an empty one.
+    @Before fun empty() { root.deleteRecursively() }
     @After fun clean() { root.deleteRecursively() }
 
     private fun clip(name: String = "IMG_0001.MOV", asset: String = "sdr-portrait.mov"): File {
