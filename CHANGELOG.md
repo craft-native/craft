@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.535...v0.0.536)
+
+## 🧪 Tests
+
+- **android**: the refresh indicator in the hostile-number fixture and builder contract ([08e0538](https://github.com/craft-native/craft/commit/08e0538)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.534...v0.0.535)
 
 ## 🧪 Tests
