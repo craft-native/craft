@@ -106,6 +106,16 @@ function settled(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('bridge reply correlation', () => {
+  it('posts the requested window appearance and restores system inheritance', async () => {
+    const h = loadBridge()
+    for (const appearance of ['dark', 'light', 'system'] as const) {
+      await h.craft.window.setAppearance(appearance)
+      expect(h.sent.at(-1)).toMatchObject({
+        t: 'window', a: 'setAppearance', d: JSON.stringify({ appearance }),
+      })
+    }
+  })
+
   it('selects native menu bar visibility explicitly and never silently downgrades an unknown backend', async () => {
     const h = loadBridge()
     await h.craft.menubar.init({ backend: 'nativeVisibility' })

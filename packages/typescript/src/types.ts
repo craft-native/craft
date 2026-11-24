@@ -713,6 +713,11 @@ export interface CraftTrayAPI {
  */
 export interface CraftWindowAPI {
     /**
+     * Pin the native window to light or dark, or follow the system appearance (macOS).
+     */
+    setAppearance?(appearance: 'light' | 'dark' | 'system'): Promise<void>
+
+    /**
      * Show the window
      */
     show(): Promise<void>
