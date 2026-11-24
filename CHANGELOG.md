@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.536...v0.0.537)
+
+## 🐛 Bug Fixes
+
+- **ios**: keep list scroll indicators in the viewport gutter ([ef51dd3](https://github.com/craft-native/craft/commit/ef51dd3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.535...v0.0.536)
 
 ## 🧪 Tests
