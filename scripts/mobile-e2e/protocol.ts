@@ -589,6 +589,17 @@ export function droppedTapProblems(log: string, evidence = 'springboard-notifica
 }
 
 /**
+ * The same diagnosis for a UI test leg (#450): which synthesized taps or drags
+ * the simulator discarded during the job, so a case that waited for a tap's
+ * effect says why. It reports; it never changes a leg's outcome.
+ */
+export function droppedTapReport(log: string, evidence: string): string | undefined {
+  const dropped = droppedSimulatorTaps(log)
+  if (!dropped.length) return undefined
+  return `the simulator dropped ${dropped.length === 1 ? 'a synthesized touch' : `${dropped.length} synthesized touches`} before the app saw ${dropped.length === 1 ? 'it' : 'them'} (${dropped.join(', ')}): backboardd registered the digitizer twice and discarded the release, so the app never received ${dropped.length === 1 ? 'that tap or drag' : 'those taps or drags'} (#450); see ${evidence}`
+}
+
+/**
  * Why the tap on the notification the page scheduled is not a pass (#258).
  *
  * The page scheduled it with `data`, and the tap must hand that back once,

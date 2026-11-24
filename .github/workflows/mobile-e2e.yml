@@ -283,6 +283,10 @@ jobs:
           # reaches the end of the window; the test app's own lines (the
           # animation probe, #522) reach it.
           run_bounded 60 xcrun simctl spawn booted log show --last 30m --style compact --predicate 'process BEGINSWITH "Native"' > "$evidence_dir/app.log" 2>&1 || true
+          # Every synthesized touch, so a case whose tap or drag had no effect
+          # can say whether the simulator discarded it before the app (#450).
+          run_bounded 90 xcrun simctl spawn booted log show --last 60m --style compact --predicate 'process == "backboardd" AND category == "TouchEvents"' > "$evidence_dir/backboard-touch.log" 2>&1 || true
+          bun scripts/mobile-e2e/dropped-taps.ts "$evidence_dir/backboard-touch.log" || true
           {
             find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
               \( -name '*NativeNavigation*' -o -name '*NativeRender*' -o -name '*Craft*' \) -print 2>/dev/null || true

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, droppedSimulatorTaps, droppedTapProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, simulatorPasteboardProblems, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, droppedSimulatorTaps, droppedTapProblems, droppedTapReport, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, simulatorPasteboardProblems, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { LOCAL_NOTIFICATION_DELAY_MS, NOTIFICATION_TEST_TIMEOUT_MS } from './protocol'
 import { iosRuntimeLegs } from './ios'
 
@@ -791,6 +791,19 @@ describe('a synthesized tap the simulator dropped', () => {
     expect(droppedTapProblems(fixture('dropped-tap-backboard.txt'), 'ios-shim/springboard-notification.log')).toEqual([
       'the simulator dropped a synthesized tap before SpringBoard saw it (digitizer 104e140e00002 at 11:46:06.935): backboardd registered the digitizer twice and discarded the release, so no notification action ran and Craft was not reached (#450); see ios-shim/springboard-notification.log',
     ])
+  })
+
+  it('names a dropped touch on a UI test leg without blaming notifications', () => {
+    expect(droppedTapReport(fixture('dropped-tap-backboard.txt'), 'diagnostics/backboard-touch.log')).toBe(
+      'the simulator dropped a synthesized touch before the app saw it (digitizer 104e140e00002 at 11:46:06.935): backboardd registered the digitizer twice and discarded the release, so the app never received that tap or drag (#450); see diagnostics/backboard-touch.log',
+    )
+    expect(droppedTapReport(fixture('delivered-tap-backboard.txt'), 'x')).toBeUndefined()
+  })
+
+  it('the iOS UI legs keep backboardd\'s touch log and name what it dropped', () => {
+    const workflow = readFileSync(join(import.meta.dir, '..', '..', '.github', 'workflows', 'mobile-e2e.yml'), 'utf8')
+    expect(workflow).toContain('category == "TouchEvents"')
+    expect(workflow).toContain('bun scripts/mobile-e2e/dropped-taps.ts "$evidence_dir/backboard-touch.log"')
   })
 
   it('says nothing about a tap that reached SpringBoard', () => {
