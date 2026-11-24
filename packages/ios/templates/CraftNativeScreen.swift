@@ -7178,6 +7178,12 @@ private final class CraftNativeIconView: UIImageView {
     }
 }
 
+/// Opaque hint ink stays readable on the standard light and dark input surfaces.
+/// The system's translucent placeholder can disappear over dark cards.
+private let craftNativeInputPlaceholderColor = UIColor { traits in
+    UIColor(white: traits.userInterfaceStyle == .dark ? 166.0 / 255 : 102.0 / 255, alpha: 1)
+}
+
 private final class CraftNativeTextView: UITextView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         craftPointerHitTest(point, with: event) { super.hitTest(point, with: event) }
@@ -7190,7 +7196,7 @@ private final class CraftNativeTextView: UITextView {
         didSet { refreshPlaceholder() }
     }
     var placeholderColor: UIColor? {
-        didSet { placeholderLabel.textColor = placeholderColor ?? .placeholderText }
+        didSet { placeholderLabel.textColor = placeholderColor ?? craftNativeInputPlaceholderColor }
     }
     var placeholderFont: UIFont? {
         didSet { placeholderLabel.font = placeholderFont ?? .systemFont(ofSize: 16) }
@@ -7286,7 +7292,7 @@ private final class CraftNativeTextView: UITextView {
         isScrollEnabled = false
         placeholderLabel.numberOfLines = 0
         placeholderLabel.font = font
-        placeholderLabel.textColor = .placeholderText
+        placeholderLabel.textColor = craftNativeInputPlaceholderColor
         placeholderLabel.isUserInteractionEnabled = false
         addSubview(placeholderLabel)
         refreshPlaceholder()
@@ -11105,17 +11111,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 break
             }
             let field = result as! UITextField
-            if let placeholder = props["placeholder"] as? String,
-               let placeholderColor = color(props["placeholderTextColor"]) {
+            if let placeholder = props["placeholder"] as? String {
                 field.attributedPlaceholder = NSAttributedString(
                     string: placeholder,
-                    attributes: [.foregroundColor: placeholderColor]
+                    attributes: [.foregroundColor: color(props["placeholderTextColor"]) ?? craftNativeInputPlaceholderColor]
                 )
             } else {
-                // UIKit shares these properties: resetting the attributed
-                // value after the plain one also erases the visible hint.
                 field.attributedPlaceholder = nil
-                field.placeholder = props["placeholder"] as? String
             }
             field.tintColor = color(props["selectionColor"])
             let fieldId = ObjectIdentifier(field)

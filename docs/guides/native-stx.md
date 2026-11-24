@@ -997,10 +997,12 @@ platform overscroll effect, and accept
 `keyboardDismissMode="on-drag"` or `"interactive"`; omitting it keeps the
 keyboard open while scrolling.
 
-Removing `placeholderTextColor` or `selectionColor` from a reused `TextInput`
-restores the platform theme default on both hosts instead of retaining the
-previous native color. Removing `accessibilityState.disabled` likewise restores
-interaction for retained links and generic pressable containers.
+Text input hints use opaque `#666666` in light appearance and `#a6a6a6` in
+dark appearance on both hosts. Use `placeholderTextColor` when a custom input
+surface needs different ink. Removing it restores the current appearance's
+hint color. Removing `selectionColor` restores the system selection color.
+Removing `accessibilityState.disabled` restores interaction for retained links
+and generic pressable containers.
 
 Changing a keyed `TextInput` between single-line and `multiline` mode recreates
 the platform control when its native class or mode is incompatible, while the

@@ -5595,7 +5595,6 @@ class MainActivity : AppCompatActivity() {
     private val imageSources = mutableMapOf<ImageView, String>()
     private val imageJobs = mutableMapOf<ImageView, Future<*>>()
     private val imageErrors = mutableMapOf<ImageView, String>()
-    private val inputHintDefaults = mutableMapOf<EditText, ColorStateList>()
     private val inputHighlightDefaults = mutableMapOf<EditText, Int>()
     private val inputPaddingDefaults = mutableMapOf<EditText, IntArray>()
     private val defaultBackgrounds = mutableMapOf<View, Drawable?>()
@@ -6810,11 +6809,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshInputDefaultsForTraitChange() {
-        if (inputHintDefaults.isEmpty() && inputHighlightDefaults.isEmpty()) return
-        val probe = EditText(this)
-        val hintColors = probe.hintTextColors
-        val highlightColor = probe.highlightColor
-        inputHintDefaults.keys.toList().forEach { inputHintDefaults[it] = hintColors }
+        if (inputHighlightDefaults.isEmpty()) return
+        val highlightColor = EditText(this).highlightColor
         inputHighlightDefaults.keys.toList().forEach { inputHighlightDefaults[it] = highlightColor }
     }
 
@@ -7331,9 +7327,6 @@ class MainActivity : AppCompatActivity() {
                 val keptText = text.toString()
                 val keptStart = selectionStart
                 val keptEnd = selectionEnd
-                val defaultHintColors = inputHintDefaults.getOrPut(this) {
-                    hintTextColors ?: ColorStateList.valueOf(Color.GRAY)
-                }
                 val defaultHighlightColor = inputHighlightDefaults.getOrPut(this) { highlightColor }
                 val defaultPadding = inputPaddingDefaults.getOrPut(this) {
                     intArrayOf(paddingLeft, paddingTop, paddingRight, paddingBottom)
@@ -7342,8 +7335,7 @@ class MainActivity : AppCompatActivity() {
                 setHintTextColor(
                     (props.opt("placeholderTextColor") as? String)
                         ?.let { runCatching { craftNativeColor(it) }.getOrNull() }
-                        ?.let { ColorStateList.valueOf(it) }
-                        ?: defaultHintColors,
+                        ?: if (colorScheme() == "dark") Color.rgb(166, 166, 166) else Color.rgb(102, 102, 102),
                 )
                 highlightColor = (props.opt("selectionColor") as? String)
                     ?.let { runCatching { craftNativeColor(it) }.getOrNull() }
@@ -10097,7 +10089,6 @@ class MainActivity : AppCompatActivity() {
         released.filterIsInstance<EditText>().forEach { it.setOnEditorActionListener(null) }
         released.filterIsInstance<EditText>().forEach {
             screen.inputWatchers.remove(it)?.let(it::removeTextChangedListener)
-            inputHintDefaults.remove(it)
             inputHighlightDefaults.remove(it)
             inputPaddingDefaults.remove(it)
             screen.suppressedTextChanges.remove(it)

@@ -4662,25 +4662,39 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(forgotFocus)
     }
 
-    func testPlainTextInputKeepsItsPlaceholderWithoutACustomColor() throws {
+    func testTextInputPlaceholderUsesReadableInkAndRestoresItAfterAnOverride() throws {
         let screen = CraftNativeScreenController(config: CraftConfig())
         screen.loadViewIfNeeded()
         func document(_ placeholder: String?, color: String? = nil) -> [String: Any] {
             var props: [String: Any] = ["key": "email"]
             props["placeholder"] = placeholder
             props["placeholderTextColor"] = color
-            return ["type": "TextInput", "props": props, "style": ["height": 48, "width": 300]]
+            return self.document([
+                ["type": "TextInput", "props": props, "style": ["height": 48, "width": 300]],
+                ["type": "TextInput", "props": ["key": "notes", "placeholder": "Notes", "multiline": true]],
+            ])
         }
         screen.render(document("Email"))
         let input = try XCTUnwrap(find(UITextField.self, key: "email", below: screen.view))
-        XCTAssertEqual(input.placeholder, "Email", "A normal HTML input has no custom placeholder color")
+        let notes = try XCTUnwrap(find(UITextView.self, key: "notes", below: screen.view))
+        let label = try XCTUnwrap(notes.subviews.compactMap { $0 as? UILabel }.first { $0.text == "Notes" })
+        XCTAssertEqual(input.placeholder, "Email")
+        let defaultInk = try XCTUnwrap(input.attributedPlaceholder?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+        let light = UITraitCollection(userInterfaceStyle: .light)
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        XCTAssertEqual(defaultInk.resolvedColor(with: light), UIColor(white: 102.0 / 255, alpha: 1))
+        XCTAssertEqual(defaultInk.resolvedColor(with: dark), UIColor(white: 166.0 / 255, alpha: 1))
+        XCTAssertEqual(label.textColor.resolvedColor(with: light), defaultInk.resolvedColor(with: light))
+        XCTAssertEqual(label.textColor.resolvedColor(with: dark), defaultInk.resolvedColor(with: dark))
         screen.render(document("Updated email", color: "#ff0000"))
         XCTAssertTrue(input === find(UITextField.self, key: "email", below: screen.view))
         XCTAssertEqual(input.placeholder, "Updated email")
         XCTAssertEqual(input.attributedPlaceholder?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, .red)
         screen.render(document("Email"))
-        XCTAssertEqual(input.placeholder, "Email", "Removing a custom color restores the system placeholder")
-        XCTAssertNotEqual(input.attributedPlaceholder?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, .red)
+        XCTAssertEqual(input.placeholder, "Email")
+        let restored = try XCTUnwrap(input.attributedPlaceholder?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+        XCTAssertEqual(restored.resolvedColor(with: light), defaultInk.resolvedColor(with: light))
+        XCTAssertEqual(restored.resolvedColor(with: dark), defaultInk.resolvedColor(with: dark))
         screen.render(document(nil))
         XCTAssertNil(input.placeholder)
     }
