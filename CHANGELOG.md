@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.537...v0.0.538)
+
+## 🐛 Bug Fixes
+
+- give native input hints readable default colors ([9432746](https://github.com/craft-native/craft/commit/9432746)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- verify default native hints and color overrides ([190a829](https://github.com/craft-native/craft/commit/190a829)) _(by Chris Breuer)_
+
+## 🤖 Continuous Integration
+
+- name the Pantry publish token PANTRY_TOKEN ([085dd52](https://github.com/craft-native/craft/commit/085dd52)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.536...v0.0.537)
 
 ## 🐛 Bug Fixes
