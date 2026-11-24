@@ -984,6 +984,19 @@ describe('Craft Android builder', () => {
       .toContain('val type = (progress.remove("_event") as? String) ?: "NETWORK_UPLOAD_PROGRESS"')
   })
 
+  // #577: a page sheet lets its own list scroll, needs a real flick to be
+  // swiped away, and keeps the focused field above the keyboard.
+  it('lets a page sheet scroll its content, ignore a nudge and clear the keyboard', async () => {
+    const output = createTempDir('craft-android-native-sheet-')
+    await init({ name: 'Sheets', packageName: 'org.example.sheets', output, runtimeDir: null, config: { renderer: 'native' } })
+    const activity = readFileSync(join(output, 'app/src/main/java/org/example/sheets/MainActivity.kt'), 'utf8')
+    const list = readFileSync(join(output, 'app/src/main/java/org/example/sheets/CraftNativeRefreshableFlatList.kt'), 'utf8')
+    expect(activity).toContain('vertical != null && horizontalMode != true && vertical.canScrollVertically(direction)')
+    expect(list).toContain('override fun canScrollVertically(direction: Int): Boolean = list != null && list.canScrollVertically(direction)')
+    expect(activity).toContain('behavior.significantVelocityThreshold = (resources.displayMetrics.density * 1000).roundToInt()')
+    expect(activity).toContain('height = max(0, (if (compact) peek else panelHeight) - topMargin - keyboardOverlap(viewportHeight))')
+  })
+
   it('generates a DayNight background resource for native screens', async () => {
     const output = createTempDir('craft-android-dark-background-')
     await init({

@@ -4404,6 +4404,209 @@ class NativeNavigationTest {
         } finally { scenario.close() }
     }
 
+    /**
+     * #577 beyond detents and the swipe close: a page sheet's own list scrolls
+     * without moving the sheet, a short drag settles back, Back asks to close,
+     * the keyboard leaves the focused field visible, a sheet with no close
+     * handler cannot be swiped away, reduced motion settles without a slide,
+     * and full-screen and non-modal Modals stay as they were.
+     */
+    @Test
+    fun aPageSheetScrollsItsContentHoldsBelowTheThresholdAndKeepsTheKeyboardsFieldVisible() {
+        val scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java)
+        val animatorScale = android.provider.Settings.Global.getFloat(instrumentation.targetContext.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use { java.io.FileInputStream(it.fileDescriptor).use { stream -> stream.readBytes() } }
+        try {
+            lateinit var activity: MainActivity
+            scenario.onActivity { activity = it }
+            awaitView(activity, "navigation-home-state")
+            val screen = requireNotNull(MainActivity::class.java.getDeclaredField("visibleScreen").apply { isAccessible = true }.get(activity))
+            val isolate = screen.javaClass.getDeclaredField("isolate").apply { isAccessible = true }.get(screen) as androidx.javascriptengine.JavaScriptIsolate
+            fun evaluate(javascript: String) = isolate.evaluateJavaScriptAsync(javascript).get(5, java.util.concurrent.TimeUnit.SECONDS)
+            evaluate("globalThis.sheetEvents = []; globalThis.__stxNativeCallback = json => { const m = JSON.parse(json); if (m.type === 'EVENT' && /^request-/.test(m.payload.handlerName)) sheetEvents.push(m.payload.handlerName); }; 'ready'")
+            val render = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, JSONObject::class.java).apply { isAccessible = true }
+            fun draw(visible: Boolean = true, style: String = "pageSheet", closable: Boolean = true, nonModal: Boolean = false, animation: String = "none") {
+                val events = if (closable) ""","events":{"onRequestClose":"request-sheet"}""" else ""
+                scenario.onActivity {
+                    render.invoke(activity, screen, JSONObject("""{"id":"root","type":"View","style":{"flex":1},"children":[
+                        {"id":"sheet","type":"Modal","props":{"testID":"page-sheet","visible":$visible,"animationType":"$animation","presentationStyle":"$style","sheetDetents":["large"],"selectedDetent":"large","nonModal":$nonModal}$events,"children":[
+                            {"id":"sheet-scroll","type":"ScrollView","props":{"testID":"sheet-scroll"},"style":{"flex":1},"children":[
+                                {"id":"tall","type":"View","style":{"height":3000}}
+                            ]},
+                            {"id":"sheet-field","type":"TextInput","props":{"testID":"sheet-field"},"style":{"height":48}}
+                        ]}
+                    ]}"""))
+                }
+            }
+            fun events() = evaluate("sheetEvents.join('|')")
+            fun behavior(modal: View): BottomSheetBehavior<android.widget.FrameLayout>? {
+                var found: BottomSheetBehavior<android.widget.FrameLayout>? = null
+                instrumentation.runOnMainSync {
+                    val layout = findType(modal, CoordinatorLayout::class.java)
+                    found = (layout?.getChildAt(0) as? android.widget.FrameLayout)?.let { BottomSheetBehavior.from(it) }
+                }
+                return found
+            }
+            fun waitForState(sheet: BottomSheetBehavior<*>, expected: Int) {
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                var state = -1
+                while (SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.runOnMainSync { state = sheet.state }
+                    if (state == expected) return
+                    SystemClock.sleep(20)
+                }
+                assertEquals("the sheet did not settle", expected, state)
+            }
+            fun drag(view: View, fromFraction: Float, distanceFraction: Float, stepMs: Long = 40L) {
+                val location = IntArray(2)
+                instrumentation.runOnMainSync { view.getLocationOnScreen(location) }
+                val x = location[0] + view.width / 2f
+                val startY = location[1] + view.height * fromFraction
+                val distance = view.height * distanceFraction
+                val down = SystemClock.uptimeMillis()
+                for (step in 0..12) {
+                    val action = when (step) { 0 -> MotionEvent.ACTION_DOWN; 12 -> MotionEvent.ACTION_UP; else -> MotionEvent.ACTION_MOVE }
+                    // Slow enough that Material settles by position, not by fling.
+                    val event = MotionEvent.obtain(down, down + step * stepMs, action, x, startY + distance * step / 12f, 0)
+                    try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+                }
+                instrumentation.waitForIdleSync()
+            }
+
+            // Control: the same drag scrolls a ScrollView that is not in a sheet.
+            scenario.onActivity {
+                render.invoke(activity, screen, JSONObject("""{"id":"root","type":"View","style":{"flex":1},"children":[
+                    {"id":"plain-scroll","type":"ScrollView","props":{"testID":"plain-scroll"},"style":{"flex":1},"children":[{"id":"plain-tall","type":"View","style":{"height":3000}}]}
+                ]}"""))
+            }
+            val plain = requireNotNull(findType(awaitView(activity, "plain-scroll"), android.widget.ScrollView::class.java))
+            instrumentation.runOnMainSync { plain.scrollTo(0, 1200) }
+            drag(plain, 0.3f, 0.4f)
+            var plainScrolled = 0
+            instrumentation.runOnMainSync { plainScrolled = plain.scrollY }
+            assertTrue("control: the drag did not scroll a plain ScrollView ($plainScrolled)", plainScrolled < 1200)
+
+            draw()
+            val modal = awaitView(activity, "page-sheet") { it.visibility == View.VISIBLE }
+            val sheet = requireNotNull(behavior(modal)) { "a page sheet is a Material bottom sheet" }
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+            val scroll = awaitView(activity, "sheet-scroll")
+            val list = requireNotNull(findType(scroll, android.widget.ScrollView::class.java))
+            var panelView: View? = null
+            instrumentation.runOnMainSync { panelView = findType(modal, CoordinatorLayout::class.java)?.getChildAt(0) }
+            val panel = requireNotNull(panelView)
+
+            // The sheet's own content scrolls first: a downward drag inside a
+            // scrolled list moves the list, not the sheet.
+            instrumentation.runOnMainSync { list.scrollTo(0, 1200) }
+            drag(list, 0.3f, 0.4f)
+            var scrolled = 0
+            var during = ""
+            instrumentation.runOnMainSync { scrolled = list.scrollY; during = "sheet state ${sheet.state}, panel top ${panel.top}, list ${list.width}x${list.height} enabled ${list.isEnabled}" }
+            assertTrue("the list did not scroll back: $scrolled ($during)", scrolled < 1200)
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+            assertEquals("", events())
+
+            // A short drag from the top is under the dismiss threshold.
+            instrumentation.runOnMainSync { list.scrollTo(0, 0) }
+            val transitions = java.util.Collections.synchronizedList(mutableListOf<String>())
+            val watch = object : BottomSheetBehavior.BottomSheetCallback() {
+                override fun onStateChanged(bottomSheet: View, newState: Int) { transitions.add("state $newState top ${bottomSheet.top}") }
+                override fun onSlide(bottomSheet: View, slideOffset: Float) = Unit
+            }
+            var before = ""
+            instrumentation.runOnMainSync { sheet.addBottomSheetCallback(watch); before = "top ${panel.top} of ${(panel.parent as View).height}, expandedOffset ${sheet.expandedOffset}, hideable ${sheet.isHideable}, skipCollapsed ${sheet.skipCollapsed}" }
+            drag(panel, 0.01f, 0.08f)
+            SystemClock.sleep(600)
+            instrumentation.runOnMainSync { sheet.removeBottomSheetCallback(watch) }
+            android.util.Log.i("NativeNavigationTest", "short drag: $before -> $transitions")
+            assertEquals("a short drag settles back ($before -> $transitions)", BottomSheetBehavior.STATE_EXPANDED, sheet.state)
+            assertEquals("a short drag must not close the sheet", "", events())
+
+            // A real flick (about 3,700 dp/s here) is a deliberate dismissal.
+            drag(panel, 0.01f, 0.15f, stepMs = 2L)
+            waitForState(sheet, BottomSheetBehavior.STATE_HIDDEN)
+            val flicked = SystemClock.uptimeMillis() + 5_000
+            while (events() != "request-sheet" && SystemClock.uptimeMillis() < flicked) SystemClock.sleep(30)
+            assertEquals("a flick asks to close once", "request-sheet", events())
+            draw(visible = false)
+            awaitView(activity, "page-sheet") { it.visibility != View.VISIBLE }
+            draw()
+            awaitView(activity, "page-sheet") { it.visibility == View.VISIBLE }
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+
+            // System Back asks the sheet to close.
+            scenario.onActivity { activity.onBackPressedDispatcher.onBackPressed() }
+            val asked = SystemClock.uptimeMillis() + 5_000
+            while (events() != "request-sheet|request-sheet" && SystemClock.uptimeMillis() < asked) SystemClock.sleep(30)
+            assertEquals("Back asks to close", "request-sheet|request-sheet", events())
+            draw(visible = false)
+            awaitView(activity, "page-sheet") { it.visibility != View.VISIBLE }
+            draw()
+            awaitView(activity, "page-sheet") { it.visibility == View.VISIBLE }
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+
+            // The keyboard leaves the focused field above it.
+            val field = awaitView(activity, "sheet-field")
+            scenario.onActivity {
+                field.requestFocus()
+                androidx.core.view.WindowCompat.getInsetsController(activity.window, field).show(androidx.core.view.WindowInsetsCompat.Type.ime())
+            }
+            fun imeTop(): Int? {
+                var top: Int? = null
+                instrumentation.runOnMainSync {
+                    val insets = androidx.core.view.ViewCompat.getRootWindowInsets(field)
+                    if (insets?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true) {
+                        top = activity.window.decorView.height - insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+                    }
+                }
+                return top
+            }
+            val shown = SystemClock.uptimeMillis() + 5_000
+            while (imeTop() == null && SystemClock.uptimeMillis() < shown) SystemClock.sleep(50)
+            val keyboardTop = imeTop()
+            if (keyboardTop != null) {
+                SystemClock.sleep(500)
+                instrumentation.waitForIdleSync()
+                val location = IntArray(2)
+                instrumentation.runOnMainSync { field.getLocationOnScreen(location) }
+                assertTrue("the focused field (bottom ${location[1] + field.height}) is under the keyboard (top $keyboardTop)", location[1] + field.height <= keyboardTop)
+                scenario.onActivity { androidx.core.view.WindowCompat.getInsetsController(activity.window, field).hide(androidx.core.view.WindowInsetsCompat.Type.ime()) }
+                val hidden = SystemClock.uptimeMillis() + 5_000
+                while (imeTop() != null && SystemClock.uptimeMillis() < hidden) SystemClock.sleep(50)
+            } else android.util.Log.i("NativeNavigationTest", "no soft keyboard on this device; the keyboard inset was not checked")
+
+            // With no close handler the sheet cannot be swiped away.
+            draw(closable = false)
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+            instrumentation.runOnMainSync { list.scrollTo(0, 0) }
+            drag(panel, 0.01f, 0.7f)
+            waitForState(sheet, BottomSheetBehavior.STATE_EXPANDED)
+            assertEquals("a sheet with no close handler is not swiped away", "request-sheet|request-sheet", events())
+
+            // Reduced motion: the sheet comes and goes without a slide.
+            shell("settings put global animator_duration_scale 0")
+            draw(visible = false, animation = "slide")
+            scenario.onActivity { assertEquals("closing under reduced motion is immediate", View.GONE, modal.visibility) }
+            draw(animation = "slide")
+            scenario.onActivity {
+                assertEquals(View.VISIBLE, modal.visibility)
+                assertEquals("opening under reduced motion does not slide", 0f, (findType(modal, CoordinatorLayout::class.java) as View).translationY)
+            }
+            shell("settings put global animator_duration_scale $animatorScale")
+
+            // Full-screen and non-modal Modals are not sheets.
+            draw(style = "fullScreen")
+            awaitView(activity, "page-sheet") { it.visibility == View.VISIBLE }
+            assertNull("a full-screen Modal became a sheet", behavior(modal))
+            draw(nonModal = true)
+            assertNull("a non-modal Modal became a sheet", behavior(modal))
+        } finally {
+            shell("settings put global animator_duration_scale $animatorScale")
+            scenario.close()
+        }
+    }
+
     @Test
     fun nativeAppearanceReconcilesTraitDefaults() {
         val context = instrumentation.targetContext

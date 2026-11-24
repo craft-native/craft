@@ -16,6 +16,11 @@ internal class CraftNativeRefreshableFlatList(context: Context) : SwipeRefreshLa
         (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
 
     val list = CraftNativeFlatList(context)
+
+    // #577: as for the native ScrollView, a page sheet asks this wrapper
+    // whether its content can scroll; the list inside is the one that does.
+    @Suppress("SENSELESS_COMPARISON")
+    override fun canScrollVertically(direction: Int): Boolean = list != null && list.canScrollVertically(direction)
     private var refreshHandler: (() -> Unit)? = null
 
     init {

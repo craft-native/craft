@@ -3224,6 +3224,14 @@ internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(cont
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
         CraftNativePointers.dispatch(this, event) { super.dispatchTouchEvent(it) }
 
+    // #577: a parent that arbitrates a drag by asking this view (a Material
+    // bottom sheet does, for its nested scrolling child) must hear about the
+    // scroller inside, not this refresh wrapper, which never scrolls itself.
+    // Otherwise a page sheet takes a downward drag the list should have.
+    @Suppress("SENSELESS_COMPARISON")
+    override fun canScrollVertically(direction: Int): Boolean =
+        vertical != null && horizontalMode != true && vertical.canScrollVertically(direction)
+
     override fun onTouchEvent(event: MotionEvent): Boolean =
         (event.actionMasked == MotionEvent.ACTION_CANCEL || CraftNativePointers.ownsTouch(this)) && super.onTouchEvent(event)
 
@@ -4028,6 +4036,7 @@ private class CraftNativeSheetLayout(
     private var compact = true
     private var lastDetent = BottomSheetBehavior.STATE_EXPANDED
     private var cancelingDrag = false
+    private var keyboardHeight = 0
 
     val isHidden: Boolean get() = behavior.state == BottomSheetBehavior.STATE_HIDDEN
 
@@ -4038,6 +4047,11 @@ private class CraftNativeSheetLayout(
         behavior.isFitToContents = false
         behavior.halfExpandedRatio = 0.5f
         behavior.skipCollapsed = true
+        // #577: with skipCollapsed, Material hides on any downward release
+        // faster than this, and its default (500 px/s, ~190 dp/s on a phone)
+        // is slower than a deliberate drag, so a nudge closed the sheet. A
+        // flick still does; a drag past halfway still does, by position.
+        behavior.significantVelocityThreshold = (resources.displayMetrics.density * 1000).roundToInt()
         val placement = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         placement.behavior = behavior
         addView(panel, placement)
@@ -4050,6 +4064,17 @@ private class CraftNativeSheetLayout(
         } else if (color.data != 0) color.data else Color.GRAY
         grip.background = GradientDrawable().apply { setColor(gripColor); cornerRadius = dp(2).toFloat() }
         panel.addView(grip, FrameLayout.LayoutParams(dp(32), dp(4), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(6) })
+        // A cached measurement would keep the content its old height when only
+        // the keyboard changes, so a change in its height measures again.
+        ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+            val keyboard = if (insets.isVisible(WindowInsetsCompat.Type.ime())) insets.getInsets(WindowInsetsCompat.Type.ime()).bottom else 0
+            if (keyboard != keyboardHeight) {
+                keyboardHeight = keyboard
+                view.requestLayout()
+                body.requestLayout()
+            }
+            insets
+        }
         behavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
             override fun onSlide(bottomSheet: View, slideOffset: Float) = Unit
 
@@ -4111,9 +4136,25 @@ private class CraftNativeSheetLayout(
         if (behavior.peekHeight != peek) behavior.peekHeight = peek
         (body.layoutParams as FrameLayout.LayoutParams).apply {
             topMargin = if (grip.visibility == View.VISIBLE) dp(16) else 0
-            height = max(0, (if (compact) peek else panelHeight) - topMargin)
+            height = max(0, (if (compact) peek else panelHeight) - topMargin - keyboardOverlap(viewportHeight))
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    /**
+     * #577: how much of this sheet the keyboard covers. The sheet sits on
+     * the screen's bottom edge, so its content is measured that much shorter
+     * and the focused field stays above the keyboard. The activity lays the
+     * tree out again whenever the keyboard's inset changes.
+     */
+    private fun keyboardOverlap(viewportHeight: Int): Int {
+        val insets = ViewCompat.getRootWindowInsets(this) ?: return 0
+        if (!insets.isVisible(WindowInsetsCompat.Type.ime())) return 0
+        val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val keyboardTop = rootView.height - keyboard
+        return max(0, location[1] + viewportHeight - keyboardTop)
     }
 
     private fun dp(value: Int) = (resources.displayMetrics.density * value).roundToInt()
