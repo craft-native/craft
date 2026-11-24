@@ -2370,6 +2370,10 @@ class NativeNavigationTest {
             awaitText(activity, "input-style-status", "input colors off")
             assertSame("Removing input colors replaced the native field", nameInput, awaitView(activity, "name-input"))
             val defaultHintColor = nameInput.hintTextColors.defaultColor
+            val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+            val hintGray = if (night) 166 else 102
+            assertEquals("Removing the hint override should use readable ink for the current appearance",
+                Color.rgb(hintGray, hintGray, hintGray), defaultHintColor)
             val defaultHighlightColor = nameInput.highlightColor
             click(activity, "toggle-input-colors")
             awaitText(activity, "input-style-status", "input colors on")

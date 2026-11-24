@@ -4988,12 +4988,14 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).not.toContain('val signature = "${dataPositions.size}:$lastIdentity"')
   })
 
-  it('resets removed text-input colors to each host theme', () => {
+  it('restores readable hint and system selection colors when overrides are removed', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
+    expect(ios).toContain('color(props["placeholderTextColor"]) ?? craftNativeInputPlaceholderColor')
+    expect(ios).toContain('placeholderLabel.textColor = placeholderColor ?? craftNativeInputPlaceholderColor')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')
-    expect(android).toContain('inputHintDefaults.getOrPut(this)')
+    expect(android).toContain('?: if (colorScheme() == "dark") Color.rgb(166, 166, 166) else Color.rgb(102, 102, 102)')
     expect(android).toContain('inputHighlightDefaults.getOrPut(this)')
-    expect(android).toContain('inputHintDefaults.remove(it)')
+    expect(android).toContain('inputHighlightDefaults.remove(it)')
   })
 
   it('ignores malformed Android text-input colors instead of inventing a fallback', () => {
@@ -5161,7 +5163,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('private fun refreshThemeDefaults()')
     expect(android).toContain('refreshThemeDefaults()')
     expect(android).toContain('refreshInputDefaultsForTraitChange()')
-    expect(android).toContain('val probe = EditText(this)')
+    expect(android).toContain('val highlightColor = EditText(this).highlightColor')
   })
 
   it('exercises theme trait refresh in both maintained native fixtures', () => {
