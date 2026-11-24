@@ -548,6 +548,47 @@ export function notificationTapProblems(
 }
 
 /**
+ * Synthesized taps the simulator lost before SpringBoard saw them (#450).
+ *
+ * XCTest attaches a fresh virtual digitizer for every tap. When the tap's
+ * first touch reaches backboardd on another thread before it has finished
+ * matching that digitizer, backboardd logs `unknown digitizer` for the same
+ * sender and builds a second touch state: the touch-down lands in one, the
+ * moves and the release in the other, which rejects them ("didn't see a
+ * previous touch down"), and the contact is cancelled when the digitizer
+ * detaches. SpringBoard never gets a complete tap, so no notification action
+ * or launch happens and nothing of Craft's runs. This reads the BackBoard
+ * window the harness retains and names each such tap, so a failure says
+ * what happened. It never turns the failure into a pass.
+ */
+export function droppedSimulatorTaps(log: string): string[] {
+  const dropped: string[] = []
+  const raced = new Map<string, string>()
+  for (const line of log.split('\n')) {
+    if (!line.includes('[com.apple.BackBoard:TouchEvents]')) continue
+    const time = line.split(' ')[1] ?? ''
+    const unknown = line.match(/\*\*\* unknown digitizer .*?id:0x([0-9a-f]+)/i)
+    if (unknown) { raced.set(unknown[1]!.toLowerCase(), time); continue }
+    if (line.includes("didn't see a previous touch down or range-in event")) {
+      for (const [sender, at] of raced) {
+        if (!dropped.some(entry => entry.includes(sender))) dropped.push(`digitizer ${sender} at ${at}`)
+      }
+      continue
+    }
+    const detached = line.match(/digitizer detached \(sender ([0-9A-F]+)\)/i)
+    if (detached) raced.delete(detached[1]!.toLowerCase())
+  }
+  return dropped
+}
+
+/** The failure line for those taps, or nothing when the log shows none. */
+export function droppedTapProblems(log: string, evidence = 'springboard-notification.log'): string[] {
+  const dropped = droppedSimulatorTaps(log)
+  if (!dropped.length) return []
+  return [`the simulator dropped ${dropped.length === 1 ? 'a synthesized tap' : `${dropped.length} synthesized taps`} before SpringBoard saw ${dropped.length === 1 ? 'it' : 'them'} (${dropped.join(', ')}): backboardd registered the digitizer twice and discarded the release, so no notification action ran and Craft was not reached (#450); see ${evidence}`]
+}
+
+/**
  * Why the tap on the notification the page scheduled is not a pass (#258).
  *
  * The page scheduled it with `data`, and the tap must hand that back once,

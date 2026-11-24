@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, simulatorPasteboardProblems, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, droppedSimulatorTaps, droppedTapProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, simulatorPasteboardProblems, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { LOCAL_NOTIFICATION_DELAY_MS, NOTIFICATION_TEST_TIMEOUT_MS } from './protocol'
 import { iosRuntimeLegs } from './ios'
 
@@ -778,5 +778,35 @@ describe('notification permission UI recovery', () => {
     expect(ui).toContain('func testNotificationTapNeverLaunchesAStoppedAppOrRetriesItsGesture()')
     expect(ui).toContain('Notification banner target and application states')
     expect(ui).toContain('attachment.lifetime = .keepAlways')
+  })
+})
+
+// #450: the v0.0.538 shim leg's local tap, and the runtime leg's that worked,
+// as backboardd logged them (Mobile E2E run 45364635606, job 138412074158).
+describe('a synthesized tap the simulator dropped', () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', name), 'utf8')
+
+  it('names the tap backboardd raced and discarded', () => {
+    expect(droppedSimulatorTaps(fixture('dropped-tap-backboard.txt'))).toEqual(['digitizer 104e140e00002 at 11:46:06.935'])
+    expect(droppedTapProblems(fixture('dropped-tap-backboard.txt'), 'ios-shim/springboard-notification.log')).toEqual([
+      'the simulator dropped a synthesized tap before SpringBoard saw it (digitizer 104e140e00002 at 11:46:06.935): backboardd registered the digitizer twice and discarded the release, so no notification action ran and Craft was not reached (#450); see ios-shim/springboard-notification.log',
+    ])
+  })
+
+  it('says nothing about a tap that reached SpringBoard', () => {
+    // Every XCTest tap attaches a digitizer and logs "already have a main
+    // display digitizer"; that alone is not the race.
+    const delivered = fixture('delivered-tap-backboard.txt')
+    expect(delivered).toContain('already have a main display digitizer')
+    expect(droppedSimulatorTaps(delivered)).toEqual([])
+    expect(droppedTapProblems(delivered)).toEqual([])
+    expect(droppedTapProblems('')).toEqual([])
+  })
+
+  it('does not blame a later tap for a race that ended when its digitizer detached', () => {
+    const [raced, ...rest] = fixture('dropped-tap-backboard.txt').split('\n').filter(line => /unknown digitizer|didn't see a previous/.test(line))
+    const detach = '2026-11-24 11:46:07.115 Df backboardd[5785:ed86] [com.apple.BackBoard:TouchEvents] digitizer detached (sender 104E140E00002) builtIn:1'
+    const later = rest[0]!.replace('11:46:06', '11:47:06')
+    expect(droppedSimulatorTaps([raced, detach, later].join('\n'))).toEqual([])
   })
 })

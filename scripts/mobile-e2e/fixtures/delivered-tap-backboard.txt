@@ -1,0 +1,14 @@
+2026-11-24 12:15:59.298 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] digitizer attached (sender 104B131E00005) service:<BKIOHIDService: 0x600002c2a800; serviceStatus: matched; IOHIDService: IOHIDService name: id:0x104b131e00005 primaryUsagePage:0xd primaryUsage:0x4 transport:Recap locationID:recap-bus-0 reportInterval:0 batchInterval:0 events:0 mask:0x0 sensorcontrols:7; senderID: 0
+2026-11-24 12:15:59.298 E  backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] *** already have a main display digitizer
+2026-11-24 12:15:59.299 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] service 104B131E00005 setProperty:480 forKey:QuantizationDPI
+2026-11-24 12:15:59.299 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] service 104B131E00005 restore persistent props {
+2026-11-24 12:15:59.299 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] init: <BKDirectTouchState: 0x600003b140e0; touchScreen; builtin; senderID: 0x104B131E00005; contacts: contacts: []; destinations: []; latentSystemGestureDestinations: ()>
+2026-11-24 12:15:59.300 E  backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] touch down without previous range event: 2
+2026-11-24 12:15:59.300 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] contact 2 presence: touching
+2026-11-24 12:15:59.300 Df backboardd[5785:3352c] [com.apple.BackBoard:TouchEvents] Touch entered (insideExclusive) <BKSHitTestRegion: 0x600002931260; {{0, 0}, {402, 874}}; exclusive: {{0, 0}, {402, 874}}>
+2026-11-24 12:15:59.374 Df backboardd[5785:352a5] [com.apple.BackBoard:TouchEvents] contact 2 presence: none
+2026-11-24 12:15:59.447 Df backboardd[5785:3529e] [com.apple.BackBoard:TouchEvents] soft cancel on display:<main>
+2026-11-24 12:15:59.487 Df backboardd[5785:352a5] [com.apple.BackBoard:TouchEvents] digitizer detached (sender 104B131E00005) builtIn:1
+2026-11-24 12:15:59.487 Df backboardd[5785:352a5] [com.apple.BackBoard:TouchEvents] cancel -- digitizer did disappear:<BKDirectTouchState: 0x600003b140e0; touchScreen; builtin; senderID: 0x104B131E00005; contacts: contacts: []; destinations: []; latentSystemGestureDestinations: ()>
+2026-11-24 12:15:59.487 Df backboardd[5785:352a5] [com.apple.BackBoard:TouchEvents] invalidate: <BKDirectTouchState: 0x600003b140e0; touchScreen; builtin; senderID: 0x104B131E00005; contacts: contacts: []; destinations: []; latentSystemGestureDestinations: ()>
+2026-11-24 12:15:59.488 Df backboardd[5785:352a5] [com.apple.BackBoard:TouchEvents] touchstats 104B131E00005-<main> events starting 0.188434s ago: [

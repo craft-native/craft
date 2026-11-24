@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
 import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../../packages/ios/scripts/insert-project-targets'
 import { checkPermissionBinary } from '../../packages/ios/scripts/permission-binary'
-import { simulatorPasteboardProblems, deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, LOCAL_NOTIFICATION_DELAY_MS, localNotificationProblems, NOTIFICATION_TEST_TIMEOUT_MS, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { simulatorPasteboardProblems, deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, LOCAL_NOTIFICATION_DELAY_MS, localNotificationProblems, droppedTapProblems, NOTIFICATION_TEST_TIMEOUT_MS, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /** The scheme the probe registers, and the one its cold-start link uses. */
@@ -442,6 +442,12 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
       failures.push(...notificationReceiptProblems(notificationReceiptReport(notificationOutput), nonce, notificationEvidence))
       failures.push(...localNotificationProblems(notificationTapReport(notificationOutput, 'CRAFT-E2E-LOCAL-RESULT'), nonce, notificationEvidence))
     }
+  }
+  // #450: a tap that never reported may be one the simulator lost on its way
+  // to SpringBoard. Say so, beside the failure, from the retained log.
+  if (failures.some(failure => failure.includes('never reported') || failure.includes('notification UI test exited'))) {
+    const springboardLog = join(evidence, 'springboard-notification.log')
+    if (existsSync(springboardLog)) failures.push(...droppedTapProblems(readFileSync(springboardLog, 'utf8'), springboardLog))
   }
 
   const dispatched = zigDispatchedActions(consoleText)
