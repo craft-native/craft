@@ -427,7 +427,10 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         if flowLayout.scrollDirection == .vertical { inset.bottom += floatingCover }
         guard contentInset != inset else { return }
         contentInset = inset
-        scrollIndicatorInsets = inset
+        // Row padding is inside the viewport. Keep the indicator in the
+        // gutter while it still clears controls at the ends of its axis.
+        verticalScrollIndicatorInsets = UIEdgeInsets(top: inset.top, left: 0, bottom: inset.bottom, right: 0)
+        horizontalScrollIndicatorInsets = UIEdgeInsets(top: 0, left: inset.left, bottom: 0, right: inset.right)
         collectionViewLayout.invalidateLayout()
     }
 

@@ -1832,17 +1832,21 @@ final class NativeLayoutUnitTests: XCTestCase {
         let rows = (0..<40).map { index in
             box("row-\(index)", style: ["height": 48], props: ["listRole": "item", "key": "row-\(index)"])
         }
-        let list: [String: Any] = ["id": "list", "type": "FlatList", "props": ["testID": "list", "contentContainerStyle": ["paddingBottom": 20, "paddingTop": 6]], "style": ["flex": 1], "children": rows]
+        let list: [String: Any] = ["id": "list", "type": "FlatList", "props": ["testID": "list", "contentContainerStyle": ["paddingBottom": 20, "paddingTop": 6, "paddingHorizontal": 16]], "style": ["flex": 1], "children": rows]
         let (controller, tabs, window) = try await bottomLayoutScreen(box("root", style: ["flex": 1], [list]))
         defer { CraftChrome.shared.floatingActionsMoved(to: nil, in: nil); window.isHidden = true }
         let view = try XCTUnwrap(find("list", below: controller.view) as? CraftNativeFlatList)
         XCTAssertEqual(view.contentInset.bottom, 20, accuracy: 0.5)
+        XCTAssertEqual(view.contentInset.right, 16, accuracy: 0.5)
+        XCTAssertEqual(view.verticalScrollIndicatorInsets.right, 0, accuracy: 0.5)
         let actions = floatingActions(above: tabs, in: window)
         let room = controller.view.convert(controller.view.safeAreaLayoutGuide.layoutFrame, to: window).maxY - actions.minY
         CraftChrome.shared.floatingActionsMoved(to: actions, in: tabs.view)
         await settle(controller)
         XCTAssertEqual(view.contentInset.bottom, 20 + room, accuracy: 0.5)
         XCTAssertEqual(view.contentInset.top, 6, accuracy: 0.5)
+        XCTAssertEqual(view.verticalScrollIndicatorInsets.bottom, 20 + room, accuracy: 0.5)
+        XCTAssertEqual(view.verticalScrollIndicatorInsets.right, 0, accuracy: 0.5)
         XCTAssertEqual(try frame("list", in: controller).maxY, controller.view.bounds.maxY, accuracy: 0.5)
         view.setContentOffset(CGPoint(x: 0, y: view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom), animated: false)
         await settle(controller)
