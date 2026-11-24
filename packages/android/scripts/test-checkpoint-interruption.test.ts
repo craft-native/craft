@@ -197,7 +197,7 @@ test('native UI capture treats an explicitly missing root as not yet observed', 
 })
 
 
-test('native UI capture accepts only a fresh complete tree and preserves its command cap', async () => {
+test('native UI capture accepts only a fresh complete tree inside its window', async () => {
   const paths: string[] = []
   const xml = '<?xml version="1.0"?><hierarchy><node package="dev.craft.probe" /></hierarchy>'
   for (let observation = 0; observation < 2; observation++) {
@@ -207,7 +207,7 @@ test('native UI capture accepts only a fresh complete tree and preserves its com
       label: 'ready', deadline: 30000, now: () => clock,
       adb: (...args) => ['adb', ...args],
       run: async (label, args, timeoutMs) => {
-        expect(timeoutMs).toBe(10000 - clock)
+        expect(timeoutMs).toBe(30000 - clock)
         clock += 10
         calls.push(label)
         if (label.endsWith('-dump')) {
@@ -223,9 +223,37 @@ test('native UI capture accepts only a fresh complete tree and preserves its com
   expect(paths[0]).not.toBe(paths[1])
 })
 
+// #596, Mobile E2E run 45404563973: the control relaunch's first dump began
+// 0.23 s into its 30 s window and was killed at the 10 s command cap while
+// still writing. A slow dump may use the window, and only the window.
+test('a slow UI dump may use its window, not just the 10 s command cap, and never more', async () => {
+  let clock = 230
+  const given: number[] = []
+  const xml = '<?xml version="1.0"?><hierarchy><node package="dev.craft.probe" /></hierarchy>'
+  expect(await captureAndroidNativeUi({
+    label: 'relaunch', deadline: 30000, now: () => clock,
+    adb: (...args) => ['adb', ...args],
+    run: async (label, args, timeoutMs) => {
+      given.push(timeoutMs)
+      if (label.endsWith('-dump')) { clock += 14000; return `UI hierchary dumped to: ${args.at(-1)}\n` }
+      clock += 10
+      return label.endsWith('-xml') ? xml : ''
+    },
+  })).toBe(xml)
+  expect(given[0]).toBe(29770)
+  expect(given[0]).toBeGreaterThan(10000)
+  // A dump that ends past the window is still a failure.
+  clock = 230
+  await expect(captureAndroidNativeUi({
+    label: 'late', deadline: 30000, now: () => clock,
+    adb: (...args) => ['adb', ...args],
+    run: async (label, args) => { clock = 30001; return `UI hierchary dumped to: ${args.at(-1)}\n` },
+  })).rejects.toThrow('exceeded its original bound')
+})
+
 test.each(['transport', 'unknown-output', 'invalid-tree', 'late-root'])('native UI capture propagates failure rather than treating it as missing root (%s)', async (failure) => {
   await expect(captureAndroidNativeUi({
-    label: 'bad', deadline: 30000, now: (() => { let calls = 0; return () => failure === 'late-root' && calls++ > 1 ? 10001 : 0 })(),
+    label: 'bad', deadline: 30000, now: (() => { let calls = 0; return () => failure === 'late-root' && calls++ > 0 ? 30001 : 0 })(),
     adb: (...args) => ['adb', ...args],
     run: async (label, args) => {
       if (failure === 'transport') throw new Error('adb disconnected')

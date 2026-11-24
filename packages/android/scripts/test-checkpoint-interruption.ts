@@ -69,8 +69,7 @@ function app(...args: string[]) { return shell('run-as', packageName, ...args) }
 function expected(generation: number) { return JSON.stringify({ generation, payload: String(generation).repeat(262144) }) }
 async function uiContaining(text: string, label: string, deadline = performance.now() + 30000) {
   while (performance.now() < deadline) {
-    const remaining = Math.floor(deadline - performance.now())
-    const xml = await captureAndroidNativeUi({ label, adb, run, deadline: Math.min(deadline, performance.now() + Math.min(10000, remaining)) })
+    const xml = await captureAndroidNativeUi({ label, adb, run, deadline })
     if (performance.now() > deadline) throw new Error(`Public UI exceeded its original 30000ms bound: ${label}`)
     if (xml) {
       if (xml.includes('class="android.webkit.WebView"')) throw new Error('Checkpoint fixture rendered a WebView instead of native controls')

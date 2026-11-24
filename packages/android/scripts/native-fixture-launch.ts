@@ -27,7 +27,13 @@ export async function launchAndroidNativeFixture(options: {
   return { pid, xml, elapsedMs: now() - started, boundMs }
 }
 
-/** Capture one native UI observation inside the existing command budget. */
+/**
+ * Capture one native UI observation inside the caller's window (the 30 s
+ * public-UI bound), never past it. Not inside the 10 s command cap (#596): on
+ * a loaded hosted runner a \`uiautomator dump\` was killed at 10 s while still
+ * writing, with 19.8 s of its window left, and the run failed though nothing
+ * was wrong. Other commands keep their cap.
+ */
 export async function captureAndroidNativeUi(options: {
   label: string
   adb: (...args: string[]) => string[]
@@ -36,7 +42,7 @@ export async function captureAndroidNativeUi(options: {
   now?: () => number
 }): Promise<string | null> {
   const now = options.now ?? (() => performance.now())
-  const deadline = Math.min(options.deadline, now() + 10000)
+  const deadline = options.deadline
   const remaining = () => {
     const value = Math.floor(deadline - now())
     if (!Number.isFinite(value) || value <= 0) throw new Error(`Native UI capture exceeded its original bound: ${options.label}`)
