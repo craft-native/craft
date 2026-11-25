@@ -81,6 +81,7 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilityUiTest.kt'), join(testDirectory, 'NativeCapabilityUiTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMapTest.kt'), join(testDirectory, 'NativeMapTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeVideoExportTest.kt'), join(testDirectory, 'NativeVideoExportTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeBiometricPromptTest.kt'), join(testDirectory, 'NativeBiometricPromptTest.kt'))
   // The phone clips NativeVideoExportTest exports, in the test APK's assets.
   const testAssets = join(output, 'app/src/androidTest/assets')
   mkdirSync(testAssets, { recursive: true })

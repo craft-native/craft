@@ -162,3 +162,11 @@ describe('Android native runner failure evidence', () => {
     })
   }, 15000)
 })
+
+test('every native-navigation fixture test file is copied into the generated project (#565)', () => {
+  const fixtures = resolve(import.meta.dir, '../fixtures/native-navigation')
+  const source = readFileSync(runner, 'utf8')
+  const files = readdirSync(fixtures).filter(name => name.endsWith('Test.kt')).sort()
+  expect(files).toContain('NativeBiometricPromptTest.kt')
+  for (const file of files) expect(source, `${file} is never copied, so it never runs`).toContain(`'../fixtures/native-navigation/${file}'), join(testDirectory, '${file}')`)
+})
