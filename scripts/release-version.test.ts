@@ -108,7 +108,9 @@ test('release Git preflight requires clean main and checks the current remote', 
   const work = join(root, 'work')
   mkdirSync(work)
   const git = (cwd: string, ...args: string[]) => {
-    const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+    // #597: a blocking spawn can't be stopped by the test's limit, so bound each
+    // call itself; a stalled clone once held release:patch for 15 minutes.
+    const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', timeout: 5_000 })
     expect(result.exitCode, result.stderr.toString()).toBe(0)
     return result.stdout.toString()
   }
