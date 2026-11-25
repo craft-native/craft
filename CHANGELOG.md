@@ -1,5 +1,26 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.539...v0.0.540)
+
+## 🚀 Features
+
+- **android**: export a phone clip as an upright SDR H.264 MP4 and poster with enableVideoExport ([812c38b](https://github.com/craft-native/craft/commit/812c38b)) _(by glennmichael123)_ ([#595](https://github.com/craft-native/craft/issues/595))
+- **ios**: export a phone clip as an upright SDR H.264 MP4 and poster before upload ([ecc6572](https://github.com/craft-native/craft/commit/ecc6572)) _(by glennmichael123)_ ([#595](https://github.com/craft-native/craft/issues/595))
+
+## 🐛 Bug Fixes
+
+- **window**: expose appearance in the desktop bridge ([99cb710](https://github.com/craft-native/craft/commit/99cb710)) _(by Chris Breuer)_
+- **mobile-e2e**: keep the iOS media probe compiling and the Android export test's cache its own ([e55396f](https://github.com/craft-native/craft/commit/e55396f)) _(by glennmichael123)_ ([#595](https://github.com/craft-native/craft/issues/595))
+
+## 🧪 Tests
+
+- **android**: export a phone's portrait 4K60 clip on the emulator, and refuse HDR it can't tone-map ([0199adb](https://github.com/craft-native/craft/commit/0199adb)) _(by glennmichael123)_ ([#595](https://github.com/craft-native/craft/issues/595))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.538...v0.0.539)
 
 ## 🚀 Features
