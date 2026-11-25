@@ -1479,6 +1479,10 @@ export interface CraftBridgeAPI {
    * Screen-sharing and screen-recording detection (macOS)
    */
   timers?: CraftTimersAPI
+  /**
+   * Start the app at login (macOS 13+, SMAppService)
+   */
+  autoLaunch?: CraftAutoLaunchAPI
   screenSharing?: CraftScreenSharingAPI
 
   /**
@@ -2643,6 +2647,20 @@ declare global {
      */
     craft?: CraftBridgeAPI & CraftEventEmitter
   }
+}
+
+/**
+ * Whether the app starts when the user logs in, through
+ * `SMAppService.mainAppService` (macOS 13+). It registers the running app
+ * bundle, so it needs one: a bare binary, or macOS before 13, answers `false`.
+ */
+export interface CraftAutoLaunchAPI {
+  /** Register the app to open at login. Resolves `false` when macOS declines. */
+  enable(): Promise<boolean>
+  /** Stop opening the app at login. Resolves `false` when macOS declines. */
+  disable(): Promise<boolean>
+  /** Whether the app is registered and enabled to open at login. */
+  isEnabled(): Promise<boolean>
 }
 
 /** Native background deadlines, independent of hidden WebKit DOM timers. */

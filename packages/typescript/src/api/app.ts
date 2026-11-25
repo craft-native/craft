@@ -679,17 +679,41 @@ class AppManager {
   // ==========================================================================
 
   /**
-   * Set login item settings
+   * Start the app when the user logs in, or stop doing so (macOS 13+).
+   *
+   * Served by `autoLaunch` (`SMAppService.mainAppService`), which registers the
+   * running app bundle. It cannot open the app hidden or with other arguments,
+   * and registers only this app, so `openAsHidden`, `path` and `args` are
+   * refused rather than ignored. Rejects when macOS declines, for example
+   * for a binary that is not inside an app bundle, or before macOS 13.
    */
-  async setLoginItemSettings(options: { openAtLogin: boolean; openAsHidden?: boolean; path?: string; args?: string[] }): Promise<void> {
-    await this._call('setLoginItemSettings', options)
+  async setLoginItemSettings(options: { openAtLogin: boolean, openAsHidden?: boolean, path?: string, args?: string[] }): Promise<void> {
+    if (options.openAsHidden || options.path !== undefined || options.args !== undefined)
+      throw new Error('setLoginItemSettings supports only openAtLogin: SMAppService registers this app as it is, with no hidden launch, path or arguments')
+    const action = options.openAtLogin ? 'enable' : 'disable'
+    const result = await this._autoLaunch<{ ok?: boolean, reason?: string }>(action)
+    if (!result?.ok)
+      throw new Error(`macOS did not ${options.openAtLogin ? 'register' : 'unregister'} the login item${result?.reason ? `: ${result.reason}` : ''}`)
   }
 
   /**
-   * Get login item settings
+   * Whether the app starts at login (macOS 13+), from `autoLaunch`.
+   *
+   * `openAsHidden`, `wasOpenedAtLogin` and `wasOpenedAsHidden` are always
+   * false: SMAppService has no hidden launch and does not say how this launch
+   * began.
    */
-  async getLoginItemSettings(): Promise<{ openAtLogin: boolean; openAsHidden: boolean; wasOpenedAtLogin: boolean; wasOpenedAsHidden: boolean }> {
-    return this._call('getLoginItemSettings')
+  async getLoginItemSettings(): Promise<{ openAtLogin: boolean, openAsHidden: boolean, wasOpenedAtLogin: boolean, wasOpenedAsHidden: boolean }> {
+    const result = await this._autoLaunch<{ value?: boolean }>('isEnabled')
+    return { openAtLogin: !!result?.value, openAsHidden: false, wasOpenedAtLogin: false, wasOpenedAsHidden: false }
+  }
+
+  // #588: these were sent as `app` actions, which native never served, so in
+  // a WebKit host their promise never settled. Login items live on `autoLaunch`.
+  private async _autoLaunch<T>(action: 'enable' | 'disable' | 'isEnabled'): Promise<T> {
+    if (isWebKitHost())
+      return webkitRequest<T>(`autoLaunch.${action}`, { type: 'autoLaunch', action })
+    return getBridge().request(`autoLaunch.${action}`) as Promise<T>
   }
 
   // ==========================================================================

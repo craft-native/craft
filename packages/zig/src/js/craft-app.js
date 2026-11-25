@@ -166,11 +166,18 @@ catch (error) {
 
   // ========== Login Items ==========
 
-  /** Set login item settings */
-  async setLoginItemSettings(options) { return this._send('setLoginItemSettings', options); },
+  /** Start at login, or stop (macOS 13+). Served by craft.autoLaunch (#588); only openAtLogin is supported. */
+  async setLoginItemSettings(options) {
+    if (options && (options.openAsHidden || options.path !== undefined || options.args !== undefined))
+      throw new Error('setLoginItemSettings supports only openAtLogin: SMAppService registers this app as it is, with no hidden launch, path or arguments');
+    const ok = await (options && options.openAtLogin ? window.craft.autoLaunch.enable() : window.craft.autoLaunch.disable());
+    if (!ok) throw new Error('macOS did not ' + (options && options.openAtLogin ? 'register' : 'unregister') + ' the login item');
+  },
 
-  /** Get login item settings */
-  async getLoginItemSettings() { return this._send('getLoginItemSettings'); },
+  /** Whether the app starts at login. The other three fields are always false under SMAppService. */
+  async getLoginItemSettings() {
+    return { openAtLogin: await window.craft.autoLaunch.isEnabled(), openAsHidden: false, wasOpenedAtLogin: false, wasOpenedAsHidden: false };
+  },
 
   // ========== Event Handling ==========
 
