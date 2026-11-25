@@ -81,7 +81,11 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilityUiTest.kt'), join(testDirectory, 'NativeCapabilityUiTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMapTest.kt'), join(testDirectory, 'NativeMapTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeVideoExportTest.kt'), join(testDirectory, 'NativeVideoExportTest.kt'))
-  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeBiometricPromptTest.kt'), join(testDirectory, 'NativeBiometricPromptTest.kt'))
+  // Tests that need a device set up by hand (an enrolled fingerprint, #565)
+  // skip anywhere else, and CI's suite allows no skips, so they come in only
+  // when asked for.
+  if (process.env.CRAFT_ANDROID_DEVICE_TESTS === '1')
+    copyFileSync(join(import.meta.dir, '../fixtures/native-device/NativeBiometricPromptTest.kt'), join(testDirectory, 'NativeBiometricPromptTest.kt'))
   // The phone clips NativeVideoExportTest exports, in the test APK's assets.
   const testAssets = join(output, 'app/src/androidTest/assets')
   mkdirSync(testAssets, { recursive: true })

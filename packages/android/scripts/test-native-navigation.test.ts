@@ -163,10 +163,15 @@ describe('Android native runner failure evidence', () => {
   }, 15000)
 })
 
-test('every native-navigation fixture test file is copied into the generated project (#565)', () => {
+test('every native-navigation fixture test file is copied, and device-only ones only on request (#565)', () => {
   const fixtures = resolve(import.meta.dir, '../fixtures/native-navigation')
   const source = readFileSync(runner, 'utf8')
   const files = readdirSync(fixtures).filter(name => name.endsWith('Test.kt')).sort()
-  expect(files).toContain('NativeBiometricPromptTest.kt')
+  expect(files.length).toBeGreaterThan(10)
   for (const file of files) expect(source, `${file} is never copied, so it never runs`).toContain(`'../fixtures/native-navigation/${file}'), join(testDirectory, '${file}')`)
+  // Device-only tests live apart: CI's no-skips gate counts every @Test in
+  // native-navigation, and these skip without a fingerprint.
+  const device = readdirSync(resolve(import.meta.dir, '../fixtures/native-device')).filter(name => name.endsWith('Test.kt'))
+  expect(device).toEqual(['NativeBiometricPromptTest.kt'])
+  for (const file of device) expect(source).toContain(`if (process.env.CRAFT_ANDROID_DEVICE_TESTS === '1')\n    copyFileSync(join(import.meta.dir, '../fixtures/native-device/${file}'), join(testDirectory, '${file}'))`)
 })

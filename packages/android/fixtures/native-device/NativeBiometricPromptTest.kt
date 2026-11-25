@@ -34,7 +34,9 @@ import org.junit.runner.RunWith
  * 1. `adb shell locksettings set-pin 1234`, then enrol fingerprint 1 in
  *    Settings (`am start -a android.settings.FINGERPRINT_ENROLL`), touching
  *    the sensor with `adb emu finger touch 1` until it says "Fingerprint added".
- * 2. Install both APKs once and run with `adb shell am instrument -e class …
+ * 2. Generate the fixture with `CRAFT_ANDROID_DEVICE_TESTS=1` (this file is
+ *    left out otherwise: it skips on CI, whose suite allows no skips).
+ *    Install both APKs once and run with `adb shell am instrument -e class …
  *    -e craftEmulatorConsole 5558:$(cat ~/.emulator_console_auth_token)`.
  *    Gradle's connected task uninstalls the app after each run, which would
  *    take the stored credential with it before the second test.
