@@ -3,10 +3,20 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { createTempDir } from '../packages/typescript/src/temp-dir'
 
+// #597: a blocking spawn holds its caller (and a test's limit can't stop it),
+// so every child here is bounded and says when it was stopped.
+export const changelogGitLimitMs = 30_000
+export const changelogGenerateLimitMs = 120_000
+
+export function spawnFailure(result: { exitedDueToTimeout?: boolean, stderr: Uint8Array | { toString: () => string } }, limitMs: number): string {
+  const stderr = result.stderr.toString().trim()
+  return result.exitedDueToTimeout ? `stopped after ${limitMs / 1000} s${stderr ? `: ${stderr}` : ''}` : stderr
+}
+
 function git(cwd: string, args: string[]): string {
-  const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', timeout: changelogGitLimitMs })
   if (result.exitCode !== 0)
-    throw new Error(`Cannot resolve changelog range: ${result.stderr.toString().trim()}`)
+    throw new Error(`Cannot resolve changelog range: ${spawnFailure(result, changelogGitLimitMs)}`)
   return result.stdout.toString().trim()
 }
 
@@ -34,9 +44,9 @@ export function previewChangelog(cwd: string, from?: string, to = 'HEAD'): strin
     const result = Bun.spawnSync([
       process.execPath, cli, '--dir', resolve(cwd), '--from', commits[0]!, '--to', commits[1]!,
       '--output', output, '--hide-author-email', '--no-dates', '--theme', 'default',
-    ], { cwd, env: { ...process.env, DO_NOT_TRACK: '1' }, stdout: 'pipe', stderr: 'pipe' })
+    ], { cwd, env: { ...process.env, DO_NOT_TRACK: '1' }, stdout: 'pipe', stderr: 'pipe', timeout: changelogGenerateLimitMs })
     if (result.exitCode !== 0)
-      throw new Error(`Changelog generation failed: ${result.stderr.toString().trim()}`)
+      throw new Error(`Changelog generation failed: ${spawnFailure(result, changelogGenerateLimitMs)}`)
     // The dependency can log an error and exit zero; a missing output is still failure.
     return dedupeChangelogReferences(readFileSync(output, 'utf8'))
   }

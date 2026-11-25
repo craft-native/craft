@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { dedupeChangelogReferences, previewChangelog } from './changelog-preview'
+import { changelogGenerateLimitMs, changelogGitLimitMs, dedupeChangelogReferences, previewChangelog, spawnFailure } from './changelog-preview'
 import { generateReleaseChangelog } from './generate-release-changelog'
 import { bumpxReleaseCommand } from './release-cli'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
@@ -14,8 +14,9 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 function fixture(run: (directory: string, git: (...args: string[]) => string) => void) {
   const directory = createTempDir('craft-changelog-fixture-')
   const git = (...args: string[]) => {
-    const result = Bun.spawnSync(['git', ...args], { cwd: directory, stdout: 'pipe', stderr: 'pipe' })
-    if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+    // #597: bounded, so a stalled git fails inside the test's limit.
+    const result = Bun.spawnSync(['git', ...args], { cwd: directory, stdout: 'pipe', stderr: 'pipe', timeout: 5_000 })
+    if (result.exitCode !== 0) throw new Error(spawnFailure(result, 5_000))
     return result.stdout.toString()
   }
   try {
@@ -51,7 +52,7 @@ test('CLI emits only the preview and preserves pre-existing local edits', () => 
     const notes = '# Uncommitted user notes\n'
     writeFileSync(join(directory, 'CHANGELOG.md'), notes)
     const before = git('status', '--porcelain')
-    const result = Bun.spawnSync([process.execPath, cli, '--from', 'v1.0.0', '--to', 'HEAD'], { cwd: directory, stdout: 'pipe', stderr: 'pipe' })
+    const result = Bun.spawnSync([process.execPath, cli, '--from', 'v1.0.0', '--to', 'HEAD'], { cwd: directory, stdout: 'pipe', stderr: 'pipe', timeout: 20_000 })
     expect(result.exitCode).toBe(0)
     expect(result.stdout.toString()).toContain('preserve preview sentinel')
     expect(result.stdout.toString()).not.toContain('Changelog written')
@@ -63,7 +64,7 @@ test('CLI emits only the preview and preserves pre-existing local edits', () => 
 test('rejects output overrides and invalid refs without mutating the repository', () => {
   fixture((directory, git) => {
     for (const args of [['--output', 'CHANGELOG.md'], ['--no-output'], ['--from', 'missing-ref'], ['--to', '--help']]) {
-      const result = Bun.spawnSync([process.execPath, cli, ...args], { cwd: directory, stdout: 'pipe', stderr: 'pipe' })
+      const result = Bun.spawnSync([process.execPath, cli, ...args], { cwd: directory, stdout: 'pipe', stderr: 'pipe', timeout: 20_000 })
       expect(result.exitCode).not.toBe(0)
       expect(result.stdout.toString()).toBe('')
       expect(git('status', '--porcelain')).toBe('')
@@ -77,6 +78,18 @@ test('keeps one link per issue or pull request without dropping distinct referen
   const line = `- Merge pull request #326 ([36af50e](https://github.com/craft-native/craft/commit/36af50e)) (${first}, ${first}, ${second}, ${first})`
   expect(dedupeChangelogReferences(line)).toBe(`- Merge pull request #326 ([36af50e](https://github.com/craft-native/craft/commit/36af50e)) (${first}, ${second})`)
   expect(dedupeChangelogReferences('A regular sentence with #326')).toBe('A regular sentence with #326')
+})
+
+test('a stalled child is stopped and named, not waited on (#597)', () => {
+  const stalled = Bun.spawnSync(['sleep', '5'], { stdout: 'pipe', stderr: 'pipe', timeout: 200 })
+  expect(spawnFailure(stalled, 200)).toBe('stopped after 0.2 s')
+  const failed = Bun.spawnSync(['git', 'rev-parse', '--verify', 'no-such-ref'], { cwd: import.meta.dir, stdout: 'pipe', stderr: 'pipe', timeout: 5_000 })
+  expect(spawnFailure(failed, 5_000)).toContain('fatal')
+  // Both limits sit inside what a release waits for, and above what a real run takes.
+  expect(changelogGitLimitMs).toBe(30_000)
+  expect(changelogGenerateLimitMs).toBe(120_000)
+  const source = readFileSync(join(import.meta.dir, 'changelog-preview.ts'), 'utf8')
+  expect(source.match(/Bun\.spawnSync\(/g)?.length).toBe(source.match(/timeout: changelog(Git|Generate)LimitMs/g)?.length)
 })
 
 test('real merge commit preview has only one linked reference', () => {
