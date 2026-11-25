@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.540...v0.0.541)
+
+## 🐛 Bug Fixes
+
+- **release**: bound the changelog preview's git and logsmith calls ([0681fae](https://github.com/craft-native/craft/commit/0681fae)) _(by glennmichael123)_ ([#597](https://github.com/craft-native/craft/issues/597))
+- **android**: a page sheet scrolls its own list, ignores a nudge, and clears the keyboard ([a2d917f](https://github.com/craft-native/craft/commit/a2d917f)) _(by glennmichael123)_ ([#577](https://github.com/craft-native/craft/issues/577))
+
+## 🧪 Tests
+
+- **release**: bound each git call in the Git preflight fixture ([abaab49](https://github.com/craft-native/craft/commit/abaab49)) _(by glennmichael123)_ ([#597](https://github.com/craft-native/craft/issues/597))
+- **e2e**: name the touches the simulator dropped on the iOS UI legs ([eebaf83](https://github.com/craft-native/craft/commit/eebaf83)) _(by glennmichael123)_ ([#450](https://github.com/craft-native/craft/issues/450))
+- **android**: bound a checkpoint UI dump by its 30 s window, not the 10 s command cap ([a41495d](https://github.com/craft-native/craft/commit/a41495d)) _(by glennmichael123)_ ([#596](https://github.com/craft-native/craft/issues/596))
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.539...v0.0.540)
 
 ## 🚀 Features
