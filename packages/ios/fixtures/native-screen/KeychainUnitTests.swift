@@ -125,7 +125,13 @@ final class BiometricVaultUnitTests: XCTestCase {
         XCTAssertEqual(SecItemCopyMatching(session as CFDictionary, nil), errSecItemNotFound)
 
         // The read through a prompt. On a device it shows Face ID and returns
-        // once the face matches; the simulator answers it either way.
+        // once the face matches; the simulator answers it either way. Measured
+        // on an iOS 26.5 simulator (2026-11-25): a non-matching face, no face at
+        // all, and a read after Face ID was enrolled again each returned the
+        // value at once with no prompt, and `evaluatePolicy` answered true to
+        // a non-matching face. Refusal, cancel and invalidation are only
+        // testable on a device; the Android emulator does enforce them
+        // (NativeBiometricPromptTest, #565).
         let context = LAContext()
         context.localizedReason = "Sign in to the test"
         var released: Result<String?, CraftBiometricVault.Failure>?
