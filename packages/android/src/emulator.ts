@@ -100,6 +100,15 @@ export function describeDownloadedArchives(sdkRoot: string, limit = 20): Downloa
 }
 
 /** Provision and own a real Android emulator on a macOS or Linux SDK host. */
+/**
+ * The line that says sdkmanager could not read an archive it downloaded, or
+ * undefined. These are the forms #451 recorded: an archive that is not a ZIP
+ * at all, and one that ends early.
+ */
+export function truncatedSdkDownload(output: string): string | undefined {
+  return output.split('\n').map(line => line.trim()).find(line => /Archive is not a ZIP archive|Error reading Zip content|Unexpected end of ZLIB input stream|java\.io\.EOFException/i.test(line))
+}
+
 export async function createAndroidEmulator(options: AndroidEmulatorOptions): Promise<AndroidEmulatorSession> {
   options.signal?.throwIfAborted()
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Android emulator sessions require macOS or Linux')
@@ -232,7 +241,7 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     void attempt.catch(() => { if (record.closing === attempt) record.closing = undefined })
     return attempt
   }
-  async function run(args: string[], input?: string, timeout = 900_000, allowFailure = false): Promise<{ code: number, stdout: string }> {
+  async function run(args: string[], input?: string, timeout = 900_000, allowFailure = false): Promise<{ code: number, stdout: string, stderr: string }> {
     options.signal?.throwIfAborted()
     const startedAt = new Date().toISOString()
     const command = Bun.spawn(args, { env, detached: true, stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input), stdout: 'pipe', stderr: 'pipe' })
@@ -259,7 +268,7 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
       if (code !== 0 && !allowFailure) throw new Error(`${basename(args[0]!)} failed with exit ${code}; inspect ${artifacts}`)
       // Readiness probes retry transient timeouts within the original boot
       // deadline. Even a process handling TERM with exit zero is not ready.
-      return { code: timedOut ? code || 1 : code, stdout }
+      return { code: timedOut ? code || 1 : code, stdout, stderr }
     }
     finally {
       clearTimeout(timer)
@@ -288,6 +297,28 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     void attempt.catch(() => { if (disposal === attempt) disposal = undefined })
     return attempt
   }
+  /**
+   * #451: dl.google.com now and then serves an SDK archive short, often to
+   * several runners in the same few minutes, and sdkmanager fails before any
+   * test can run. Only that failure is retried, once. The first attempt stays
+   * on record (its command in device-commands.jsonl, what it staged in
+   * android-sdk-download-retry.json) and is announced as a warning, so a
+   * retried download is never silent. Anything else fails as before.
+   */
+  async function install(packages: string[]): Promise<void> {
+    const args = [options.sdkmanager, `--sdk_root=${sdk}`, '--verbose', ...packages]
+    const input = options.acceptLicenses ? 'y\n'.repeat(100) : undefined
+    const first = await run(args, input, undefined, true)
+    if (first.code === 0) return
+    const reason = truncatedSdkDownload(`${first.stdout}\n${first.stderr}`)
+    if (!reason) throw new Error(`sdkmanager failed with exit ${first.code}; inspect ${artifacts}`)
+    let staged: DownloadedArchiveIdentity[] = []
+    try { staged = describeDownloadedArchives(sdk) }
+    catch (diagnostic) { console.error(`Could not describe the first SDK download: ${diagnostic}`) }
+    await Bun.write(join(artifacts, 'android-sdk-download-retry.json'), `${JSON.stringify({ packages, reason, staged }, null, 2)}\n`)
+    console.log(`::warning title=Android SDK download arrived truncated (#451)::sdkmanager could not read what it downloaded for ${packages.join(' ')} (${reason}); retrying once. See android-sdk-download-retry.json`)
+    await run(args, input)
+  }
   const onAbort = (): void => { void dispose().catch(() => {}) }
   options.signal?.addEventListener('abort', onAbort, { once: true })
   try {
@@ -296,11 +327,11 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     if (options.acceptLicenses) await run([options.sdkmanager, `--sdk_root=${sdk}`, '--licenses'], 'y\n'.repeat(100))
     // Preserve the vendor download URL and exception details in the command
     // artifact when SDK provisioning fails before an emulator can start.
-    await run([options.sdkmanager, `--sdk_root=${sdk}`, '--verbose', 'platform-tools', 'emulator'], options.acceptLicenses ? 'y\n'.repeat(100) : undefined)
+    await install(['platform-tools', 'emulator'])
     const acceleration = await run([executable, '-accel-check'], undefined, 30_000, true)
     if (options.acceleration === 'hardware' && acceleration.code !== 0)
       throw new Error(`Android hardware acceleration is unavailable; inspect ${artifacts}`)
-    await run([options.sdkmanager, `--sdk_root=${sdk}`, '--verbose', options.image], options.acceptLicenses ? 'y\n'.repeat(100) : undefined)
+    await install([options.image])
     const devices = (await run([adb, 'devices'], undefined, 10_000)).stdout
     if (devices.split('\n').some(line => line.startsWith(`${serial}\t`))) throw new Error(`${serial} is already in use`)
     await run([options.avdmanager, 'create', 'avd', '--name', name, '--package', options.image, '--device', 'pixel_6'], 'no\n')

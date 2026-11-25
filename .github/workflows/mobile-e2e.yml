@@ -593,6 +593,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # #451: the emulator action downloads these itself, and dl.google.com
+      # now and then serves the archive short. Installing them first, with one
+      # flagged retry for exactly that failure, leaves the action nothing to
+      # download.
+      - name: Install the emulator and its system image
+        run: bun packages/android/scripts/sdk-install.ts emulator 'system-images;android-34;default;x86_64'
+
       - name: AVD cache
         uses: actions/cache@v5
         id: avd-cache

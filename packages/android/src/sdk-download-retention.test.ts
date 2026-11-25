@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
-import { createAndroidEmulator } from './emulator'
+import { createAndroidEmulator, truncatedSdkDownload } from './emulator'
 
 /**
  * A provisioning failure actually writes the receipt, not just can.
@@ -99,6 +99,86 @@ test.skipIf(!['darwin', 'linux'].includes(process.platform))('a truncated archiv
 
     const described = JSON.parse(readFileSync(join(artifacts, 'android-sdk-downloads.json'), 'utf8')) as { path: string, looksLike: string }[]
     expect(described.find(entry => entry.path.endsWith('emulator.zip'))!.looksLike).toBe('zip')
+  }
+  finally { removeTempDir(dir) }
+}, 120_000)
+
+/** The sdkmanager calls device-commands.jsonl recorded, with their exit codes. */
+function sdkmanagerCalls(artifacts: string): { args: string[], code: number }[] {
+  return readFileSync(join(artifacts, 'device-commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as { args: string[], code: number })
+    .filter(entry => entry.args[0]!.endsWith('sdkmanager'))
+}
+
+test('the lines that mean a download arrived unreadable are recognised, and nothing else (#451)', () => {
+  expect(truncatedSdkDownload('Unzipping...\njava.io.IOException: Error reading Zip content from a SeekableByteChannel\n')).toBe('java.io.IOException: Error reading Zip content from a SeekableByteChannel')
+  expect(truncatedSdkDownload('java.util.zip.ZipException: Archive is not a ZIP archive')).toBe('java.util.zip.ZipException: Archive is not a ZIP archive')
+  for (const other of ['Error: Failed to find package \'emulator\'', 'Warning: Failed to read or create install properties file.', 'java.net.UnknownHostException: dl.google.com', ''])
+    expect(truncatedSdkDownload(other)).toBeUndefined()
+})
+
+test.skipIf(!['darwin', 'linux'].includes(process.platform))('a download that arrives truncated is retried once, and the first attempt stays on record (#451)', async () => {
+  const dir = createTempDir('craft-android-provisioning-retry-')
+  try {
+    const sdk = join(dir, 'sdk'), artifacts = join(dir, 'artifacts')
+    mkdirSync(sdk, { recursive: true })
+    const sdkmanager = join(dir, 'sdkmanager'), avdmanager = join(dir, 'avdmanager')
+    // The first run stages a short archive and fails as the 11-16 runners did;
+    // the second installs an emulator, which then has no acceleration, so
+    // setup stops right after the step under test.
+    writeFileSync(sdkmanager, `#!/bin/sh
+if [ ! -f "${dir}/tried" ]; then
+  touch "${dir}/tried"
+  mkdir -p "${sdk}/.temp/PackageOperation01"
+  printf 'PK\\003\\004short' > "${sdk}/.temp/PackageOperation01/emulator.zip"
+  echo 'Unzipping...'
+  echo 'java.io.IOException: Error reading Zip content from a SeekableByteChannel' >&2
+  exit 1
+fi
+mkdir -p "${sdk}/emulator"
+printf '#!/bin/sh\\nexit 1\\n' > "${sdk}/emulator/emulator"
+chmod +x "${sdk}/emulator/emulator"
+exit 0
+`)
+    chmodSync(sdkmanager, 0o755)
+    writeFileSync(avdmanager, '#!/bin/sh\nexit 0\n')
+    chmodSync(avdmanager, 0o755)
+
+    await expect(createAndroidEmulator({
+      sdkRoot: sdk, sdkmanager, avdmanager,
+      image: `system-images;android-35;google_apis;${abi}`,
+      acceleration: 'hardware', artifactsDirectory: artifacts,
+      temporaryDirectory: join(dir, 'tmp'), bootTimeoutMs: 1000,
+    })).rejects.toThrow(/hardware acceleration is unavailable/)
+
+    expect(sdkmanagerCalls(artifacts).map(call => [call.args.slice(-2).join(' '), call.code])).toEqual([['platform-tools emulator', 1], ['platform-tools emulator', 0]])
+    const retry = JSON.parse(readFileSync(join(artifacts, 'android-sdk-download-retry.json'), 'utf8')) as { packages: string[], reason: string, staged: { path: string, looksLike: string }[] }
+    expect(retry.packages).toEqual(['platform-tools', 'emulator'])
+    expect(retry.reason).toContain('Error reading Zip content')
+    expect(retry.staged.find(entry => entry.path.endsWith('emulator.zip'))?.looksLike).toBe('zip')
+  }
+  finally { removeTempDir(dir) }
+}, 120_000)
+
+test.skipIf(!['darwin', 'linux'].includes(process.platform))('any other sdkmanager failure is not retried (#451)', async () => {
+  const dir = createTempDir('craft-android-provisioning-noretry-')
+  try {
+    const sdk = join(dir, 'sdk'), artifacts = join(dir, 'artifacts')
+    mkdirSync(sdk, { recursive: true })
+    const sdkmanager = join(dir, 'sdkmanager'), avdmanager = join(dir, 'avdmanager')
+    writeFileSync(sdkmanager, "#!/bin/sh\necho \"Error: Failed to find package 'emulator'\" >&2\nexit 1\n")
+    chmodSync(sdkmanager, 0o755)
+    writeFileSync(avdmanager, '#!/bin/sh\nexit 0\n')
+    chmodSync(avdmanager, 0o755)
+
+    await expect(createAndroidEmulator({
+      sdkRoot: sdk, sdkmanager, avdmanager,
+      image: `system-images;android-35;google_apis;${abi}`,
+      acceleration: 'hardware', artifactsDirectory: artifacts,
+      temporaryDirectory: join(dir, 'tmp'), bootTimeoutMs: 1000,
+    })).rejects.toThrow(/sdkmanager failed with exit 1/)
+
+    expect(sdkmanagerCalls(artifacts)).toHaveLength(1)
+    expect(existsSync(join(artifacts, 'android-sdk-download-retry.json'))).toBe(false)
   }
   finally { removeTempDir(dir) }
 }, 120_000)
