@@ -223,6 +223,61 @@ const WEBVIEW_HOST =
     \\globalThis.clearTimeout = function () {};
 ;
 
+/// A page with a `data-craft-drag` header and a button inside it (#587):
+/// enough DOM for the bridge to measure, and animation frames that run at once.
+const DRAG_DOM =
+    \\function el(rect, inner) {
+    \\  return {
+    \\    getBoundingClientRect: function () { return { left: rect[0], top: rect[1], width: rect[2], height: rect[3] } },
+    \\    querySelectorAll: function () { return inner || [] },
+    \\  };
+    \\}
+    \\var button = el([700, 10, 80, 32]);
+    \\var hidden = el([0, 0, 0, 0]);
+    \\var header = el([0, 0, 800, 52.3], [button, hidden]);
+    \\var regions = [header];
+    \\document = {
+    \\  readyState: 'complete',
+    \\  addEventListener: function () {},
+    \\  documentElement: {},
+    \\  querySelectorAll: function (selector) { return selector === '[data-craft-drag]' ? regions : [] },
+    \\};
+    \\globalThis.requestAnimationFrame = function (fn) { fn(); return 1 };
+;
+
+test "a page's drag regions reach native as one message, and again only when they change" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(DRAG_DOM);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("var drags = posted.filter(function (m) { return m.a === 'setDragRegions' })");
+    try testing.expectEqualStrings("1", try fx.text("String(drags.length)"));
+    try testing.expectEqualStrings("window", try fx.text("drags[0].t"));
+    // Half-point rounding, and the zero-size element is not a hole.
+    try testing.expectEqualStrings("{\"drag\":[[0,0,800,52.5]],\"noDrag\":[[700,10,80,32]]}", try fx.text("drags[0].d"));
+
+    // An unchanged layout sends nothing; a removed region sends the empty list.
+    _ = try ctx.evaluate("window.dispatchEvent(new CustomEvent('resize'))");
+    try testing.expectEqualStrings("1", try fx.text("String(posted.filter(function (m) { return m.a === 'setDragRegions' }).length)"));
+    _ = try ctx.evaluate("regions = []; window.dispatchEvent(new CustomEvent('resize'))");
+    try testing.expectEqualStrings("{\"drag\":[],\"noDrag\":[]}", try fx.text("posted.filter(function (m) { return m.a === 'setDragRegions' })[1].d"));
+}
+
+test "a page without drag regions sends nothing about them" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(DRAG_DOM);
+    _ = try ctx.evaluate("regions = []");
+    _ = try ctx.evaluate(BRIDGE);
+    try testing.expectEqualStrings("0", try fx.text("String(posted.filter(function (m) { return m.a === 'setDragRegions' }).length)"));
+}
+
 test "the embedded bridge posts through WebView2 when WebKit is absent" {
     var fx = try Fixture.init();
     defer fx.deinit();

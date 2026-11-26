@@ -1440,6 +1440,87 @@
   }
 
   // -------------------------------------------------------------------------
+  // Drag regions (#587): an element marked `data-craft-drag` moves the window
+  // like a titlebar. Native starts the drag from the real mouse-down, which a
+  // drag begun from a page's mousedown handler cannot, so the page reports
+  // where the regions are, and the clickable things inside them, whenever
+  // layout changes. `data-craft-no-drag` keeps anything else clickable.
+  ;(function () {
+    const holes = 'button, a[href], input, select, textarea, label, summary, [contenteditable=""], [contenteditable="true"], [role="button"], [data-craft-no-drag]'
+    const none = JSON.stringify({ drag: [], noDrag: [] })
+    let last = none
+    let queued = false
+    let resizes = null
+    let layout = null
+    let watching = false
+    // A page with no region pays only for structure changes. Class, style and
+    // scroll changes move regions, so they are watched only while there are some.
+    function watchLayout(on) {
+      if (on === watching) return
+      watching = on
+      if (on) {
+        if (layout) layout.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
+        window.addEventListener('scroll', schedule, true)
+      }
+      else {
+        if (layout) layout.disconnect()
+        window.removeEventListener('scroll', schedule, true)
+      }
+    }
+    function box(el) {
+      const r = el.getBoundingClientRect()
+      return [Math.round(r.left * 2) / 2, Math.round(r.top * 2) / 2, Math.round(r.width * 2) / 2, Math.round(r.height * 2) / 2]
+    }
+    function shown(r) { return r[2] > 0 && r[3] > 0 }
+    function measure() {
+      queued = false
+      const drag = []
+      const noDrag = []
+      const regions = document.querySelectorAll('[data-craft-drag]')
+      if (resizes) resizes.disconnect()
+      for (let i = 0; i < regions.length; i++) {
+        const region = regions[i]
+        if (resizes) resizes.observe(region)
+        const r = box(region)
+        if (!shown(r)) continue
+        drag.push(r)
+        const inside = region.querySelectorAll(holes)
+        for (let j = 0; j < inside.length; j++) {
+          const h = box(inside[j])
+          if (shown(h)) noDrag.push(h)
+        }
+      }
+      watchLayout(regions.length > 0)
+      const message = JSON.stringify({ drag: drag, noDrag: noDrag })
+      if (message === last) return
+      last = message
+      _post('window', 'setDragRegions', _stringify({ drag: drag, noDrag: noDrag }))
+    }
+    function schedule() {
+      if (queued) return
+      queued = true
+      // A hidden page gets no animation frames, and nothing can be dragged in
+      // it either; a timer covers the frame that never comes.
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(measure)
+      setTimeout(function () { if (queued) measure() }, 100)
+    }
+    function start() {
+      if (typeof ResizeObserver === 'function') resizes = new ResizeObserver(schedule)
+      if (typeof MutationObserver === 'function') {
+        new MutationObserver(schedule).observe(document.documentElement, {
+          subtree: true, childList: true, attributes: true,
+          attributeFilter: ['data-craft-drag', 'data-craft-no-drag'],
+        })
+        layout = new MutationObserver(schedule)
+      }
+      window.addEventListener('resize', schedule)
+      schedule()
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true })
+    else start()
+  })()
+
+  // -------------------------------------------------------------------------
   // Native deadlines continue while a tray popover's WebKit page is hidden.
   window.craft.timers = {
     sleep: function (delayMs, options) {

@@ -5036,6 +5036,73 @@ pub fn installScrollGestureMonitor() void {
     );
 }
 
+// ============================================================================
+// Drag regions (#587)
+//
+// A page marks `data-craft-drag` elements and the injected bridge reports
+// where they are (`drag_regions.zig`). This monitor sees each left mouse-down
+// before it is dispatched, and when it lands in a region it starts the drag
+// from that event, which is what `performWindowDragWithEvent:` needs. The
+// event is then consumed, as a titlebar consumes it. Anywhere else the event
+// passes through untouched.
+// ============================================================================
+
+const drag_regions = @import("drag_regions.zig");
+var drag_monitor: objc.id = null;
+const NSEventMaskLeftMouseDown: c_ulong = 1 << 1;
+
+fn msgSendPoint(target: anytype, selector: [*:0]const u8) NSPoint {
+    const msg = @as(*const fn (@TypeOf(target), objc.SEL) callconv(.c) NSPoint, @ptrCast(&objc.objc_msgSend));
+    return msg(target, sel(selector));
+}
+
+fn dragMonitorInvoke(_: *const anyopaque, event: objc.id) callconv(.c) objc.id {
+    if (event == null) return event;
+    const window = msgSend0(event, "window");
+    if (window == null) return event;
+    const webview = webViewForWindow(window) orelse return event;
+    const at = msgSendPoint(event, "locationInWindow");
+    const local = msgSendRect1RectId(webview, "convertRect:fromView:", NSRect{ .origin = at, .size = .{ .width = 0, .height = 0 } }, @as(objc.id, null));
+    const height = msgSendRect(webview, "bounds").size.height;
+    const y = if (msgSendBool(webview, "isFlipped")) local.origin.y else height - local.origin.y;
+    if (!drag_regions.hits(@intFromPtr(webview), local.origin.x, y)) return event;
+
+    if (msgSendNSInteger(event, "clickCount") >= 2) {
+        // The titlebar's double-click, as System Settings configures it.
+        const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
+        const value = msgSend1(defaults, "stringForKey:", createNSString("AppleActionOnDoubleClick"));
+        const setting: ?[]const u8 = if (value != null) std.mem.span(@as([*:0]const u8, @ptrCast(msgSend0(value, "UTF8String")))) else null;
+        switch (drag_regions.doubleClickAction(setting)) {
+            .zoom => msgSendVoid1(window, "performZoom:", @as(objc.id, null)),
+            .minimize => msgSendVoid1(window, "performMiniaturize:", @as(objc.id, null)),
+            .none => {},
+        }
+        return null;
+    }
+    msgSendVoid1(window, "performWindowDragWithEvent:", event);
+    return null;
+}
+
+var drag_block = ScrollBlockLayout{
+    .isa = &_NSConcreteStackBlock,
+    .flags = 0,
+    .reserved = 0,
+    .invoke = dragMonitorInvoke,
+    .descriptor = &scroll_block_descriptor,
+};
+
+/// Install the drag-region monitor once per process. Inert until a page
+/// reports a region: `hits` answers false for a webview with none.
+pub fn installDragRegionMonitor() void {
+    if (drag_monitor != null) return;
+    drag_monitor = msgSend2(
+        getClass("NSEvent"),
+        "addLocalMonitorForEventsMatchingMask:handler:",
+        NSEventMaskLeftMouseDown,
+        @as(objc.id, @ptrCast(&drag_block)),
+    );
+}
+
 /// Which of the injected scripts a given window wants.
 ///
 /// `bridge` is always injected; the rest are opt-in because a plain window has
@@ -5121,6 +5188,7 @@ pub fn injectCraftScripts(userContentController: objc.id, scripts: CraftScripts)
         addUserScriptSource(userContentController, getGesturesScript());
         installScrollGestureMonitor();
     }
+    installDragRegionMonitor();
 
     if (scripts.sidebar_bootstrap)
         addUserScriptSource(userContentController, getNativeSidebarBootstrapScript());
@@ -6870,6 +6938,7 @@ fn releaseContent(content: LoadedContent) void {
 fn forgetContent(webview: objc.id) void {
     const key = @intFromPtr(webview);
     @import("bridge_timers.zig").forgetWebView(key);
+    @import("drag_regions.zig").forget(key);
     for (&content_slots) |*slot| {
         if (slot.key != key) continue;
         releaseContent(slot.content);

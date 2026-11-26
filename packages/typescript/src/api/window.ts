@@ -585,6 +585,12 @@ export class Window {
 
   /**
    * Start moving the native window from the current pointer event.
+   *
+   * Prefer marking the element `data-craft-drag` (macOS): native then starts
+   * the drag from the real mouse-down, double-click zooms as a titlebar does,
+   * and buttons, links, inputs and `data-craft-no-drag` elements inside it
+   * stay clickable. A call from a mousedown handler reaches native after that
+   * event, so it can miss it.
    */
   async startDrag(): Promise<void> {
     await this._call('startDrag')

@@ -231,6 +231,8 @@ pub const WindowBridge = struct {
             try self.setMovable(data);
         } else if (std.mem.eql(u8, action, "startDrag")) {
             try self.startDrag(data);
+        } else if (std.mem.eql(u8, action, "setDragRegions")) {
+            try self.setDragRegions(data);
         } else if (std.mem.eql(u8, action, "setHasShadow")) {
             try self.setHasShadow(data);
         } else if (std.mem.eql(u8, action, "setWindowLevel")) {
@@ -1296,6 +1298,19 @@ pub const WindowBridge = struct {
             const macos = @import("macos.zig");
             macos.startWindowDrag(handle);
         }
+    }
+
+    /// Where the sending page lets its window be dragged (#587): its
+    /// `data-craft-drag` elements and the interactive ones inside them, as
+    /// the injected bridge measured them. Stored for the sending webview only.
+    fn setDragRegions(self: *Self, data: ?[]const u8) !void {
+        const json_data = data orelse return BridgeError.MissingData;
+        const webview = window_context.currentWebView() orelse return BridgeError.InvalidParameter;
+        @import("drag_regions.zig").setFromJson(self.allocator, webview, json_data) catch |err| return switch (err) {
+            error.InvalidJSON => BridgeError.InvalidJSON,
+            error.InvalidParameter => BridgeError.InvalidParameter,
+            else => BridgeError.NativeCallFailed,
+        };
     }
 
     fn setHasShadow(self: *Self, data: ?[]const u8) !void {
