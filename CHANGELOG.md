@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.544...v0.0.545)
+
+## 🚀 Features
+
+- **ios-testing**: pickmedia chooses an item in the system Photos picker ([1a377f6](https://github.com/craft-native/craft/commit/1a377f6)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.543...v0.0.544)
 
 ## 🐛 Bug Fixes
