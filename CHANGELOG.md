@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.543...v0.0.544)
+
+## 🐛 Bug Fixes
+
+- **ios**: share pull-to-refresh timing with recycling lists ([f68888f](https://github.com/craft-native/craft/commit/f68888f)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.542...v0.0.543)
 
 ## 🐛 Bug Fixes
