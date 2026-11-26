@@ -5125,12 +5125,12 @@ describe('native renderer component contract', () => {
     expect(android).not.toContain('props.optBoolean("secureTextEntry", false)')
   })
 
-  it('keeps malformed Android refresh colors from crashing or inventing a tint', () => {
+  it('keeps malformed native refresh colors from crashing or inventing a tint', () => {
     expect(android).toContain('setColorSchemeColors(tint?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: fallback)')
     expect(android).toContain('background?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: Color.TRANSPARENT')
-    expect(ios).toContain('pullToRefresh.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
+    expect(ios).toContain('pullToRefresh.tintColor = refresh.indicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
     // A CSS colour, `transparent` included, so a screen can clear the spinner for its own figure.
-    expect(readFileSync(new URL('../packages/ios/templates/CraftNativeFlatList.swift', import.meta.url), 'utf8')).toContain('nativeRefreshControl.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
+    expect(iosFlatList).toContain('nativeRefreshControl.tintColor = refresh.indicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }')
   })
 
   it('restores native backgrounds when custom styles are removed', () => {

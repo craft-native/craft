@@ -5490,7 +5490,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     private var contentNeedsLayout = true
     private var laidOutSize: CGSize = .zero
     private let pullToRefresh = UIRefreshControl()
-    private var refreshHandler: (() -> Void)?
+    private lazy var refresh = CraftRefreshLifecycle(control: pullToRefresh)
     private var authoredPageIndex: Int?
     private var pendingPageIndex: Int?
     private var currentPageIndex = 0
@@ -5798,35 +5798,8 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         if abs(verticalScrollIndicatorInsets.bottom - cover) > 0.5 { verticalScrollIndicatorInsets.bottom = cover }
     }
 
-    private var refreshingProp = false
-    // A redraw can precede the script thread handling the native pull event.
-    private var awaitingRefreshAnswer = false
-    private var refreshEnd: Timer?
-
-    deinit { refreshEnd?.invalidate() }
-
-    /// `onRefresh` and `refreshing`: the system's pull to refresh, controlled
-    /// as in React Native. The spinner shows while `refreshing` is true; a
-    /// pull that the screen does not answer with `refreshing` true ends once
-    /// its custom indicator, if animated, has completed its first cycle.
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
-        refreshHandler = handler
-        refreshingProp = refreshing
-        if refreshing || handler == nil { awaitingRefreshAnswer = false }
-        if handler == nil {
-            cancelRefreshEnd()
-            if pullToRefresh.isRefreshing { pullToRefresh.endRefreshing() }
-            if refreshControl === pullToRefresh { refreshControl = nil }
-            updateRefreshBursts()
-            return
-        }
-        if refreshControl !== pullToRefresh { refreshControl = pullToRefresh }
-        if refreshing, !pullToRefresh.isRefreshing {
-            pullToRefresh.beginRefreshing()
-        }
-        if refreshing { cancelRefreshEnd() }
-        updateRefreshBursts()
-        finishRefreshIfReady()
+        refresh.configure(in: self, handler: handler, refreshing: refreshing)
     }
 
     /// Applies the shared RefreshControl appearance props. UIKit's refresh
@@ -5836,7 +5809,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     /// on Android: a screen that draws its own figure in the gap clears the
     /// spinner with `transparent`.
     func setRefreshAppearance(_ props: [String: Any]) {
-        pullToRefresh.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
+        pullToRefresh.tintColor = refresh.indicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
         guard let title = props["title"] as? String, !title.isEmpty else {
             pullToRefresh.attributedTitle = nil
             return
@@ -5850,56 +5823,12 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 
     var isRefreshingNow: Bool { pullToRefresh.isRefreshing }
 
-    // MARK: A screen's own refresh indicator
-
-    /// The figure a screen draws in the pull's gap instead of the spinner
-    /// (CraftRefreshIndicator).
-    private lazy var refreshIndicator = CraftRefreshIndicator(control: pullToRefresh)
-
     func setRefreshIndicator(_ node: [String: Any]?) {
-        refreshIndicator.set(node)
-        finishRefreshIfReady()
-    }
-
-    private func updateRefreshBursts() {
-        refreshIndicator.update()
+        refresh.setIndicator(node)
     }
 
     @objc private func refreshPulled() {
-        cancelRefreshEnd()
-        awaitingRefreshAnswer = true
-        updateRefreshBursts()
-        refreshHandler?()
-        // Once the script has answered the pull (and its render has landed):
-        // a script on its own thread answers a turn or two later.
-        CraftNativeScriptThread.afterScript { [weak self] in
-            guard let self else { return }
-            self.awaitingRefreshAnswer = false
-            self.finishRefreshIfReady()
-        }
-    }
-
-    private func finishRefreshIfReady() {
-        guard !refreshingProp, !awaitingRefreshAnswer, pullToRefresh.isRefreshing else { return }
-        let remaining = refreshIndicator.remainingFirstCycle
-        if remaining <= 0 {
-            cancelRefreshEnd()
-            pullToRefresh.endRefreshing()
-            updateRefreshBursts()
-            return
-        }
-        guard refreshEnd == nil else { return }
-        let timer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in
-            self?.refreshEnd = nil
-            self?.finishRefreshIfReady()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        refreshEnd = timer
-    }
-
-    private func cancelRefreshEnd() {
-        refreshEnd?.invalidate()
-        refreshEnd = nil
+        refresh.pulled()
     }
 
     func setKeyboardShouldPersistTaps(_ value: Any?) {
@@ -6134,6 +6063,86 @@ final class CraftChartInspection: NSObject, UIGestureRecognizerDelegate {
             text(row.1, rect: CGRect(x: left + width * 0.48, y: top, width: width * 0.52 - 12, height: rowHeight), strong: true, right: true)
             top += rowHeight
         }
+    }
+}
+
+/// Shared controlled refresh lifecycle for both native scroll hosts. Data can be
+/// ready before presentation finishes, so hold only a moving first cycle.
+final class CraftRefreshLifecycle {
+    let indicator: CraftRefreshIndicator
+    private let control: UIRefreshControl
+    private var handler: (() -> Void)?
+    private var refreshing = false
+    // An unrelated render may arrive before the script answers a native pull.
+    private var awaitingAnswer = false
+    private var endTimer: Timer?
+
+    init(control: UIRefreshControl) {
+        self.control = control
+        self.indicator = CraftRefreshIndicator(control: control)
+    }
+
+    deinit { endTimer?.invalidate() }
+
+    func configure(in scroll: UIScrollView, handler: (() -> Void)?, refreshing: Bool) {
+        self.handler = handler
+        self.refreshing = refreshing
+        guard handler != nil else {
+            awaitingAnswer = false
+            cancelEnd()
+            if control.isRefreshing { control.endRefreshing() }
+            if scroll.refreshControl === control { scroll.refreshControl = nil }
+            indicator.update()
+            return
+        }
+        if scroll.refreshControl !== control { scroll.refreshControl = control }
+        if refreshing {
+            awaitingAnswer = false
+            cancelEnd()
+            if !control.isRefreshing { control.beginRefreshing() }
+        }
+        indicator.update()
+        finishIfReady()
+    }
+
+    func setIndicator(_ node: [String: Any]?) {
+        indicator.set(node)
+        finishIfReady()
+    }
+
+    func pulled() {
+        cancelEnd()
+        awaitingAnswer = true
+        indicator.update()
+        handler?()
+        // Wait for the script and its render, including on a separate thread.
+        CraftNativeScriptThread.afterScript { [weak self] in
+            self?.awaitingAnswer = false
+            self?.finishIfReady()
+        }
+    }
+
+    private func finishIfReady() {
+        guard !refreshing, !awaitingAnswer, control.isRefreshing else { return }
+        let remaining = indicator.remainingFirstCycle
+        if remaining <= 0 {
+            cancelEnd()
+            control.endRefreshing()
+            indicator.update()
+            return
+        }
+        guard endTimer == nil else { return }
+        let timer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in
+            self?.endTimer = nil
+            self?.finishIfReady()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        endTimer = timer
+    }
+
+    private func cancelEnd() {
+        endTimer?.invalidate()
+        endTimer = nil
     }
 }
 

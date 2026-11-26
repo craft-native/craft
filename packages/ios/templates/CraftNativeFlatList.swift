@@ -214,7 +214,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var pendingApply: (() -> Void)?
     private var pendingThemeRefresh = false
     private let nativeRefreshControl = UIRefreshControl()
-    private var refreshHandler: (() -> Void)?
+    private lazy var refresh = CraftRefreshLifecycle(control: nativeRefreshControl)
     private let keyboardTapGesture = UITapGestureRecognizer()
     private var keyboardShouldPersistTaps = "never"
     private var scrollTargetKey: String?
@@ -440,50 +440,20 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         keyboardTapGesture.isEnabled = keyboardShouldPersistTaps != "always"
     }
 
-    private var refreshingProp = false
-    // A redraw can precede the script thread handling the native pull event.
-    private var awaitingRefreshAnswer = false
-
-    /// `onRefresh` and `refreshing`, controlled as in React Native: a pull
-    /// the screen does not answer with `refreshing` true ends at once.
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
-        refreshHandler = handler
-        refreshingProp = refreshing
-        if refreshing || handler == nil { awaitingRefreshAnswer = false }
-        let control = handler == nil ? nil : nativeRefreshControl
-        if refreshControl !== control { refreshControl = control }
-        if handler == nil || (!refreshing && !awaitingRefreshAnswer) {
-            if nativeRefreshControl.isRefreshing { nativeRefreshControl.endRefreshing() }
-        } else if refreshing, !nativeRefreshControl.isRefreshing {
-            nativeRefreshControl.beginRefreshing()
-        }
-        refreshIndicator.update()
+        refresh.configure(in: self, handler: handler, refreshing: refreshing)
     }
 
     func setRefreshAppearance(_ props: [String: Any]) {
-        nativeRefreshControl.tintColor = refreshIndicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
+        nativeRefreshControl.tintColor = refresh.indicator.isShown ? .clear : (props["tintColor"] as? String).flatMap { UIColor(css: $0) ?? UIColor(hex: $0) }
     }
 
-    /// The figure a screen draws in the pull's gap instead of the spinner
-    /// (CraftRefreshIndicator, kept out of the rows by the screen).
-    private lazy var refreshIndicator = CraftRefreshIndicator(control: nativeRefreshControl)
-
     func setRefreshIndicator(_ node: [String: Any]?) {
-        refreshIndicator.set(node)
+        refresh.setIndicator(node)
     }
 
     @objc private func refreshTriggered() {
-        awaitingRefreshAnswer = true
-        refreshHandler?()
-        refreshIndicator.update()
-        // Once the script has answered the pull, on its own thread or not.
-        CraftNativeScriptThread.afterScript { [weak self] in
-            guard let self else { return }
-            self.awaitingRefreshAnswer = false
-            guard !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return self.refreshIndicator.update() }
-            self.nativeRefreshControl.endRefreshing()
-            self.refreshIndicator.update()
-        }
+        refresh.pulled()
     }
 
     @objc private func keyboardTap() {

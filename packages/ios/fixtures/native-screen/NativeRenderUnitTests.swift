@@ -3960,6 +3960,7 @@ final class NativeRenderUnitTests: XCTestCase {
     }
 
     func testAnimatedRefreshIndicatorFinishesOneCycleWithoutHoldingAnAlreadySlowRefresh() throws {
+        let duration: TimeInterval = 0.6
         for type in ["ScrollView", "FlatList"] {
             let controller = CraftNativeScreenController(config: CraftConfig())
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
@@ -3968,7 +3969,7 @@ final class NativeRenderUnitTests: XCTestCase {
             defer { window.isHidden = true; controller.viewDidDisappear(false) }
             let animate: [String: Any] = [
                 "id": "move", "type": "Animate",
-                "props": ["attributeName": "d", "duration": 0.4, "frames": [[0, 0, 0, 1, 10, 0], [0, 0, 0, 1, 20, 10]], "frameTimes": [0, 1]],
+                "props": ["attributeName": "d", "duration": duration, "frames": [[0, 0, 0, 1, 10, 0], [0, 0, 0, 1, 20, 10]], "frameTimes": [0, 1]],
             ]
             let path: [String: Any] = ["id": "limb", "type": "Path", "props": ["geometry": [0, 0, 0, 1, 10, 0]], "children": [animate]]
             let drawing: [String: Any] = ["id": "figure", "type": "Svg", "props": ["refreshIndicator": true], "children": [path]]
@@ -3984,15 +3985,24 @@ final class NativeRenderUnitTests: XCTestCase {
             let scroll = try XCTUnwrap(find(UIScrollView.self, key: "pull", below: controller.view))
             let control = try XCTUnwrap(scroll.refreshControl)
             control.beginRefreshing()
+            let pulledAt = ProcessInfo.processInfo.systemUptime
             control.sendActions(for: .valueChanged)
             controller.render(screen(true))
             controller.render(screen(false))
-            XCTAssertEqual(control.isRefreshing, !UIAccessibility.isReduceMotionEnabled)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            XCTAssertEqual(control.isRefreshing, !UIAccessibility.isReduceMotionEnabled, "\(type) ended a fast refresh before its first animation cycle")
+            // Wait for the main run loop to deliver the presentation timer.
+            // A loaded simulator can miss a fixed 200 ms scheduling margin.
+            let settleBy = Date().addingTimeInterval(3)
+            while control.isRefreshing && Date() < settleBy {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
             XCTAssertFalse(control.isRefreshing, "\(type) kept the figure after the first cycle")
+            if !UIAccessibility.isReduceMotionEnabled {
+                XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - pulledAt, duration - 0.02)
+            }
 
             controller.render(screen(true))
-            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            RunLoop.main.run(until: Date().addingTimeInterval(duration + 0.2))
             XCTAssertTrue(control.isRefreshing, "\(type) left while the request was still running")
             controller.render(screen(false))
             XCTAssertFalse(control.isRefreshing, "\(type) delayed a refresh that had already played a full cycle")
