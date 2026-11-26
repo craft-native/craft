@@ -94,6 +94,8 @@ export type SimulatorStep =
   | { command: 'edge', direction: 'left' | 'right' }
   | { command: 'tabbar', state: 'shown' | 'hidden' }
   | { command: 'tapxy', x: number, y: number }
+  /** An item in the system Photos picker, which draws in its own process: index 0 is the first; waits up to `seconds` (default 10). */
+  | { command: 'pickmedia', item?: number, seconds?: number }
   /** One native event record, without quiescence between paths. Times are seconds. */
   | { command: 'touches', paths: TimedTouchPoint[][] }
   /** Standard XCTest tab hold; independent screenshots must be captured before release. */
@@ -131,7 +133,12 @@ export function serializeSimulatorSteps(steps: readonly SimulatorStep[]): string
   }
   const line = (step: SimulatorStep): string => {
     let arg = ''
-    if (step.command === 'holdtab') {
+    if (step.command === 'pickmedia') {
+      const item = step.item ?? 0
+      if (!Number.isInteger(number(item))) throw new Error('pickmedia item must be a whole number')
+      arg = step.seconds === undefined ? String(item) : `${item} | ${number(step.seconds)}`
+    }
+    else if (step.command === 'holdtab') {
       const seconds = step.seconds ?? 6
       if (!step.text.trim() || step.text.includes('|') || number(seconds) < 2 || seconds > 10)
         throw new Error('holdtab needs a nonempty tab name and 2–10 seconds')

@@ -7,6 +7,7 @@ import Darwin
 ///   launch | activate | terminate | home
 ///   notifications          Home, then reveal Notification Center's Lock Screen presentation
 ///   systemexpect <text> [| secs] / systemabsent <text> / systemtap <text>
+///   pickmedia [index] [| secs] chooses an item in the system Photos picker (0 = first, default 10 s)
 ///                          assert or tap SpringBoard content, including Live Activities
 ///   systemtree <name>      SpringBoard accessibility tree → shots/<name>.txt
 ///   background <secs>     Home, wait, back to the app
@@ -482,7 +483,7 @@ final class DriverTests: XCTestCase {
         let arg = parts.count > 1 ? parts[1] : ""
         // Context changes can move focus without going through press().
         if ["launch", "activate", "terminate", "home", "background", "openurl", "universallink",
-            "back", "return", "tab", "tapxy", "edge", "notifications", "systemtap", "longpressid", "exec"].contains(command) {
+            "back", "return", "tab", "tapxy", "edge", "notifications", "systemtap", "pickmedia", "longpressid", "exec"].contains(command) {
             lastTappedInput = nil
         }
         if bundledJourney && ["net", "delay", "exec"].contains(command) {
@@ -535,6 +536,21 @@ final class DriverTests: XCTestCase {
             }
             if let target { press(target, within: springboard.frame); note("systemtap \(arg): ok") }
             else { XCTFail("Exact system element not found"); note("FAIL systemtap \(arg): NOT FOUND") }
+        case "pickmedia":
+            // The system Photos picker (PHPicker) draws in its own process,
+            // never in the app's tree, and takes seconds to fill on a busy
+            // machine. Wait for its grid to show the item, then choose it.
+            let (which, seconds) = split(arg)
+            let index = max(0, Int(which) ?? 0)
+            let picker = XCUIApplication(bundleIdentifier: "com.apple.mobileslideshow.photospicker")
+            let target = poll(seconds) {
+                let items = picker.images.matching(identifier: "PXGGridLayout-Info")
+                guard items.count > index else { return nil }
+                let item = items.element(boundBy: index)
+                return item.exists && item.isHittable ? item : nil
+            }
+            if let target { press(target, within: picker.frame); note("pickmedia \(index): ok") }
+            else { XCTFail("Photos picker item \(index) not found"); note("FAIL pickmedia \(index): NOT FOUND") }
         case "systemtree":
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             post("/save?name=\(arg).txt", Data(springboard.debugDescription.utf8))
