@@ -6,7 +6,7 @@
  */
 
 import { writeInstallerLayout } from './installer-layout.js'
-import { installerBackground } from './installer-background.js'
+import { installerBackgroundBase64, installerBackgroundFile } from './installer-background.js'
 import type { WindowOptions } from './types.js'
 import { spawn, spawnSync } from 'child_process'
 import { createHash } from 'crypto'
@@ -1282,7 +1282,7 @@ export async function createDiskImage(opts: {
     await run('ditto', [opts.appBundlePath, join(payload, bundleName)])
     symlinkSync('/Applications', join(payload, 'Applications'))
     mkdirSync(join(payload, '.background'))
-    writeFileSync(join(payload, '.background', 'installer.png'), installerBackground)
+    writeFileSync(join(payload, '.background', installerBackgroundFile), installerBackgroundBase64, 'base64')
     const args = dmgCreateArguments({ ...opts, appBundlePath: payload, outputPath: writable }, pathContentBytes(payload))
     args[args.indexOf('ULMO')] = 'UDRW'
     phase = 'create'

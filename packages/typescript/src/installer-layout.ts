@@ -30,6 +30,7 @@
 import { execFileSync } from 'node:child_process'
 import { statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { installerBackgroundFile, installerIconPositions } from './installer-background.js'
 
 const number = (value: number, bytes = 4) => {
   const out = Buffer.alloc(bytes)
@@ -48,7 +49,7 @@ const tag = (id: number, data: Buffer) => Buffer.concat([number(id, 2), number(d
 
 function backgroundAlias(mount: string, volume: string): Buffer {
   const folder = '.background'
-  const filename = 'installer.png'
+  const filename = installerBackgroundFile
   const directory = statSync(join(mount, folder))
   const file = statSync(join(mount, folder, filename))
   const date = (ms: number) => Math.floor(ms / 1000) + 2082844800
@@ -87,11 +88,12 @@ export function writeInstallerLayout(mount: string, volume: string, appName: str
   const records: Array<{ name: string, code: string, type: string, data: Buffer }> = []
   const blob = (name: string, code: string, data: Buffer) => records.push({ name, code, type: 'blob', data: Buffer.concat([number(data.length), data]) })
   blob('.', 'bwsp', plist({ ShowStatusBar: false, ShowToolbar: false, ShowTabView: false, ShowSidebar: false, ContainerShowSidebar: false, ShowPathbar: false, SidebarWidth: 0, PreviewPaneVisibility: false, WindowBounds: '{{100, 100}, {660, 460}}' }))
-  blob('.', 'icvp', plist({ viewOptionsVersion: 1, backgroundType: 2, backgroundColorRed: 1, backgroundColorGreen: 1, backgroundColorBlue: 1, backgroundImageAlias: backgroundAlias(mount, volume), iconSize: 96, arrangeBy: 'none', gridSpacing: 100, gridOffsetX: 0, gridOffsetY: 0, scrollPositionX: 0, scrollPositionY: 0, textSize: 13, labelOnBottom: true, showIconPreview: true, showItemInfo: false }))
+  blob('.', 'icvp', plist({ viewOptionsVersion: 1, backgroundType: 2, backgroundColorRed: 1, backgroundColorGreen: 1, backgroundColorBlue: 1, backgroundImageAlias: backgroundAlias(mount, volume), iconSize: 128, arrangeBy: 'none', gridSpacing: 100, gridOffsetX: 0, gridOffsetY: 0, scrollPositionX: 0, scrollPositionY: 0, textSize: 13, labelOnBottom: true, showIconPreview: true, showItemInfo: false }))
   records.push({ name: '.', code: 'vSrn', type: 'long', data: number(1) })
   records.push({ name: '.', code: 'icvl', type: 'type', data: Buffer.from('icnv') })
   records.push({ name: '.', code: 'vstl', type: 'type', data: Buffer.from('icnv') })
-  for (const [name, x, y] of [[appName, 160, 190], ['Applications', 500, 190], ['.background', 500, 600]] as const)
+  const { appX, applicationsX, y } = installerIconPositions
+  for (const [name, x] of [[appName, appX], ['Applications', applicationsX]] as const)
     blob(name, 'Iloc', Buffer.concat([number(x), number(y), Buffer.from('ffffffffffff0000', 'hex')]))
   records.sort((a, b) => {
     const left = a.name.normalize('NFD').toLowerCase()

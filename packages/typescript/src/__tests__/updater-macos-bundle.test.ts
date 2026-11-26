@@ -8,7 +8,7 @@
 
 import { execFileSync } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { AutoUpdater, DeltaGenerator } from '../updater/index'
@@ -19,7 +19,7 @@ import {
   swapBundle,
   verifyBundleTrust,
 } from '../updater/macos-bundle'
-import { createDiskImage } from '../package'
+import { attachedDevice, detachDiskImage, packageApp } from '../package'
 import { createTempDir, removeAllTempDirs } from '../temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -201,16 +201,37 @@ describe('extractBundleFromZip', () => {
 })
 
 describe('zipped installer images', () => {
-  it.if(darwin)('lays out a drag installer and extracts its app from a ZIP', async () => {
-    const app = makeBundle(join(work, 'Installer.app'), 'zipped-dmg-payload')
-    const image = join(work, 'Installer.dmg')
-    const result = await createDiskImage({ appBundlePath: app, outputPath: image, volumeName: 'Craft Installer' })
-    expect(result.success).toBe(true)
+  it.if(darwin)('ships a Retina drag installer by default and extracts its app from a ZIP', async () => {
+    const binaryPath = join(work, 'fixture')
+    writeFileSync(binaryPath, 'zipped-dmg-payload')
+    const results = await packageApp({ name: 'Installer', version: '1.0.0', binaryPath, outDir: work })
+    const dmg = results.find(result => result.format === 'dmg')
+    expect(dmg?.error).toBeUndefined()
+    expect(dmg?.success).toBe(true)
+    const image = dmg!.outputPath!
+
+    const mount = join(work, 'volume')
+    mkdirSync(mount)
+    const attachment = execFileSync('hdiutil', ['attach', image, '-readonly', '-nobrowse', '-mountpoint', mount], { encoding: 'utf8' })
+    try {
+      expect(readlinkSync(join(mount, 'Applications'))).toBe('/Applications')
+      const layout = readFileSync(join(mount, '.DS_Store'))
+      expect(layout.includes(Buffer.from('icvpblob'))).toBe(true)
+      expect(layout.includes(Buffer.from('installer.tiff'))).toBe(true)
+      const background = execFileSync('tiffutil', ['-info', join(mount, '.background', 'installer.tiff')], { encoding: 'utf8' })
+      expect(background).toMatch(/Image Width: 660 Image Length: 400\s+Resolution: 72, 72/)
+      expect(background).toMatch(/Image Width: 1320 Image Length: 800\s+Resolution: 144, 144/)
+    }
+    finally {
+      const detached = await detachDiskImage(attachedDevice(attachment) ?? mount)
+      if (!detached.success) throw new Error(detached.error)
+    }
+
     const archive = `${image}.zip`
     execFileSync('ditto', ['-c', '-k', image, archive])
     const staged = await extractBundleFromZip(archive, join(work, 'zip-out'))
-    expect(readFileSync(join(staged.appPath, 'Contents/MacOS/App'), 'utf8')).toBe('zipped-dmg-payload')
-    expect(existsSync(join(staged.stagingDir, 'payload', 'Installer.dmg'))).toBe(true)
+    expect(readFileSync(join(staged.appPath, 'Contents/MacOS/Installer'), 'utf8')).toBe('zipped-dmg-payload')
+    expect(existsSync(join(staged.stagingDir, 'payload', 'Installer-1.0.0.dmg'))).toBe(true)
   }, 30000)
 })
 
