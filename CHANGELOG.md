@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.541...v0.0.542)
+
+## 🚀 Features
+
+- **packaging**: sharpen the default macOS disk image installer ([48e78cf](https://github.com/craft-native/craft/commit/48e78cf)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **ios-testing**: tap screen coordinates through SpringBoard so tapxy reaches the Photos picker ([51f98cf](https://github.com/craft-native/craft/commit/51f98cf)) _(by Chris Breuer)_
+- **app**: serve login items through autoLaunch, so they settle ([a415779](https://github.com/craft-native/craft/commit/a415779)) _(by glennmichael123)_ ([#588](https://github.com/craft-native/craft/issues/588))
+- **android**: retry an SDK download that arrives truncated, once and on record ([89a7571](https://github.com/craft-native/craft/commit/89a7571)) _(by glennmichael123)_ ([#451](https://github.com/craft-native/craft/issues/451))
+
+## 🧪 Tests
+
+- **android**: keep the fingerprint prompt test out of CI's no-skips suite ([08cc448](https://github.com/craft-native/craft/commit/08cc448)) _(by glennmichael123)_ ([#565](https://github.com/craft-native/craft/issues/565))
+- **ios**: record what the simulator does not enforce for a biometric credential ([31c30bb](https://github.com/craft-native/craft/commit/31c30bb)) _(by glennmichael123)_ ([#564](https://github.com/craft-native/craft/issues/564), [#565](https://github.com/craft-native/craft/issues/565))
+- **android**: read a biometric credential behind a real BiometricPrompt on the emulator ([c39667a](https://github.com/craft-native/craft/commit/c39667a)) _(by glennmichael123)_ ([#565](https://github.com/craft-native/craft/issues/565))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.540...v0.0.541)
 
 ## 🐛 Bug Fixes
