@@ -224,6 +224,13 @@ pub const WindowStyle = struct {
     /// window that only renders needs nothing else. On for any app that keeps
     /// a preference.
     persistent_storage: bool = false,
+    /// A persistent store of this webview's own, under this name (#589): it
+    /// survives a quit like `persistent_storage`, but shares nothing with the
+    /// default store or with any other name. Needs macOS 14
+    /// (`dataStoreForIdentifier:`); `validateWebContentStyle` refuses it on
+    /// older systems before anything is created. Overrides
+    /// `persistent_storage`.
+    data_store: ?[]const u8 = null,
     /// Whether Craft draws its own row of controls beside the window buttons —
     /// the sidebar toggle and the two history arrows.
     ///
@@ -337,6 +344,48 @@ pub fn supportsTransparentWebContent() bool {
 fn validateWebContentStyle(style: WindowStyle) !void {
     if ((style.transparent or style.hasWebMaterial()) and !supportsTransparentWebContent())
         return error.UnsupportedWebViewTransparency;
+    // Falling back to the shared store would put a session's cookies where
+    // every other window can read them, which is what a name is for avoiding.
+    if (style.data_store != null and !namedDataStoresAvailable())
+        return error.UnsupportedNamedDataStore;
+}
+
+/// Whether this macOS can give a webview a persistent store of its own
+/// (`+[WKWebsiteDataStore dataStoreForIdentifier:]`, macOS 14).
+pub fn namedDataStoresAvailable() bool {
+    const WKWebsiteDataStore = getClass("WKWebsiteDataStore");
+    if (WKWebsiteDataStore == null) return false;
+    return msgSendBool1Sel(WKWebsiteDataStore, "respondsToSelector:", sel("dataStoreForIdentifier:"));
+}
+
+/// The identifier a named store lives under: the same name gives the same
+/// store on every launch, and different names never share one. A version-8
+/// (name-derived) UUID from SHA-256 of a fixed prefix and the name.
+pub fn dataStoreIdentifier(name: []const u8) [16]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("dev.craft.webview-data-store\x00");
+    hash.update(name);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    var bytes: [16]u8 = digest[0..16].*;
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    return bytes;
+}
+
+fn namedDataStore(name: []const u8) objc.id {
+    var bytes = dataStoreIdentifier(name);
+    const uuid = msgSend1(msgSend0(getClass("NSUUID"), "alloc"), "initWithUUIDBytes:", @as([*]const u8, &bytes));
+    defer _ = msgSend0(uuid, "release");
+    return msgSend1(getClass("WKWebsiteDataStore"), "dataStoreForIdentifier:", uuid);
+}
+
+test "a named data store's identifier is stable, distinct per name, and a version-8 UUID" {
+    const a = dataStoreIdentifier("x-session");
+    try std.testing.expectEqualSlices(u8, &a, &dataStoreIdentifier("x-session"));
+    try std.testing.expect(!std.mem.eql(u8, &a, &dataStoreIdentifier("x-session-2")));
+    try std.testing.expectEqual(@as(u8, 0x80), a[6] & 0xf0);
+    try std.testing.expectEqual(@as(u8, 0x80), a[8] & 0xc0);
 }
 
 fn makeWebViewTransparent(webview: objc.id) !void {
@@ -1115,7 +1164,13 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // `--persistent-storage` opts into the default store, which is shared
         // between every window in the process and survives a relaunch.
         const WKWebsiteDataStore = getClass("WKWebsiteDataStore");
-        const store = if (style.persistent_storage)
+        //
+        // `data_store` names a persistent store of the window's own (#589):
+        // an automation webview whose signed-in session must outlive a quit
+        // without sharing cookies with the app's main window.
+        const store = if (style.data_store) |name|
+            namedDataStore(name)
+        else if (style.persistent_storage)
             msgSend0(WKWebsiteDataStore, "defaultDataStore")
         else
             msgSend0(WKWebsiteDataStore, "nonPersistentDataStore");
@@ -7972,6 +8027,10 @@ pub const SecondaryWindow = struct {
     /// Zero is for native callers with no page owner.
     owner_webview: window_registry.Handle = 0,
     relationship: window_registry.Relationship = .{},
+    /// Create and load the window without showing it (#589). Its page runs;
+    /// `show` reveals it later. Opening an existing name headless leaves that
+    /// window where it is rather than bringing it forward.
+    headless: bool = false,
 };
 
 /// The window open under this name, if one is.
@@ -8011,7 +8070,7 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
         // again; otherwise button geometry stops updating after the first
         // close/reopen cycle.
         observeWindowChrome(existing);
-        showWindow(existing);
+        if (!spec.headless) showWindow(existing);
         return existing;
     }
 
@@ -8040,7 +8099,7 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     // never hears `craft:window:close`.
     @import("macos_window_events.zig").install(window);
 
-    showWindow(window);
+    if (!spec.headless) showWindow(window);
     return window;
 }
 

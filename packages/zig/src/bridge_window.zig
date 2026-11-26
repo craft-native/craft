@@ -388,6 +388,17 @@ pub const WindowBridge = struct {
             return BridgeError.InvalidJSON;
         defer if (background_color_text) |value| self.allocator.free(value);
 
+        // #589: a persistent store of the window's own. Checked here, before
+        // anything is created, like the colour below.
+        const data_store = json_utils.getStringDecoded(self.allocator, json_data, "dataStore") catch
+            return BridgeError.InvalidJSON;
+        defer if (data_store) |value| self.allocator.free(value);
+        if (data_store) |store_name| {
+            if (!validDataStoreName(store_name)) return BridgeError.InvalidParameter;
+            if (builtin.os.tag == .macos and !@import("macos.zig").namedDataStoresAvailable())
+                return BridgeError.PlatformNotSupported;
+        }
+
         // Parse before creating anything. Returning an error after AppKit has
         // already opened the window would leave a live, named window behind
         // even though the caller's `createWindow` promise rejected.
@@ -427,6 +438,7 @@ pub const WindowBridge = struct {
             // window's store, or it writes them where nothing else can read
             // them.
             .persistent_storage = json_utils.getBool(json_data, "persistentStorage") orelse false,
+            .data_store = data_store,
             // The inspector follows the window that opened it: an app built
             // with `--no-devtools` should not grow a right-click Inspect
             // Element by opening its own Settings.
@@ -448,6 +460,9 @@ pub const WindowBridge = struct {
             // window id asserted by the payload.
             .owner_webview = window_context.currentWebView() orelse 0,
             .relationship = relationship,
+            // Opened and loaded but not shown (#589): an automation page that
+            // runs while the app sits in the menu bar. `show` reveals it.
+            .headless = json_utils.getBool(json_data, "headless") orelse false,
         }) catch return BridgeError.NativeCallFailed;
 
         // A floor on the size, so a window with a fixed-width sidebar cannot be
@@ -1744,4 +1759,24 @@ test "a child name containing NUL is refused before native creation" {
         BridgeError.InvalidParameter,
         bridge.open("{\"name\":\"settings\\u0000hidden\",\"html\":\"<p>orphan</p>\"}"),
     );
+}
+
+/// A data store name (#589): 1 to 64 letters, digits, `.`, `_` or `-`, so it
+/// can never be confused with a path or carry anything a log would mangle.
+fn validDataStoreName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 64) return false;
+    for (name) |c| if (!(std.ascii.isAlphanumeric(c) or c == '.' or c == '_' or c == '-')) return false;
+    return true;
+}
+
+test "data store names are short and plain" {
+    try std.testing.expect(validDataStoreName("x-session"));
+    try std.testing.expect(validDataStoreName("profile_2.main"));
+    try std.testing.expect(!validDataStoreName(""));
+    try std.testing.expect(!validDataStoreName("../escape"));
+    try std.testing.expect(!validDataStoreName("has space"));
+    var long: [65]u8 = undefined;
+    @memset(&long, 'a');
+    try std.testing.expect(!validDataStoreName(&long));
+    try std.testing.expect(validDataStoreName(long[0..64]));
 }

@@ -159,6 +159,25 @@ export interface WindowCreateOptions {
    * must have it on, or it writes where the first window cannot read.
    */
   persistentStorage?: boolean
+  /**
+   * A persistent store of this window's own, under this name (macOS 14+).
+   *
+   * Like `persistentStorage` it survives a quit, but it is shared with nothing:
+   * not the app's default store, not any other name. For an automation
+   * window that keeps its own signed-in session apart from the app's main
+   * window. The same name opens the same store on every launch. 1 to 64
+   * letters, digits, `.`, `_` or `-`. Rejects with PLATFORM_NOT_SUPPORTED
+   * before macOS 14 rather than falling back to a shared store.
+   */
+  dataStore?: string
+  /**
+   * Create the window and load its page without showing it (macOS).
+   *
+   * The page runs; `show()` reveals the window later. Hidden pages are
+   * throttled and, after a few minutes, suspended: wait with
+   * `craft.timers.sleep`, not `setTimeout`, for anything due later.
+   */
+  headless?: boolean
   /** Titlebar style (macOS) */
   titlebarStyle?: 'default' | 'hidden' | 'hiddenInset' | 'customButtonsOnHover'
   /** Vibrancy effect (macOS) */

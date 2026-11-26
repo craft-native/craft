@@ -70,6 +70,12 @@ describe('typed window-handle routing', () => {
     expect(open).toHaveBeenCalledWith({ id, parent: 'main', modal: true, html: '<p>Dialog</p>' })
   })
 
+  it('forwards a named data store and headless creation to native (#589)', async () => {
+    const id = fixtureId('automation')
+    await windowManager.create({ id, url: 'https://x.com/home', dataStore: 'x-session', headless: true })
+    expect(open).toHaveBeenCalledWith({ id, url: 'https://x.com/home', dataStore: 'x-session', headless: true })
+  })
+
   it('keeps every common mutation on the retained handle', async () => {
     const settings = new Window('settings')
 
