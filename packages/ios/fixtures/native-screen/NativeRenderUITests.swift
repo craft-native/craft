@@ -667,9 +667,18 @@ final class NativeRenderUITests: XCTestCase {
         var moves: [String] = []
         for (step, dy) in [(1, -55.0), (2, 55.0), (3, -55.0), (4, 55.0), (5, -55.0), (6, 55.0)] as [(Int, CGFloat)] {
             let before = password.frame.minY
-            let start = step <= 3
-                ? scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                : email.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            // A scroll view can extend under the keyboard even though its
+            // content insets keep the form reachable. Start the drag in its
+            // exposed area, which varies with the iOS keyboard and device.
+            let scrollFrame = scroll.frame
+            let keyboardFrame = app.keyboards.firstMatch.frame
+            let exposed = CGRect(x: scrollFrame.minX, y: scrollFrame.minY, width: scrollFrame.width,
+                                 height: max(0, min(scrollFrame.maxY, keyboardFrame.minY) - scrollFrame.minY))
+            let origin = step <= 3 ? exposed : email.frame.intersection(exposed)
+            XCTAssertFalse(origin.isEmpty, "drag \(step) has no exposed touch target: scroll \(scrollFrame), keyboard \(keyboardFrame), field \(email.frame)")
+            guard !origin.isEmpty else { break }
+            let start = scroll.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: origin.midX - scrollFrame.minX, dy: origin.midY - scrollFrame.minY))
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0.3)
             Thread.sleep(forTimeInterval: 0.8)
             let after = password.frame.minY
