@@ -90,9 +90,13 @@ test('no tap command reaches a control without going through press', () => {
     if (branch.name === 'tapxy') {
       // A screen coordinate names no control, so there is no frame to wait
       // on and nothing press could settle. That is the whole exemption: it
-      // must stay a bare app coordinate. If it ever resolves an element, it
-      // has a control and belongs under the rule below.
-      expect(branch.body).toContain('app.coordinate(withNormalizedOffset:')
+      // must stay a bare screen coordinate. If it ever resolves an element,
+      // it has a control and belongs under the rule below. The coordinate is
+      // SpringBoard's: an app coordinate's tap does not reach another
+      // process's sheet over the app from iOS 27 (the Photos picker).
+      expect(branch.body).toContain('XCUIApplication(bundleIdentifier: "com.apple.springboard")')
+      expect(branch.body).toContain('screen.coordinate(withNormalizedOffset:')
+      expect(branch.body).not.toContain('app.coordinate(')
       for (const lookup of ['element(', 'identified(', 'exact('])
         expect(branch.body, `tapxy resolves a control (${lookup}) and must tap it through press`).not.toContain(lookup)
       continue

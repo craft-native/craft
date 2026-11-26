@@ -24,7 +24,7 @@ import Darwin
 ///   longpressid <identifier> holds a hittable native element to open its edit menu
 ///   holdtab <name> [| secs] standard XCTest hold (2–10s, default 6), BEGIN/END timing receipt
 ///   touches <JSON>       timed normalized touch paths in one native dispatch
-///   tapxy <x> <y>         normalised 0…1 of the screen
+///   tapxy <x> <y>         normalised 0…1 of the screen, through SpringBoard (reaches the Photos picker)
 ///   tapexact <label>      a button whose label is exactly this
 ///   back                  the navigation bar's back button, else an edge swipe
 ///   type <text>           into the focused element
@@ -749,7 +749,12 @@ final class DriverTests: XCTestCase {
         case "tapxy":
             let xy = arg.split(separator: " ").compactMap { Double($0) }
             if xy.count == 2 && xy.allSatisfy({ $0 >= 0 && $0 <= 1 }) {
-                app.coordinate(withNormalizedOffset: CGVector(dx: xy[0], dy: xy[1])).tap()
+                // A point on the screen, whatever is drawn there. Through
+                // SpringBoard, not the app: from iOS 27 an app coordinate's
+                // tap never reaches a sheet another process draws over the
+                // app (the Photos picker), so the clip was never chosen.
+                let screen = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                screen.coordinate(withNormalizedOffset: CGVector(dx: xy[0], dy: xy[1])).tap()
             } else { XCTFail("tapxy needs two coordinates between 0 and 1") }
         case "back":
             let bar = app.navigationBars.buttons.firstMatch
