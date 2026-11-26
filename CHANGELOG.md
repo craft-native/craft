@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.542...v0.0.543)
+
+## 🐛 Bug Fixes
+
+- **ios**: finish the first animated refresh cycle ([1f749f3](https://github.com/craft-native/craft/commit/1f749f3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.541...v0.0.542)
 
 ## 🚀 Features
