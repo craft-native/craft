@@ -3959,6 +3959,46 @@ final class NativeRenderUnitTests: XCTestCase {
         }
     }
 
+    func testAnimatedRefreshIndicatorFinishesOneCycleWithoutHoldingAnAlreadySlowRefresh() throws {
+        for type in ["ScrollView", "FlatList"] {
+            let controller = CraftNativeScreenController(config: CraftConfig())
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+            window.rootViewController = controller
+            window.isHidden = false
+            defer { window.isHidden = true; controller.viewDidDisappear(false) }
+            let animate: [String: Any] = [
+                "id": "move", "type": "Animate",
+                "props": ["attributeName": "d", "duration": 0.4, "frames": [[0, 0, 0, 1, 10, 0], [0, 0, 0, 1, 20, 10]], "frameTimes": [0, 1]],
+            ]
+            let path: [String: Any] = ["id": "limb", "type": "Path", "props": ["geometry": [0, 0, 0, 1, 10, 0]], "children": [animate]]
+            let drawing: [String: Any] = ["id": "figure", "type": "Svg", "props": ["refreshIndicator": true], "children": [path]]
+            func screen(_ refreshing: Bool) -> [String: Any] {
+                document([[
+                    "type": type, "props": ["key": "pull", "refreshing": refreshing],
+                    "events": ["onRefresh": "refresh-people"],
+                    "children": [drawing, ["type": "Text", "children": [refreshing ? "Loading" : "Updated"]]],
+                ]])
+            }
+            controller.render(screen(false))
+            controller.view.layoutIfNeeded()
+            let scroll = try XCTUnwrap(find(UIScrollView.self, key: "pull", below: controller.view))
+            let control = try XCTUnwrap(scroll.refreshControl)
+            control.beginRefreshing()
+            control.sendActions(for: .valueChanged)
+            controller.render(screen(true))
+            controller.render(screen(false))
+            XCTAssertEqual(control.isRefreshing, !UIAccessibility.isReduceMotionEnabled)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            XCTAssertFalse(control.isRefreshing, "\(type) kept the figure after the first cycle")
+
+            controller.render(screen(true))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            XCTAssertTrue(control.isRefreshing, "\(type) left while the request was still running")
+            controller.render(screen(false))
+            XCTAssertFalse(control.isRefreshing, "\(type) delayed a refresh that had already played a full cycle")
+        }
+    }
+
     func testAnUnansweredPullEndsAndRemovingItsHandlerClearsTheControl() throws {
         for type in ["ScrollView", "FlatList"] {
             let controller = CraftNativeScreenController(config: CraftConfig())

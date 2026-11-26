@@ -5801,27 +5801,32 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     private var refreshingProp = false
     // A redraw can precede the script thread handling the native pull event.
     private var awaitingRefreshAnswer = false
+    private var refreshEnd: Timer?
+
+    deinit { refreshEnd?.invalidate() }
 
     /// `onRefresh` and `refreshing`: the system's pull to refresh, controlled
     /// as in React Native. The spinner shows while `refreshing` is true; a
-    /// pull that the screen does not answer with `refreshing` true ends at
-    /// once instead of spinning forever.
+    /// pull that the screen does not answer with `refreshing` true ends once
+    /// its custom indicator, if animated, has completed its first cycle.
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
         refreshHandler = handler
         refreshingProp = refreshing
         if refreshing || handler == nil { awaitingRefreshAnswer = false }
         if handler == nil {
+            cancelRefreshEnd()
             if pullToRefresh.isRefreshing { pullToRefresh.endRefreshing() }
             if refreshControl === pullToRefresh { refreshControl = nil }
+            updateRefreshBursts()
             return
         }
         if refreshControl !== pullToRefresh { refreshControl = pullToRefresh }
         if refreshing, !pullToRefresh.isRefreshing {
             pullToRefresh.beginRefreshing()
-        } else if !refreshing, !awaitingRefreshAnswer, pullToRefresh.isRefreshing {
-            pullToRefresh.endRefreshing()
         }
+        if refreshing { cancelRefreshEnd() }
         updateRefreshBursts()
+        finishRefreshIfReady()
     }
 
     /// Applies the shared RefreshControl appearance props. UIKit's refresh
@@ -5853,6 +5858,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
 
     func setRefreshIndicator(_ node: [String: Any]?) {
         refreshIndicator.set(node)
+        finishRefreshIfReady()
     }
 
     private func updateRefreshBursts() {
@@ -5860,18 +5866,40 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     }
 
     @objc private func refreshPulled() {
+        cancelRefreshEnd()
         awaitingRefreshAnswer = true
-        refreshHandler?()
         updateRefreshBursts()
+        refreshHandler?()
         // Once the script has answered the pull (and its render has landed):
         // a script on its own thread answers a turn or two later.
         CraftNativeScriptThread.afterScript { [weak self] in
             guard let self else { return }
             self.awaitingRefreshAnswer = false
-            guard !self.refreshingProp, self.pullToRefresh.isRefreshing else { return self.updateRefreshBursts() }
-            self.pullToRefresh.endRefreshing()
-            self.updateRefreshBursts()
+            self.finishRefreshIfReady()
         }
+    }
+
+    private func finishRefreshIfReady() {
+        guard !refreshingProp, !awaitingRefreshAnswer, pullToRefresh.isRefreshing else { return }
+        let remaining = refreshIndicator.remainingFirstCycle
+        if remaining <= 0 {
+            cancelRefreshEnd()
+            pullToRefresh.endRefreshing()
+            updateRefreshBursts()
+            return
+        }
+        guard refreshEnd == nil else { return }
+        let timer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in
+            self?.refreshEnd = nil
+            self?.finishRefreshIfReady()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        refreshEnd = timer
+    }
+
+    private func cancelRefreshEnd() {
+        refreshEnd?.invalidate()
+        refreshEnd = nil
     }
 
     func setKeyboardShouldPersistTaps(_ value: Any?) {
@@ -6125,12 +6153,18 @@ final class CraftRefreshIndicator {
     private weak var control: UIRefreshControl?
     private var view: CraftNativeSvgView?
     private var bursts: Timer?
+    private var cycleEndsAt: CFTimeInterval?
 
     init(control: UIRefreshControl) {
         self.control = control
     }
 
     var isShown: Bool { view != nil }
+
+    var remainingFirstCycle: TimeInterval {
+        guard view?.isAnimating == true, let cycleEndsAt else { return 0 }
+        return max(0, cycleEndsAt - CACurrentMediaTime())
+    }
 
     /// Show `node` in the gap, or put the spinner back when it is nil.
     func set(_ node: [String: Any]?) {
@@ -6163,11 +6197,16 @@ final class CraftRefreshIndicator {
         guard let view, control?.isRefreshing == true else {
             bursts?.invalidate()
             bursts = nil
+            cycleEndsAt = nil
             view?.animationRate = 1
             return
         }
         guard bursts == nil else { return }
-        let timer = Timer(timeInterval: Self.burst, repeats: true) { [weak view] _ in
+        view.animationRate = 1
+        view.restartAnimation()
+        let duration = CraftNativeSvgView.cycleDuration(view.drawing["children"] as? [Any] ?? [])
+        cycleEndsAt = CACurrentMediaTime() + duration
+        let timer = Timer(timeInterval: max(Self.burst, duration), repeats: true) { [weak view] _ in
             guard let view else { return }
             view.animationRate = view.animationRate == 1 ? 2 : 1
         }
@@ -6260,6 +6299,25 @@ final class CraftNativeSvgView: UIView {
     @objc private func reduceMotionChanged() {
         updateFrames()
         setNeedsDisplay()
+    }
+
+    func restartAnimation() {
+        animationStart = nil
+        updateFrames()
+        setNeedsDisplay()
+    }
+
+    static func cycleDuration(_ children: [Any]) -> TimeInterval {
+        children.compactMap { child -> TimeInterval? in
+            guard let node = child as? [String: Any] else { return nil }
+            if node["type"] as? String == "Animate" {
+                let props = node["props"] as? [String: Any] ?? [:]
+                guard props["attributeName"] as? String == "d", props["frames"] != nil,
+                      let duration = number(props["duration"]), duration.isFinite, duration > 0 else { return nil }
+                return TimeInterval(duration)
+            }
+            return cycleDuration(node["children"] as? [Any] ?? [])
+        }.max() ?? 0
     }
 
     /// Frames from the screens' display link (CraftNativeFrameClock, up to
