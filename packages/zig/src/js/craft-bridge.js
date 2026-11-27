@@ -1473,7 +1473,7 @@
       if (on === watching) return
       watching = on
       if (on) {
-        if (layout) layout.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
+        if (layout && document.documentElement) layout.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
         window.addEventListener('scroll', schedule, true)
       }
       else {
@@ -1486,8 +1486,16 @@
       return [Math.round(r.left * 2) / 2, Math.round(r.top * 2) / 2, Math.round(r.width * 2) / 2, Math.round(r.height * 2) / 2]
     }
     function shown(r) { return r[2] > 0 && r[3] > 0 }
+    // A host whose document has no DOM (a test harness, a page torn down
+    // mid-frame) measures nothing. This runs from timers, so a throw here
+    // would surface in whatever runs next, not in the page.
     function measure() {
       queued = false
+      try { measureNow() }
+      catch (error) { if (typeof console !== 'undefined' && console.warn) console.warn('craft: could not measure drag regions', error) }
+    }
+    function measureNow() {
+      if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return
       const drag = []
       const noDrag = []
       const regions = document.querySelectorAll('[data-craft-drag]')
@@ -1520,7 +1528,7 @@
     }
     function start() {
       if (typeof ResizeObserver === 'function') resizes = new ResizeObserver(schedule)
-      if (typeof MutationObserver === 'function') {
+      if (typeof MutationObserver === 'function' && document.documentElement) {
         new MutationObserver(schedule).observe(document.documentElement, {
           subtree: true, childList: true, attributes: true,
           attributeFilter: ['data-craft-drag', 'data-craft-no-drag'],
