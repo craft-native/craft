@@ -73,7 +73,8 @@ function loadBridge(platform: 'webkit' | 'webview2' = 'webkit'): Harness {
   else {
     win.chrome = { webview: { postMessage: (m: Envelope) => { sent.push(m) } } }
   }
-  const doc: any = { readyState: 'complete', addEventListener: () => {} }
+  // Model bridge injection before the document finishes loading. These tests do not fire DOMContentLoaded.
+  const doc = { readyState: 'loading', addEventListener: () => {} }
   const console_: any = { ...console, error: (...a: unknown[]) => { errors.push(a) }, warn: () => {} }
 
   // eslint-disable-next-line no-new-func

@@ -1766,7 +1766,7 @@ test "the current-window alias cannot name a child window" {
 
     try testing.expectError(
         BridgeError.InvalidParameter,
-        bridge.open("{\"name\":\"main\",\"html\":\"<p>orphan</p>\"}"),
+        bridge.open("{\"name\":\"main\",\"html\":\"<p>orphan</p>\"}", false),
     );
 }
 
@@ -1777,7 +1777,7 @@ test "a child name containing NUL is refused before native creation" {
 
     try testing.expectError(
         BridgeError.InvalidParameter,
-        bridge.open("{\"name\":\"settings\\u0000hidden\",\"html\":\"<p>orphan</p>\"}"),
+        bridge.open("{\"name\":\"settings\\u0000hidden\",\"html\":\"<p>orphan</p>\"}", false),
     );
 }
 

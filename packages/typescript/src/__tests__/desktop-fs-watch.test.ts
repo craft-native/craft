@@ -40,7 +40,8 @@ function loadBridge(): Harness {
     dispatchEvent: events.dispatchEvent.bind(events),
     webkit: { messageHandlers: { craft: { postMessage: (m: Envelope) => { sent.push(m) } } } },
   }
-  const doc: any = { readyState: 'complete', addEventListener: () => {} }
+  // Model bridge injection before the document finishes loading. These tests do not fire DOMContentLoaded.
+  const doc = { readyState: 'loading', addEventListener: () => {} }
   const console_: any = { ...console, error: () => {}, warn: () => {} }
 
   // eslint-disable-next-line no-new-func
