@@ -875,6 +875,27 @@ final class CraftChrome: ObservableObject {
         let id: String
         let title: String
         let symbol: String
+        /// What VoiceOver reads instead of the title ("Chat, 2 unread").
+        var accessibilityLabel: String? = nil
+        /// Short text beside the title (an unread count), up to 8 characters.
+        var badge: String? = nil
+        /// "cover": the choice opens over everything, as an accessory can.
+        var presentation: String? = nil
+    }
+
+    /// A tab accessory's menu, from a page: up to twelve choices, each with an
+    /// absolute, single-slashed path and a title. The same rules apply to the
+    /// primary action's menu and its companions'.
+    static func tabMenu(_ raw: Any?) -> [TabMenuItem] {
+        ((raw as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
+            guard let destination = choice["path"] as? String,
+                  destination.hasPrefix("/"), !destination.hasPrefix("//"),
+                  let label = choice["title"] as? String, !label.isEmpty else { return nil }
+            return TabMenuItem(id: destination, title: label, symbol: choice["symbol"] as? String ?? "circle",
+                accessibilityLabel: (choice["accessibilityLabel"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(160)) },
+                badge: (choice["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
+                presentation: choice["presentation"] as? String == "cover" ? "cover" : nil)
+        }
     }
 
     @Published var tabs: [Tab] = []
@@ -1058,14 +1079,11 @@ final class CraftChrome: ObservableObject {
                         accessibilityLabel: action["accessibilityLabel"] as? String, iconOnly: true,
                         presentation: action["presentation"] as? String == "cover" ? "cover" : nil,
                         active: action["selected"] as? Bool ?? false,
-                        menu: ((action["menu"] as? [[String: Any]]) ?? []).prefix(12).compactMap { choice in
-                            guard let destination = choice["path"] as? String,
-                                  destination.hasPrefix("/"), !destination.hasPrefix("//"),
-                                  let label = choice["title"] as? String, !label.isEmpty else { return nil }
-                            return TabMenuItem(id: destination, title: label, symbol: choice["symbol"] as? String ?? "circle")
-                        })
+                        menu: Self.tabMenu(action["menu"]))
                 },
-                active: item["selected"] as? Bool ?? false)
+                active: item["selected"] as? Bool ?? false,
+                // With a menu a tap opens it instead of `path`.
+                menu: Self.tabMenu(item["menu"]))
         } else {
             next = nil
         }
@@ -1414,7 +1432,13 @@ private struct CraftTabBarContent: View {
                             } else {
                                 Menu {
                                     ForEach(accessory.menu) { choice in
-                                        Button { CraftHybrid.shared.open(choice.id) } label: { Label(choice.title, systemImage: choice.symbol) }
+                                        Button { CraftHybrid.shared.open(choice.id, presentation: choice.presentation) } label: {
+                                            Label {
+                                                Text(choice.title)
+                                                if let badge = choice.badge { Text(badge) }
+                                            } icon: { Image(systemName: choice.symbol) }
+                                        }
+                                        .accessibilityLabel(choice.accessibilityLabel ?? choice.title)
                                     }
                                 } label: { accessoryLabel(accessory) }
                             }

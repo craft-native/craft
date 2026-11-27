@@ -4757,7 +4757,8 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('Open capabilities')
     expect(ios).toContain('CraftChrome.shared.releaseTabAccessory(ownedBy: self)')
     expect(ios).toContain('CraftChrome.shared.clearUnclaimedTabAccessory()')
-    expect(androidShell).toContain('accessory.setOnClickListener { openFromActions(accessorySpec) }')
+    // A tap opens the accessory's menu when it has one, its path otherwise.
+    expect(androidShell).toContain('accessory.setOnClickListener { if (!showAccessoryMenu(accessory, accessorySpec)) openFromActions(accessorySpec) }')
     expect(guide).toContain('`tabAccessory` adds one destination button beside the tab pill')
     expect(iosReadme).toContain('`tabAccessory` destination beside the tab pill')
     expect(androidReadme).toContain('right buttons with badges, `tabAccessory`, `tabBarHidden`')

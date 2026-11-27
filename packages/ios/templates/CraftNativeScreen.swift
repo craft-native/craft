@@ -8908,7 +8908,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// - `craft.navigation.setOptions({ title, titleColor, largeTitle, hidden,
     ///   backTitle, backButton, tabBarHidden, tabBarHiddenWhenPushed, tabItem, swipeBack,
     ///   contentSwipeBack,
-    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, edgeToEdge, preventRemove, leftButtons,
+    ///   tabSwipeEnabled, backgroundColor, navigationBarSolid, topEdge, edgeToEdge, preventRemove, leftButtons,
     ///   rightButtons, tabAccessory })`; a button's tap is the event
     ///   `navButton`. `craft.d.ts` types no navigation surface, so this list
     ///   is the public description of it — keep it in step with the keys
@@ -9476,6 +9476,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private let statusBarBackdrop = UIView()
     private var statusBarBackdropObservation: NSKeyValueObservation?
     private weak var statusBarBackdropScroll: UIScrollView?
+    /// `topEdge`: what is drawn behind the clock and the bar's buttons while
+    /// content scrolls under them on an edge-to-edge screen. "system" (the
+    /// default) is UIKit's own scroll edge effect; "fade" a blur band that
+    /// fades out downward; "none" nothing at all.
+    private var topEdge = "system"
+    private let topEdgeFade = CraftTopEdgeFadeView()
+    private var topEdgeFadeObservation: NSKeyValueObservation?
+    private weak var topEdgeFadeScroll: UIScrollView?
     /// Empty SafeAreaViews above the leading scroll view, which owns their top inset.
     private let yieldedSafeAreas = NSHashTable<CraftNativeSafeAreaView>.weakObjects()
 
@@ -9553,6 +9561,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let solid = options["navigationBarSolid"] as? Bool {
             navigationBarSolid = solid
+        }
+        if let edge = options["topEdge"] as? String, ["fade", "system", "none"].contains(edge), edge != topEdge {
+            topEdge = edge
+            trackContentScrollView()
         }
         if let full = options["edgeToEdge"] as? Bool, full != contentEdgeToEdge {
             contentEdgeToEdge = full
@@ -10031,9 +10043,50 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll?.topEdgeEffect.isHidden = false
             scroll?.topEdgeEffect.style = topEdgeToEdge ? (navigationBarSolid ? .hard : .soft) : .automatic
             scroll?.bottomEdgeEffect.isHidden = tabbedScroll
+            // "fade" draws its own band instead; "none" draws nothing.
+            if topEdgeToEdge, !navigationBarSolid, topEdge != "system" { scroll?.topEdgeEffect.isHidden = true }
         }
         #endif
-        updateStatusBarBackdrop(edgeToEdge && !fullEdgeToEdge ? scroll : nil)
+        let fades = topEdgeToEdge && !navigationBarSolid && topEdge == "fade"
+        updateTopEdgeFade(fades ? scroll : nil)
+        // The band covers the status bar too, so it replaces that strip.
+        updateStatusBarBackdrop(edgeToEdge && !fullEdgeToEdge && topEdge == "system" ? scroll : nil)
+    }
+
+    /// `topEdge: "fade"`: a blur band behind the clock and the bar's buttons,
+    /// reaching 12 points below them and fading out downward. Not there at
+    /// rest; it comes in as content scrolls under it, fully by 24 points.
+    private func updateTopEdgeFade(_ scroll: UIScrollView?) {
+        if scroll !== topEdgeFadeScroll {
+            topEdgeFadeObservation = nil
+            topEdgeFadeScroll = scroll
+            topEdgeFadeObservation = scroll?.observe(\.contentOffset) { [weak self] _, _ in
+                self?.refreshTopEdgeFade()
+            }
+        }
+        if scroll != nil, topEdgeFade.superview == nil {
+            topEdgeFade.translatesAutoresizingMaskIntoConstraints = false
+            view.insertSubview(topEdgeFade, aboveSubview: rootStack)
+            NSLayoutConstraint.activate([
+                topEdgeFade.topAnchor.constraint(equalTo: view.topAnchor),
+                topEdgeFade.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                topEdgeFade.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                topEdgeFade.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            ])
+        }
+        refreshTopEdgeFade()
+    }
+
+    private func refreshTopEdgeFade() {
+        guard let scroll = topEdgeFadeScroll, view.safeAreaInsets.top > 0 else {
+            topEdgeFade.alpha = 0
+            topEdgeFade.isHidden = true
+            return
+        }
+        let under = scroll.contentOffset.y + scroll.adjustedContentInset.top
+        let alpha = min(1, max(0, (under - 8) / 16))
+        topEdgeFade.alpha = alpha
+        topEdgeFade.isHidden = alpha == 0
     }
 
     /// Whether this screen shows a navigation bar: its own `hidden` first,
@@ -14736,5 +14789,33 @@ final class CraftNativeRowSwipe: UIPanGestureRecognizer, UIGestureRecognizerDele
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
         guard let scroll = other.view as? UIScrollView, other === scroll.panGestureRecognizer else { return false }
         return !scroll.alwaysBounceHorizontal && scroll.contentSize.width <= scroll.bounds.width + 1
+    }
+}
+
+/// The `topEdge: "fade"` band: the system's thin material (dark in dark mode,
+/// a light tint in light mode), opaque for its top half and fading to nothing
+/// at its bottom edge. It draws only; touches and VoiceOver pass through.
+final class CraftTopEdgeFadeView: UIView {
+    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    private let fade = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        accessibilityIdentifier = "craft-top-edge-fade"
+        blur.frame = bounds
+        blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(blur)
+        fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+        fade.locations = [0, 0.5, 1]
+        layer.mask = fade
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        fade.frame = bounds
     }
 }

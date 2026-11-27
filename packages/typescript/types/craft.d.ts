@@ -2651,6 +2651,17 @@ export interface CraftTabAccessory {
   accessibilityLabel?: string;
   /** Draw the symbol without the title. */
   iconOnly?: boolean;
+  /**
+   * Where the actions sit. `'vertical'` or `'horizontal'`: one shared capsule
+   * above the trailing end of the tab bar, the companions and then this
+   * action. Omitted: separate floating buttons.
+   */
+  layout?: 'vertical' | 'horizontal';
+  /**
+   * Up to twelve destinations. With a menu, a tap opens it, from the button,
+   * instead of opening `path`; the badge still shows on the button.
+   */
+  menu?: readonly CraftTabMenuItem[];
   /** Up to two further destinations drawn beside it, icon-only. */
   companions?: readonly CraftTabAccessoryCompanion[];
   /**
@@ -2669,8 +2680,26 @@ export interface CraftTabAccessoryCompanion {
   accessibilityLabel?: string;
   /** As on the accessory: `'cover'` opens `path` over everything. */
   presentation?: 'cover';
-  /** Up to twelve destinations offered on a long press. */
-  menu?: readonly { path: string; title: string; symbol?: string }[];
+  /** Up to twelve destinations; a tap opens them instead of `path`. */
+  menu?: readonly CraftTabMenuItem[];
+}
+
+/** One choice in a tab accessory's menu. */
+export interface CraftTabMenuItem {
+  /** Absolute and single-slashed; a choice without one is left out. */
+  path: string;
+  title: string;
+  symbol?: string;
+  /**
+   * What TalkBack reads instead of the title, and VoiceOver in the web shell.
+   * In the iOS native shell VoiceOver reads the title and then the badge: a
+   * UIKit menu item has no accessibility label of its own.
+   */
+  accessibilityLabel?: string;
+  /** Up to 8 characters beside the title: an unread count, say. */
+  badge?: string;
+  /** `'cover'` opens `path` over everything, as the accessory's own can. */
+  presentation?: 'cover';
 }
 
 /**
@@ -2741,6 +2770,19 @@ export interface CraftNavigationOptions {
    * colour instead of UIKit's material.
    */
   navigationBarSolid?: boolean;
+  /**
+   * **iOS only.** What is drawn behind the clock and the bar's buttons while
+   * content scrolls under them, on a screen that runs edge to edge (a large
+   * title, or a scroll view first) without `navigationBarSolid`.
+   * - `'system'` (the default): iOS's own scroll edge effect.
+   * - `'fade'`: a blur band, dark in dark mode and light in light mode, from
+   *   the top of the screen to 12 points below the bar's buttons, fading out
+   *   downward. It is not there at rest; it fades in as content scrolls under
+   *   it, fully by 24 points.
+   * - `'none'`: nothing.
+   * Android's header bar is opaque, so it has nothing to do there.
+   */
+  topEdge?: 'fade' | 'system' | 'none';
   /**
    * **iOS only.** Lay the screen out across the whole view, under the status
    * bar and the home indicator, instead of inside the safe area. For an

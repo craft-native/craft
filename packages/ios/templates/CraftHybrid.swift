@@ -1606,13 +1606,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 if action.menu.isEmpty {
                     button.addAction(UIAction { [weak self] _ in self?.hybrid.open(action.id, presentation: action.presentation) }, for: .touchUpInside)
                 } else {
-                    button.menu = UIMenu(children: action.menu.map { choice in
-                        UIAction(title: choice.title, image: UIImage(systemName: choice.symbol)) { [weak self] _ in
-                            self?.hybrid.open(choice.id)
-                        }
-                    })
-                    button.showsMenuAsPrimaryAction = true
-                    if #available(iOS 16.0, *) { button.preferredMenuElementOrder = .fixed }
+                    showAccessoryMenu(action.menu, on: button)
                 }
                 let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
 #if compiler(>=6.2)
@@ -1647,6 +1641,14 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 button.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
                 button.accessibilityValue = model.badge
                 styleAccessory(button, for: model, grouped: grouped)
+                // With a menu the primary action opens it, from the button,
+                // instead of navigating; `openTabAccessory` then stands aside.
+                if model.menu.isEmpty {
+                    button.menu = nil
+                    button.showsMenuAsPrimaryAction = false
+                } else {
+                    showAccessoryMenu(model.menu, on: button)
+                }
             }
         }
 #if compiler(>=6.2)
@@ -1775,7 +1777,25 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     static let accessoryGroupStep: CGFloat = 55
 
     @objc private func openTabAccessory() {
-        if let accessoryModel { hybrid.open(accessoryModel.id, presentation: accessoryModel.presentation) }
+        guard let accessoryModel, accessoryModel.menu.isEmpty else { return }
+        hybrid.open(accessoryModel.id, presentation: accessoryModel.presentation)
+    }
+
+    /// A tab accessory's menu, opened by a tap on `button`. Each choice shows
+    /// its badge as a subtitle and opens with its own presentation. VoiceOver
+    /// reads a UIKit menu item's title and then its subtitle: a `UIAction`
+    /// keeps no accessibility label of its own (one set reads back nil), so
+    /// a choice's `accessibilityLabel` reaches TalkBack and the web shell only.
+    private func showAccessoryMenu(_ items: [CraftChrome.TabMenuItem], on button: UIButton) {
+        button.menu = UIMenu(children: items.map { choice in
+            let action = UIAction(title: choice.title, image: UIImage(systemName: choice.symbol)) { [weak self] _ in
+                self?.hybrid.open(choice.id, presentation: choice.presentation)
+            }
+            if #available(iOS 15.0, *) { action.subtitle = choice.badge }
+            return action
+        })
+        button.showsMenuAsPrimaryAction = true
+        if #available(iOS 16.0, *) { button.preferredMenuElementOrder = .fixed }
     }
 
     // MARK: A blocking Modal on the screen shown

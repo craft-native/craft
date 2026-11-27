@@ -1349,6 +1349,61 @@ class NativeNavigationTest {
         }
     }
 
+    /**
+     * HQ's Add button (lastsoulultra#38): a primary accessory with a menu
+     * opens it on a tap instead of its path. Each choice shows its badge after
+     * its title, gives TalkBack its own label, and opens with its own
+     * presentation.
+     */
+    @Test
+    fun primaryAccessoryMenuOpensOnATapAndEachChoiceKeepsItsBadgeLabelAndCover() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            instrumentation.runOnMainSync {
+                val chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                val opened = mutableListOf<Pair<String, String?>>()
+                val previousOpen = chrome.onOpen
+                chrome.onOpen = { path, presentation -> opened += path to presentation }
+                try {
+                    val spec = org.json.JSONObject("""{"path":"/m/add","title":"Hinzufügen","symbol":"plus","accessibilityLabel":"Hinzufügen","badge":"2",
+                        "menu":[{"path":"/m/workouts/library?create=1","title":"Workout schreiben","symbol":"square.and.pencil"},
+                                {"path":"//elsewhere","title":"Refused"},
+                                {"path":"/m/messages","title":"Chat","symbol":"message","accessibilityLabel":"Chat, 2 ungelesen","badge":"2","presentation":"cover"}]}""")
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", spec), 0, "Home")
+                    val add = find(chrome, "Hinzufügen, 2") ?: throw AssertionError("the Add button did not mount")
+                    add.performClick()
+                    assertTrue("a tap with a menu opens the menu, not the path", opened.isEmpty())
+                    val menu = chrome.shownAccessoryMenu?.menu ?: throw AssertionError("the menu did not open")
+                    assertEquals(2, menu.size())
+                    assertEquals("Workout schreiben", menu.getItem(0).title.toString())
+                    assertEquals("Chat  2", menu.getItem(1).title.toString())
+                    if (android.os.Build.VERSION.SDK_INT >= 26) assertEquals("Chat, 2 ungelesen", menu.getItem(1).contentDescription?.toString())
+                    menu.performIdentifierAction(menu.getItem(1).itemId, 0)
+                    assertEquals(listOf("/m/messages" to "cover"), opened)
+                    chrome.shownAccessoryMenu?.dismiss()
+
+                    // Without a menu the same button opens its path again.
+                    spec.remove("menu")
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", spec), 0, "Home")
+                    opened.clear()
+                    add.performClick()
+                    assertEquals(listOf("/m/add" to null), opened)
+                } finally {
+                    chrome.onOpen = previousOpen
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject.NULL), 0, "Home")
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
     @Test
     fun groupedAccessoryRetainsSeparateActionsAndSwitchesLayoutWithoutShrinkingTabs() {
         val context = instrumentation.targetContext

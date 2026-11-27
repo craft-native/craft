@@ -1108,6 +1108,42 @@ internal class CraftNativeChrome(
     internal var closesAtRoot = false
     private var shownDepth = 0
 
+    /**
+     * The menu of a tab accessory or one of its companions, from [anchor]:
+     * up to twelve choices with an absolute, single-slashed path and a title.
+     * A choice's badge follows its title, its accessibilityLabel is what
+     * TalkBack reads, and it opens with its own presentation. False when there
+     * is nothing to offer, so the caller opens its own path instead.
+     */
+    private fun showAccessoryMenu(anchor: View, spec: JSONObject?): Boolean {
+        val choices = spec?.optJSONArray("menu") ?: return false
+        val destinations = (0 until minOf(choices.length(), 12)).mapNotNull { index ->
+            val choice = choices.optJSONObject(index) ?: return@mapNotNull null
+            val destination = choice.optString("path")
+            if (!destination.startsWith("/") || destination.startsWith("//") || choice.optString("title").isBlank()) null else choice
+        }
+        if (destinations.isEmpty()) return false
+        shownAccessoryMenu = android.widget.PopupMenu(context, anchor).apply {
+            destinations.forEachIndexed { index, choice ->
+                val badge = choice.optString("badge").takeIf { it.isNotBlank() && it != "null" }?.take(8)
+                val item = menu.add(0, index, index, choice.optString("title") + badge?.let { "  $it" }.orEmpty())
+                val label = choice.optString("accessibilityLabel").takeIf { it.isNotBlank() && it != "null" }
+                if (label != null && android.os.Build.VERSION.SDK_INT >= 26) item.contentDescription = label
+            }
+            setOnMenuItemClickListener { selected ->
+                destinations.getOrNull(selected.itemId)?.let { openFromActions(it) }
+                true
+            }
+            setOnDismissListener { if (shownAccessoryMenu === it) shownAccessoryMenu = null }
+            show()
+        }
+        return true
+    }
+
+    /** The accessory menu on screen, if one is: what a test reads back. */
+    internal var shownAccessoryMenu: android.widget.PopupMenu? = null
+        private set
+
     private fun openFromActions(spec: JSONObject?) {
         val path = spec?.optString("path")?.takeIf { it.isNotBlank() } ?: return
         val presentation = spec.optString("presentation").takeIf { it == "cover" }
@@ -1211,7 +1247,8 @@ internal class CraftNativeChrome(
         accessoryBadge.setPadding(dp(4), 0, dp(4), 0)
         accessoryBadge.background = GradientDrawable().apply { setColor(Color.RED); cornerRadius = dp(9).toFloat() }
         accessory.addView(accessoryBadge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(18), Gravity.TOP or Gravity.END))
-        accessory.setOnClickListener { openFromActions(accessorySpec) }
+        // With a menu the primary action opens it instead of its path.
+        accessory.setOnClickListener { if (!showAccessoryMenu(accessory, accessorySpec)) openFromActions(accessorySpec) }
         accessory.visibility = View.GONE
         accessoryGroup.addView(accessory, LayoutParams(dp(64), dp(64)).apply { marginStart = dp(8) })
         tabRow.addView(accessoryGroup, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1350,23 +1387,7 @@ internal class CraftNativeChrome(
                 val action = FrameLayout(context)
                 action.contentDescription = item.optString("accessibilityLabel").ifBlank { item.optString("title") }
                 action.addView(accessorySymbolView(), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-                action.setOnClickListener {
-                    val choices = item.optJSONArray("menu")
-                    val destinations = (0 until minOf(choices?.length() ?: 0, 12)).mapNotNull { choiceIndex ->
-                        val choice = choices?.optJSONObject(choiceIndex) ?: return@mapNotNull null
-                        val destination = choice.optString("path")
-                        if (!destination.startsWith("/") || destination.startsWith("//") || choice.optString("title").isBlank()) null else choice
-                    }
-                    if (destinations.isEmpty()) openFromActions(item)
-                    else android.widget.PopupMenu(context, action).apply {
-                        destinations.forEachIndexed { index, choice -> menu.add(0, index, index, choice.optString("title")) }
-                        setOnMenuItemClickListener { selected ->
-                            destinations.getOrNull(selected.itemId)?.let { onAccessory?.invoke(it.optString("path")) }
-                            true
-                        }
-                        show()
-                    }
-                }
+                action.setOnClickListener { if (!showAccessoryMenu(action, item)) openFromActions(item) }
                 companionRow.addView(action, LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
                 companionViews.add(action to item)
             }

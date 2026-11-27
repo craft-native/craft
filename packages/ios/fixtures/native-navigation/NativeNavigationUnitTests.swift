@@ -163,6 +163,102 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertFalse(chrome.accessorySelected)
     }
 
+    func testAccessoryMenuChoicesCarryTheirLabelBadgeAndPresentation() {
+        let raw: [[String: Any]] = [
+            ["path": "/m/messages", "title": "Chat", "symbol": "message", "accessibilityLabel": "Chat, 2 ungelesen", "badge": "2", "presentation": "cover"],
+            ["path": "//elsewhere", "title": "Protocol-relative"],
+            ["path": "/untitled", "title": ""],
+            ["path": "/long", "title": "Long badge", "badge": "123456789", "presentation": "sheet"],
+        ] + (0..<20).map { ["path": "/n\($0)", "title": "N\($0)"] }
+        let items = CraftChrome.tabMenu(raw)
+        // Twelve offered, two of them refused.
+        XCTAssertEqual(items.count, 10)
+        XCTAssertEqual(items[0], CraftChrome.TabMenuItem(id: "/m/messages", title: "Chat", symbol: "message",
+            accessibilityLabel: "Chat, 2 ungelesen", badge: "2", presentation: "cover"))
+        XCTAssertEqual(items[1].badge, "12345678")
+        XCTAssertNil(items[1].presentation, "only cover is a presentation")
+        XCTAssertEqual(items[1].symbol, "circle")
+    }
+
+    /// The button the shell draws for the primary action, in its floating
+    /// form or the system shelf's.
+    private func accessoryButtons() -> [UIButton] {
+        func find(_ view: UIView) -> [UIButton] {
+            let own = (view as? UIButton).flatMap { $0.accessibilityIdentifier == "craft-tab-accessory" ? [$0] : nil } ?? []
+            return own + view.subviews.flatMap(find)
+        }
+        return find(shell.view)
+    }
+
+    func testPrimaryAccessoryWithAMenuOpensItInsteadOfItsPath() async throws {
+        let chrome = CraftChrome.shared
+        chrome.updateTabAccessory(["path": "/m/add", "title": "Hinzufügen", "symbol": "plus", "badge": "2",
+            "accessibilityLabel": "Hinzufügen", "iconOnly": true,
+            "menu": [
+                ["path": "/m/workouts/library?create=1", "title": "Workout schreiben", "symbol": "square.and.pencil"],
+                ["path": "/m/messages", "title": "Chat", "symbol": "message", "accessibilityLabel": "Chat, 2 ungelesen", "badge": "2", "presentation": "cover"],
+            ]], owner: shell)
+        // Owned: a screen that draws without asking for one clears an
+        // accessory nobody owns (clearUnclaimedTabAccessory).
+        defer { chrome.updateTabAccessory(nil) }
+        XCTAssertEqual(chrome.tabAccessory?.menu.map(\.id), ["/m/workouts/library?create=1", "/m/messages"])
+        await displayWait("the primary action carries its menu", diagnostic: {
+            func ids(_ view: UIView) -> [String] { ((view as? UIButton).map { ["\($0.accessibilityIdentifier ?? "?") menu=\($0.menu != nil) hidden=\($0.isHidden)"] } ?? []) + view.subviews.flatMap(ids) }
+            return "model=\(chrome.tabAccessory?.id ?? "nil") menu=\(chrome.tabAccessory?.menu.count ?? -1) tabBarVisible=\(chrome.tabBarVisible) tabs=\(chrome.tabs.count) buttons=\(ids(self.shell.view).filter { $0.hasPrefix("craft-tab") })"
+        }) { self.accessoryButtons().contains { $0.menu != nil } }
+        let button = try XCTUnwrap(accessoryButtons().first { $0.menu != nil })
+        XCTAssertTrue(button.showsMenuAsPrimaryAction, "a tap opens the menu rather than the path")
+        XCTAssertEqual(button.accessibilityLabel, "Hinzufügen")
+        XCTAssertEqual(button.accessibilityValue, "2", "VoiceOver reads the unread count on the button")
+        let actions = (button.menu?.children ?? []).compactMap { $0 as? UIAction }
+        XCTAssertEqual(actions.map(\.title), ["Workout schreiben", "Chat"])
+        // VoiceOver reads "Chat, 2": the title, then the subtitle. UIAction
+        // keeps no accessibility label, so the choice's own goes unused here.
+        XCTAssertEqual(actions.last?.subtitle, "2")
+
+        chrome.updateTabAccessory(["path": "/m/add", "title": "Hinzufügen", "symbol": "plus", "iconOnly": true], owner: shell)
+        await displayWait("the menu goes with the menu key") { self.accessoryButtons().allSatisfy { $0.menu == nil } }
+        XCTAssertTrue(accessoryButtons().allSatisfy { !$0.showsMenuAsPrimaryAction })
+    }
+
+    func testTopEdgeFadeComesInAsContentScrollsUnderTheBarAndIsGoneAtRest() async throws {
+        let home = try XCTUnwrap(stack("/")?.topViewController as? CraftNativeScreenController)
+        home.render(["id": "fade-root", "type": "ScrollView", "children": (0..<60).map { ["type": "Text", "children": ["Row \($0)"]] }])
+        home.evaluateScript("craft.navigation.setOptions({title:'Home',largeTitle:true,topEdge:'fade'})")
+        func band() -> UIView? {
+            func find(_ view: UIView) -> UIView? {
+                view.accessibilityIdentifier == "craft-top-edge-fade" ? view : view.subviews.lazy.compactMap(find).first
+            }
+            return find(home.view)
+        }
+        await displayWait("the fade band is installed") { band() != nil }
+        let fade = try XCTUnwrap(band())
+        let scroll = try XCTUnwrap(home.contentScrollView(for: .top))
+        home.view.layoutIfNeeded()
+        XCTAssertTrue(fade.isHidden || fade.alpha == 0, "not there at rest")
+        XCTAssertFalse(fade.isUserInteractionEnabled)
+        XCTAssertEqual(fade.frame.minY, 0)
+        XCTAssertEqual(fade.frame.maxY, home.view.safeAreaInsets.top + 12, accuracy: 0.5, "12 points below the bar's buttons")
+        func alpha(at under: CGFloat) -> CGFloat {
+            scroll.contentOffset.y = under - scroll.adjustedContentInset.top
+            let actual = scroll.contentOffset.y + scroll.adjustedContentInset.top
+            XCTAssertEqual(fade.alpha, min(1, max(0, (actual - 8) / 16)), accuracy: 0.01)
+            return fade.alpha
+        }
+        XCTAssertEqual(alpha(at: 16), 0.5, accuracy: 0.05)
+        XCTAssertEqual(alpha(at: 60), 1, accuracy: 0.01)
+        XCTAssertFalse(fade.isHidden)
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { XCTAssertTrue(scroll.topEdgeEffect.isHidden, "the band replaces iOS's soft edge") }
+        #endif
+
+        home.evaluateScript("craft.navigation.setOptions({topEdge:'system'})")
+        await displayWait("'system' takes the band away") { fade.isHidden }
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { XCTAssertFalse(scroll.topEdgeEffect.isHidden) }
+        #endif
+    }
+
     private func drag(_ distance: CGFloat, phase: UIGestureRecognizer.State = .changed, speed: CGFloat = 0) {
         pan.distance = distance
         pan.speed = speed
