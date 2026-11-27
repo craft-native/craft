@@ -1439,6 +1439,17 @@ class NativeNavigationTest {
                     opened.clear()
                     add.performClick()
                     assertEquals(listOf("/m/add" to null), opened)
+
+                    // A label that already says the count reads it once.
+                    spec.put("badge", "3").put("accessibilityLabel", "Hinzufügen, 3 ungelesene Nachrichten").put("accessibilityValue", "")
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", spec), 0, "Home")
+                    assertEquals("Hinzufügen, 3 ungelesene Nachrichten", add.contentDescription?.toString())
+                    spec.put("accessibilityLabel", "Hinzufügen").put("accessibilityValue", "3 neu")
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", spec), 0, "Home")
+                    assertEquals("Hinzufügen, 3 neu", add.contentDescription?.toString())
+                    spec.remove("accessibilityValue")
+                    chrome.apply(org.json.JSONObject().put("tabAccessory", spec), 0, "Home")
+                    assertEquals("without one, the badge is read", "Hinzufügen, 3", add.contentDescription?.toString())
                 } finally {
                     chrome.onOpen = previousOpen
                     chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject.NULL), 0, "Home")

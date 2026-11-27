@@ -219,6 +219,16 @@ final class NativeNavigationUnitTests: XCTestCase {
         chrome.updateTabAccessory(["path": "/m/add", "title": "Hinzufügen", "symbol": "plus", "iconOnly": true], owner: shell)
         await displayWait("the menu goes with the menu key") { self.accessoryButtons().allSatisfy { $0.menu == nil } }
         XCTAssertTrue(accessoryButtons().allSatisfy { !$0.showsMenuAsPrimaryAction })
+
+        // A label that already says the count reads it once: "" reads no
+        // value, and a value of its own replaces the badge.
+        chrome.updateTabAccessory(["path": "/m/add", "title": "Hinzufügen", "symbol": "plus", "iconOnly": true, "badge": "3",
+            "accessibilityLabel": "Hinzufügen, 3 ungelesene Nachrichten", "accessibilityValue": ""], owner: shell)
+        await displayWait("the label carries the count") { self.accessoryButtons().first?.accessibilityLabel == "Hinzufügen, 3 ungelesene Nachrichten" }
+        XCTAssertNil(accessoryButtons().first?.accessibilityValue, "an empty value reads nothing after the label")
+        chrome.updateTabAccessory(["path": "/m/add", "title": "Hinzufügen", "symbol": "plus", "iconOnly": true, "badge": "3",
+            "accessibilityLabel": "Hinzufügen", "accessibilityValue": "3 neu"], owner: shell)
+        await displayWait("its own value replaces the badge") { self.accessoryButtons().first?.accessibilityValue == "3 neu" }
     }
 
     func testTopEdgeFadeComesInAsContentScrollsUnderTheBarAndIsGoneAtRest() async throws {

@@ -1640,7 +1640,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             for button in [accessoryButton, shelfAccessoryButton] {
                 button.configuration = configuration
                 button.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
-                button.accessibilityValue = model.badge
+                button.accessibilityValue = model.spokenValue
                 styleAccessory(button, for: model, grouped: grouped)
                 // With a menu the primary action opens it, from the button,
                 // instead of navigating; `openTabAccessory` then stands aside.

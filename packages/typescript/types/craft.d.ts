@@ -2649,6 +2649,12 @@ export interface CraftTabAccessory {
   /** Up to 8 characters. */
   badge?: string;
   accessibilityLabel?: string;
+  /**
+   * What VoiceOver and TalkBack read after the label, instead of the badge.
+   * For a label that already says the count ("Add, 3 unread messages"); `''`
+   * reads nothing. Omitted, the badge is read.
+   */
+  accessibilityValue?: string;
   /** Draw the symbol without the title. */
   iconOnly?: boolean;
   /**

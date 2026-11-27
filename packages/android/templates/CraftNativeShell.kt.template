@@ -1393,7 +1393,11 @@ internal class CraftNativeChrome(
             }
         }
         accessorySpec?.let {
-            accessory.contentDescription = it.optString("accessibilityLabel").ifBlank { it.optString("title") } + it.optString("badge").takeIf { badge -> badge.isNotBlank() && badge != "null" }?.let { badge -> ", $badge" }.orEmpty()
+            // What TalkBack reads after the label: the page's accessibilityValue
+            // when it sends one ("" for nothing), else the badge.
+            val spoken = if (it.has("accessibilityValue") && !it.isNull("accessibilityValue")) it.optString("accessibilityValue")
+                else it.optString("badge").takeIf { badge -> badge != "null" }.orEmpty()
+            accessory.contentDescription = it.optString("accessibilityLabel").ifBlank { it.optString("title") } + spoken.takeIf { value -> value.isNotBlank() }?.let { value -> ", $value" }.orEmpty()
             accessoryBadge.text = it.optString("badge").takeUnless { badge -> badge == "null" }.orEmpty().take(8)
             accessoryBadge.visibility = if (accessoryBadge.text.isEmpty()) View.GONE else View.VISIBLE
         }

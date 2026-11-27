@@ -855,6 +855,11 @@ final class CraftChrome: ObservableObject {
         }
         var displayTitle: String { titleOverride ?? title }
         var accessibilityLabel: String? = nil
+        /// What VoiceOver reads as the value, instead of the badge: for a
+        /// label that already says the count. Empty reads nothing.
+        var accessibilityValue: String? = nil
+        /// The value to read: the page's own, else the badge.
+        var spokenValue: String? { accessibilityValue.map { $0.isEmpty ? nil : $0 } ?? badge }
         var image: String? = nil
         /// A compact floating icon, instead of the system full-width accessory shelf.
         var iconOnly = false
@@ -1075,6 +1080,7 @@ final class CraftChrome: ObservableObject {
             next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "bubble.left",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
                 accessibilityLabel: item["accessibilityLabel"] as? String,
+                accessibilityValue: (item["accessibilityValue"] as? String).map { String($0.prefix(160)) },
                 iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal", "beside"].contains(item["layout"] as? String ?? ""),
                 accessoryLayout: (item["layout"] as? String).flatMap { ["vertical", "horizontal", "beside"].contains($0) ? $0 : nil },
                 presentation: item["presentation"] as? String == "cover" ? "cover" : nil,
@@ -1460,7 +1466,7 @@ private struct CraftTabBarContent: View {
                         // sizes come from the bounded metrics owned above.
                         .environment(\.dynamicTypeSize, viewerTextSize)
                         .accessibilityLabel(accessory.accessibilityLabel ?? accessory.title)
-                        .accessibilityValue(accessory.badge ?? "")
+                        .accessibilityValue(accessory.spokenValue ?? "")
                         .accessibilityIdentifier("craft-tab-accessory")
                         .accessibilityAddTraits(chrome.accessorySelected(accessory) ? .isSelected : [])
                     }
