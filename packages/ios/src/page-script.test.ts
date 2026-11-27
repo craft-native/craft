@@ -134,6 +134,17 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
 }
 
 describe('the injected iOS page script', () => {
+  it('preserves the difference between an empty clipboard and a denied read', async () => {
+    const page = loadPage()
+    const empty = page.craft.clipboard.read()
+    page.answer('clipboardRead', '')
+    expect(await empty).toBe('')
+
+    const denied = page.craft.clipboard.read()
+    page.refuse('clipboardRead', 'Pasteboard text could not be read', 'PERMISSION_DENIED')
+    await expect(denied).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+  })
+
   // #207: each of these posted no callbackId, so Swift's reply helpers, which
   // return early on a nil id, dropped the answer and the page got undefined.
   const calls: [string, (craft: any) => unknown][] = [

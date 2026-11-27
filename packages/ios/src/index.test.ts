@@ -636,6 +636,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actionsSwift).toContain('case "haptic":')
     expect(actionsSwift).toContain('case "clipboardWrite":')
     expect(actionsSwift).toContain('case "clipboardRead":')
+    expect(actionsSwift).toContain('guard pasteboard.hasStrings else { return .success("") }')
+    expect(actionsSwift).toContain('guard let text = pasteboard.string else { return failure("PERMISSION_DENIED",')
     expect(actionsSwift).toContain('CAPABILITY_DISABLED')
     expect(actionsSwift).toContain('INVALID_ARGUMENT')
     expect(actionsSwift).toContain('let craftNativeCapabilityProtocolVersion = 1')

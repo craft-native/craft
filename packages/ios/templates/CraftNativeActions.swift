@@ -234,7 +234,11 @@ enum CraftNativeActions {
             return .success(true)
         case "clipboardRead":
             guard config.enableClipboard else { return failure("CAPABILITY_DISABLED", "Clipboard is disabled") }
-            return .success(UIPasteboard.general.string ?? "")
+            let pasteboard = UIPasteboard.general
+            guard pasteboard.hasStrings else { return .success("") }
+            // Match the Zig bridge when text exists but UIKit won't deliver it.
+            guard let text = pasteboard.string else { return failure("PERMISSION_DENIED", "Pasteboard text could not be read") }
+            return .success(text)
         // Crash reporting (CraftCrashReporter.swift): on when the config names
         // a bughq key. Each answers at once; delivery is the outbox's job.
         case "crashReporterCapture":
