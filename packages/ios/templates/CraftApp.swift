@@ -4093,7 +4093,8 @@ struct CraftWebView: UIViewRepresentable {
             // An iframe the app's page embeds loads in place. Only the main
             // frame's navigations leave for Safari: cancelling the frame's
             // too left every embed blank, a YouTube or Vimeo player among them.
-            if let frame = navigationAction.targetFrame, !frame.isMainFrame, isEmbeddableFrameURL(url) {
+            if let frame = navigationAction.targetFrame, !frame.isMainFrame,
+               isEmbeddableFrameURL(url, parentURL: webView.url, source: navigationAction.sourceFrame) {
                 decisionHandler(.allow)
                 return
             }
@@ -4106,14 +4107,24 @@ struct CraftWebView: UIViewRepresentable {
         /// What an iframe inside the app's page may load: a video player, a
         /// payment form, a map. It stays inside its frame, and the bridge
         /// answers only `isTrustedOrigin`, so loading one reaches nothing
-        /// native. Plain http is left to the trusted local origins.
-        private func isEmbeddableFrameURL(_ url: URL) -> Bool {
+        /// native. Trusted local apps can also embed local development servers
+        /// on other ports without granting them the bridge.
+        private func isEmbeddableFrameURL(_ url: URL, parentURL: URL?, source: WKFrameInfo) -> Bool {
             switch url.scheme?.lowercased() {
             case "https", "about", "data", "blob":
                 return true
+            case "http":
+                guard url.user == nil, url.password == nil, isLoopbackHost(url.host),
+                      let parentURL, isLoopbackHost(parentURL.host), isTrustedURL(parentURL) else { return false }
+                return source.isMainFrame ? trusts(source.securityOrigin) : isLoopbackHost(source.securityOrigin.host)
             default:
                 return false
             }
+        }
+
+        private func isLoopbackHost(_ host: String?) -> Bool {
+            guard let host = host?.lowercased() else { return false }
+            return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
         }
 
         /// WebKit's content process died: out of memory, usually, often while

@@ -1995,6 +1995,20 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(ui).toContain('while let presented = top?.presentedViewController, !presented.isBeingDismissed {')
   })
 
+  it('allows HTTP loopback iframes from the trusted local app without trusting their origin for the bridge', async () => {
+    const output = createTempDir('craft-ios-loopback-preview-')
+    await init({ runtimeDir: null, name: 'Preview', bundleId: 'org.example.preview', output })
+    const swift = readFileSync(join(output, 'Sources', 'PreviewApp.swift'), 'utf8')
+    const navigation = swift.slice(swift.indexOf('decidePolicyFor navigationAction: WKNavigationAction'), swift.indexOf('private func isEmbeddableFrameURL('))
+    expect(navigation).toContain('!frame.isMainFrame,\n               isEmbeddableFrameURL(url, parentURL: webView.url, source: navigationAction.sourceFrame)')
+    const preview = swift.slice(swift.indexOf('private func isEmbeddableFrameURL('), swift.indexOf('/// WebKit\'s content process died'))
+    expect(preview).toContain('url.user == nil, url.password == nil, isLoopbackHost(url.host)')
+    expect(preview).toContain('isLoopbackHost(parentURL.host), isTrustedURL(parentURL)')
+    expect(preview).toContain('source.isMainFrame ? trusts(source.securityOrigin) : isLoopbackHost(source.securityOrigin.host)')
+    const bridge = swift.slice(swift.indexOf('private func isTrustedOrigin('), swift.indexOf('private func noteCallbackId('))
+    expect(bridge).toContain('return allowed.contains(origin)')
+  })
+
   it('serves the native UI actions and lets the status bar follow the page', async () => {
     const output = createTempDir('craft-ios-native-ui-')
     await init({ runtimeDir: null, name: 'NativeUI', bundleId: 'org.example.nativeui', output, config: { enableShare: true } })
