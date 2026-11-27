@@ -52,6 +52,7 @@ nativeTest('native bridge accepts its document and rejects child frames and fore
 nativeTest('external sessions keep their own persistent cookies and have no native bridge', async () => {
   const dataStore = 'external-test-' + crypto.randomUUID()
   const cookies: Array<{ phase: string, own: boolean, parent: boolean }> = []
+  const loaded = new Set<string>()
   let result: unknown
 
   const server = Bun.serve({
@@ -64,10 +65,15 @@ nativeTest('external sessions keep their own persistent cookies and have no nati
         result = await request.json()
         return new Response('ok')
       }
+      if (url.pathname === '/window-loaded') {
+        if (request.method === 'POST') loaded.add(phase)
+        return new Response(loaded.has(phase) ? 'ready' : '', { status: loaded.has(phase) ? 200 : 404 })
+      }
       if (url.pathname === '/sign-in') {
         const sent = request.headers.get('cookie') ?? ''
         cookies.push({ phase, own: sent.includes('external_fixture=session'), parent: sent.includes('external_parent=private') })
-        return new Response('<p id="verified">Signed in</p>', {
+        const readyUrl = '/window-loaded?' + new URLSearchParams({ phase })
+        return new Response(`<p id="verified">Signed in</p><script>addEventListener('load', () => fetch(${JSON.stringify(readyUrl)}, { method: 'POST' }))</script>`, {
           headers: {
             'content-type': 'text/html',
             'set-cookie': phase === 'relaunch'
@@ -81,18 +87,24 @@ nativeTest('external sessions keep their own persistent cookies and have no nati
       return new Response(`<script>(async () => {
         const options = ${JSON.stringify(options)};
         const outcome = {};
+        let step = 'open';
         try {
           localStorage.setItem('app-only', 'parent');
           await craft.window.openExternal(options);
-          for (let i = 0; i < 80; i++) {
-            const code = 'JSON.stringify({ loaded: !!document.getElementById("verified"), bridge: typeof window.craft, handler: Boolean(window.webkit?.messageHandlers?.craft), appStorage: localStorage.getItem("app-only") })';
-            const child = JSON.parse(await craft.window._call('executeJavaScript', { code }, options.name));
-            if (child.loaded) { outcome.child = child; break; }
+          step = 'load';
+          const readyUrl = '/window-loaded' + location.search;
+          const deadline = Date.now() + 8000;
+          while (!(await fetch(readyUrl, { cache: 'no-store' })).ok) {
+            if (Date.now() >= deadline) throw new Error('Isolated page did not finish loading');
             await new Promise(resolve => setTimeout(resolve, 100));
           }
+          step = 'inspect';
+          const code = 'JSON.stringify({ loaded: !!document.getElementById("verified"), bridge: typeof window.craft, handler: Boolean(window.webkit?.messageHandlers?.craft), appStorage: localStorage.getItem("app-only") })';
+          outcome.child = JSON.parse(await craft.window._call('executeJavaScript', { code }, options.name));
+          step = 'reuse';
           outcome.rejectedMode = await craft.window.open(options).then(() => false, () => true);
           outcome.rejectedStore = await craft.window.openExternal({ ...options, dataStore: 'different-store' }).then(() => false, () => true);
-        } catch (error) { outcome.error = String(error); }
+        } catch (error) { outcome.error = { step, code: error.code, message: error.message ?? String(error) }; }
         await fetch('/result', { method: 'POST', body: JSON.stringify(outcome) });
         craft.app.quit();
       })();</script>`, {
@@ -126,7 +138,7 @@ nativeTest('external sessions keep their own persistent cookies and have no nati
         if (proc.exitCode === null) proc.kill()
         await proc.exited
         const output = await stderr
-        if (proc.exitCode !== 0) console.error(output)
+        if (proc.exitCode !== 0 || (result && typeof result === 'object' && 'error' in result)) console.error(output)
       }
     }
     expect(cookies).toEqual([
