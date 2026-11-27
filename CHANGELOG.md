@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.545...v0.0.546)
+
+## 🚀 Features
+
+- **sdk**: expose isolated external sessions ([533bc56](https://github.com/craft-native/craft/commit/533bc56)) _(by Chris Breuer)_ ([#599](https://github.com/craft-native/craft/issues/599))
+- **window**: isolate external WebKit sessions from the app bridge ([b636b19](https://github.com/craft-native/craft/commit/b636b19)) _(by Chris Breuer)_
+- **window**: drag a window by any element marked data-craft-drag ([204deb8](https://github.com/craft-native/craft/commit/204deb8)) _(by glennmichael123)_ ([#587](https://github.com/craft-native/craft/issues/587), [#155](https://github.com/craft-native/craft/issues/155), [#204](https://github.com/craft-native/craft/issues/204))
+- **window**: open a hidden window on a persistent data store of its own ([4f0523c](https://github.com/craft-native/craft/commit/4f0523c)) _(by glennmichael123)_ ([#589](https://github.com/craft-native/craft/issues/589), [stacksjs/postline#118](https://github.com/stacksjs/postline/issues/118))
+
+## 🧪 Tests
+
+- **window**: await navigation before inspecting an external session ([5355dd9](https://github.com/craft-native/craft/commit/5355dd9)) _(by Chris Breuer)_
+- update native window and bridge fixtures ([bc0ebcf](https://github.com/craft-native/craft/commit/bc0ebcf)) _(by Chris Breuer)_
+- **ios**: start landscape form drags above the keyboard ([62a941c](https://github.com/craft-native/craft/commit/62a941c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.544...v0.0.545)
 
 ## 🚀 Features
