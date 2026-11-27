@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.547...v0.0.548)
+
+## 🚀 Features
+
+- **mobile**: a tab accessory's own accessibilityValue, read instead of its badge ([16d0003](https://github.com/craft-native/craft/commit/16d0003)) _(by glennmichael123)_
+- **mobile**: a tab accessory beside the tab bar, in its own row ([b47725e](https://github.com/craft-native/craft/commit/b47725e)) _(by glennmichael123)_
+- **mobile**: tab accessory menus with badges and cover, and an iOS top-edge fade ([89def9f](https://github.com/craft-native/craft/commit/89def9f)) _(by glennmichael123)_
+- **sdk**: expose and verify named profile removal ([2ca48cd](https://github.com/craft-native/craft/commit/2ca48cd)) _(by Chris Breuer)_ ([#600](https://github.com/craft-native/craft/issues/600))
+- **window**: remove named WebKit data stores on macOS ([0a6af42](https://github.com/craft-native/craft/commit/0a6af42)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **bridge**: keep drag-region measuring inert where there is no DOM ([85d9f71](https://github.com/craft-native/craft/commit/85d9f71)) _(by glennmichael123)_ ([#587](https://github.com/craft-native/craft/issues/587))
+
+## 🧪 Tests
+
+- **android**: record topEdge as iOS-only, and keep #451's stand-in retries out of CI annotations ([c2f8357](https://github.com/craft-native/craft/commit/c2f8357)) _(by glennmichael123)_ ([#451](https://github.com/craft-native/craft/issues/451))
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.546...v0.0.547)
 
 ## 🐛 Bug Fixes
