@@ -159,6 +159,8 @@ pub const PortableWindowStyle = struct {
     /// `WKWebsiteDataStore dataStoreForIdentifier:` (#589), and WebKit2GTK and
     /// WebView2 profiles are not wired up here yet.
     data_store: ?[]const u8 = null,
+    /// The secondary-window bridge for named WebKit profiles is macOS-only.
+    untrusted_content: bool = false,
     /// Accepted so `minimal.zig` can pass one `WindowStyle` on every platform,
     /// and ignored: remembering a window frame is `setFrameAutosaveName:`, an
     /// AppKit facility with no counterpart wired up on GTK or Win32 yet.

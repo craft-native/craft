@@ -231,6 +231,8 @@ pub const WindowStyle = struct {
     /// older systems before anything is created. Overrides
     /// `persistent_storage`.
     data_store: ?[]const u8 = null,
+    /// Website content in an isolated store without access to the Craft bridge.
+    untrusted_content: bool = false,
     /// Whether Craft draws its own row of controls beside the window buttons —
     /// the sidebar toggle and the two history arrows.
     ///
@@ -909,12 +911,13 @@ pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []co
 
 pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?[]const u8, url: ?[]const u8, style: WindowStyle) !objc.id {
     try validateWebContentStyle(style);
+    const install_bridge = !style.benchmark and !style.untrusted_content;
     // Get classes (skip unnecessary lookups in benchmark mode)
     const NSWindow = getClass("NSWindow");
     const NSString = getClass("NSString");
     const WKPreferences = if (!style.benchmark) getClass("WKPreferences") else null;
     const WKWebViewConfiguration = getClass("WKWebViewConfiguration");
-    const WKUserContentController = if (!style.benchmark) getClass("WKUserContentController") else null;
+    const WKUserContentController = if (install_bridge) getClass("WKUserContentController") else null;
 
     // Note: Activation policy is set in initApp(), NOT here!
 
@@ -1099,56 +1102,58 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // Note: allowsInlineMediaPlayback and mediaTypesRequiringUserActionForPlayback
         // are iOS-only properties and not available on macOS WKWebViewConfiguration
 
-        // Set up user content controller for JavaScript bridge
-        const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
-        defer msgSendVoid0(userContentController, "release");
+        if (install_bridge) {
+            // Set up user content controller for JavaScript bridge
+            const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
+            defer msgSendVoid0(userContentController, "release");
 
-        // One injection path for both URL and HTML loads — see
-        // `injectCraftScripts`. Scripts land at document-start and survive
-        // navigation, which the old HTML-splicing path did not.
-        injectCraftScripts(userContentController, .{
-            .full_bridge = style.system_tray,
-            .sidebar_bootstrap = style.hasWebMaterial(),
-            .web_material = style.webMaterialSpan(),
-            // Also for a web-sidebar window, not only a native one.
-            //
-            // The surface used to be sidebar-only — createSidebar,
-            // createFileBrowser, createSplitView — so gating it on
-            // `native_sidebar` was exactly right. `createSpacesSidebar` broke
-            // that assumption: it puts a segmented control in the *titlebar*
-            // while the web keeps rendering the spaces, which is precisely the
-            // `web_sidebar_material` case. Leaving the old gate meant the one
-            // window mode that wants a native space rail was the one mode that
-            // could not reach it.
-            // Widened again, and this time to always. `showContextMenu` is not a
-            // sidebar facility — it opens a menu at a point, over whatever the
-            // page just right-clicked — but it shipped inside this bundle, so a
-            // plain web window could not reach it. The only way to get one was
-            // `--native-sidebar`, which costs 220px of viewport to a sidebar the
-            // app never asked for; every such app wrote its own div menu
-            // instead, which is the outcome this surface exists to prevent.
-            //
-            // Injecting always is safe: the script only *defines* the namespace.
-            // Nothing native is created until a page calls a constructor, so a
-            // window that never mentions sidebars is unchanged but for one more
-            // namespace on `window.craft`.
-            .native_ui = true,
-            // A frameless window has no standard buttons; every other style
-            // has them, either in a titlebar of their own or floating over a
-            // full-height content view.
-            // Measured, not deduced from the flags above: where the buttons
-            // land depends on what AppKit does with them, and the window is
-            // already built by the time this runs.
-            .window_controls = measureWindowChrome(window, null, style.frameless),
-        });
+            // One injection path for both URL and HTML loads — see
+            // `injectCraftScripts`. Scripts land at document-start and survive
+            // navigation, which the old HTML-splicing path did not.
+            injectCraftScripts(userContentController, .{
+                .full_bridge = style.system_tray,
+                .sidebar_bootstrap = style.hasWebMaterial(),
+                .web_material = style.webMaterialSpan(),
+                // Also for a web-sidebar window, not only a native one.
+                //
+                // The surface used to be sidebar-only — createSidebar,
+                // createFileBrowser, createSplitView — so gating it on
+                // `native_sidebar` was exactly right. `createSpacesSidebar` broke
+                // that assumption: it puts a segmented control in the *titlebar*
+                // while the web keeps rendering the spaces, which is precisely the
+                // `web_sidebar_material` case. Leaving the old gate meant the one
+                // window mode that wants a native space rail was the one mode that
+                // could not reach it.
+                // Widened again, and this time to always. `showContextMenu` is not a
+                // sidebar facility — it opens a menu at a point, over whatever the
+                // page just right-clicked — but it shipped inside this bundle, so a
+                // plain web window could not reach it. The only way to get one was
+                // `--native-sidebar`, which costs 220px of viewport to a sidebar the
+                // app never asked for; every such app wrote its own div menu
+                // instead, which is the outcome this surface exists to prevent.
+                //
+                // Injecting always is safe: the script only *defines* the namespace.
+                // Nothing native is created until a page calls a constructor, so a
+                // window that never mentions sidebars is unchanged but for one more
+                // namespace on `window.craft`.
+                .native_ui = true,
+                // A frameless window has no standard buttons; every other style
+                // has them, either in a titlebar of their own or floating over a
+                // full-height content view.
+                // Measured, not deduced from the flags above: where the buttons
+                // land depends on what AppKit does with them, and the window is
+                // already built by the time this runs.
+                .window_controls = measureWindowChrome(window, null, style.frameless),
+            });
 
-        // Set up the script message handler
-        setupScriptMessageHandler(userContentController) catch |err| {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
-        };
+            // Set up the script message handler
+            setupScriptMessageHandler(userContentController) catch |err| {
+                if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                    std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
+            };
 
-        _ = msgSend1(config, "setUserContentController:", userContentController);
+            _ = msgSend1(config, "setUserContentController:", userContentController);
+        }
 
         // Where the page's own storage lives.
         //
@@ -1232,7 +1237,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
     // Install the native file-drop hook so JS gets real filesystem paths.
     // No-op in benchmark mode (no JS bridge to deliver to anyway).
-    if (!style.benchmark) {
+    if (install_bridge) {
         @import("macos_file_drop.zig").install();
     }
 
@@ -1254,10 +1259,12 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // loop, which is not entered until much later. (The note that used to be
     // here said "before the load below" — the load moved above it.)
     if (!style.benchmark) {
-        setupUIDelegate(webview) catch |err| {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
-        };
+        if (install_bridge) {
+            setupUIDelegate(webview) catch |err| {
+                if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                    std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
+            };
+        }
 
         setupNavigationDelegate(webview) catch |err| {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -1314,28 +1321,30 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             _ = msgSend1(window, "setContentView:", webview);
         }
 
-        // Store webview and window references globally
-        if (webview) |wv| {
-            setGlobalWebView(wv);
-            if (style.hasWebMaterial() and style.web_chrome_controls) {
-                addWebSidebarChromeControls(window, wv);
+        if (install_bridge) {
+            // Store webview and window references globally
+            if (webview) |wv| {
+                setGlobalWebView(wv);
+                if (style.hasWebMaterial() and style.web_chrome_controls) {
+                    addWebSidebarChromeControls(window, wv);
+                }
+                // Also set references for tray menu actions
+                const tray_menu = @import("tray_menu.zig");
+                tray_menu.setGlobalWebView(wv);
+                if (window) |win| {
+                    tray_menu.setGlobalWindow(win);
+                    // No-op unless `--tray-popover`; see tray_popover.zig.
+                    @import("tray_popover.zig").adopt(win);
+                }
             }
-            // Also set references for tray menu actions
-            const tray_menu = @import("tray_menu.zig");
-            tray_menu.setGlobalWebView(wv);
-            if (window) |win| {
-                tray_menu.setGlobalWindow(win);
-                // No-op unless `--tray-popover`; see tray_popover.zig.
-                @import("tray_popover.zig").adopt(win);
-            }
-        }
 
-        // Setup bridge handlers (need allocator and handles)
-        const allocator = std.heap.c_allocator;
-        setupBridgeHandlers(allocator, null, window) catch |err| {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
-        };
+            // Setup bridge handlers (need allocator and handles)
+            const allocator = std.heap.c_allocator;
+            setupBridgeHandlers(allocator, null, window) catch |err| {
+                if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                    std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
+            };
+        }
 
         // Apply dark mode if specified
         if (style.dark_mode) |is_dark| {
@@ -8123,7 +8132,14 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     if (spec.name.len == 0 or spec.name.len > window_registry.max_name)
         return error.InvalidWindowName;
 
+    const requested_store = if (spec.style.untrusted_content) blk: {
+        if (spec.url == null or spec.html != null) return error.InvalidExternalWindow;
+        break :blk dataStoreIdentifier(spec.style.data_store orelse return error.InvalidExternalWindow);
+    } else null;
+
     if (findNamedWindow(spec.name)) |existing| {
+        if (!std.meta.eql(window_registry.externalStore(@intFromPtr(existing)), requested_store))
+            return error.InvalidExternalWindow;
         if (!window_registry.bindRelationship(@intFromPtr(existing), spec.relationship))
             return error.InvalidWindowRelationship;
         // A creator can be permanently destroyed while one of its children
@@ -8157,6 +8173,12 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     if (!window_registry.rememberNamedOwned(@intFromPtr(window), spec.name, spec.owner_webview)) {
         destroyWindow(window);
         return error.WindowRegistrationFailed;
+    }
+    if (requested_store) |store| {
+        if (!window_registry.recordExternalStore(@intFromPtr(window), store)) {
+            destroyWindow(window);
+            return error.WindowRegistrationFailed;
+        }
     }
     if (!window_registry.bindRelationship(@intFromPtr(window), spec.relationship)) {
         destroyWindow(window);

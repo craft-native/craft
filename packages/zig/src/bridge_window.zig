@@ -246,7 +246,9 @@ pub const WindowBridge = struct {
         } else if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create")) {
             // `create` is what the TypeScript SDK's `windows.create()` has
             // always sent, to a host that had no handler for it. Same action.
-            try self.open(data);
+            try self.open(data, false);
+        } else if (std.mem.eql(u8, action, "openExternal")) {
+            try self.open(data, true);
         } else {
             return BridgeError.UnknownAction;
         }
@@ -335,7 +337,7 @@ pub const WindowBridge = struct {
     /// hidden titlebar, a native material behind the sidebar span or the whole
     /// view. Without that a Settings window would be the one surface in the
     /// app sitting on plain white.
-    fn open(self: *Self, data: ?[]const u8) !void {
+    fn open(self: *Self, data: ?[]const u8, untrusted_content: bool) !void {
         const json_data = data orelse return BridgeError.MissingData;
 
         // `id` is what the TypeScript SDK calls it; `name` is what it is.
@@ -400,6 +402,8 @@ pub const WindowBridge = struct {
             if (builtin.os.tag == .macos and !@import("macos.zig").namedDataStoresAvailable())
                 return BridgeError.PlatformNotSupported;
         }
+        if (untrusted_content and (data_store == null or url == null or html != null))
+            return BridgeError.InvalidParameter;
 
         // Parse before creating anything. Returning an error after AppKit has
         // already opened the window would leave a live, named window behind
@@ -441,6 +445,7 @@ pub const WindowBridge = struct {
             // them.
             .persistent_storage = json_utils.getBool(json_data, "persistentStorage") orelse false,
             .data_store = data_store,
+            .untrusted_content = untrusted_content,
             // The inspector follows the window that opened it: an app built
             // with `--no-devtools` should not grow a right-click Inspect
             // Element by opening its own Settings.

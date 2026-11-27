@@ -66,6 +66,7 @@ const Entry = struct {
     relationship_initialized: bool = false,
     /// AppKit's requestUserAttention: token, scoped to the window that asked.
     attention_request: ?c_long = null,
+    external_store: ?[16]u8 = null,
     name: [max_name]u8 = @splat(0),
     name_len: usize = 0,
 
@@ -151,6 +152,25 @@ pub fn ownerWebViewOf(handle: Handle) ?Handle {
         if (entry.handle == handle) {
             return if (entry.owner_webview == 0) null else entry.owner_webview;
         }
+    }
+    return null;
+}
+
+/// Bind a bridge-free window to its persistent WebKit profile.
+pub fn recordExternalStore(handle: Handle, identifier: [16]u8) bool {
+    if (handle == 0) return false;
+    for (&windows) |*entry| {
+        if (entry.handle != handle) continue;
+        entry.external_store = identifier;
+        return true;
+    }
+    return false;
+}
+
+pub fn externalStore(handle: Handle) ?[16]u8 {
+    if (handle == 0) return null;
+    for (windows) |entry| {
+        if (entry.handle == handle) return entry.external_store;
     }
     return null;
 }
@@ -286,6 +306,19 @@ test "a window craft opened is recognised" {
     resetForTesting();
     try testing.expect(remember(0x1000));
     try testing.expect(isKnown(0x1000));
+}
+
+test "an external store follows its window until permanent teardown" {
+    resetForTesting();
+    const store: [16]u8 = @splat(0xAB);
+    try testing.expect(!recordExternalStore(0x1000, store));
+    try testing.expect(rememberNamed(0x1000, "external"));
+    try testing.expect(recordExternalStore(0x1000, store));
+    try testing.expect(rememberNamed(0x1000, "external"));
+    try testing.expectEqual(store, externalStore(0x1000).?);
+    forget(0x1000);
+    try testing.expect(rememberNamed(0x1000, "replacement"));
+    try testing.expect(externalStore(0x1000) == null);
 }
 
 test "a window craft did not open is not" {

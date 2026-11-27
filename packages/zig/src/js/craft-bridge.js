@@ -559,6 +559,15 @@
       if (!o.url && !o.html) return Promise.reject(new Error('craft.window.open needs a url or html'))
       return _req('window', 'open', _stringify(Object.assign({}, o, { name: name })))
     },
+    // A dedicated request lets callers detect older runtimes before loading
+    // an external page in an ordinary window with the full bridge.
+    openExternal: function (opts) {
+      const o = opts || {}
+      const name = String(o.name || o.id || '')
+      if (!name || name === 'main' || !o.url || !o.dataStore || o.html)
+        return Promise.reject(new Error('craft.window.openExternal needs a child name, URL and data store'))
+      return _req('window', 'openExternal', _stringify(Object.assign({}, o, { name: name })))
+    },
   }
 
   // -------------------------------------------------------------------------
