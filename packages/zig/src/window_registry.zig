@@ -49,6 +49,11 @@ pub const Relationship = struct {
     modal: bool = false,
 };
 
+pub const DataStore = struct {
+    identifier: [16]u8,
+    untrusted: bool,
+};
+
 /// One row: the window, and what the app that opened it calls it.
 ///
 /// The name is what makes "open the settings window" idempotent. Without it
@@ -66,7 +71,7 @@ const Entry = struct {
     relationship_initialized: bool = false,
     /// AppKit's requestUserAttention: token, scoped to the window that asked.
     attention_request: ?c_long = null,
-    external_store: ?[16]u8 = null,
+    data_store: ?DataStore = null,
     name: [max_name]u8 = @splat(0),
     name_len: usize = 0,
 
@@ -156,23 +161,24 @@ pub fn ownerWebViewOf(handle: Handle) ?Handle {
     return null;
 }
 
-/// Bind a bridge-free window to its persistent WebKit profile.
-pub fn recordExternalStore(handle: Handle, identifier: [16]u8) bool {
-    if (handle == 0) return false;
-    for (&windows) |*entry| {
-        if (entry.handle != handle) continue;
-        entry.external_store = identifier;
-        return true;
-    }
-    return false;
+/// Track both trusted and bridge-free windows that hold named profiles.
+pub fn recordDataStore(handle: Handle, store: DataStore) bool {
+    const entry = find(handle) orelse return false;
+    entry.data_store = store;
+    return true;
 }
 
-pub fn externalStore(handle: Handle) ?[16]u8 {
-    if (handle == 0) return null;
+pub fn dataStore(handle: Handle) ?DataStore {
+    const entry = find(handle) orelse return null;
+    return entry.data_store;
+}
+
+pub fn usesDataStore(identifier: [16]u8) bool {
     for (windows) |entry| {
-        if (entry.handle == handle) return entry.external_store;
+        const store = entry.data_store orelse continue;
+        if (std.mem.eql(u8, &store.identifier, &identifier)) return true;
     }
-    return null;
+    return false;
 }
 
 fn setName(slot: *Entry, name: []const u8) void {
@@ -308,17 +314,24 @@ test "a window craft opened is recognised" {
     try testing.expect(isKnown(0x1000));
 }
 
-test "an external store follows its window until permanent teardown" {
+test "a data store remains in use until every bound window is destroyed" {
     resetForTesting();
-    const store: [16]u8 = @splat(0xAB);
-    try testing.expect(!recordExternalStore(0x1000, store));
+    const store: DataStore = .{ .identifier = @splat(0xAB), .untrusted = true };
+    try testing.expect(!recordDataStore(0x1000, store));
     try testing.expect(rememberNamed(0x1000, "external"));
-    try testing.expect(recordExternalStore(0x1000, store));
+    try testing.expect(recordDataStore(0x1000, store));
+    try testing.expect(rememberNamed(0x2000, "trusted"));
+    try testing.expect(recordDataStore(0x2000, .{ .identifier = store.identifier, .untrusted = false }));
     try testing.expect(rememberNamed(0x1000, "external"));
-    try testing.expectEqual(store, externalStore(0x1000).?);
+    try testing.expectEqual(store, dataStore(0x1000).?);
+    try testing.expect(usesDataStore(store.identifier));
+    try testing.expect(!usesDataStore(@splat(0xCD)));
     forget(0x1000);
     try testing.expect(rememberNamed(0x1000, "replacement"));
-    try testing.expect(externalStore(0x1000) == null);
+    try testing.expect(dataStore(0x1000) == null);
+    try testing.expect(usesDataStore(store.identifier));
+    forget(0x2000);
+    try testing.expect(!usesDataStore(store.identifier));
 }
 
 test "a window craft did not open is not" {

@@ -568,6 +568,11 @@
         return Promise.reject(new Error('craft.window.openExternal needs a child name, URL and data store'))
       return _req('window', 'openExternal', _stringify(Object.assign({}, o, { name: name })))
     },
+    // Only named profiles can be removed. Destroy every window using the
+    // profile first, then wait for WebKit to finish before reopening it.
+    removeDataStore: function (name) {
+      return _req('window', 'removeDataStore', _stringify({ dataStore: name })).then(function () {})
+    },
   }
 
   // -------------------------------------------------------------------------

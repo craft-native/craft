@@ -6,6 +6,7 @@ const local_tls = @import("local_tls.zig");
 const menu_roles = @import("menu_roles.zig");
 const external_link = @import("external_link.zig");
 const bridge_origin = @import("bridge_origin.zig");
+const bridge_error = @import("bridge_error.zig");
 const webview_recovery = @import("webview_recovery.zig");
 const window_registry = @import("window_registry.zig");
 const request_context = @import("request_context.zig");
@@ -348,8 +349,10 @@ fn validateWebContentStyle(style: WindowStyle) !void {
         return error.UnsupportedWebViewTransparency;
     // Falling back to the shared store would put a session's cookies where
     // every other window can read them, which is what a name is for avoiding.
-    if (style.data_store != null and !namedDataStoresAvailable())
-        return error.UnsupportedNamedDataStore;
+    if (style.data_store) |name| {
+        if (!namedDataStoresAvailable()) return error.UnsupportedNamedDataStore;
+        if (dataStoreRemovalPending(dataStoreIdentifier(name))) return error.NamedDataStoreBusy;
+    }
 }
 
 /// Whether this macOS can give a webview a persistent store of its own
@@ -375,11 +378,87 @@ pub fn dataStoreIdentifier(name: []const u8) [16]u8 {
     return bytes;
 }
 
-fn namedDataStore(name: []const u8) objc.id {
-    var bytes = dataStoreIdentifier(name);
-    const uuid = msgSend1(msgSend0(getClass("NSUUID"), "alloc"), "initWithUUIDBytes:", @as([*]const u8, &bytes));
-    defer _ = msgSend0(uuid, "release");
-    return msgSend1(getClass("WKWebsiteDataStore"), "dataStoreForIdentifier:", uuid);
+fn dataStoreUUID(identifier: [16]u8) objc.id {
+    return msgSend1(msgSend0(getClass("NSUUID"), "alloc"), "initWithUUIDBytes:", @as([*]const u8, &identifier));
+}
+
+fn setNamedDataStore(configuration: objc.id, name: []const u8) void {
+    // WebKit returns an autoreleased store. Complete that temporary ownership
+    // here so only the configuration and its view continue to hold it.
+    const pool = msgSend0(msgSend0(getClass("NSAutoreleasePool"), "alloc"), "init");
+    defer msgSendVoid0(pool, "drain");
+    const uuid = dataStoreUUID(dataStoreIdentifier(name));
+    defer msgSendVoid0(uuid, "release");
+    const store = msgSend1(getClass("WKWebsiteDataStore"), "dataStoreForIdentifier:", uuid);
+    msgSendVoid1(configuration, "setWebsiteDataStore:", store);
+}
+
+// WebKit performs both the request and its completion on the main run loop.
+// Hold the identifier from request through completion so a second window
+// cannot recreate the store while WebKit is removing its files.
+const DataStoreRemoval = struct {
+    identifier: [16]u8,
+    reply_webview: objc.id,
+    request_id: ?u64,
+};
+
+var removing_data_stores: [window_registry.capacity]?DataStoreRemoval = @splat(null);
+
+fn dataStoreRemovalPending(identifier: [16]u8) bool {
+    for (removing_data_stores) |slot| {
+        const pending = slot orelse continue;
+        if (std.mem.eql(u8, &identifier, &pending.identifier)) return true;
+    }
+    return false;
+}
+
+extern "c" fn craft_webview_remove_data_store(
+    identifier: *const [16]u8,
+    context: *anyopaque,
+    completion: *const fn (*anyopaque, objc.id) callconv(.c) void,
+) void;
+
+fn dataStoreRemovalFinished(context: *anyopaque, error_object: objc.id) callconv(.c) void {
+    const slot: *?DataStoreRemoval = @ptrCast(@alignCast(context));
+    const removal = slot.* orelse return;
+    slot.* = null;
+    defer msgSendVoid0(removal.reply_webview, "release");
+    window_context.push(0, @intFromPtr(removal.reply_webview));
+    defer window_context.pop();
+    request_context.push(removal.request_id);
+    defer request_context.pop();
+
+    if (error_object != null) {
+        const description = msgSend0(msgSend0(error_object, "localizedDescription"), "UTF8String");
+        if (description) |c_string| {
+            const message = std.mem.span(@as([*:0]const u8, @ptrCast(c_string)));
+            std.log.warn("WebKit could not remove the named data store: {s}", .{message});
+        }
+        bridge_error.sendErrorToJS(std.heap.c_allocator, "removeDataStore", bridge_error.BridgeError.NativeCallFailed);
+        return;
+    }
+    bridge_error.sendResultToJS(std.heap.c_allocator, "removeDataStore", "null");
+}
+
+/// Refuse live or retained views rather than destroy a page that may be
+/// the caller itself. WebKit's own error still applies if it holds the store.
+pub fn removeNamedDataStore(name: []const u8, reply_webview: objc.id) bridge_error.BridgeError!void {
+    const store_class = getClass("WKWebsiteDataStore");
+    const selector = "removeDataStoreForIdentifier:completionHandler:";
+    if (store_class == null or !msgSendBool1Sel(store_class, "respondsToSelector:", sel(selector)))
+        return bridge_error.BridgeError.PlatformNotSupported;
+    const identifier = dataStoreIdentifier(name);
+    if (dataStoreRemovalPending(identifier) or window_registry.usesDataStore(identifier))
+        return bridge_error.BridgeError.Busy;
+    const slot = for (&removing_data_stores) |*pending| {
+        if (pending.* == null) break pending;
+    } else return bridge_error.BridgeError.Busy;
+    slot.* = .{
+        .identifier = identifier,
+        .reply_webview = msgSend0(reply_webview, "retain"),
+        .request_id = request_context.current(),
+    };
+    craft_webview_remove_data_store(&identifier, @ptrCast(slot), dataStoreRemovalFinished);
 }
 
 test "a named data store's identifier is stable, distinct per name, and a version-8 UUID" {
@@ -1173,13 +1252,12 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // `data_store` names a persistent store of the window's own (#589):
         // an automation webview whose signed-in session must outlive a quit
         // without sharing cookies with the app's main window.
-        const store = if (style.data_store) |name|
-            namedDataStore(name)
-        else if (style.persistent_storage)
-            msgSend0(WKWebsiteDataStore, "defaultDataStore")
-        else
-            msgSend0(WKWebsiteDataStore, "nonPersistentDataStore");
-        _ = msgSend1(config, "setWebsiteDataStore:", store);
+        if (style.data_store) |name| {
+            setNamedDataStore(config, name);
+        } else {
+            const selector = if (style.persistent_storage) "defaultDataStore" else "nonPersistentDataStore";
+            msgSendVoid1(config, "setWebsiteDataStore:", msgSend0(WKWebsiteDataStore, selector));
+        }
 
         // Suppress incremental rendering to reduce peak memory during page load
         msgSendVoid1(config, "setSuppressesIncrementalRendering:", true);
@@ -4175,6 +4253,16 @@ pub fn destroyWindow(window_handle: anytype) void {
         @import("webview_recovery.zig").forget(@intFromPtr(view));
         window_registry.forgetOwner(@intFromPtr(view));
         msgSendVoid0(view, "stopLoading");
+        // AppKit can retain a closed window past this dispatch. Detach a
+        // named view immediately so that retention does not keep its
+        // WebKit profile in use after destroy.
+        if (window_registry.dataStore(@intFromPtr(window)) != null) {
+            if (msgSend0(window, "contentView") == view) {
+                msgSendVoid1(window, "setContentView:", @as(objc.id, null));
+            } else {
+                msgSendVoid0(view, "removeFromSuperview");
+            }
+        }
     }
     if (window_registry.exchangeAttentionRequest(@intFromPtr(window), null)) |request| {
         const app = msgSend0(getClass("NSApplication"), "sharedApplication");
@@ -5662,7 +5750,6 @@ fn evaluateReply(webview: objc.id, source: []const u8) void {
 }
 
 fn sendJavaScriptEvaluationError(reply_webview: objc.id, request_id: ?u64, message: []const u8) void {
-    const bridge_error = @import("bridge_error.zig");
     const allocator = std.heap.c_allocator;
     var context = bridge_error.ErrorContext.init(
         bridge_error.BridgeError.NativeCallFailed,
@@ -8132,13 +8219,15 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     if (spec.name.len == 0 or spec.name.len > window_registry.max_name)
         return error.InvalidWindowName;
 
-    const requested_store = if (spec.style.untrusted_content) blk: {
-        if (spec.url == null or spec.html != null) return error.InvalidExternalWindow;
-        break :blk dataStoreIdentifier(spec.style.data_store orelse return error.InvalidExternalWindow);
+    if (spec.style.untrusted_content and (spec.url == null or spec.html != null or spec.style.data_store == null))
+        return error.InvalidExternalWindow;
+    const requested_store: ?window_registry.DataStore = if (spec.style.data_store) |name| .{
+        .identifier = dataStoreIdentifier(name),
+        .untrusted = spec.style.untrusted_content,
     } else null;
 
     if (findNamedWindow(spec.name)) |existing| {
-        if (!std.meta.eql(window_registry.externalStore(@intFromPtr(existing)), requested_store))
+        if (!std.meta.eql(window_registry.dataStore(@intFromPtr(existing)), requested_store))
             return error.InvalidExternalWindow;
         if (!window_registry.bindRelationship(@intFromPtr(existing), spec.relationship))
             return error.InvalidWindowRelationship;
@@ -8175,7 +8264,7 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
         return error.WindowRegistrationFailed;
     }
     if (requested_store) |store| {
-        if (!window_registry.recordExternalStore(@intFromPtr(window), store)) {
+        if (!window_registry.recordDataStore(@intFromPtr(window), store)) {
             destroyWindow(window);
             return error.WindowRegistrationFailed;
         }

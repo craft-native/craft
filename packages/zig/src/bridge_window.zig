@@ -137,6 +137,7 @@ pub const WindowBridge = struct {
             BridgeError.InvalidJSON => BridgeError.InvalidJSON,
             BridgeError.InvalidParameter => BridgeError.InvalidParameter,
             BridgeError.PlatformNotSupported => BridgeError.PlatformNotSupported,
+            BridgeError.Busy => BridgeError.Busy,
             else => BridgeError.NativeCallFailed,
         };
         bridge_error.sendErrorToJS(self.allocator, action, bridge_err);
@@ -249,6 +250,8 @@ pub const WindowBridge = struct {
             try self.open(data, false);
         } else if (std.mem.eql(u8, action, "openExternal")) {
             try self.open(data, true);
+        } else if (std.mem.eql(u8, action, "removeDataStore")) {
+            try self.removeDataStore(data);
         } else {
             return BridgeError.UnknownAction;
         }
@@ -470,7 +473,10 @@ pub const WindowBridge = struct {
             // Opened and loaded but not shown (#589): an automation page that
             // runs while the app sits in the menu bar. `show` reveals it.
             .headless = json_utils.getBool(json_data, "headless") orelse false,
-        }) catch return BridgeError.NativeCallFailed;
+        }) catch |err| switch (err) {
+            error.NamedDataStoreBusy => return BridgeError.Busy,
+            else => return BridgeError.NativeCallFailed,
+        };
 
         // A floor on the size, so a window with a fixed-width sidebar cannot be
         // dragged narrower than the sidebar it contains.
@@ -592,6 +598,17 @@ pub const WindowBridge = struct {
 
         if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
         @import("macos.zig").destroyWindow(handle);
+    }
+
+    fn removeDataStore(self: *Self, data: ?[]const u8) !void {
+        if (comptime builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        const json_data = data orelse return BridgeError.MissingData;
+        const name = (json_utils.getStringDecoded(self.allocator, json_data, "dataStore") catch
+            return BridgeError.InvalidJSON) orelse return BridgeError.InvalidParameter;
+        defer self.allocator.free(name);
+        if (!validDataStoreName(name)) return BridgeError.InvalidParameter;
+        const sender = window_context.currentWebView() orelse return BridgeError.WebViewHandleNotSet;
+        try @import("macos.zig").removeNamedDataStore(name, @ptrFromInt(sender));
     }
 
     fn focus(self: *Self, data: ?[]const u8) !void {
