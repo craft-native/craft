@@ -10,6 +10,7 @@ import { isDesktopWebViewHost } from '../bridge/webkit-pending.js'
 interface InjectedWindowBridge {
   _call<T>(action: string, data: Record<string, any> | undefined, windowId: string): Promise<T>
   open(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
+  openExternal?(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
 }
 
 const CURRENT_WINDOW_ID = 'main'
@@ -170,6 +171,12 @@ export interface WindowCreateOptions {
    * before macOS 14 rather than falling back to a shared store.
    */
   dataStore?: string
+  /**
+   * Disable the native bridge and native media permissions for external web
+   * content. Requires a URL and a named `dataStore` on macOS 14 or later.
+   * The creating window can still use its typed handle to control this window.
+   */
+  untrustedContent?: boolean
   /**
    * Create the window and load its page without showing it (macOS).
    *
@@ -837,12 +844,20 @@ class WindowManager {
 
     if (isDesktopWebViewHost()) {
       const injected = getInjectedWindowBridge()
-      if (!injected?.open) {
+      if (options.untrustedContent) {
+        if (!injected?.openExternal)
+          throw new Error('This Craft runtime does not support external webview sessions')
+        await injected.openExternal({ ...options, id })
+      }
+      else if (injected?.open) {
+        await injected.open({ ...options, id })
+      }
+      else {
         throw new Error('Craft window bridge is unavailable')
       }
-      await injected.open({ ...options, id })
     }
     else {
+      if (options.untrustedContent) throw new Error('External webview sessions require the Craft desktop runtime')
       const bridge = getBridge()
       await bridge.request('window.create', { ...options, id })
     }

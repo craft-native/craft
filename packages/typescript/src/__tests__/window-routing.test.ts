@@ -10,6 +10,7 @@ describe('typed window-handle routing', () => {
     return callResult
   })
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
+  const openExternal = mock(async (options: { id: string }) => ({ name: options.id }))
   const listeners = new Map<string, Set<EventListener>>()
   // The manager retains stable handles across fixtures and Bun reruns. Wall
   // clock milliseconds can collide while each test installs a fresh fake DOM.
@@ -22,6 +23,7 @@ describe('typed window-handle routing', () => {
     call.mockClear()
     callResult = undefined
     open.mockClear()
+    openExternal.mockClear()
     listeners.clear()
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -35,7 +37,7 @@ describe('typed window-handle routing', () => {
           listeners.get(name)?.delete(listener)
         },
         webkit: { messageHandlers: { craft: { postMessage: () => {} } } },
-        craft: { window: { _call: call, open } },
+        craft: { window: { _call: call, open, openExternal } },
       },
     })
   })
@@ -74,6 +76,30 @@ describe('typed window-handle routing', () => {
     const id = fixtureId('automation')
     await windowManager.create({ id, url: 'https://x.com/home', dataStore: 'x-session', headless: true })
     expect(open).toHaveBeenCalledWith({ id, url: 'https://x.com/home', dataStore: 'x-session', headless: true })
+  })
+
+  it('forwards an isolated external window to native', async () => {
+    const options = {
+      id: fixtureId('external'),
+      url: 'https://example.test/sign-in',
+      dataStore: 'external-session',
+      untrustedContent: true,
+    }
+    await windowManager.create(options)
+    expect(openExternal).toHaveBeenCalledWith(options)
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('keeps external URLs out of ordinary windows on older runtimes', async () => {
+    const bridge = (window as unknown as { craft: { window: { openExternal?: typeof openExternal } } }).craft.window
+    delete bridge.openExternal
+    await expect(windowManager.create({
+      id: fixtureId('unsupported'),
+      url: 'https://example.test/sign-in',
+      dataStore: 'external-session',
+      untrustedContent: true,
+    })).rejects.toThrow('does not support external webview sessions')
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('keeps every common mutation on the retained handle', async () => {

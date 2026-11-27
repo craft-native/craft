@@ -657,7 +657,29 @@ survive application restarts. Restore saved bounds by passing their `x`, `y`,
 from an explicit action or a debounced move/resize handler; an asynchronous
 write started by a `close` listener may outlive the page on Linux or Windows.
 
+## External web sessions
+
+On macOS 14 or later, open an external site with a named WebKit store and a
+window that has no Craft bridge:
+
+```typescript
+const signIn = await windowManager.create({
+  id: 'account-sign-in',
+  url: 'https://example.com/sign-in',
+  dataStore: 'account-sign-in',
+  untrustedContent: true,
+})
+await signIn.focus()
+```
+
+The named store persists across launches and stays separate from the app's
+default store. Native media permissions remain disabled in the external
+window. The creating app keeps its window handle and can evaluate page
+JavaScript through it. Reopen the name with the same store and mode. Older
+runtime versions reject external sessions.
+
 ## Next Steps
+
 
 - [Webview Integration](/features/webview-integration) - Configure webview
 - [IPC Communication](/features/ipc-communication) - Window-web communication

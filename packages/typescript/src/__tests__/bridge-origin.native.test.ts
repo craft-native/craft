@@ -49,6 +49,97 @@ nativeTest('native bridge accepts its document and rejects child frames and fore
   }
 }, 25000)
 
+nativeTest('external sessions keep their own persistent cookies and have no native bridge', async () => {
+  const dataStore = 'external-test-' + crypto.randomUUID()
+  const cookies: Array<{ phase: string, own: boolean, parent: boolean }> = []
+  let result: unknown
+
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      const phase = url.searchParams.get('phase') ?? ''
+      if (url.pathname === '/result') {
+        result = await request.json()
+        return new Response('ok')
+      }
+      if (url.pathname === '/sign-in') {
+        const sent = request.headers.get('cookie') ?? ''
+        cookies.push({ phase, own: sent.includes('external_fixture=session'), parent: sent.includes('external_parent=private') })
+        return new Response('<p id="verified">Signed in</p>', {
+          headers: {
+            'content-type': 'text/html',
+            'set-cookie': phase === 'relaunch'
+              ? 'external_fixture=; Max-Age=0; HttpOnly; Path=/'
+              : 'external_fixture=session; Max-Age=120; HttpOnly; SameSite=Strict; Path=/',
+          },
+        })
+      }
+
+      const options = { name: 'external-test', url: `${url.origin}/sign-in?phase=${phase}`, dataStore, headless: true }
+      return new Response(`<script>(async () => {
+        const options = ${JSON.stringify(options)};
+        const outcome = {};
+        try {
+          localStorage.setItem('app-only', 'parent');
+          await craft.window.openExternal(options);
+          for (let i = 0; i < 80; i++) {
+            const code = 'JSON.stringify({ loaded: !!document.getElementById("verified"), bridge: typeof window.craft, handler: Boolean(window.webkit?.messageHandlers?.craft), appStorage: localStorage.getItem("app-only") })';
+            const child = JSON.parse(await craft.window._call('executeJavaScript', { code }, options.name));
+            if (child.loaded) { outcome.child = child; break; }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          outcome.rejectedMode = await craft.window.open(options).then(() => false, () => true);
+          outcome.rejectedStore = await craft.window.openExternal({ ...options, dataStore: 'different-store' }).then(() => false, () => true);
+        } catch (error) { outcome.error = String(error); }
+        await fetch('/result', { method: 'POST', body: JSON.stringify(outcome) });
+        craft.app.quit();
+      })();</script>`, {
+        headers: {
+          'content-type': 'text/html',
+          'set-cookie': 'external_parent=private; Max-Age=30; HttpOnly; SameSite=Strict; Path=/',
+        },
+      })
+    },
+  })
+
+  try {
+    for (const phase of ['launch', 'relaunch']) {
+      result = undefined
+      const proc = Bun.spawn([process.env.CRAFT_NATIVE_TEST_BIN!, '--persistent-storage', '--url', `${server.url.origin}/?phase=${phase}`], {
+        stdout: 'ignore',
+        stderr: 'pipe',
+      })
+      const stderr = new Response(proc.stderr).text()
+      const deadline = setTimeout(() => proc.kill(), 15000)
+      try {
+        expect(await proc.exited).toBe(0)
+        expect(result).toEqual({
+          child: { loaded: true, bridge: 'undefined', handler: false, appStorage: null },
+          rejectedMode: true,
+          rejectedStore: true,
+        })
+      }
+      finally {
+        clearTimeout(deadline)
+        if (proc.exitCode === null) proc.kill()
+        await proc.exited
+        const output = await stderr
+        if (proc.exitCode !== 0) console.error(output)
+      }
+    }
+    expect(cookies).toEqual([
+      { phase: 'launch', own: false, parent: false },
+      { phase: 'relaunch', own: true, parent: false },
+    ])
+  }
+  finally {
+    server.stop(true)
+  }
+}, 35000)
+
+
 nativeTest('app-directed inline HTML retains access to its native bridge', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'craft-inline-'))
   const marker = join(dir, 'inline')
