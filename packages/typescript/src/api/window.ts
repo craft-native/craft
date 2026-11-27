@@ -11,6 +11,7 @@ interface InjectedWindowBridge {
   _call<T>(action: string, data: Record<string, any> | undefined, windowId: string): Promise<T>
   open(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
   openExternal?(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
+  removeDataStore?(name: string): Promise<void>
 }
 
 const CURRENT_WINDOW_ID = 'main'
@@ -826,6 +827,18 @@ class WindowManager {
    */
   get(id: string): Window | undefined {
     return this._windows.get(id)
+  }
+
+  /**
+   * Permanently remove a named WebKit profile on macOS 14 or later.
+   * Destroy every window using it before calling, including closed windows
+   * retained for reopening. The default app store is outside this API.
+   */
+  async removeDataStore(name: string): Promise<void> {
+    const injected = isDesktopWebViewHost() ? getInjectedWindowBridge() : undefined
+    if (!injected?.removeDataStore)
+      throw new Error('This Craft runtime does not support removing named webview data stores')
+    await injected.removeDataStore(name)
   }
 
   /**

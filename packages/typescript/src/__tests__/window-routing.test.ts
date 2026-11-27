@@ -11,6 +11,7 @@ describe('typed window-handle routing', () => {
   })
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
   const openExternal = mock(async (options: { id: string }) => ({ name: options.id }))
+  const removeDataStore = mock(async (name: string) => { void name })
   const listeners = new Map<string, Set<EventListener>>()
   // The manager retains stable handles across fixtures and Bun reruns. Wall
   // clock milliseconds can collide while each test installs a fresh fake DOM.
@@ -24,6 +25,7 @@ describe('typed window-handle routing', () => {
     callResult = undefined
     open.mockClear()
     openExternal.mockClear()
+    removeDataStore.mockClear()
     listeners.clear()
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -37,7 +39,7 @@ describe('typed window-handle routing', () => {
           listeners.get(name)?.delete(listener)
         },
         webkit: { messageHandlers: { craft: { postMessage: () => {} } } },
-        craft: { window: { _call: call, open, openExternal } },
+        craft: { window: { _call: call, open, openExternal, removeDataStore } },
       },
     })
   })
@@ -100,6 +102,20 @@ describe('typed window-handle routing', () => {
       untrustedContent: true,
     })).rejects.toThrow('does not support external webview sessions')
     expect(open).not.toHaveBeenCalled()
+  })
+
+  it('waits for native profile removal and forwards its failure', async () => {
+    await windowManager.removeDataStore('profile')
+    expect(removeDataStore).toHaveBeenCalledWith('profile')
+    const error = new Error('The data store is in use')
+    removeDataStore.mockRejectedValueOnce(error)
+    await expect(windowManager.removeDataStore('profile')).rejects.toThrow(error.message)
+  })
+
+  it('reports unsupported profile removal on older runtimes', async () => {
+    const bridge = (window as unknown as { craft: { window: { removeDataStore?: typeof removeDataStore } } }).craft.window
+    delete bridge.removeDataStore
+    await expect(windowManager.removeDataStore('profile')).rejects.toThrow('does not support removing named webview data stores')
   })
 
   it('keeps every common mutation on the retained handle', async () => {

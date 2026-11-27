@@ -152,6 +152,120 @@ nativeTest('external sessions keep their own persistent cookies and have no nati
 }, 35000)
 
 
+nativeTest('removes only the chosen named profile after all its views are destroyed', async () => {
+  const target = 'erase-' + crypto.randomUUID()
+  const keep = 'keep-' + crypto.randomUUID()
+  const cookie = 'craft_' + crypto.randomUUID().replaceAll('-', '')
+  const observed = new Map<string, string>()
+  let result: unknown
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      const phase = url.searchParams.get('phase') ?? ''
+      const current = (request.headers.get('cookie') ?? '').match(new RegExp(`(?:^|; *)${cookie}=([^;]*)`))?.[1] ?? ''
+      if (url.pathname === '/result') {
+        result = await request.json()
+        return new Response('ok')
+      }
+      if (url.pathname === '/observed') {
+        if (request.method === 'POST') observed.set(phase, current)
+        return Response.json({ ready: observed.has(phase), value: observed.get(phase) })
+      }
+      if (url.pathname === '/child') {
+        const headers = new Headers({ 'content-type': 'text/html', 'cache-control': 'no-store' })
+        const value = url.searchParams.get('set')
+        if (value) headers.set('set-cookie', `${cookie}=${value}; Max-Age=120; HttpOnly; SameSite=Strict; Path=/`)
+        const report = '/observed?' + new URLSearchParams({ phase })
+        return new Response(`<script>fetch(${JSON.stringify(report)}, { method: 'POST' })</script>`, { headers })
+      }
+      if (url.pathname === '/settings') {
+        return new Response(`<script>(async () => {
+          const target = ${JSON.stringify(target)};
+          const keep = ${JSON.stringify(keep)};
+          const api = craft.window;
+          let step = '';
+          async function open(profile, phase, set) {
+            step = phase;
+            const query = new URLSearchParams({ phase });
+            if (set) query.set('set', set);
+            await api.openExternal({ name: profile, dataStore: profile, headless: true, url: location.origin + '/child?' + query });
+            const deadline = Date.now() + 6000;
+            while (Date.now() < deadline) {
+              const observed = await fetch('/observed?phase=' + phase, { cache: 'no-store' }).then(reply => reply.json());
+              if (observed.ready) return observed.value;
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            throw new Error('No request from ' + phase);
+          }
+          const destroy = name => api._call('destroy', undefined, name);
+          const outcome = {};
+          try {
+            outcome.targetBefore = await open(target, 'target-before', 'erase');
+            outcome.keepBefore = await open(keep, 'keep-before', 'keep');
+            outcome.busy = await api.removeDataStore(target).then(() => null, error => error.code);
+            await api._call('close', undefined, target);
+            outcome.closedBusy = await api.removeDataStore(target).then(() => null, error => error.code);
+            await destroy(target);
+            step = 'remove';
+            const removing = api.removeDataStore(target);
+            const reopening = api.openExternal({
+              name: 'during-erasure', dataStore: target, headless: true, url: location.origin + '/child?phase=forbidden',
+            }).then(() => null, error => error.code);
+            [, outcome.pendingBusy] = await Promise.all([removing, reopening]);
+            step = 'remove-again';
+            await api.removeDataStore(target);
+            outcome.targetAfter = await open(target, 'target-after');
+            await destroy(keep);
+            outcome.keepAfter = await open(keep, 'keep-after');
+            await destroy(target);
+            await destroy(keep);
+            await api.removeDataStore(target);
+            await api.removeDataStore(keep);
+            outcome.defaultStore = (await fetch('/observed?phase=default-after', { method: 'POST' }).then(reply => reply.json())).value;
+          } catch (error) {
+            outcome.error = { step, code: error.code, message: error.message };
+          }
+          await fetch('/result', { method: 'POST', body: JSON.stringify(outcome) });
+          craft.app.quit();
+        })();</script>`, { headers: { 'content-type': 'text/html' } })
+      }
+      return new Response(`<script>craft.window.open({ name: 'settings', url: location.origin + '/settings', persistentStorage: true, headless: true })</script>`, {
+        headers: { 'content-type': 'text/html', 'set-cookie': `${cookie}=default; Max-Age=30; HttpOnly; SameSite=Strict; Path=/` },
+      })
+    },
+  })
+  const proc = Bun.spawn([process.env.CRAFT_NATIVE_TEST_BIN!, '--headless', '--persistent-storage', '--url', server.url.href], {
+    stdout: 'ignore',
+    stderr: 'pipe',
+  })
+  const stderr = new Response(proc.stderr).text()
+  const deadline = setTimeout(() => proc.kill(), 20_000)
+  try {
+    expect(await proc.exited).toBe(0)
+    expect(result).toEqual({
+      targetBefore: 'erase',
+      keepBefore: 'keep',
+      busy: 'BUSY',
+      closedBusy: 'BUSY',
+      pendingBusy: 'BUSY',
+      targetAfter: '',
+      keepAfter: 'keep',
+      defaultStore: 'default',
+    })
+    expect(observed.has('forbidden')).toBe(false)
+  }
+  finally {
+    clearTimeout(deadline)
+    if (proc.exitCode === null) proc.kill()
+    await proc.exited
+    const output = await stderr
+    if (!result || (typeof result === 'object' && 'error' in result)) console.error(output)
+    server.stop(true)
+  }
+}, 25_000)
+
 nativeTest('app-directed inline HTML retains access to its native bridge', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'craft-inline-'))
   const marker = join(dir, 'inline')
