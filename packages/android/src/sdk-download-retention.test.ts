@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createTempDir, removeTempDir } from '../../typescript/src/temp-dir'
@@ -24,6 +24,18 @@ import { createAndroidEmulator, truncatedSdkDownload } from './emulator'
  * about the bytes it read.
  */
 const abi = process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64'
+
+// The #451 retry prints a `::warning`, which GitHub turns into an annotation
+// on the run: from these stand-ins it would read as a real truncated download.
+// Captured here instead, and asserted where it matters.
+let logged: string[] = []
+let restoreLog: (() => void) | undefined
+beforeEach(() => {
+  logged = []
+  const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { logged.push(parts.join(' ')) })
+  restoreLog = () => spy.mockRestore()
+})
+afterEach(() => restoreLog?.())
 
 /** A script at `path` that stages `body` as a download, then fails like the vendor tool. */
 function standInSdkManager(path: string, sdk: string, body: string): void {
@@ -155,6 +167,7 @@ exit 0
     expect(retry.packages).toEqual(['platform-tools', 'emulator'])
     expect(retry.reason).toContain('Error reading Zip content')
     expect(retry.staged.find(entry => entry.path.endsWith('emulator.zip'))?.looksLike).toBe('zip')
+    expect(logged.filter(line => line.startsWith('::warning title=Android SDK download arrived truncated (#451)::'))).toHaveLength(1)
   }
   finally { removeTempDir(dir) }
 }, 120_000)

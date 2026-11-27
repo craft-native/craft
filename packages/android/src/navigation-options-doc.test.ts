@@ -86,7 +86,9 @@ test('the hosts agree on which navigation options exist, or the difference is re
   // A key one host honours and the other silently ignores is not a platform
   // difference a caller can see; it reads as a broken option. The iOS-only
   // entries are UIKit surfaces with no Android equivalent — the back button's
-  // own title, the interactive back-swipe, and the bar's material. There are
+  // own title, the interactive back-swipe, the bar's material, and what is
+  // drawn behind the clock as content scrolls under it (`topEdge`: Android's
+  // header bar is opaque, so it has nothing to fade). There are
   // no Android-only entries: `tabBarHiddenWhenPushed` was the one, and #493
   // gave UIKit the same depth-gated behaviour rather than dropping it.
   const swift = readFileSync(join(import.meta.dir, '../../ios/templates/CraftNativeScreen.swift'), 'utf8')
@@ -96,6 +98,6 @@ test('the hosts agree on which navigation options exist, or the difference is re
   expect(ios.size).toBeGreaterThan(10)
   const android = new Set([...appliedOptions(), ...screenOptions()])
 
-  expect([...ios].filter(key => !android.has(key)).sort()).toEqual(['backTitle', 'contentSwipeBack', 'edgeToEdge', 'navigationBarSolid', 'swipeBack'])
+  expect([...ios].filter(key => !android.has(key)).sort()).toEqual(['backTitle', 'contentSwipeBack', 'edgeToEdge', 'navigationBarSolid', 'swipeBack', 'topEdge'])
   expect([...android].filter(key => !ios.has(key)).sort()).toEqual([])
 })
