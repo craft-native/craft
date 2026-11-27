@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.546...v0.0.547)
+
+## 🐛 Bug Fixes
+
+- **ios-testing**: tap the nested switch control in Settings ([1527958](https://github.com/craft-native/craft/commit/1527958)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.545...v0.0.546)
 
 ## 🚀 Features
