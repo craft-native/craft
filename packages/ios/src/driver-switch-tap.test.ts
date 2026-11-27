@@ -132,3 +132,13 @@ test('the observation can tell a moving control from an ignored tap', () => {
   const settleLoop = tapidCase.indexOf('} while !flipped && Date() < settle')
   expect(after, 'frameAfter must be read after the settle loop').toBeGreaterThan(settleLoop)
 })
+
+test('activated nested switches use the frame of their switch control', () => {
+  const start = driver.indexOf('    func press(')
+  const body = driver.slice(start, driver.indexOf('\n    }', start))
+  const nested = body.slice(body.indexOf('if knob != element'), body.indexOf('} else if element.isHittable'))
+  expect(body).toContain('element.descendants(matching: .switch).firstMatch')
+  expect(nested).toContain('settledFrame(knob)')
+  expect(nested).toContain('knob.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()')
+  expect(nested).not.toContain('knob.tap()')
+})

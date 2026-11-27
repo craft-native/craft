@@ -414,10 +414,16 @@ final class DriverTests: XCTestCase {
         // Use that real descendant, preserving one gesture and the value
         // observation on the identified row, without guessing screen points.
         let knob = element.elementType == .switch ? element.descendants(matching: .switch).firstMatch : element
-        let target = knob.exists ? knob : element
-        if target != element { _ = settledFrame(target) }
-        if target.isHittable { target.tap() }
-        else { target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        if knob != element, knob.exists {
+            _ = settledFrame(knob)
+            // XCTest can resolve the nested switch's default hit point to
+            // its enclosing accessibility row. Use the real control's frame.
+            knob.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        } else if element.isHittable {
+            element.tap()
+        } else {
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         // A tap on a read-only text view need not open the keyboard. Only a
         // following type command observes whether this target took focus.
         lastTappedInput = input
