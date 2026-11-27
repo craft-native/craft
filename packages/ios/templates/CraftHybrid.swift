@@ -1588,7 +1588,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         let chrome = CraftChrome.shared
         let model = hidden ? nil : chrome.tabAccessory
         // Keep controls when only the selected destination or unread badge changes.
-        let companions = model?.iconOnly == true ? model?.companions ?? [] : []
+        // Beside the tab bar the primary action stands alone.
+        let companions = model?.iconOnly == true && model?.accessoryLayout != "beside" ? model?.companions ?? [] : []
         if companionModels != companions {
             companionModels = companions
             for button in companionButtons { button.removeFromSuperview() }
@@ -1620,7 +1621,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 companionButtons.append(button)
             }
         }
-        let grouped = model?.accessoryLayout != nil
+        let grouped = model?.accessoryGrouped == true
         // A group is one control, as the map controls in Maps are: its
         // actions live inside the shared surface, so the glass lights the
         // one being pressed and keeps every symbol legible over the page.
@@ -1900,8 +1901,13 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         }
 #endif
         let iconOnly = accessoryModel?.iconOnly == true
-        if let axis = accessoryModel?.accessoryLayout {
-            layoutAccessoryGroup(vertical: axis == "vertical")
+        if accessoryModel?.accessoryLayout == "beside" {
+            layoutAccessoryBeside()
+            CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY))
+            return
+        }
+        if let model = accessoryModel, model.accessoryGrouped {
+            layoutAccessoryGroup(vertical: model.accessoryLayout == "vertical")
             CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY))
             return
         }
@@ -1934,10 +1940,60 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         guard let model = accessoryModel, model.iconOnly, view.window != nil,
               accessoryGlass.superview === view, !accessoryGlass.isHidden, !tabBar.isHidden else { return nil }
         var frame = accessoryGlass.frame
-        if model.accessoryLayout == nil {
+        if !model.accessoryGrouped {
             for glass in companionGlasses where !glass.isHidden { frame = frame.union(glass.frame) }
         }
         return view.convert(frame, to: view.window)
+    }
+
+    /// `layout: "beside"` (lastsoulultra#38): the primary action as a round
+    /// button in the tab bar's own row, at its trailing end, as tall as the
+    /// bar and of its material. The bar gives up the room: its frame is
+    /// narrowed on every pass (UIKit restores the full width when it lays the
+    /// controller out), and on iOS 26 its glass platter narrows with it, so
+    /// the pair keeps the bar's side margins.
+    private func layoutAccessoryBeside() {
+        guard !tabBar.isHidden else { return }
+        let rightToLeft = view.effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let gap: CGFloat = 8
+        // Before iOS 26 the bar is the screen's width with no margin of its
+        // own; leave the button the same 8 points from the screen's edge.
+        let edge: CGFloat = tabBarPlatter() == nil ? 8 : 0
+        let diameter = tabBarRow().height
+        var frame = tabBar.frame
+        let room = diameter + gap + edge
+        frame.size.width = max(0, frame.width - room)
+        if rightToLeft { frame.origin.x += room }
+        tabBar.frame = frame
+        tabBar.layoutIfNeeded()
+        let row = tabBarRow()
+        let x = rightToLeft ? row.minX - gap - diameter : row.maxX + gap
+        let circle = CGRect(x: x, y: row.midY - diameter / 2, width: diameter, height: diameter)
+        accessoryGlass.frame = circle
+        accessoryButton.frame = circle
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) { accessoryGlass.cornerConfiguration = .capsule() }
+#endif
+        if accessoryGlass.clipsToBounds { accessoryGlass.layer.cornerRadius = diameter / 2 }
+        let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
+        accessoryBadge.frame = CGRect(x: circle.maxX - badgeWidth + 2, y: circle.minY - 2, width: badgeWidth, height: 18)
+    }
+
+    /// The tab bar's glass platter on iOS 26, measured rather than assumed:
+    /// its height, margins and vertical place are the system's to choose.
+    private func tabBarPlatter() -> UIView? {
+        tabBar.subviews.first { String(describing: type(of: $0)).contains("Platter") }
+    }
+
+    /// The visible row of the tab bar: its platter, or before iOS 26 the bar
+    /// above the home indicator.
+    private func tabBarRow() -> CGRect {
+        if let platter = tabBarPlatter(), platter.bounds.height > 0 {
+            return platter.convert(platter.bounds, to: view)
+        }
+        var row = tabBar.frame
+        row.size.height = max(0, row.height - view.safeAreaInsets.bottom)
+        return row
     }
 
     /// One capsule above the trailing end of the tab bar, companions first

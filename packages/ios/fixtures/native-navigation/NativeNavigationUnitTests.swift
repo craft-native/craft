@@ -259,6 +259,70 @@ final class NativeNavigationUnitTests: XCTestCase {
         #endif
     }
 
+    /// lastsoulultra#38, option A: the primary action as one round button
+    /// in the tab bar's own row, the bar narrowed to make room for it.
+    func testBesideAccessoryIsARoundButtonInTheTabBarRowAndTheBarMakesRoom() async throws {
+        func platter() -> CGRect {
+            shell.view.layoutIfNeeded()
+            if let view = shell.tabBar.subviews.first(where: { String(describing: type(of: $0)).contains("Platter") }) {
+                return view.convert(view.bounds, to: shell.view)
+            }
+            var row = shell.tabBar.frame
+            row.size.height -= shell.view.safeAreaInsets.bottom
+            return row
+        }
+        func shoot(_ name: String) {
+            shell.view.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: shell.view.bounds).image { _ in
+                shell.view.drawHierarchy(in: shell.view.bounds, afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        let full = platter()
+        let chrome = CraftChrome.shared
+        chrome.updateTabAccessory(["path": "/m/add", "layout": "beside", "title": "Hinzufügen", "symbol": "plus",
+            "accessibilityLabel": "Hinzufügen", "badge": "2",
+            "companions": [["path": "/m/messages", "title": "Nachrichten", "symbol": "message"]],
+            "menu": [["path": "/m/messages", "title": "Chat", "symbol": "message", "badge": "2 neu"]]], owner: shell)
+        defer { chrome.updateTabAccessory(nil) }
+        await displayWait("the beside button is laid out") { (self.accessoryButtons().first?.frame.width ?? 0) > 0 }
+        let button = try XCTUnwrap(accessoryButtons().first)
+        let row = platter()
+        let frame = button.convert(button.bounds, to: shell.view)
+        let margin = row.minX
+        XCTAssertEqual(frame.height, row.height, accuracy: 1, "as tall as the bar")
+        XCTAssertEqual(frame.width, frame.height, accuracy: 1, "round")
+        XCTAssertEqual(frame.midY, row.midY, accuracy: 1, "in the bar's own row")
+        XCTAssertGreaterThan(frame.minX, row.maxX, "beside the bar, at its trailing end")
+        XCTAssertLessThan(frame.minX - row.maxX, 16)
+        XCTAssertEqual(shell.view.bounds.maxX - frame.maxX, margin, accuracy: 2, "the pair keeps the bar's side margins")
+        XCTAssertLessThan(row.width, full.width - frame.width, "the bar narrowed to make room")
+        XCTAssertTrue(button.showsMenuAsPrimaryAction)
+        XCTAssertEqual(button.accessibilityValue, "2")
+        XCTAssertNil(shell.view.subviews.first { $0.accessibilityIdentifier == "craft-tab-companion:/m/messages" }, "beside, the primary action stands alone")
+        shoot("Beside, light")
+        shell.overrideUserInterfaceStyle = .dark
+        shoot("Beside, dark")
+        shell.overrideUserInterfaceStyle = .unspecified
+        if #available(iOS 17.0, *) {
+            shell.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+            let large = platter()
+            let largeFrame = button.convert(button.bounds, to: shell.view)
+            XCTAssertEqual(largeFrame.height, large.height, accuracy: 1, "the row does not clip at the largest text size")
+            // iOS 26's platter reaches into the home indicator's strip at
+            // every text size; the button follows it and stays on screen.
+            XCTAssertLessThanOrEqual(largeFrame.maxY, shell.view.bounds.maxY)
+            shoot("Beside, largest text")
+            shell.traitOverrides.preferredContentSizeCategory = .unspecified
+        }
+
+        chrome.updateTabAccessory(nil)
+        await displayWait("the bar takes its width back") { abs(platter().width - full.width) < 1 }
+    }
+
     private func drag(_ distance: CGFloat, phase: UIGestureRecognizer.State = .changed, speed: CGFloat = 0) {
         pan.distance = distance
         pan.speed = speed

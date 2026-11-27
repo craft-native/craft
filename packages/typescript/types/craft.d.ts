@@ -2652,11 +2652,17 @@ export interface CraftTabAccessory {
   /** Draw the symbol without the title. */
   iconOnly?: boolean;
   /**
-   * Where the actions sit. `'vertical'` or `'horizontal'`: one shared capsule
-   * above the trailing end of the tab bar, the companions and then this
-   * action. Omitted: separate floating buttons.
+   * Where the actions sit.
+   * - `'vertical'` or `'horizontal'`: one shared capsule above the trailing
+   *   end of the tab bar, the companions and then this action.
+   * - `'beside'`: this action alone (companions are not drawn), a round
+   *   button in the tab bar's own row at its trailing end, as tall as the bar
+   *   and of its material. The bar narrows to make room. Content needs only
+   *   the bar's own inset: `craftFloatingActionsLayout` reports the button's
+   *   frame with a height of 0.
+   * - Omitted: separate floating buttons.
    */
-  layout?: 'vertical' | 'horizontal';
+  layout?: 'vertical' | 'horizontal' | 'beside';
   /**
    * Up to twelve destinations. With a menu, a tap opens it, from the button,
    * instead of opening `path`; the badge still shows on the button.

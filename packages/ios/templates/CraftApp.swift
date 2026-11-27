@@ -858,8 +858,12 @@ final class CraftChrome: ObservableObject {
         var image: String? = nil
         /// A compact floating icon, instead of the system full-width accessory shelf.
         var iconOnly = false
-        /// A shared material capsule; nil keeps separate floating buttons.
+        /// "vertical" or "horizontal": a shared material capsule. "beside":
+        /// the primary action alone, a circle in the tab bar's own row. Nil
+        /// keeps separate floating buttons.
         var accessoryLayout: String? = nil
+        /// Whether the actions share one capsule.
+        var accessoryGrouped: Bool { accessoryLayout == "vertical" || accessoryLayout == "horizontal" }
         /// How a tab accessory or one of its companions opens its path:
         /// "cover" for over everything, in a stack of its own.
         var presentation: String? = nil
@@ -928,6 +932,9 @@ final class CraftChrome: ObservableObject {
         guard tabBarVisible, !keyboardUp, let actions = floatingActions,
               let page = webView, page.window != nil else { return (0, nil) }
         let inPage = page.convert(actions, from: nil)
+        // In the tab bar's own row, the action reaches no higher than the bar
+        // already does: the page is told where it is, with nothing to clear.
+        if tabAccessory?.accessoryLayout == "beside" { return (0, inPage.integral) }
         let reach = max(0, page.bounds.maxY - inPage.minY)
         guard reach > 0, inPage.minY < page.bounds.maxY else { return (0, nil) }
         return (Int(reach.rounded()), inPage.integral)
@@ -1068,8 +1075,8 @@ final class CraftChrome: ObservableObject {
             next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "bubble.left",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
                 accessibilityLabel: item["accessibilityLabel"] as? String,
-                iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal"].contains(item["layout"] as? String ?? ""),
-                accessoryLayout: (item["layout"] as? String).flatMap { ["vertical", "horizontal"].contains($0) ? $0 : nil },
+                iconOnly: (item["iconOnly"] as? Bool ?? false) || ["vertical", "horizontal", "beside"].contains(item["layout"] as? String ?? ""),
+                accessoryLayout: (item["layout"] as? String).flatMap { ["vertical", "horizontal", "beside"].contains($0) ? $0 : nil },
                 presentation: item["presentation"] as? String == "cover" ? "cover" : nil,
                 companions: ((item["companions"] as? [[String: Any]]) ?? []).prefix(2).compactMap { action in
                     guard let companionPath = action["path"] as? String,
@@ -1425,7 +1432,8 @@ private struct CraftTabBarContent: View {
             HStack(spacing: 8) {
                 bar
                 if let primary = chrome.tabAccessory {
-                    ForEach(primary.companions + [primary]) { accessory in
+                    // Beside the bar the primary action stands alone, as in the native shell.
+                    ForEach(primary.accessoryLayout == "beside" ? [primary] : primary.companions + [primary]) { accessory in
                         Group {
                             if accessory.menu.isEmpty {
                                 Button { CraftHybrid.shared.open(accessory.id, presentation: accessory.presentation) } label: { accessoryLabel(accessory) }

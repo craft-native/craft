@@ -1350,6 +1350,52 @@ class NativeNavigationTest {
     }
 
     /**
+     * lastsoulultra#38, option A: `layout: 'beside'` keeps the primary action
+     * alone in the tab row, round and as tall as the pill, and the pill
+     * narrows by exactly the room it takes.
+     */
+    @Test
+    fun besideAccessoryStandsAloneInTheTabRowAndThePillNarrowsForIt() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "navigation-home-state")
+            lateinit var chrome: CraftNativeChrome
+            var pillAlone = 0
+            instrumentation.runOnMainSync {
+                chrome = findType(activity.window.decorView, CraftNativeChrome::class.java)
+                    ?: throw AssertionError("native chrome did not mount")
+                pillAlone = (find(chrome, "craft-tab-/")?.parent as View).width
+                chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject(
+                    """{"path":"/m/add","layout":"beside","title":"Hinzufügen","symbol":"plus","badge":"2","companions":[{"path":"/m/messages","title":"Nachrichten","symbol":"message"}]}"""
+                )), 0, "Home")
+            }
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                val add = find(chrome, "Hinzufügen, 2") ?: throw AssertionError("the Add button did not mount")
+                val pill = find(chrome, "craft-tab-/")?.parent as View
+                val row = pill.parent as ViewGroup
+                assertTrue("the button sits in the pill's own row", generateSequence(add.parent) { it.parent }.any { it === row })
+                assertEquals("round", add.width, add.height)
+                assertEquals("as tall as the pill", pill.height, add.height)
+                val pillAt = IntArray(2).also { pill.getLocationOnScreen(it) }
+                val addAt = IntArray(2).also { add.getLocationOnScreen(it) }
+                assertEquals("in the pill's row", (pillAt[1] + pill.height / 2).toDouble(), (addAt[1] + add.height / 2).toDouble(), 1.0)
+                assertTrue("beside the pill, at its trailing end", addAt[0] >= pillAt[0] + pill.width)
+                val taken = add.width + (add.layoutParams as ViewGroup.MarginLayoutParams).marginStart
+                assertEquals("the pill gives up exactly the button's room", (pillAlone - taken).toDouble(), pill.width.toDouble(), 2.0)
+                assertNull("beside, the companions are not drawn", find(chrome, "Nachrichten")?.takeIf { it.isShown })
+                chrome.apply(org.json.JSONObject().put("tabAccessory", org.json.JSONObject.NULL), 0, "Home")
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    /**
      * HQ's Add button (lastsoulultra#38): a primary accessory with a menu
      * opens it on a tap instead of its path. Each choice shows its badge after
      * its title, gives TalkBack its own label, and opens with its own

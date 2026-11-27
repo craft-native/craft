@@ -1584,7 +1584,9 @@ internal class CraftNativeChrome(
         }
         accessory.layoutParams = LayoutParams(dp(if (grouped) 48 else 64), dp(if (grouped) 48 else 64)).apply { marginStart = if (grouped) 0 else dp(8) }
         // A group is one control: no divider between its actions, as on iOS.
-        companionRow.visibility = if (companionViews.isEmpty()) View.GONE else View.VISIBLE
+        // Beside the pill (lastsoulultra#38) the primary action stands alone;
+        // it already sits in the tab row, which the pill's weight narrows for.
+        companionRow.visibility = if (companionViews.isEmpty() || layout == "beside") View.GONE else View.VISIBLE
     }
 
     fun selectTab(index: Int) {
