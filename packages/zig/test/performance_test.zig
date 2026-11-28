@@ -104,6 +104,20 @@ const Timer = struct {
     }
 
     fn monotonic_ns() i128 {
+        // Inlined rather than imported: this file is its own root module and
+        // cannot reach `../src/compat.zig`. POSIX `clock_gettime` has no
+        // Windows counterpart (`clockid_t` is `void` there).
+        if (comptime builtin.os.tag == .windows) {
+            const kern = struct {
+                extern "kernel32" fn QueryPerformanceCounter(c: *i64) callconv(.c) c_int;
+                extern "kernel32" fn QueryPerformanceFrequency(f: *i64) callconv(.c) c_int;
+            };
+            var counter: i64 = 0;
+            var frequency: i64 = 0;
+            if (kern.QueryPerformanceFrequency(&frequency) == 0 or frequency <= 0) return 0;
+            if (kern.QueryPerformanceCounter(&counter) == 0) return 0;
+            return @intCast((@as(u128, @intCast(counter)) * std.time.ns_per_s) / @as(u128, @intCast(frequency)));
+        }
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(.MONOTONIC, &ts);
         return @as(i128, ts.sec) * 1_000_000_000 + ts.nsec;

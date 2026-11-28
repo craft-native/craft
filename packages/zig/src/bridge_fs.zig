@@ -4,6 +4,15 @@ const bridge_error = @import("bridge_error.zig");
 const io_context = @import("io_context.zig");
 const fs_watch = @import("fs_watch.zig");
 
+/// The window whose request is being handled. Set by the Windows host before it
+/// dispatches, because a watch has to name the page it reports into.
+pub var current_window: u32 = 0;
+
+/// Hands a page script to the UI thread. Set by the Windows host; null
+/// elsewhere, where the sink already runs somewhere that can evaluate.
+pub var post_to_ui: ?*const fn (window_id: u32, script: []const u8) void = null;
+const request_context = @import("request_context.zig");
+
 const BridgeError = bridge_error.BridgeError;
 
 /// Parse one action's payload into `T`, the fields that handler reads.
@@ -28,6 +37,61 @@ fn parsePayload(comptime T: type, allocator: std.mem.Allocator, data: []const u8
         .ignore_unknown_fields = true,
         .allocate = .alloc_always,
     }) catch BridgeError.InvalidJSON;
+}
+
+/// Whether this call arrived through the `_req` protocol, i.e. the page is
+/// awaiting a correlated reply.
+///
+/// The bridge has two reply channels. The legacy one is `__craftFSCallback`,
+/// keyed by a `callbackId` the page generates and carrying an unwrapped
+/// payload. `craft-bridge.js` no longer uses it: every `craft.fs.*` accessor
+/// there awaits `_req`, which settles only on `__craftBridgeResult` stamped
+/// with the request id. A call answered on the legacy channel alone therefore
+/// never resolves, which is why `fs` behaved as "not implemented" even once
+/// the namespace was routed.
+fn bridgeReplyWanted() bool {
+    return request_context.current() != null;
+}
+
+/// Answer a `_req` with a payload that is already valid JSON.
+/// Returns false when the legacy channel is the one in use.
+fn replyJson(action: []const u8, payload: []const u8) bool {
+    if (!bridgeReplyWanted()) return false;
+    bridge_error.sendResultToJS(std.heap.c_allocator, action, payload);
+    return true;
+}
+
+/// Answer a `_req` whose value is a bare string — file contents, for instance.
+/// `_req` resolves with the decoded value, so the bytes have to arrive as a
+/// JSON string rather than raw.
+fn replyJsonString(action: []const u8, value: []const u8) bool {
+    if (!bridgeReplyWanted()) return false;
+    const allocator = std.heap.c_allocator;
+
+    const esc_buf = allocator.alloc(u8, value.len * 6 + 1) catch return true;
+    defer allocator.free(esc_buf);
+    const escaped = bridge_error.escapeJsonString(esc_buf, value) catch return true;
+
+    const json = std.fmt.allocPrint(allocator, "\"{s}\"", .{escaped}) catch return true;
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+    return true;
+}
+
+/// Answer a `_req` shaped `{ "path": ... }`, which is what the directory
+/// accessors (`homeDir` / `tempDir` / `appDataDir`) decode.
+fn replyJsonPath(action: []const u8, path: []const u8) bool {
+    if (!bridgeReplyWanted()) return false;
+    const allocator = std.heap.c_allocator;
+
+    const esc_buf = allocator.alloc(u8, path.len * 6 + 1) catch return true;
+    defer allocator.free(esc_buf);
+    const escaped = bridge_error.escapeJsonString(esc_buf, path) catch return true;
+
+    const json = std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\"}}", .{escaped}) catch return true;
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+    return true;
 }
 
 /// File watcher entry
@@ -261,7 +325,11 @@ pub const FSBridge = struct {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[FSBridge] appendFile: {s}\n", .{path});
 
-        const file = std.Io.Dir.cwd().openFile(io_context.get(), path, .{ .mode = .write_only }) catch |err| {
+        // `read_write`, not `write_only`: appending needs the file's current
+        // size, and on Windows a handle opened write-only refuses both the stat
+        // and the positional write that follows -- with AccessDenied, which the
+        // caller never sees because this action is fire-and-forget.
+        const file = std.Io.Dir.cwd().openFile(io_context.get(), path, .{ .mode = .read_write }) catch |err| {
             self.sendFSError(callback_id, "appendFile", path, err);
             return;
         };
@@ -364,6 +432,10 @@ pub const FSBridge = struct {
         // Escape the user-supplied callback_id before embedding in the JS.
         var cb_buf: [128]u8 = undefined;
         const cb_esc = bridge_error.escapeJsSingleQuoted(&cb_buf, callback_id) catch return;
+
+        var payload_buf: [256]u8 = undefined;
+        const stat_payload = std.fmt.bufPrint(&payload_buf, "{{\"isDirectory\":{},\"isFile\":{},\"size\":{d},\"mtime\":{d}}}", .{ is_dir, is_file, size, mtime }) catch return;
+        if (replyJson("stat", stat_payload)) return;
 
         var buf: [512]u8 = undefined;
         const js = std.fmt.bufPrint(&buf,
@@ -486,6 +558,8 @@ pub const FSBridge = struct {
         var cb_buf: [128]u8 = undefined;
         const cb_esc = bridge_error.escapeJsSingleQuoted(&cb_buf, callback_id) catch return;
 
+        if (replyJson("readDir", buf[0..pos])) return;
+
         var js_buf: [8500]u8 = undefined;
         const js = std.fmt.bufPrint(&js_buf,
             \\if(window.__craftFSCallback)window.__craftFSCallback('{s}','readDir',{s});
@@ -530,11 +604,16 @@ pub const FSBridge = struct {
     }
 
     /// Remove directory
-    /// JSON: {"path": "/path/to/dir", "callbackId": "cb1"}
+    /// JSON: {"path": "/path/to/dir", "recursive": true, "callbackId": "cb1"}
     fn rmdir(self: *Self, data: []const u8) !void {
         const parsed = try parsePayload(struct {
             path: []const u8 = "",
             callbackId: []const u8 = "",
+            // `craft.fs.rmdir(path, { recursive: true })` has always sent this,
+            // and this side never read it: every rmdir was non-recursive, so a
+            // directory with anything in it failed with DirNotEmpty while the
+            // caller's promise resolved.
+            recursive: bool = false,
         }, self.allocator, data);
         defer parsed.deinit();
         const path = parsed.value.path;
@@ -543,12 +622,19 @@ pub const FSBridge = struct {
         if (path.len == 0) return BridgeError.MissingData;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[FSBridge] rmdir: {s}\n", .{path});
+            std.debug.print("[FSBridge] rmdir: {s} (recursive={})\n", .{ path, parsed.value.recursive });
 
-        std.Io.Dir.cwd().deleteDir(io_context.get(), path) catch |err| {
-            self.sendFSError(callback_id, "rmdir", path, err);
-            return;
-        };
+        if (parsed.value.recursive) {
+            std.Io.Dir.cwd().deleteTree(io_context.get(), path) catch |err| {
+                self.sendFSError(callback_id, "rmdir", path, err);
+                return;
+            };
+        } else {
+            std.Io.Dir.cwd().deleteDir(io_context.get(), path) catch |err| {
+                self.sendFSError(callback_id, "rmdir", path, err);
+                return;
+            };
+        }
 
         self.sendFSSuccess(callback_id, "rmdir");
     }
@@ -688,6 +774,20 @@ pub const FSBridge = struct {
     /// A path that does not exist is `NotFound`, as `node:fs.watch` makes it
     /// ENOENT: FSEvents would watch it happily and never say a word.
     fn startNative(self: *Self, id: []const u8, path: []const u8, recursive: bool) !?NativeWatch {
+        if (comptime builtin.os.tag == .windows) {
+            // The sink runs on the reader thread, which must not call into the
+            // webview; `post_to_ui` carries each event back to the UI thread.
+            const native_watch = fs_watch.start(self.allocator, id, path, recursive, .{
+                .context = @ptrFromInt(@as(usize, current_window)),
+                .deliver = deliverToPage,
+            }) catch |err| return switch (err) {
+                error.FileNotFound => BridgeError.NotFound,
+                error.AccessDenied => BridgeError.PermissionDenied,
+                error.UnsupportedPlatform => BridgeError.PlatformNotSupported,
+                else => BridgeError.NativeCallFailed,
+            };
+            return .{ .watch = native_watch, .webview = current_window };
+        }
         if (comptime builtin.os.tag != .macos) return null;
         const macos = @import("macos.zig");
 
@@ -709,13 +809,24 @@ pub const FSBridge = struct {
         return .{ .watch = stream, .webview = @intFromPtr(webview) };
     }
 
-    /// The sink: one change, as a `craft:fs:change` event in the page. On the
-    /// main thread, where FSEvents' main-queue callback already is.
+    /// The sink: one change, as a `craft:fs:change` event in the page.
+    ///
+    /// On macOS this runs on the main thread, where FSEvents' main-queue
+    /// callback already is. On Windows it runs on a reader thread that must not
+    /// touch the webview, so the script is handed to the UI thread instead.
     fn deliverToPage(context: ?*anyopaque, id: []const u8, change: fs_watch.ChangeType, path: []const u8) void {
-        if (context == null) return;
         const allocator = std.heap.c_allocator;
         const script = fs_watch.eventScript(allocator, id, change, path) catch return;
         defer allocator.free(script);
+
+        if (comptime builtin.os.tag == .windows) {
+            const raw = context orelse return;
+            const window_id: u32 = @intCast(@intFromPtr(raw));
+            if (post_to_ui) |post| post(window_id, script);
+            return;
+        }
+        if (comptime builtin.os.tag != .macos) return;
+        if (context == null) return;
         @import("macos.zig").tryEvalJSInWebView(context, script) catch |err| {
             std.log.debug("fs watch: could not deliver a change to the page: {}", .{err});
         };
@@ -768,6 +879,19 @@ pub const FSBridge = struct {
     /// Get home directory
     fn getHomeDir(self: *Self) !void {
         _ = self;
+
+        // A `_req` page is answered here and never reaches the legacy
+        // `__craftFSCallback` path below. Environment lookup covers every
+        // platform: HOME on macOS/Linux, USERPROFILE on Windows, and both name
+        // the same directory NSFileManager would report.
+        if (bridgeReplyWanted()) {
+            const home = envOrEmpty("HOME") orelse
+                (if (comptime builtin.os.tag == .windows) envOrEmpty("USERPROFILE") orelse "" else "");
+            if (home.len == 0) return BridgeError.NativeCallFailed;
+            _ = replyJsonPath("getHomeDir", home);
+            return;
+        }
+
         const bridge = @import("bridge.zig");
 
         if (comptime builtin.os.tag == .macos) {
@@ -831,6 +955,17 @@ pub const FSBridge = struct {
     /// Get temp directory
     fn getTempDir(self: *Self) !void {
         _ = self;
+
+        // See `getHomeDir`: a `_req` is answered without touching the
+        // platform-specific branch, and TEMP is set on Windows.
+        if (bridgeReplyWanted()) {
+            const tmp = envOrEmpty("TMPDIR") orelse
+                (if (comptime builtin.os.tag == .windows) envOrEmpty("TEMP") orelse "" else "/tmp");
+            if (tmp.len == 0) return BridgeError.NativeCallFailed;
+            _ = replyJsonPath("getTempDir", tmp);
+            return;
+        }
+
         const bridge = @import("bridge.zig");
 
         if (comptime builtin.os.tag == .macos) {
@@ -884,6 +1019,22 @@ pub const FSBridge = struct {
     /// Get app data directory (Application Support)
     fn getAppDataDir(self: *Self) !void {
         _ = self;
+
+        // Not on macOS: this environment shortcut would answer HOME, while the
+        // AppKit branch below answers ~/Library/Application Support. Only the
+        // platforms without that branch take it.
+        if (comptime builtin.os.tag != .macos) {
+            if (bridgeReplyWanted()) {
+                const dir = if (comptime builtin.os.tag == .windows)
+                    envOrEmpty("APPDATA") orelse ""
+                else
+                    envOrEmpty("XDG_DATA_HOME") orelse envOrEmpty("HOME") orelse "";
+                if (dir.len == 0) return BridgeError.NativeCallFailed;
+                _ = replyJsonPath("getAppDataDir", dir);
+                return;
+            }
+        }
+
         const bridge = @import("bridge.zig");
 
         if (comptime builtin.os.tag == .macos) {
@@ -968,6 +1119,7 @@ pub const FSBridge = struct {
 
     /// Send success callback
     fn sendFSSuccess(_: *Self, callback_id: []const u8, action: []const u8) void {
+        if (replyJson(action, "{\"success\":true}")) return;
         const bridge = @import("bridge.zig");
 
         // Escape callback_id/action — see `sendFSError` for rationale.
@@ -988,6 +1140,10 @@ pub const FSBridge = struct {
 
     /// Send boolean result callback
     fn sendFSBool(_: *Self, callback_id: []const u8, action: []const u8, value: bool) void {
+        // `craft.fs.exists` decodes `r.exists`; the legacy channel sent a bare
+        // boolean instead, which `_req` would resolve as `true`/`false` and the
+        // accessor would then read as `undefined`.
+        if (replyJson(action, if (value) "{\"exists\":true}" else "{\"exists\":false}")) return;
         const bridge = @import("bridge.zig");
 
         var cb_buf: [128]u8 = undefined;
@@ -1007,6 +1163,10 @@ pub const FSBridge = struct {
 
     /// Send file content result (base64 encoded for safety)
     fn sendFSResult(_: *Self, callback_id: []const u8, action: []const u8, content: []const u8) void {
+        // `craft.fs.readFile` resolves with the decoded value, so the contents
+        // must arrive as a JSON string rather than the raw bytes the legacy
+        // channel embedded unquoted.
+        if (replyJsonString(action, content)) return;
         const bridge = @import("bridge.zig");
 
         // For text content, escape and send directly
@@ -1079,6 +1239,27 @@ pub const FSBridge = struct {
 
     /// Send error callback
     fn sendFSError(_: *Self, callback_id: []const u8, action: []const u8, path: []const u8, err: anyerror) void {
+        // Every mutating fs action is a fire-and-forget send: the page gets a
+        // resolved promise the moment the message is posted, and nothing on the
+        // page is listening for a reply. Without this line a failed write, copy
+        // or rmdir is indistinguishable from a successful one from any side of
+        // the bridge -- it cost a probe round trip to learn that appendFile was
+        // failing silently.
+        std.log.warn("craft.fs.{s} failed for '{s}': {}", .{ action, path, err });
+        // A `_req` fails through `__craftBridgeError`, which the page turns
+        // into a rejected promise. Without this branch the call would sit
+        // unanswered until it timed out.
+        if (bridgeReplyWanted()) {
+            const mapped: BridgeError = switch (err) {
+                error.FileNotFound => BridgeError.NotFound,
+                error.AccessDenied => BridgeError.PermissionDenied,
+                error.PathAlreadyExists, error.IsDir, error.NotDir => BridgeError.InvalidParameter,
+                else => BridgeError.NativeCallFailed,
+            };
+            bridge_error.sendErrorToJS(std.heap.c_allocator, action, mapped);
+            return;
+        }
+
         const bridge = @import("bridge.zig");
 
         const err_msg = switch (err) {

@@ -28,9 +28,94 @@ extern "c" fn closedir(dirp: ?*anyopaque) c_int;
 /// regular libc `open` / `read` / `write` plus a `termios` baud-rate
 /// configuration step.
 ///
+/// The window whose request is being handled, and how a reader thread gets a
+/// script onto the UI thread. Both set by the Windows host.
+pub var current_window: u32 = 0;
+pub var post_to_ui: ?*const fn (window_id: u32, script: []const u8) void = null;
+
+extern "kernel32" fn Sleep(milliseconds: u32) callconv(.c) void;
+
+/// A thread reading one open port, so the page hears about input without
+/// polling for it. Ports are opened with a zero read timeout, so `ReadFile`
+/// returns at once; an idle port costs a short sleep per turn.
+const Reader = struct {
+    handle: usize = 0,
+    id: u32 = 0,
+    stop: std.atomic.Value(bool) = .init(false),
+    thread: ?std.Thread = null,
+};
+
+const max_readers = 16;
+var readers: [max_readers]?*Reader = @splat(null);
+
+/// Post one chunk to the page as `craft:serial:data`.
+///
+/// Base64, because serial input is bytes and a JSON string cannot carry arbitrary
+/// ones: the facade's `read` answers text, but a device sends whatever it likes.
+fn emitSerialData(allocator: std.mem.Allocator, id: u32, bytes: []const u8) void {
+    const post = post_to_ui orelse return;
+    const encoder = std.base64.standard.Encoder;
+    const encoded = allocator.alloc(u8, encoder.calcSize(bytes.len)) catch return;
+    defer allocator.free(encoded);
+    _ = encoder.encode(encoded, bytes);
+
+    const script = std.fmt.allocPrint(
+        allocator,
+        "if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('craft:serial:data',{{detail:{{id:{d},base64:'{s}'}}}}));",
+        .{ id, encoded },
+    ) catch return;
+    defer allocator.free(script);
+    post(current_window, script);
+}
+
+fn readerLoop(reader: *Reader) void {
+    var buffer: [1024]u8 = undefined;
+    while (!reader.stop.load(.acquire)) {
+        var got: u32 = 0;
+        if (ReadFile(@ptrFromInt(reader.handle), &buffer, @intCast(buffer.len), &got, null) == 0) return;
+        if (got > 0) {
+            emitSerialData(std.heap.c_allocator, reader.id, buffer[0..got]);
+        } else {
+            // Nothing waiting: back off rather than spin. 20 ms is well under a
+            // person's perception and costs almost nothing when idle.
+            Sleep(20);
+        }
+    }
+}
+
+fn startReader(allocator: std.mem.Allocator, id: u32, handle: usize) void {
+    if (post_to_ui == null) return;
+    for (&readers) |*slot| {
+        if (slot.* != null) continue;
+        const reader = allocator.create(Reader) catch return;
+        reader.* = .{ .handle = handle, .id = id };
+        reader.thread = std.Thread.spawn(.{}, readerLoop, .{reader}) catch {
+            allocator.destroy(reader);
+            return;
+        };
+        slot.* = reader;
+        return;
+    }
+}
+
+fn stopReader(allocator: std.mem.Allocator, id: u32) void {
+    for (&readers) |*slot| {
+        const reader = slot.* orelse continue;
+        if (reader.id != id) continue;
+        reader.stop.store(true, .release);
+        if (reader.thread) |thread| thread.join();
+        allocator.destroy(reader);
+        slot.* = null;
+        return;
+    }
+}
+
 pub const SerialBridge = struct {
     allocator: std.mem.Allocator,
-    ports: std.AutoHashMap(u32, c_int),
+    /// Open ports. A POSIX file descriptor or a Win32 `HANDLE`, both widened to
+    /// `usize`: the two are pointer-sized and never coexist on one target, so
+    /// one map serves both without a tagged union.
+    ports: std.AutoHashMap(u32, usize),
     next_id: u32 = 1,
 
     const Self = @This();
@@ -38,14 +123,21 @@ pub const SerialBridge = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .ports = std.AutoHashMap(u32, c_int).init(allocator),
+            .ports = std.AutoHashMap(u32, usize).init(allocator),
         };
     }
 
     pub fn deinit(self: *Self) void {
         var it = self.ports.iterator();
         while (it.next()) |entry| {
-            _ = std.c.close(entry.value_ptr.*);
+            // Stop the reader before its handle goes away, or it reads from a
+            // closed handle.
+            if (comptime builtin.os.tag == .windows) stopReader(self.allocator, entry.key_ptr.*);
+            if (comptime builtin.os.tag == .windows) {
+                _ = CloseHandle(@ptrFromInt(entry.value_ptr.*));
+            } else {
+                _ = std.c.close(@intCast(entry.value_ptr.*));
+            }
         }
         self.ports.deinit();
     }
@@ -65,6 +157,7 @@ pub const SerialBridge = struct {
     }
 
     fn list(self: *Self) !void {
+        if (comptime builtin.os.tag == .windows) return self.windowsList();
         if (builtin.os.tag != .macos and builtin.os.tag != .linux) {
             bridge_error.sendResultToJS(self.allocator, "list", "{\"ports\":[]}");
             return;
@@ -117,8 +210,6 @@ pub const SerialBridge = struct {
     }
 
     fn open(self: *Self, data: []const u8) !void {
-        if (builtin.os.tag != .macos and builtin.os.tag != .linux) return BridgeError.PlatformNotSupported;
-
         const ParseShape = struct {
             path: []const u8 = "",
             baud: u32 = 9600,
@@ -130,6 +221,10 @@ pub const SerialBridge = struct {
         defer parsed.deinit();
 
         if (parsed.value.path.len == 0) return BridgeError.MissingData;
+
+        if (comptime builtin.os.tag == .windows)
+            return self.windowsOpen(parsed.value.path, parsed.value.baud);
+
         if (!std.mem.startsWith(u8, parsed.value.path, "/dev/")) return BridgeError.InvalidParameter;
 
         const path_z = try @import("memory.zig").dupeZ(self.allocator, u8, parsed.value.path);
@@ -143,7 +238,7 @@ pub const SerialBridge = struct {
         const id = self.next_id;
         self.next_id +%= 1;
         if (self.next_id == 0) self.next_id = 1;
-        try self.ports.put(id, fd);
+        try self.ports.put(id, @intCast(fd));
 
         var buf: [96]u8 = undefined;
         const json = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"id\":\"{d}\"}}", .{id});
@@ -162,8 +257,20 @@ pub const SerialBridge = struct {
         defer parsed.deinit();
 
         const id = try parseId(parsed.value.id);
-        const fd = self.ports.get(id) orelse return BridgeError.NotFound;
-        const written = std.c.write(fd, parsed.value.data.ptr, parsed.value.data.len);
+        const handle = self.ports.get(id) orelse return BridgeError.NotFound;
+
+        if (comptime builtin.os.tag == .windows) {
+            var written: u32 = 0;
+            if (parsed.value.data.len > std.math.maxInt(u32)) return BridgeError.InvalidParameter;
+            if (WriteFile(@ptrFromInt(handle), parsed.value.data.ptr, @intCast(parsed.value.data.len), &written, null) == 0)
+                return BridgeError.NativeCallFailed;
+            var wbuf: [96]u8 = undefined;
+            const wjson = try std.fmt.bufPrint(&wbuf, "{{\"ok\":true,\"bytes\":{d}}}", .{written});
+            bridge_error.sendResultToJS(self.allocator, "write", wjson);
+            return;
+        }
+
+        const written = std.c.write(@intCast(handle), parsed.value.data.ptr, parsed.value.data.len);
         if (written < 0) return BridgeError.NativeCallFailed;
 
         var buf: [96]u8 = undefined;
@@ -183,15 +290,26 @@ pub const SerialBridge = struct {
         defer parsed.deinit();
 
         const id = try parseId(parsed.value.id);
-        const fd = self.ports.get(id) orelse return BridgeError.NotFound;
+        const handle = self.ports.get(id) orelse return BridgeError.NotFound;
         const cap = @min(parsed.value.maxBytes, 64 * 1024);
         const bytes = try self.allocator.alloc(u8, cap);
         defer self.allocator.free(bytes);
 
-        const n = std.c.read(fd, bytes.ptr, bytes.len);
-        if (n < 0) {
-            bridge_error.sendResultToJS(self.allocator, "read", "{\"ok\":true,\"data\":\"\",\"bytes\":0}");
-            return;
+        var n: isize = 0;
+        if (comptime builtin.os.tag == .windows) {
+            var got: u32 = 0;
+            if (cap > std.math.maxInt(u32)) return BridgeError.InvalidParameter;
+            if (ReadFile(@ptrFromInt(handle), bytes.ptr, @intCast(cap), &got, null) == 0) {
+                bridge_error.sendResultToJS(self.allocator, "read", "{\"ok\":true,\"data\":\"\",\"bytes\":0}");
+                return;
+            }
+            n = @intCast(got);
+        } else {
+            n = std.c.read(@intCast(handle), bytes.ptr, bytes.len);
+            if (n < 0) {
+                bridge_error.sendResultToJS(self.allocator, "read", "{\"ok\":true,\"data\":\"\",\"bytes\":0}");
+                return;
+            }
         }
 
         var out: std.ArrayListUnmanaged(u8) = .empty;
@@ -215,12 +333,204 @@ pub const SerialBridge = struct {
 
         const id = try parseId(parsed.value.id);
         if (self.ports.fetchRemove(id)) |entry| {
-            _ = std.c.close(entry.value);
+            if (comptime builtin.os.tag == .windows) stopReader(self.allocator, id);
+            if (comptime builtin.os.tag == .windows) {
+                _ = CloseHandle(@ptrFromInt(entry.value));
+            } else {
+                _ = std.c.close(@intCast(entry.value));
+            }
             bridge_error.sendResultToJS(self.allocator, "close", "{\"ok\":true}");
         } else {
             return BridgeError.NotFound;
         }
     }
+
+    /// COM-port enumeration. `QueryDosDeviceW` is the documented way to ask
+    /// whether `COM<n>` resolves without opening it: a bound port resolves to a
+    /// DOS device target (`\Device\Serial0`, `\Device\BthModem1` for a
+    /// Bluetooth link), an unused name fails with `ERROR_FILE_NOT_FOUND`.
+    /// Scanning a fixed range is allocation-free and does not depend on the
+    /// `SERIALCOMM` registry map, which only lists ports with a driver bound
+    /// and whose order is not the numeric one.
+    fn windowsList(self: *Self) !void {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(self.allocator);
+        try out.appendSlice(self.allocator, "{\"ports\":[");
+
+        var first = true;
+        var n: u32 = 1;
+        while (n <= 256) : (n += 1) {
+            var name_buf: [16]u8 = undefined;
+            const name = std.fmt.bufPrint(&name_buf, "COM{d}", .{n}) catch continue;
+
+            var wide: [16]u16 = undefined;
+            for (name, 0..) |ch, i| wide[i] = ch;
+            wide[name.len] = 0;
+
+            var target: [256]u16 = undefined;
+            if (QueryDosDeviceW(wide[0..name.len :0].ptr, &target, target.len) == 0) continue;
+
+            if (!first) try out.append(self.allocator, ',');
+            first = false;
+            try out.appendSlice(self.allocator, "{\"path\":\"");
+            try out.appendSlice(self.allocator, name);
+            try out.appendSlice(self.allocator, "\"}");
+        }
+        try out.appendSlice(self.allocator, "]}");
+
+        const owned = try out.toOwnedSlice(self.allocator);
+        defer self.allocator.free(owned);
+        bridge_error.sendResultToJS(self.allocator, "list", owned);
+    }
+
+    /// Open a COM port. Accepts both `COM3` and the `\\.\COM3` device-path
+    /// form; the latter is mandatory for `COM10` and above, and harmless for
+    /// `COM1`..`COM9`, so it is normalised in rather than required from the
+    /// caller.
+    fn windowsOpen(self: *Self, path: []const u8, baud: u32) !void {
+        var path_buf: [64]u8 = undefined;
+        const device_path = if (std.mem.startsWith(u8, path, "\\\\.\\"))
+            path
+        else
+            std.fmt.bufPrint(&path_buf, "\\\\.\\{s}", .{path}) catch return BridgeError.InvalidParameter;
+
+        var wide: [128]u16 = undefined;
+        if (device_path.len + 1 > wide.len) return BridgeError.InvalidParameter;
+        for (device_path, 0..) |ch, i| {
+            if (ch > 0x7f) return BridgeError.InvalidParameter;
+            wide[i] = ch;
+        }
+        wide[device_path.len] = 0;
+
+        const raw = CreateFileW(
+            wide[0..device_path.len :0].ptr,
+            GENERIC_READ | GENERIC_WRITE,
+            0, // exclusive: a serial port cannot be shared
+            null,
+            OPEN_EXISTING,
+            0,
+            null,
+        );
+        if (raw == 0 or raw == std.math.maxInt(usize)) return BridgeError.NativeCallFailed;
+        const handle: *anyopaque = @ptrFromInt(raw);
+        errdefer _ = CloseHandle(handle);
+
+        // `read` must not park the bridge thread on a blocking Win32 call: a
+        // zero total timeout plus an "any byte arrives" interval timeout makes
+        // `ReadFile` return immediately with 0 bytes when the port is idle.
+        var timeouts = COMMTIMEOUTS{
+            .ReadIntervalTimeout = std.math.maxInt(u32),
+            .ReadTotalTimeoutMultiplier = 0,
+            .ReadTotalTimeoutConstant = 0,
+            .WriteTotalTimeoutMultiplier = 0,
+            .WriteTotalTimeoutConstant = 5000,
+        };
+        _ = SetCommTimeouts(handle, &timeouts);
+
+        // Configure the line only when the caller asked for a rate. `GetCommState`
+        // first, so the flags the driver considers meaningful are preserved
+        // instead of being invented here.
+        if (baud != 0) {
+            var dcb: DCB = std.mem.zeroes(DCB);
+            dcb.DCBlength = @sizeOf(DCB);
+            if (GetCommState(handle, &dcb) != 0) {
+                dcb.BaudRate = baud;
+                dcb.ByteSize = 8;
+                dcb.Parity = 0; // NOPARITY
+                dcb.StopBits = 0; // ONESTOPBIT
+                dcb.flags |= 1; // fBinary
+                _ = SetCommState(handle, &dcb);
+            }
+        }
+
+        const id = self.next_id;
+        self.next_id +%= 1;
+        if (self.next_id == 0) self.next_id = 1;
+        try self.ports.put(id, raw);
+
+        // Everything read from here on is pushed to the page as well, so a UI
+        // does not have to poll.
+        startReader(self.allocator, id, raw);
+
+        var buf: [96]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"id\":\"{d}\"}}", .{id});
+        bridge_error.sendResultToJS(self.allocator, "open", json);
+    }
+};
+
+// =============================================================================
+// Windows: Win32 serial API
+// =============================================================================
+
+const GENERIC_READ: u32 = 0x8000_0000;
+const GENERIC_WRITE: u32 = 0x4000_0000;
+const OPEN_EXISTING: u32 = 3;
+
+extern "kernel32" fn CreateFileW(
+    lp_file_name: [*:0]const u16,
+    dw_desired_access: u32,
+    dw_share_mode: u32,
+    lp_security_attributes: ?*anyopaque,
+    dw_creation_disposition: u32,
+    dw_flags_and_attributes: u32,
+    h_template_file: ?*anyopaque,
+) callconv(.c) usize;
+
+extern "kernel32" fn CloseHandle(h: *anyopaque) callconv(.c) c_int;
+
+extern "kernel32" fn WriteFile(
+    h: *anyopaque,
+    buf: [*]const u8,
+    n: u32,
+    written: *u32,
+    overlapped: ?*anyopaque,
+) callconv(.c) c_int;
+
+extern "kernel32" fn ReadFile(
+    h: *anyopaque,
+    buf: [*]u8,
+    n: u32,
+    read_bytes: *u32,
+    overlapped: ?*anyopaque,
+) callconv(.c) c_int;
+
+extern "kernel32" fn QueryDosDeviceW(
+    lp_device_name: [*:0]const u16,
+    lp_target_path: ?[*]u16,
+    ucch_max: u32,
+) callconv(.c) u32;
+
+extern "kernel32" fn GetCommState(h: *anyopaque, dcb: *DCB) callconv(.c) c_int;
+extern "kernel32" fn SetCommState(h: *anyopaque, dcb: *const DCB) callconv(.c) c_int;
+extern "kernel32" fn SetCommTimeouts(h: *anyopaque, t: *const COMMTIMEOUTS) callconv(.c) c_int;
+
+/// `DCB` from `winbase.h`. The fourteen bit-field flags are collapsed into one
+/// `u32`: the layout is identical, and the bridge only ever flips `fBinary`
+/// (bit 0), which `GetCommState` already reports correctly.
+const DCB = extern struct {
+    DCBlength: u32 = 0,
+    BaudRate: u32 = 0,
+    flags: u32 = 0,
+    wReserved: u16 = 0,
+    XonLim: u16 = 0,
+    XoffLim: u16 = 0,
+    ByteSize: u8 = 0,
+    Parity: u8 = 0,
+    StopBits: u8 = 0,
+    XonChar: u8 = 0,
+    XoffChar: u8 = 0,
+    ErrorChar: u8 = 0,
+    EofChar: u8 = 0,
+    EvtChar: u8 = 0,
+    wReserved1: u16 = 0,
+};
+
+const COMMTIMEOUTS = extern struct {
+    ReadIntervalTimeout: u32,
+    ReadTotalTimeoutMultiplier: u32,
+    ReadTotalTimeoutConstant: u32,
+    WriteTotalTimeoutMultiplier: u32,
+    WriteTotalTimeoutConstant: u32,
 };
 
 fn parseId(raw: []const u8) !u32 {

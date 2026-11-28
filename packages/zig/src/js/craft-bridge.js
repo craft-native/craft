@@ -72,7 +72,13 @@
   // evaluation is different: JSON null is a real answer (including for
   // JavaScript undefined), and must reach the caller unchanged.
   function _orEmpty(action, payload) {
-    if (action === 'executeJavaScript' && payload === null) return null
+    // `null` is a real answer for these two, not a missing one. The typed SDK
+    // declares `getFocused(): Promise<Window | null>` and reads null as "none of
+    // our windows is focused"; normalising it to `{}` handed it a truthy empty
+    // object, so `getFocused()` returned a window handle that did not exist.
+    // `executeJavaScript` is here for the same reason: an evaluated null must
+    // stay null.
+    if ((action === 'executeJavaScript' || action === 'getFocused') && payload === null) return null
     return payload === undefined || payload === null ? {} : payload
   }
 
@@ -822,6 +828,13 @@
       }, opts || {})))
     },
     kill:         function (id)               { return _send('shell', 'kill', _stringify({ id: String(id) })) },
+    // exec(command, opts) — run one command line through the platform shell and
+    // resolve with `{ exitCode, stdout, stderr }`. `spawn` is fire-and-forget by
+    // design; this is the call that waits for the result. Native already
+    // implemented it on macOS/Linux; the facade simply never exposed it.
+    exec:         function (command, opts) {
+      return _req('shell', 'exec', _stringify(Object.assign({ command: String(command) }, opts || {})))
+    },
     getEnv:       function (name)             { return _req('shell', 'getEnv', _stringify({ name: String(name) })).then(function (r) { return r && r.value }) },
     setEnv:       function (name, value)      { return _send('shell', 'setEnv', _stringify({ name: String(name), value: String(value) })) },
   }
